@@ -1,0 +1,7 @@
+{
+  "pythonVersion": "3.11",
+  "pythonPath": "C:\\Program Files\\Python311",
+  "typeCheckingMode": "basic",
+  "include": ["."],
+  "exclude": [".venv", "__pycache__", "*.pyc", "**/node_modules", "**/.*"]
+}

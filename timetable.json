@@ -1,0 +1,25 @@
+{
+  "_comment": "Paradas programadas por headcode de servicio. El nombre base (antes de la coma) debe coincidir con el que devuelve el API — comparación case-insensitive. Añade aquí otros servicios cuando los uses.",
+  "2R17": [
+    "Lichfield City",
+    "Four Oaks",
+    "Sutton Coldfield",
+    "Wylde Green",
+    "Chester Road",
+    "Erdington",
+    "Gravelly Hill",
+    "Aston",
+    "Duddeston",
+    "Birmingham New Street",
+    "Five Ways",
+    "University",
+    "Selly Oak",
+    "Bournville",
+    "Kings Norton",
+    "Northfield",
+    "Longbridge",
+    "Barnt Green",
+    "Alvechurch",
+    "Redditch"
+  ]
+}
