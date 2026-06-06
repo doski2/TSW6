@@ -304,7 +304,8 @@ class SpeedGovernor:
                ocr_stop_dist_m: Optional[float] = None,
                ocr_task: Optional[str] = None,
                doors_dmi: Optional[bool] = None,
-               supervision: str = "csm") -> str:
+               supervision: str = "csm",
+               speed_limits_ahead: Optional[list] = None) -> str:
         """
         Devuelve una acción: 'ACCELERATE' | 'HOLD' | 'COAST' | 'BRAKE' | 'HARDBRAKE'
         Control proporcional con compensación de gradiente y paradas en estación.
@@ -415,6 +416,26 @@ class SpeedGovernor:
 
         _nl = next_limit_mph
         _dn = distance_next_m
+
+        # ── Frenado anticipatorio desde planning_delta speed_limits ────────────
+        # Si planning_delta expone límites futuros, usar el más restrictivo
+        # que requiera frenar antes de lo que el DMI indica.
+        if _p1_active and speed_limits_ahead:
+            for sl in speed_limits_ahead:
+                sl_limit = sl.get("limit_mph")
+                sl_dist  = sl.get("distance_m")
+                if sl_limit is None or sl_dist is None:
+                    continue
+                if sl_limit >= speed_mph:
+                    continue  # no necesita frenar
+                # Calcular si este límite requiere frenar antes que el DMI next_limit
+                bd_needed = self.braking_distance(
+                    speed_mph, sl_limit, gradient_pct=gradient_pct) * 1.2
+                if sl_dist <= bd_needed:
+                    # Este límite de planning es más urgente
+                    if _nl is None or sl_limit < _nl or (_dn is not None and sl_dist < _dn):
+                        _nl = sl_limit
+                        _dn = sl_dist
 
         # Reset ciclos si next_limit cambia más de 2 mph (señales consecutivas)
         if _nl is not None and self._p1_last_next_limit is not None:

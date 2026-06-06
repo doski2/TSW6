@@ -346,11 +346,13 @@ class TswConnection:
                             if event_type == "companion_dmi_planning_delta":
                                 gradient_pct = (data.get("gradient_percent") or {}).get("value")
                                 route_stations = self._parse_planning_stations(data)
+                                speed_limits = self._parse_planning_speed_limits(data)
                                 # service_name puede estar en route_monitor en el futuro
                             else:
                                 # Compatibilidad con dashboard_snapshot antiguo
                                 gradient_pct = None
                                 route_stations = self._parse_route_stations(data)
+                                speed_limits = []
                                 typed = (data.get("feed", {}).get("typed") or {})
                                 identity = typed.get("identity") or {}
                                 svc_raw = identity.get("service_name")
@@ -376,6 +378,8 @@ class TswConnection:
                                         _log.info("planning_delta paradas: %s",
                                                   [s["name"] for s in route_stations])
                                     self._last_route_stations = route_stations
+                                if speed_limits:
+                                    self._telem["speed_limits_ahead"] = speed_limits
                         except Exception:
                             pass
                     elif raw_line.startswith("data:") and event_type == "engine_event":
@@ -465,6 +469,48 @@ class TswConnection:
             return sorted(seen.values(), key=lambda x: x["distance_m"])
         except Exception:
             return []
+
+    @staticmethod
+    def _parse_planning_speed_limits(data: dict) -> list:
+        """
+        Extrae límites de velocidad futuros desde companion_dmi_planning_delta.route_monitor.items.
+        Devuelve lista de {limit_mph, distance_m} ordenados por distancia.
+        Cada entrada representa un cambio de límite de velocidad por delante del tren.
+        """
+        KPH_TO_MPH = 0.621371
+        try:
+            items = (data.get("route_monitor") or {}).get("items") or []
+            limits: list[dict] = []
+            for item in items:
+                if not isinstance(item, dict) or item.get("type") != "speed_limit":
+                    continue
+                # Estructura esperada: distance_start_m, speed_limit.value (kph)
+                dist = item.get("distance_start_m") or item.get("distance_end_m")
+                if dist is None:
+                    continue
+                dist = float(dist)
+                if dist <= 0:
+                    continue
+                # El valor del límite puede estar en varias ubicaciones
+                sl = item.get("speed_limit") or item.get("speed") or {}
+                if isinstance(sl, dict):
+                    val_kph = sl.get("value") or sl.get("kph")
+                else:
+                    val_kph = sl
+                if val_kph is None:
+                    continue
+                val_kph = float(val_kph)
+                if val_kph <= 0:
+                    continue
+                limits.append({
+                    "limit_mph": round(val_kph * KPH_TO_MPH, 1),
+                    "distance_m": dist,
+                })
+            limits.sort(key=lambda x: x["distance_m"])
+            return limits
+        except Exception:
+            return []
+
     # ── Parseo del dashboard_snapshot (puertas) ─────────────────────────────
 
     @staticmethod
