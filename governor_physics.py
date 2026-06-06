@@ -17,7 +17,7 @@ from typing import Optional
 from online_learner import OnlineLearner
 from governor_constants import (
     MAX_DECEL_MS2, SAFETY_MARGIN, COAST_DECEL_MS2, BRAKE_TRANSITION_S,
-    TARGET_ACCEL_MS2, TARGET_DECEL_MS2,
+    TARGET_ACCEL_MS2, TARGET_DECEL_MS2, CRITICAL_DECEL_THRESHOLD,
 )
 
 _log = logging.getLogger("tsw.physics")
@@ -140,6 +140,23 @@ class TrainPhysics:
         return a / 9.81 if a is not None else None
 
     # ── Física de frenado ────────────────────────────────────────────────────
+
+    def effective_decel_for_gradient(self, gradient_pct: Optional[float] = None,
+                                     decel: Optional[float] = None) -> float:
+        """Calcula la deceleración efectiva considerando gradiente y lluvia.
+        Devuelve el valor en m/s² (siempre >= coast_decel_ms2)."""
+        if decel is None:
+            decel = self.eff_max_decel
+        if gradient_pct is not None:
+            g_comp = 9.81 * gradient_pct / 100.0
+            return max(decel + g_comp, self.coast_decel_ms2)
+        return decel
+
+    def is_critical_gradient(self, gradient_pct: Optional[float] = None) -> bool:
+        """True si la deceleración efectiva en esta pendiente es críticamente baja.
+        Indica que el freno de servicio es insuficiente y se necesita MAX_BRAKE."""
+        eff = self.effective_decel_for_gradient(gradient_pct)
+        return eff < CRITICAL_DECEL_THRESHOLD
 
     def braking_distance(self, from_mph: float, to_mph: float,
                          decel: Optional[float] = None,

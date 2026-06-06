@@ -21,6 +21,8 @@ from governor_constants import (
     SAFETY_MARGIN, RATE_TOLERANCE, SERVICE_MAX_BRAKE,
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
     P1_MIN_NEXT_LIMIT_MPH, P1_REACT_S, P1_ACK_GUARD_S,
+    P1_ALERTA_FACTOR, P1_EMERGENCIA_DIST, P1_EMERGENCIA_MPH,
+    P1_CRITICO_DIST, P1_CRITICO_MPH,
     STATION_STOPPED_MPH, NOTCH_NEUTRAL,
 )
 from governor_physics import TrainPhysics
@@ -55,6 +57,11 @@ class SpeedGovernor:
         self._ack_was_required: bool = False
         self._ack_approach_warned: bool = False  # aviso previo al ACK (1 vez)
         self._p1_nomarker_cycles: int = 0   # ciclos consecutivos P1 sin marcador
+        self._p1_last_next_limit: Optional[float] = None  # para detectar cambio de límite
+
+        # P3: Anti-oscilación (banda muerta de 2 ciclos antes de cambiar dirección)
+        self._p3_last_direction: Optional[str] = None  # "up" | "down" | None
+        self._p3_direction_hold: int = 0  # ciclos restantes de banda muerta
 
         # Último effective_limit calculado (para logging externo)
         self.effective_limit: float = 0.0
@@ -399,27 +406,82 @@ class SpeedGovernor:
                 return "BRAKE"
 
         # ── P1: Frenado anticipado al próximo límite de velocidad ───────────────
+        # P1-MEJORADO: 4 niveles de urgencia progresiva
         _p1_active = (self.station_state not in ("APPROACHING", "DEPARTING")
                       or speed_mph > 10.0)
         if not _p1_active:
             self._p1_nomarker_cycles = 0
+            self._p1_last_next_limit = None
 
         _nl = next_limit_mph
         _dn = distance_next_m
+
+        # Reset ciclos si next_limit cambia más de 2 mph (señales consecutivas)
+        if _nl is not None and self._p1_last_next_limit is not None:
+            if abs(_nl - self._p1_last_next_limit) > 2.0:
+                self._p1_nomarker_cycles = 0
+        self._p1_last_next_limit = _nl
+
+        # Filtro mejorado: usar siempre que next_limit < effective_limit
+        # (eliminado el filtro antiguo _nl < speed + 15)
         if (_p1_active
                 and _nl is not None
                 and _dn is not None
                 and _nl >= P1_MIN_NEXT_LIMIT_MPH
-                and _nl < speed_mph + 15.0):
+                and _nl < effective_limit):
             v_ms    = speed_mph * 0.44704
-            react_m = v_ms * (P1_REACT_S + P1_ACK_GUARD_S)
+            # Escalar react_m con pendiente: mayor en bajada
+            _grad_factor = 1.0 + abs(gradient_pct or 0.0) / 2.0
+            react_m = v_ms * (P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor
             _accel  = self.acceleration_ms2
             bd      = self.braking_distance(speed_mph, _nl,
                                             gradient_pct=gradient_pct,
                                             current_accel_ms2=_accel)
             bd_hor  = max(bd + react_m, 1.0)
             profile_cap = effective_limit
+            _exceso = speed_mph - _nl
 
+            # ── P1-CRITICO: dist ≤ 20m con exceso > 10mph → FULLSTOP ────────
+            if (_dn <= P1_CRITICO_DIST and _exceso > P1_CRITICO_MPH):
+                _gov_log.critical(
+                    "P1 CRITICO  spd=%.1f  next_lim=%.1f  dist=%.0fm  exceso=%.1f",
+                    speed_mph, _nl, _dn, _exceso)
+                self.effective_limit = _nl
+                return "FULLSTOP"
+
+            # ── P1-EMERGENCIA: dist ≤ bd×0.5 O dist ≤ 50m con exceso > 5mph ─
+            if ((_exceso > 0 and _dn <= bd * 0.5)
+                    or (_dn <= P1_EMERGENCIA_DIST and _exceso > P1_EMERGENCIA_MPH)):
+                self._p1_nomarker_cycles += 1
+                _gov_log.warning(
+                    "P1 EMERGENCIA  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm  exceso=%.1f",
+                    speed_mph, _nl, _dn, bd, _exceso)
+                self.effective_limit = _nl
+                return "HARDBRAKE"
+
+            # ── P1-SERVICIO: dist ≤ bd → BRAKE (freno de servicio) ────────
+            # Solo fuerza retorno cuando realmente no queda margen de reacción.
+            # Cuando bd < dist ≤ bd_hor, el perfil gradual (P1-ALERTA) reduce
+            # effective_limit y P2 se encarga del control por tasa.
+            if _exceso > 0 and _dn <= bd:
+                self._p1_nomarker_cycles += 1
+                if self._p1_nomarker_cycles == 1:
+                    _gov_log.warning(
+                        "P1 SERVICIO (COAST)  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
+                        speed_mph, _nl, _dn, bd)
+                    effective_limit = min(effective_limit, _nl + _exceso * 0.3)
+                    self.effective_limit = effective_limit
+                    if self.throttle.notch > 0:
+                        return "COAST"
+                    return "BRAKE"
+                _gov_log.warning(
+                    "P1 SERVICIO (BRAKE)  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
+                    speed_mph, _nl, _dn, bd)
+                effective_limit = min(effective_limit, _nl)
+                self.effective_limit = effective_limit
+                return "BRAKE"
+
+            # ── P1-ALERTA: dist ≤ bd_hor × 1.5 → perfil gradual ─────────────
             if _nl < speed_mph - 0.3:
                 _frac = min(1.0, _dn / bd_hor)
                 profile_cap = _nl + (speed_mph - _nl) * _frac
@@ -428,27 +490,17 @@ class SpeedGovernor:
                 profile_cap = min(profile_cap, p1_ceil)
                 effective_limit = min(effective_limit, profile_cap)
                 _gov_log.debug(
-                    "P1 perfil  spd=%.1f  next_lim=%.1f  dist=%.0fm  "
-                    "bd=%.0fm  cap=%.1f",
-                    speed_mph, _nl, _dn, bd, profile_cap)
+                    "P1 ALERTA perfil  spd=%.1f  next_lim=%.1f  dist=%.0fm  "
+                    "bd_hor=%.0fm  cap=%.1f",
+                    speed_mph, _nl, _dn, bd_hor, profile_cap)
 
             if self.should_brake_for_next(speed_mph, _nl, _dn,
                                           gradient_pct=gradient_pct,
-                                          react_s=P1_REACT_S + P1_ACK_GUARD_S,
+                                          react_s=(P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor,
                                           current_accel_ms2=_accel):
                 effective_limit = min(effective_limit, profile_cap)
 
-            if _nl < speed_mph and _dn <= bd:
-                self._p1_nomarker_cycles += 1
-                if self._p1_nomarker_cycles == 1:
-                    _gov_log.warning(
-                        "P1 PRE-BRAKE  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
-                        speed_mph, _nl, _dn, bd)
-                    return "COAST"
-                _gov_log.warning(
-                    "P1 HARDBRAKE  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
-                    speed_mph, _nl, _dn, bd)
-                return "HARDBRAKE"
+            # Si no entramos en SERVICIO/EMERGENCIA/CRITICO, resetear ciclos
             self._p1_nomarker_cycles = 0
         else:
             self._p1_nomarker_cycles = 0
@@ -456,7 +508,36 @@ class SpeedGovernor:
         self.effective_limit = effective_limit
         error = effective_limit - speed_mph
 
-        # ── P2: Crucero pegado al límite de vía ─────────────────────────────────
+        # ── P2-MEJORADO: Control con histéresis adaptativa ───────────────────────
+        # Bandas adaptativas por lluvia y pendiente
+        _rain = self._physics._rain_intensity
+        _band_narrow = 1.0
+        if gradient_pct is not None and gradient_pct < -0.5:
+            _band_narrow = 0.7  # bandas más estrechas en bajada
+        _rain_offset_servicio = 1.0 if _rain > 0.3 else 0.0
+        _rain_offset_critico  = 2.0 if _rain > 0.3 else 0.0
+
+        # Detección de gradiente crítico → forzar MAX_BRAKE
+        if (error < 0 and gradient_pct is not None
+                and self._physics.is_critical_gradient(gradient_pct)
+                and speed_mph > effective_limit + 1.0):
+            _gov_log.warning(
+                "P2 GRADIENTE CRITICO  spd=%.1f  elim=%.1f  grad=%.1f%%  → HARDBRAKE",
+                speed_mph, effective_limit, gradient_pct)
+            return "HARDBRAKE"
+
+        # OVER-CRITICO por límite de vía: speed > limit + umbral → HARDBRAKE
+        # (independiente del error por effective_limit, compara con limit_mph real)
+        if (limit_mph is not None
+                and self.station_state not in ("APPROACHING", "STOPPED")):
+            _over_crit = (3.0 - _rain_offset_critico) * _band_narrow
+            if speed_mph > limit_mph + _over_crit:
+                _gov_log.warning(
+                    "P2 OVER-CRITICO  spd=%.1f  lim=%.1f  umbral=+%.1f",
+                    speed_mph, limit_mph, _over_crit)
+                return "HARDBRAKE"
+
+        # P2: Crucero pegado al límite de vía
         if (error >= 0 and limit_mph is not None
                 and self.station_state not in ("APPROACHING", "STOPPED")):
             if speed_mph > limit_mph:
@@ -509,6 +590,23 @@ class SpeedGovernor:
                 return "COAST"
             _a = self.acceleration_ms2
             _decel_ok = (_a is not None and _a <= -self.target_decel_ms2 + RATE_TOLERANCE)
+
+            # Bandas adaptativas para overspeed
+            _over_serv = (0.5 + _rain_offset_servicio) * _band_narrow
+            # OVER-CRITICO by effective_limit uses a higher threshold (5 mph)
+            # because effective_limit may be a gradual P1 profile, not a hard limit.
+            # Reserve aggressive HARDBRAKE for the track limit (handled above).
+            _over_crit_elim = 5.0 - _rain_offset_critico
+
+            # OVER-CRITICO (por effective_limit) — solo emergencia extrema
+            if -error > _over_crit_elim:
+                if not _decel_ok:
+                    _gov_log.warning(
+                        "P2 OVER-CRITICO (elim)  spd=%.1f  elim=%.1f  err=%.1f",
+                        speed_mph, effective_limit, error)
+                    return "HARDBRAKE"
+
+            # TSM/overspeed: COAST→BRAKE inmediato (banda OVER-LEVE desaparece)
             if supervision in ("tsm", "overspeed") and speed_mph > limit_mph - 1.5:
                 if _decel_ok:
                     return "HOLD"
@@ -546,7 +644,7 @@ class SpeedGovernor:
                 return "COAST"
             return "HOLD"
 
-        # ── P3: Protocolo de aceleración — control por tasa ─────────────────
+        # ── P3-MEJORADO: Protocolo de aceleración — control por tasa adaptativo ──
         if self.station_state == "STOPPED" or (self.station_state == "APPROACHING" and not self._creep_to_station):
             return "HOLD"
 
@@ -565,12 +663,28 @@ class SpeedGovernor:
 
         # Fase de aceleración (error > 1.5 mph):
         a = self.acceleration_ms2
+
+        # P3-MEJORADO: Compensación de gradiente en target_accel
+        _target_accel = self.target_accel_ms2
+        if gradient_pct is not None:
+            # En subida: necesita más aceleración; en bajada: menos
+            _target_accel = _target_accel + 9.81 * (gradient_pct / 100.0)
+            _target_accel = max(_target_accel, 0.05)  # suelo mínimo
+
+        # P3-MEJORADO: Rampa de arranque (primeros 5 mph → 60% del target)
+        if speed_mph < 5.0:
+            _target_accel *= 0.60
+
+        # P3-MEJORADO: Techo por proximidad a límite (error < 3 mph → max 0.15 m/s²)
+        if error < 3.0:
+            _target_accel = min(_target_accel, 0.15)
+
         if a is not None:
             if speed_mph < 1.0 and a < 0.1:
                 target_t = max(2, min(self.throttle.notch + 1, 3))
-            elif a < self.target_accel_ms2 - RATE_TOLERANCE:
+            elif a < _target_accel - RATE_TOLERANCE:
                 target_t = min(self.throttle.notch + 1, ThrottleController.MAX_NOTCH)
-            elif a > self.target_accel_ms2 + RATE_TOLERANCE:
+            elif a > _target_accel + RATE_TOLERANCE:
                 target_t = max(self.throttle.notch - 1, 0)
             else:
                 target_t = self.throttle.notch
@@ -600,6 +714,24 @@ class SpeedGovernor:
                     target_t = min(target_t + 1, ThrottleController.MAX_NOTCH)
                 elif gradient_pct < -1.0:
                     target_t = max(target_t - 1, 0)
+
+        # P3-MEJORADO: Anti-oscilación (banda muerta de 2 ciclos)
+        if self.throttle.notch > target_t:
+            _new_dir = "down"
+        elif self.throttle.notch < target_t:
+            _new_dir = "up"
+        else:
+            _new_dir = None
+            self._p3_direction_hold = 0
+
+        if _new_dir is not None and self._p3_last_direction is not None:
+            if _new_dir != self._p3_last_direction:
+                if self._p3_direction_hold < 2:
+                    self._p3_direction_hold += 1
+                    return "HOLD"  # banda muerta: esperar antes de cambiar
+                self._p3_direction_hold = 0
+
+        self._p3_last_direction = _new_dir
 
         if self.throttle.notch > target_t:
             return "COAST"
