@@ -160,6 +160,41 @@ class TswConnection:
             f"&d={creds['device_id']}"
             f"&k={creds['device_secret']}"
         )
+
+    def set_control_value(self, control_id: str, value: float) -> bool:
+        """
+        Envía un comando RPC al RailBridge Companion para fijar el valor de un control.
+        Estrategia 'ID': mucho más fiable que SendInput al ser absoluta y no requerir foco.
+        """
+        if not self.comp_base or self.mode != "companion":
+            return False
+
+        creds = self._get_device_creds()
+        url = (
+            f"{self.comp_base}/rpc"
+            f"?t={COMP_TOKEN}"
+            f"&d={creds['device_id']}"
+            f"&k={creds['device_secret']}"
+        )
+        body = {
+            "action": "set_control_value",
+            "control_id": control_id,
+            "value": value
+        }
+        try:
+            r = self._session.post(url, json=body, timeout=1)
+            if r.status_code == 200:
+                resp = r.json()
+                if resp.get("status") == "ok":
+                    return True
+                else:
+                    _log.warning("RPC error (%s): %s", control_id, resp.get("error", "unknown"))
+            else:
+                _log.warning("RPC failed (%s) with status %d", control_id, r.status_code)
+        except Exception as e:
+            _log.error("Error enviando RPC (%s): %s", control_id, e)
+        return False
+
     # ── Descubrimiento de IP del companion ──────────────────────────────────
 
     def _find_companion_hosts(self) -> list[str]:

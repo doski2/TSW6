@@ -44,9 +44,9 @@ class SpeedGovernor:
         self.paused       = False
 
         # Instanciar submódulos físicos y de estación
-        self._physics = TrainPhysics()
-        self._fsm     = StationFSM()
-        self._braking = BrakingAdvisor()
+        self._physics: TrainPhysics = TrainPhysics()
+        self._fsm: StationFSM     = StationFSM()
+        self._braking: BrakingAdvisor = BrakingAdvisor()
 
         # Seguimiento de atascos en el mando
         self._accel_stuck_count: int = 0
@@ -62,6 +62,11 @@ class SpeedGovernor:
 
         # Último effective_limit calculado (para logging externo)
         self.effective_limit: float = 0.0
+
+        # Marca de tiempo de la última sincronización física (force_neutral)
+        self._last_sync_t: float = 0.0
+        self._force_neutral_count: int = 0
+        self._last_force_neutral_t: float = time.time()
 
     # ── Redirección de propiedades físicas (Compatibilidad retroactiva) ──────
 
@@ -160,6 +165,16 @@ class SpeedGovernor:
     @_creep_to_station.setter
     def _creep_to_station(self, val: bool):
         self._fsm._creep_to_station = val
+
+    # ── Redirección de propiedades de frenado (Compatibilidad retroactiva) ──
+
+    @property
+    def p1_nomarker_cycles(self) -> int:
+        return self._braking._nomarker_cycles
+
+    @p1_nomarker_cycles.setter
+    def p1_nomarker_cycles(self, val: int):
+        self._braking._nomarker_cycles = val
 
     @property
     def target_stop_min_m(self) -> Optional[float]:
@@ -287,6 +302,14 @@ class SpeedGovernor:
     def current_notch(self) -> int:
         """Posición equivalente 0-8 del handle combinado."""
         return NOTCH_NEUTRAL + self.throttle.notch - self.brake.notch
+
+    def is_in_sync_cooldown(self) -> bool:
+        """Devuelve True si estamos en el periodo de gracia tras un force_neutral."""
+        return (time.time() - self._last_sync_t) < 5.0
+
+    def _use_rpc_control(self, conn: Optional[object]) -> bool:
+        """Devuelve True si se debe usar el control por RPC en lugar de teclas."""
+        return conn is not None and getattr(conn, 'mode', None) == "companion"
 
     # ── Decisión de control ──────────────────────────────────────────────────
 
@@ -682,13 +705,76 @@ class SpeedGovernor:
 
     # ── Aplicar acción ───────────────────────────────────────────────────────
 
-    def apply_action(self, action: str, hwnd: Optional[int], conn=None) -> bool:
+    def apply_action(self, action: str, hwnd: Optional[int], conn: Optional[object] = None) -> bool:
         """Aplica la acción enviando teclas al juego. Devuelve True si actuó."""
+        now = time.time()
+
+        # ── Código de Conducta de Comandos ────────────────────────────────────
+        # 1. Protección contra bucles de reset
+        # Si hemos hecho muchos resets seguidos, algo va mal más allá del mando.
+        if now - self._last_force_neutral_t > 300:  # Resetear contador cada 5 min
+            self._force_neutral_count = 0
+
+        # Detección de mando atascado (desincronización o fallo de potencia)
+        # Se procesa ANTES del filtro HOLD porque si estamos a tope (Notch 8) el governor
+        # dirá HOLD, pero si el tren decelera, necesitamos resetear para recuperar tracción.
+        
+        # OMITIR si acabamos de hacer un reset (evitar bucles por telemetría obsoleta)
+        if self.is_in_sync_cooldown():
+            self._accel_stuck_count = 0
+            self._last_accel_notch = None
+        else:
+            current_combined_notch = self.throttle.notch - self.brake.notch
+            at_max_power = (self.throttle.notch >= ThrottleController.MAX_NOTCH and not self.brake.is_active)
+            is_accelerating = (self.acceleration_ms2 is not None and self.acceleration_ms2 > 0.05)
+
+            if action in ("ACCELERATE", "HOLD") and at_max_power:
+                # Caso especial: Notch 8 pero decelerando -> posible desincronización
+                if self._last_accel_notch == current_combined_notch and not is_accelerating:
+                    self._accel_stuck_count += 1
+                    if self._accel_stuck_count >= 4:
+                        if self._force_neutral_count >= 3:
+                            _gov_log.error("Reseteos múltiples fallidos en Notch 8. "
+                                           "Posible inhibición externa (Reversor, Freno Emergencia). Abortando reset.")
+                            self._accel_stuck_count = 0
+                            return False
+                        
+                        _gov_log.warning("Notch 8 detectado sin aceleración. Forzando reset a neutro por desincronización.")
+                        self.force_neutral(hwnd)
+                        self._accel_stuck_count = 0
+                        self.last_control = now
+                        return True
+                else:
+                    self._accel_stuck_count = 0
+                self._last_accel_notch = current_combined_notch
+
+            elif action == "ACCELERATE":
+                # Caso normal: pidiendo más tracción pero el notch no sube
+                if self._last_accel_notch == current_combined_notch:
+                    self._accel_stuck_count += 1
+                    if self._accel_stuck_count >= 4:
+                        if self._force_neutral_count >= 3:
+                            _gov_log.error("Mando atascado persistente. Abortando reset para evitar bucle.")
+                            self._accel_stuck_count = 0
+                            return False
+
+                        _gov_log.warning("Mando atascado al intentar acelerar. Forzando reset a neutro.")
+                        self.force_neutral(hwnd)
+                        self._accel_stuck_count = 0
+                        self.last_control = now
+                        return True
+                else:
+                    self._accel_stuck_count = 0
+                self._last_accel_notch = current_combined_notch
+            else:
+                self._accel_stuck_count = 0
+                self._last_accel_notch = None
+
+        # Filtro de acciones que no requieren mover el mando
         if action in ("HOLD", "PAUSED"):
             self.last_action = action
             return False
 
-        now = time.time()
         if action == "ACCELERATE":
             interval = CONTROL_INTERVAL
         elif action == "HARDBRAKE":
@@ -697,47 +783,72 @@ class SpeedGovernor:
             interval = CONTROL_INTERVAL_BRAKE
         else:
             interval = CONTROL_INTERVAL
+
         if now - self.last_control < interval:
             return False
 
         self.last_action = action
 
-        # Detección de mando atascado al acelerar
-        if action == "ACCELERATE":
-            current_combined_notch = self.throttle.notch - self.brake.notch
-            if self._last_accel_notch == current_combined_notch:
-                self._accel_stuck_count += 1
-                if self._accel_stuck_count >= 4:
-                    _gov_log.warning("Mando atascado al intentar acelerar. Forzando reset a neutro.")
-                    self.force_neutral(hwnd)
-                    self._accel_stuck_count = 0
-                    self.last_control = now
-                    return True
-            else:
-                self._accel_stuck_count = 0
-            self._last_accel_notch = current_combined_notch
-        else:
-            self._accel_stuck_count = 0
-            self._last_accel_notch = None
-
         if action == "ACCELERATE":
             if self.brake.is_active:
+                if self._use_rpc_control(conn):
+                    # RPC: Neutro (0.5)
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.5):
+                        self.brake.notch = 0
+                        self.last_control = now
+                        return True
+                
                 self.brake.release(hwnd)
                 self.last_control = now
                 return True
             if self._ack_was_required:
                 return False
+            
+            if self._use_rpc_control(conn):
+                # RPC: Acelerar (+1 notch desde neutro)
+                # NOTCH_NEUTRAL (4) + notch actual (0..3) + 1
+                new_notch = NOTCH_NEUTRAL + self.throttle.notch + 1
+                if new_notch <= 8:
+                    val = new_notch / 8.0
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", val):
+                        self.throttle.notch += 1
+                        self.last_control = now
+                        return True
+            
             if self.throttle.accelerate(hwnd):
                 self.last_control = now
                 return True
 
         elif action == "COAST":
             if self.throttle.is_active:
+                if self._use_rpc_control(conn):
+                    # RPC: Coast (-1 notch de tracción)
+                    new_notch = NOTCH_NEUTRAL + self.throttle.notch - 1
+                    val = new_notch / 8.0
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", val):
+                        self.throttle.notch -= 1
+                        self.last_control = now
+                        return True
+                
                 self.throttle.coast(hwnd)
                 self.last_control = now
                 return True
 
         elif action == "HARDBRAKE":
+            if self.throttle.is_active:
+                if self._use_rpc_control(conn):
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.5):
+                        self.throttle.notch = 0
+                else:
+                    self.throttle.release_all(hwnd)
+            
+            if self._use_rpc_control(conn):
+                # RPC: Freno máximo (pos 0.0)
+                if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.0):
+                    self.brake.notch = 4
+                    self.last_control = now
+                    return True
+            
             acted = False
             if self.throttle.is_active:
                 self.throttle.coast(hwnd)
@@ -754,21 +865,48 @@ class SpeedGovernor:
         elif action in ("BRAKE", "FULLSTOP"):
             # D: Medir transición throttle→brake
             if self.throttle.is_active:
+                if self._use_rpc_control(conn):
+                    # RPC: Soltar tracción instantáneamente
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.5):
+                        self.throttle.notch = 0
+                        self.last_control = now
+                        return True
+                
                 self._physics.start_brake_transition()
                 self.throttle.coast(hwnd)
                 self.last_control = now
                 return True
+            
             # D: Detectar cuando el freno empieza a actuar
             a = self.acceleration_ms2
             if (self._physics._transition_start_t is not None
                     and a is not None and a < -0.05):
                 self._physics.end_brake_transition()
+
             if action == "FULLSTOP":
+                if self._use_rpc_control(conn):
+                    # RPC: Freno máximo
+                    if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.0):
+                        self.brake.notch = 4
+                        self.last_control = now
+                        return True
+                
                 steps = 1
                 max_b = BrakeController.MAX_NOTCH
             else:
+                if self._use_rpc_control(conn):
+                    # RPC: Aplicar 1 notch de freno
+                    new_notch = NOTCH_NEUTRAL - (self.brake.notch + 1)
+                    if new_notch >= 0:
+                        val = new_notch / 8.0
+                        if getattr(conn, 'set_control_value')("PowerBrakeHandle", val):
+                            self.brake.notch += 1
+                            self.last_control = now
+                            return True
+                
                 steps = 1
                 max_b = SERVICE_MAX_BRAKE
+            
             actual = min(steps, max_b - self.brake.notch)
             if actual > 0 and self.brake.apply(hwnd, steps=actual):
                 self.last_control = now
@@ -781,19 +919,41 @@ class SpeedGovernor:
         self.throttle.release_all(hwnd)
         self.brake.release_all(hwnd)
 
-    def force_neutral(self, hwnd: Optional[int]) -> None:
+    def force_neutral(self, hwnd: Optional[int], conn: Optional[object] = None) -> None:
         """Sincroniza el handle con el juego desde posición DESCONOCIDA."""
+        if self._use_rpc_control(conn):
+            _gov_log.info("force_neutral: usando RPC para reset instantáneo")
+            if getattr(conn, 'set_control_value')("PowerBrakeHandle", 0.5):
+                self.throttle.notch = 0
+                self.brake.notch = 0
+                self._last_sync_t = time.time()
+                self._force_neutral_count += 1
+                self._last_force_neutral_t = time.time()
+                return
+
         if hwnd is None:
             return
         _gov_log.warning("force_neutral: sincronizando handle desde posición desconocida…")
-        pause = KEY_HOLD_MS / 1000.0 + 0.05
+        
+        # Aumentar pausa para mayor fiabilidad durante el reset masivo
+        pause = (KEY_HOLD_MS / 1000.0) + 0.10
+        
+        # Asegurar que llegamos al tope de freno (8 pasos abajo)
         total_down = ThrottleController.MAX_NOTCH + BrakeController.MAX_NOTCH
-        for _ in range(total_down):
+        for _ in range(total_down + 1):
             send_key(hwnd, VK_D)
             time.sleep(pause)
+        
+        # Volver 4 pasos arriba hasta neutro
         for _ in range(4):
             send_key(hwnd, VK_A)
             time.sleep(pause)
+            
         self.throttle.notch = 0
         self.brake.notch    = 0
-        _gov_log.info("force_neutral: handle en neutro (pos 4). Contadores: t=0 b=0")
+        self._last_sync_t   = time.time()
+        self._force_neutral_count += 1
+        self._last_force_neutral_t = time.time()
+        
+        _gov_log.info("force_neutral: handle en neutro (pos 4). Contadores: t=0 b=0 (intento %d)", 
+                      self._force_neutral_count)

@@ -139,7 +139,9 @@ class TestManualStop(unittest.TestCase):
             {"name": "Station C", "distance_m": 8000.0},
         ]
         stop = fsm.select_next_stop(stations)
-        self.assertEqual(stop["name"], "Station B")
+        self.assertIsNotNone(stop)
+        if stop is not None:
+            self.assertEqual(stop["name"], "Station B")
 
     def test_no_stop_when_target_zero(self):
         """target_stop_min_m = 0 significa sin parada."""

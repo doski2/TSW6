@@ -1,4 +1,5 @@
 import unittest
+import time
 from speed_governor import SpeedGovernor
 
 class TestSpeedGovernor(unittest.TestCase):
@@ -358,9 +359,97 @@ class TestSpeedGovernor(unittest.TestCase):
                       "P1-SERVICIO ciclo 1 debe ser COAST o BRAKE, no HARDBRAKE.")
         self.assertNotEqual(action, "HARDBRAKE")
 
-    def test_p1_reset_cycles_on_limit_change(self):
-        """P1 debe resetear _p1_nomarker_cycles cuando next_limit cambia > 2 mph."""
+    def test_notch_8_stuck_handle_desync(self):
+        """Si estamos en Notch 8 pero no aceleramos, el mando atascado debe dispararse (incluso en HOLD)."""
         gov = SpeedGovernor(target_mph=60.0)
+        gov.throttle.notch = 4  # Max power
+        gov.brake.notch = 0
+        gov._last_accel_notch = 4
+        gov.last_action = "HOLD"  # El governor dice HOLD porque ya estamos a tope
+        gov._api_accel = -0.1  # Decelerando a pesar de estar a tope
+        
+        # Simular force_neutral
+        force_neutral_called = False
+        def mock_force_neutral(hwnd, conn=None):
+            nonlocal force_neutral_called
+            force_neutral_called = True
+        gov.force_neutral = mock_force_neutral
+        
+        hwnd = 12345
+        
+        # Ciclo 1-4: No debería disparar todavía (umbral = 4)
+        for i in range(3):
+            gov.last_control = 0
+            # Simulamos que decide() devuelve HOLD porque ya estamos al máximo notch
+            gov.apply_action("HOLD", hwnd, None)
+            self.assertFalse(force_neutral_called, f"Ciclo {i+1}: No debería resetear aún")
+        
+        # Ciclo 4 -> Debe disparar porque seguimos en Notch 8 sin aceleración efectiva
+        gov.last_control = 0
+        gov.apply_action("HOLD", hwnd, None)
+        
+        self.assertTrue(force_neutral_called, 
+                        "El sistema debería haber detectado que Notch 8 no da potencia (en HOLD) y resetear.")
+
+    def test_force_neutral_cooldown(self):
+        """Verifica que tras un force_neutral se ignora el atasco durante 5 segundos."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.throttle.notch = 4
+        gov._last_accel_notch = 4
+        gov._api_accel = -0.1
+        
+        # Simular que acabamos de hacer un sync
+        gov._last_sync_t = time.time()
+        
+        # Mock de force_neutral para detectar si se llama OTRA VEZ
+        force_neutral_called = False
+        def mock_force_neutral(hwnd, conn=None):
+            nonlocal force_neutral_called
+            force_neutral_called = True
+        gov.force_neutral = mock_force_neutral
+        
+        # Intentar disparar atasco (4 ciclos)
+        for _ in range(5):
+            gov.last_control = 0
+            gov.apply_action("HOLD", 123, None)
+            
+        self.assertFalse(force_neutral_called, 
+                         "No debería haber disparado un segundo reset durante el cooldown.")
+
+    def test_force_neutral_anti_loop(self):
+        """Verifica que tras 3 reseteos fallidos se deja de intentar (anti-loop)."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.throttle.notch = 4
+        gov._last_accel_notch = 4
+        gov._api_accel = -0.1
+        
+        force_neutral_calls = 0
+        def mock_force_neutral(hwnd, conn=None):
+            nonlocal force_neutral_calls
+            force_neutral_calls += 1
+            # Simular lo que hace force_neutral: incrementar contadores y setear tiempos
+            gov._force_neutral_count += 1
+            gov._last_force_neutral_t = time.time()
+            gov._last_sync_t = time.time()
+        
+        gov.force_neutral = mock_force_neutral
+        
+        # Simular 4 intentos de reset (cada uno requiere 4 ciclos de atasco)
+        # El 4º intento no debería ocurrir por el límite de 3
+        for attempt in range(4):
+            # Forzar que NO estemos en cooldown para que el primer ciclo sea procesado
+            gov._last_sync_t = 0 
+            for _ in range(4):
+                gov.last_control = 0
+                # Usamos un hwnd ficticio para que apply_action lo pase a force_neutral
+                gov.apply_action("HOLD", 123, None)
+        
+        self.assertEqual(force_neutral_calls, 3, 
+                         "Debería haber parado tras 3 intentos de reset.")
+
+    def test_p1_reset_cycles_on_limit_change(self):
+        """P1 debe resetear p1_nomarker_cycles cuando next_limit cambia > 2 mph."""
+        gov: SpeedGovernor = SpeedGovernor(target_mph=60.0)
         gov.station_state = None
         gov.throttle.notch = 0
         gov.brake.notch = 0
@@ -370,14 +459,14 @@ class TestSpeedGovernor(unittest.TestCase):
         gov.decide(speed_mph=52.0, limit_mph=55.0,
                    next_limit_mph=45.0, distance_next_m=40.0)
         # Cycles incremented
-        cycles_after_first = gov._p1_nomarker_cycles
+        cycles_after_first = gov.p1_nomarker_cycles
 
         # Second call with next_limit=30 (change > 2 mph) → should reset
         gov.decide(speed_mph=52.0, limit_mph=55.0,
                    next_limit_mph=30.0, distance_next_m=40.0)
         # The reset happens before the new P1 logic runs, so a fresh cycle count
         # This tests that the counter doesn't carry over from a different limit
-        self.assertLessEqual(gov._p1_nomarker_cycles, 1,
+        self.assertLessEqual(gov.p1_nomarker_cycles, 1,
                              "Cycles debe resetearse cuando next_limit cambia > 2 mph")
 
     def test_p1_gradient_scales_react_m(self):
