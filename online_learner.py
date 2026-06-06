@@ -17,6 +17,12 @@ Notches observados (handle combinado 0-8):
   4 → COAST_DECEL_MS2  (Neutro)
   7 → TARGET_ACCEL_MS2 (Tracción-3)
   8 → TARGET_ACCEL_MS2 (Tracción-4 máxima)
+
+Mejoras v2:
+  - Filtro de coherencia de signo (tracción no acepta a<0, freno no acepta a>0)
+  - Límites duros (clamp) en constantes aprendidas
+  - Decay/reset si diverge >50% del valor inicial
+  - Separación por banda de velocidad (0-30, 30-60, 60+ mph)
 """
 
 import json
@@ -44,19 +50,55 @@ _TRACTION_NOTCHES = (7, 8)      # promedio → TARGET_ACCEL_MS2
 
 _OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH, *_TRACTION_NOTCHES}
 
+# ── Límites duros (clamp) para constantes aprendidas ──────────────────────────
+_CLAMP = {
+    "TARGET_ACCEL_MS2": (0.15, 0.80),
+    "TARGET_DECEL_MS2": (0.30, 1.20),
+    "COAST_DECEL_MS2":  (0.02, 0.25),
+    "MAX_DECEL_MS2":    (0.50, 1.50),
+}
+
+# ── Divergencia máxima antes de resetear EMA ──────────────────────────────────
+_MAX_DIVERGENCE_RATIO = 0.50  # 50% del valor inicial → reset
+
+# ── Bandas de velocidad para separar aprendizaje ──────────────────────────────
+_SPEED_BANDS = ((0, 30), (30, 60), (60, 200))  # mph rangos
+
+# Valores iniciales de referencia para detección de divergencia
+_INITIAL_REFS = {
+    "TARGET_ACCEL_MS2": 0.298,
+    "TARGET_DECEL_MS2": 0.433,
+    "COAST_DECEL_MS2":  0.095,
+    "MAX_DECEL_MS2":    1.071,
+}
+
+
+def _speed_band_index(speed_mph: float) -> int:
+    """Devuelve el índice de banda de velocidad (0, 1, 2)."""
+    for i, (lo, hi) in enumerate(_SPEED_BANDS):
+        if lo <= speed_mph < hi:
+            return i
+    return len(_SPEED_BANDS) - 1
+
 
 class OnlineLearner:
     """
     Aprende por EMA los valores de aceleración para cada notch del handle.
     Guarda y carga el estado en save_path (JSON).
+    Separado por bandas de velocidad para mayor precisión.
     """
 
     DEFAULT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "calibration.json")
 
     def __init__(self, save_path: str = DEFAULT_PATH):
         self.save_path = save_path
-        self._ema: dict[int, float] = {}   # notch → valor EMA acumulado
-        self._n:   dict[int, int]   = {}   # notch → número de muestras
+        # Almacenamiento por banda: band_idx → {notch → ema_value}
+        self._ema_bands: list[dict[int, float]] = [{} for _ in _SPEED_BANDS]
+        self._n_bands:   list[dict[int, int]]   = [{} for _ in _SPEED_BANDS]
+
+        # Compatibilidad: EMA combinada (media ponderada de bandas)
+        self._ema: dict[int, float] = {}   # notch → valor EMA combinado
+        self._n:   dict[int, int]   = {}   # notch → número total de muestras
 
         # Ventana deslizante: (t, speed_mph, notch, grad_pct, accel_ms2|None)
         self._window: list[tuple[float, float, int, float, Optional[float]]] = []
@@ -121,21 +163,51 @@ class OnlineLearner:
         else:
             measured = dv * 0.44704 / (t1 - t0)   # mph/s → m/s²
 
-        # ── Actualizar EMA ────────────────────────────────────────────────────
-        if notch not in self._ema:
-            self._ema[notch] = measured
-            self._n[notch]   = 1
+        # ── Filtro de coherencia de signo ─────────────────────────────────────
+        # Tracción (notch >= 5): solo aceptar aceleración positiva
+        if notch in _TRACTION_NOTCHES and measured < 0:
+            _log.debug(
+                "Learner DESCARTADO notch=%d  a_medida=%.3f (negativa en tracción)",
+                notch, measured)
+            self._window.clear()
+            return None
+        # Freno (notch <= 3): solo aceptar aceleración negativa (desaceleración)
+        if notch in (_MAX_NOTCH, *_BRAKE_NOTCHES) and measured > 0:
+            _log.debug(
+                "Learner DESCARTADO notch=%d  a_medida=%.3f (positiva en freno)",
+                notch, measured)
+            self._window.clear()
+            return None
+
+        # ── Determinar banda de velocidad ─────────────────────────────────────
+        avg_speed = sum(speeds) / len(speeds)
+        band_idx = _speed_band_index(avg_speed)
+
+        # ── Actualizar EMA por banda ──────────────────────────────────────────
+        band_ema = self._ema_bands[band_idx]
+        band_n   = self._n_bands[band_idx]
+
+        if notch not in band_ema:
+            band_ema[notch] = measured
+            band_n[notch]   = 1
         else:
-            self._ema[notch] = EMA_ALPHA * measured + (1 - EMA_ALPHA) * self._ema[notch]
-            self._n[notch]   = min(self._n[notch] + 1, 9999)
+            band_ema[notch] = EMA_ALPHA * measured + (1 - EMA_ALPHA) * band_ema[notch]
+            band_n[notch]   = min(band_n[notch] + 1, 9999)
+
+        # ── Recalcular EMA combinada (media ponderada por nº muestras) ────────
+        self._recalculate_combined()
 
         _log.info(
-            "Learner notch=%d  a_medida=%.3f  a_ema=%.3f  n=%d",
-            notch, measured, self._ema[notch], self._n[notch],
+            "Learner notch=%d  a_medida=%.3f  a_ema=%.3f  n=%d  band=%d-%dmph",
+            notch, measured, self._ema.get(notch, 0.0), self._n.get(notch, 0),
+            _SPEED_BANDS[band_idx][0], _SPEED_BANDS[band_idx][1],
         )
 
         # Vaciar ventana para evitar solapamiento de mediciones
         self._window.clear()
+
+        # ── Decay/reset si diverge demasiado del valor inicial ────────────────
+        self._check_divergence()
 
         # Guardar y devolver constantes si hay suficiente confianza
         consts = self.get_constants()
@@ -144,12 +216,60 @@ class OnlineLearner:
             return consts
         return None
 
+    def _recalculate_combined(self) -> None:
+        """Recalcula _ema y _n combinando todas las bandas de velocidad."""
+        all_notches = set()
+        for band_ema in self._ema_bands:
+            all_notches.update(band_ema.keys())
+
+        for notch in all_notches:
+            total_n = 0
+            weighted_sum = 0.0
+            for i in range(len(_SPEED_BANDS)):
+                n = self._n_bands[i].get(notch, 0)
+                if n > 0 and notch in self._ema_bands[i]:
+                    total_n += n
+                    weighted_sum += self._ema_bands[i][notch] * n
+            if total_n > 0:
+                self._ema[notch] = weighted_sum / total_n
+                self._n[notch]   = total_n
+
+    def _check_divergence(self) -> None:
+        """Resetea EMA de un notch si diverge >50% de su valor inicial."""
+        for const_name, ref_val in _INITIAL_REFS.items():
+            if const_name == "TARGET_ACCEL_MS2":
+                notches = _TRACTION_NOTCHES
+            elif const_name == "TARGET_DECEL_MS2":
+                notches = _BRAKE_NOTCHES
+            elif const_name == "COAST_DECEL_MS2":
+                notches = (_COAST_NOTCH,)
+            elif const_name == "MAX_DECEL_MS2":
+                notches = (_MAX_NOTCH,)
+            else:
+                continue
+
+            for notch in notches:
+                if notch in self._ema and self._n.get(notch, 0) >= MIN_SAMPLES:
+                    current = abs(self._ema[notch])
+                    if abs(current - ref_val) / ref_val > _MAX_DIVERGENCE_RATIO:
+                        _log.warning(
+                            "Learner RESET notch=%d  ema=%.3f diverge >50%% de ref=%.3f "
+                            "— reseteando todas las bandas",
+                            notch, self._ema[notch], ref_val)
+                        for band_ema in self._ema_bands:
+                            band_ema.pop(notch, None)
+                        for band_n in self._n_bands:
+                            band_n.pop(notch, None)
+                        self._ema.pop(notch, None)
+                        self._n.pop(notch, None)
+
     # ── Constantes físicas derivadas ─────────────────────────────────────────
 
     def get_constants(self) -> dict:
         """
         Devuelve las constantes físicas derivadas de las EMAs confiables.
         Solo incluye valores con n >= MIN_SAMPLES.
+        Aplica clamp (límites duros) a los valores antes de devolverlos.
         """
         result: dict = {}
 
@@ -162,21 +282,26 @@ class OnlineLearner:
             vals = [v for n in notches if (v := _trusted_abs(n)) is not None]
             return sum(vals) / len(vals) if vals else None
 
+        def _clamp(value: float, const_name: str) -> float:
+            """Aplica límites duros a una constante aprendida."""
+            lo, hi = _CLAMP.get(const_name, (0.0, 999.0))
+            return max(lo, min(hi, value))
+
         v = _trusted_abs(_MAX_NOTCH)
-        if v is not None and v > 0.3: # Límite inferior de seguridad
-            result["MAX_DECEL_MS2"] = v
+        if v is not None and v > 0.3:
+            result["MAX_DECEL_MS2"] = _clamp(v, "MAX_DECEL_MS2")
 
         v = _trusted_avg(_BRAKE_NOTCHES)
-        if v is not None and v > 0.15: # Límite inferior de seguridad (evita el 0.017)
-            result["TARGET_DECEL_MS2"] = v
+        if v is not None and v > 0.15:
+            result["TARGET_DECEL_MS2"] = _clamp(v, "TARGET_DECEL_MS2")
 
         v = _trusted_abs(_COAST_NOTCH)
         if v is not None:
-            result["COAST_DECEL_MS2"] = v
+            result["COAST_DECEL_MS2"] = _clamp(v, "COAST_DECEL_MS2")
 
         v = _trusted_avg(_TRACTION_NOTCHES)
-        if v is not None and v > 0.05: # Límite inferior de seguridad
-            result["TARGET_ACCEL_MS2"] = v
+        if v is not None and v > 0.05:
+            result["TARGET_ACCEL_MS2"] = _clamp(v, "TARGET_ACCEL_MS2")
 
         return result
 
@@ -190,6 +315,21 @@ class OnlineLearner:
         }
         return {labels[n]: self._n.get(n, 0) for n in _OBSERVED}
 
+    def confidence_by_band(self) -> dict[str, dict[str, int]]:
+        """Devuelve el número de muestras por notch y banda de velocidad."""
+        labels = {
+            0: "MAX_DECEL(n0)",
+            1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
+            4: "COAST(n4)",
+            7: "ACCEL(n7)", 8: "ACCEL(n8)",
+        }
+        result = {}
+        for i, (lo, hi) in enumerate(_SPEED_BANDS):
+            band_label = f"{lo}-{hi}mph"
+            result[band_label] = {labels[n]: self._n_bands[i].get(n, 0)
+                                  for n in _OBSERVED}
+        return result
+
     # ── Persistencia ─────────────────────────────────────────────────────────
 
     def _load(self) -> None:
@@ -197,8 +337,24 @@ class OnlineLearner:
             if os.path.exists(self.save_path):
                 with open(self.save_path, encoding="utf-8") as f:
                     d = json.load(f)
-                self._ema = {int(k): float(v) for k, v in d.get("ema", {}).items()}
-                self._n   = {int(k): int(v)   for k, v in d.get("n",   {}).items()}
+                # Cargar formato nuevo (con bandas) o formato legacy
+                if "ema_bands" in d:
+                    for i, band_data in enumerate(d["ema_bands"]):
+                        if i < len(self._ema_bands):
+                            self._ema_bands[i] = {int(k): float(v)
+                                                  for k, v in band_data.items()}
+                    for i, band_data in enumerate(d.get("n_bands", [])):
+                        if i < len(self._n_bands):
+                            self._n_bands[i] = {int(k): int(v)
+                                                for k, v in band_data.items()}
+                else:
+                    # Legacy: cargar en banda 1 (30-60 mph, la más común)
+                    legacy_ema = {int(k): float(v) for k, v in d.get("ema", {}).items()}
+                    legacy_n   = {int(k): int(v)   for k, v in d.get("n",   {}).items()}
+                    self._ema_bands[1] = legacy_ema
+                    self._n_bands[1]   = legacy_n
+
+                self._recalculate_combined()
                 consts = self.get_constants()
                 _log.info("OnlineLearner cargado: %s  constantes_confiables=%s",
                           self.save_path, list(consts.keys()))
@@ -212,6 +368,11 @@ class OnlineLearner:
             with open(self.save_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
+                        "ema_bands": [{str(k): v for k, v in band.items()}
+                                      for band in self._ema_bands],
+                        "n_bands":   [{str(k): v for k, v in band.items()}
+                                      for band in self._n_bands],
+                        # Legacy compat: also write combined values
                         "ema": {str(k): v for k, v in self._ema.items()},
                         "n":   {str(k): v for k, v in self._n.items()},
                     },

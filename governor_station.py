@@ -138,137 +138,158 @@ class StationFSM:
 
         # ── Estado: STOPPED ──────────────────────────────────────────────────
         if self.state == "STOPPED":
-            _OCR_NEXT_STOP_M = 300.0
-            if doors_dmi is True:
-                effective_doors = True
-                _ocr_door_src   = "dmi-open"
-            elif doors_dmi is False:
-                effective_doors = False
-                _ocr_door_src   = "dmi-closed"
-            elif ocr_task == "board":
-                effective_doors = True
-                _ocr_door_src   = "ocr_task=board"
-            elif ocr_task == "stop":
-                effective_doors = False
-                _ocr_door_src   = "ocr_task=stop"
-            elif ocr_stop_dist_m is not None and ocr_stop_dist_m > _OCR_NEXT_STOP_M:
-                effective_doors = False
-                _ocr_door_src   = f"ocr_dist={ocr_stop_dist_m:.0f}m>300m"
-            elif ocr_stop_dist_m is None and ocr_task is None:
-                effective_doors = True
-                _ocr_door_src   = "ocr_sin_dist(embarcando)"
-            else:
-                effective_doors = doors_open
-                _ocr_door_src   = "event"
-
-            if effective_doors:
-                if not self._doors_opened:
-                    _log.info("FSM: STOPPED puertas abiertas (src=%s)  (%s)",
-                              _ocr_door_src, self.name or "?")
-                self._doors_opened = True
-                _dwell_s = 3.0 if not self._we_stopped else 15.0
-                _dwell_label = " cold-start" if not self._we_stopped else " doors-stuck"
-                if time.time() - self._stopped_at >= _dwell_s:
-                    _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s, src=%s)  (%s)",
-                              _dwell_s, _dwell_label, _ocr_door_src, self.name or "?")
-                    self.state = "DEPARTING"
-                    self._doors_opened = False
-            elif self._doors_opened and not effective_doors:
-                _log.info("FSM: STOPPED → DEPARTING (src=%s)  (%s)",
-                          _ocr_door_src, self.name or "?")
-                self.state  = "DEPARTING"
-                self._doors_opened  = False
-            else:
-                if self._doors_opened:
-                    dwell_s = 15.0
-                    timeout_type = " doors-open-no-close"
-                else:
-                    dwell_s = STATION_DWELL_TIMEOUT_S if self._we_stopped else 3.0
-                    timeout_type = "" if self._we_stopped else " cold-start"
-                if time.time() - self._stopped_at >= dwell_s:
-                    _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s)  (%s)",
-                              dwell_s, timeout_type, self.name or "?")
-                    self.state = "DEPARTING"
-                    self._doors_opened = False
-            return "HOLD", 0.0
+            return self._handle_stopped(
+                doors_open, doors_dmi, ocr_stop_dist_m, ocr_task)
 
         # ── Estado: APPROACHING ──────────────────────────────────────────────
         if self.state == "APPROACHING":
-            api_dist = next_stop["distance_m"] if next_stop else 0.0
+            return self._handle_approaching(
+                speed_mph, limit_mph, next_stop, doors_dmi, ocr_stop_dist_m,
+                braking_dist_fn, eff_max_decel, eff_k_stop)
 
-            # Calibración del offset OCR vs API
-            if self._ocr_offset is None and ocr_stop_dist_m is not None:
-                _v_ms       = speed_mph * 0.44704
-                _phys_min   = (_v_ms * _v_ms) / (2.0 * eff_max_decel)
-                _ocr_rel_ok = (ocr_stop_dist_m > api_dist * 0.10 and ocr_stop_dist_m < api_dist * 1.10)
-                if ocr_stop_dist_m >= _phys_min and _ocr_rel_ok:
-                    self._ocr_offset = api_dist - ocr_stop_dist_m
-                    self._ocr_used   = True
-                    self._min_stop_dist = None
-                    _log.info("stop_dist  OCR CALIBRADO  API=%.1fm  OCR=%.1fm  offset=+%.1fm",
-                              api_dist, ocr_stop_dist_m, self._ocr_offset)
-                elif 0.0 < ocr_stop_dist_m < _phys_min:
-                    _log.debug("stop_dist  OCR rechazado (imposible frenar: min_fisico=%.0fm, ocr=%.0fm)",
-                               _phys_min, ocr_stop_dist_m)
-                elif ocr_stop_dist_m >= api_dist * 1.10:
-                    _log.debug("stop_dist  OCR rechazado (ocr=%.0fm > api*1.10=%.0fm)",
-                               ocr_stop_dist_m, api_dist * 1.10)
-                else:
-                    _log.debug("stop_dist  OCR rechazado (fuera de rango: api=%.0fm, ocr=%.0fm)",
-                               api_dist, ocr_stop_dist_m)
+        return None, 0.0
 
-            # Aplicar offset
-            if self._ocr_offset is not None:
-                raw_dist = max(0.0, api_dist - self._ocr_offset)
-                _log.debug("stop_dist  API=%.1fm  offset=%.1fm → raw=%.1fm",
-                           api_dist, self._ocr_offset, raw_dist)
+    # ── Handlers por estado ───────────────────────────────────────────────────
+
+    def _handle_stopped(self, doors_open: bool, doors_dmi: Optional[bool],
+                        ocr_stop_dist_m: Optional[float],
+                        ocr_task: Optional[str]) -> Tuple[Optional[str], float]:
+        """Gestiona el estado STOPPED: puertas, dwell y transición a DEPARTING."""
+        _OCR_NEXT_STOP_M = 300.0
+        if doors_dmi is True:
+            effective_doors = True
+            _ocr_door_src   = "dmi-open"
+        elif doors_dmi is False:
+            effective_doors = False
+            _ocr_door_src   = "dmi-closed"
+        elif ocr_task == "board":
+            effective_doors = True
+            _ocr_door_src   = "ocr_task=board"
+        elif ocr_task == "stop":
+            effective_doors = False
+            _ocr_door_src   = "ocr_task=stop"
+        elif ocr_stop_dist_m is not None and ocr_stop_dist_m > _OCR_NEXT_STOP_M:
+            effective_doors = False
+            _ocr_door_src   = f"ocr_dist={ocr_stop_dist_m:.0f}m>300m"
+        elif ocr_stop_dist_m is None and ocr_task is None:
+            effective_doors = True
+            _ocr_door_src   = "ocr_sin_dist(embarcando)"
+        else:
+            effective_doors = doors_open
+            _ocr_door_src   = "event"
+
+        if effective_doors:
+            if not self._doors_opened:
+                _log.info("FSM: STOPPED puertas abiertas (src=%s)  (%s)",
+                          _ocr_door_src, self.name or "?")
+            self._doors_opened = True
+            _dwell_s = 3.0 if not self._we_stopped else 15.0
+            _dwell_label = " cold-start" if not self._we_stopped else " doors-stuck"
+            if time.time() - self._stopped_at >= _dwell_s:
+                _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s, src=%s)  (%s)",
+                          _dwell_s, _dwell_label, _ocr_door_src, self.name or "?")
+                self.state = "DEPARTING"
+                self._doors_opened = False
+        elif self._doors_opened and not effective_doors:
+            _log.info("FSM: STOPPED → DEPARTING (src=%s)  (%s)",
+                      _ocr_door_src, self.name or "?")
+            self.state  = "DEPARTING"
+            self._doors_opened  = False
+        else:
+            if self._doors_opened:
+                dwell_s = 15.0
+                timeout_type = " doors-open-no-close"
             else:
-                raw_dist = api_dist
+                dwell_s = STATION_DWELL_TIMEOUT_S if self._we_stopped else 3.0
+                timeout_type = "" if self._we_stopped else " cold-start"
+            if time.time() - self._stopped_at >= dwell_s:
+                _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s)  (%s)",
+                          dwell_s, timeout_type, self.name or "?")
+                self.state = "DEPARTING"
+                self._doors_opened = False
+        return "HOLD", 0.0
 
-            # Filtro monótono mínimo
-            if self._min_stop_dist is None or raw_dist < self._min_stop_dist:
-                self._min_stop_dist = raw_dist
-            stop_dist_m = self._min_stop_dist
-            plat_len    = next_stop.get("platform_length_m") if next_stop else None
-            stop_window = max(50.0, plat_len / 2.0) if plat_len else 50.0
+    def _handle_approaching(self, speed_mph: float, limit_mph: float,
+                            next_stop: Optional[dict], doors_dmi: Optional[bool],
+                            ocr_stop_dist_m: Optional[float],
+                            braking_dist_fn, eff_max_decel: float,
+                            eff_k_stop: float) -> Tuple[Optional[str], float]:
+        """Gestiona el estado APPROACHING: calibración OCR, perfil cinemático y transición a STOPPED."""
+        api_dist = next_stop["distance_m"] if next_stop else 0.0
 
-            # Transición APPROACHING → STOPPED
-            if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
-                _log.info("FSM: APPROACHING → STOPPED  '%s'  stop_dist=%.1fm",
-                          self.name or "?", stop_dist_m)
-                self.state               = "STOPPED"
-                self._creep_to_station   = False
-                self._doors_opened       = False
-                self._stopped_at         = time.time()
-                self._min_stop_dist      = None
-                self._ocr_offset         = None
-                return "HOLD", 0.0
-
-            # Creep: marcar si paró antes del andén (histéresis hasta entrar en andén)
-            if stop_dist_m < stop_window:
-                self._creep_to_station = False
-            elif speed_mph <= STATION_STOPPED_MPH:
-                self._creep_to_station = True
-
-            # En andén parado: gestionar puertas directamente
-            if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
-                if doors_dmi is True:
-                    self._doors_opened = True
-                elif self._doors_opened and doors_dmi is False:
-                    _log.info("FSM: APPROACHING → DEPARTING (puertas cerradas)  '%s'", self.name or "?")
-                    self.state = "DEPARTING"
-                    self._doors_opened = False
-                    self._min_stop_dist = None
-                    self._ocr_offset    = None
-                return "HOLD", 0.0
-
-            # Perfil cinemático de velocidad límite para parar en el andén
-            if stop_dist_m < stop_window:
-                return None, 0.0
+        # Calibración del offset OCR vs API
+        if self._ocr_offset is None and ocr_stop_dist_m is not None:
+            _v_ms       = speed_mph * 0.44704
+            _phys_min   = (_v_ms * _v_ms) / (2.0 * eff_max_decel)
+            _ocr_rel_ok = (ocr_stop_dist_m > api_dist * 0.10 and ocr_stop_dist_m < api_dist * 1.10)
+            if ocr_stop_dist_m >= _phys_min and _ocr_rel_ok:
+                self._ocr_offset = api_dist - ocr_stop_dist_m
+                self._ocr_used   = True
+                self._min_stop_dist = None
+                _log.info("stop_dist  OCR CALIBRADO  API=%.1fm  OCR=%.1fm  offset=+%.1fm",
+                          api_dist, ocr_stop_dist_m, self._ocr_offset)
+            elif 0.0 < ocr_stop_dist_m < _phys_min:
+                _log.debug("stop_dist  OCR rechazado (imposible frenar: min_fisico=%.0fm, ocr=%.0fm)",
+                           _phys_min, ocr_stop_dist_m)
+            elif ocr_stop_dist_m >= api_dist * 1.10:
+                _log.debug("stop_dist  OCR rechazado (ocr=%.0fm > api*1.10=%.0fm)",
+                           ocr_stop_dist_m, api_dist * 1.10)
             else:
-                eff_lim = min(limit_mph or 30.0, eff_k_stop * math.sqrt(stop_dist_m))
-                if self._creep_to_station:
-                    eff_lim = min(eff_lim, 10.0)
-                return None, eff_lim
+                _log.debug("stop_dist  OCR rechazado (fuera de rango: api=%.0fm, ocr=%.0fm)",
+                           api_dist, ocr_stop_dist_m)
+
+        # Aplicar offset
+        if self._ocr_offset is not None:
+            raw_dist = max(0.0, api_dist - self._ocr_offset)
+            _log.debug("stop_dist  API=%.1fm  offset=%.1fm → raw=%.1fm",
+                       api_dist, self._ocr_offset, raw_dist)
+        else:
+            raw_dist = api_dist
+
+        # Filtro monótono mínimo
+        if self._min_stop_dist is None or raw_dist < self._min_stop_dist:
+            self._min_stop_dist = raw_dist
+        stop_dist_m = self._min_stop_dist
+        plat_len    = next_stop.get("platform_length_m") if next_stop else None
+        stop_window = max(50.0, plat_len / 2.0) if plat_len else 50.0
+
+        # Transición APPROACHING → STOPPED
+        if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
+            _log.info("FSM: APPROACHING → STOPPED  '%s'  stop_dist=%.1fm",
+                      self.name or "?", stop_dist_m)
+            self.state               = "STOPPED"
+            self._creep_to_station   = False
+            self._doors_opened       = False
+            self._stopped_at         = time.time()
+            self._min_stop_dist      = None
+            self._ocr_offset         = None
+            return "HOLD", 0.0
+
+        # Creep: marcar si paró antes del andén (histéresis hasta entrar en andén)
+        if stop_dist_m < stop_window:
+            self._creep_to_station = False
+        elif speed_mph <= STATION_STOPPED_MPH:
+            self._creep_to_station = True
+
+        # En andén parado: gestionar puertas directamente
+        if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
+            if doors_dmi is True:
+                self._doors_opened = True
+            elif self._doors_opened and doors_dmi is False:
+                _log.info("FSM: APPROACHING → DEPARTING (puertas cerradas)  '%s'", self.name or "?")
+                self.state = "DEPARTING"
+                self._doors_opened = False
+                self._min_stop_dist = None
+                self._ocr_offset    = None
+            return "HOLD", 0.0
+
+        # Perfil cinemático de velocidad límite para parar en el andén
+        if stop_dist_m < stop_window:
+            return None, 0.0
+        else:
+            eff_lim = min(limit_mph or 30.0, eff_k_stop * math.sqrt(stop_dist_m))
+            if self._creep_to_station:
+                eff_lim = min(eff_lim, 10.0)
+            return None, eff_lim
 
         return None, 0.0

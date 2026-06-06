@@ -162,7 +162,7 @@ def _detect_task(img: "_Img.Image") -> Optional[str]:
     top = img.crop((0, 0, w, top_h))
     pixels = list(top.getdata())
     ratio = pixels.count(255) / len(pixels) if pixels else 0.0
-    _log.debug("OCR icon ratio=%.3f", ratio)
+    # ratio debug removed (was ~2 logs/sec noise; use logging.TRACE if needed)
     if ratio > 0.30:
         return "stop"
     if ratio > 0.08:
@@ -231,6 +231,7 @@ class TswOcr:
         self._lock       = threading.Lock()
         self._stop_ev    = threading.Event()
         self._active     = _OCR_AVAILABLE
+        self._last_logged_dist: Optional[float] = None  # throttle OCR distance logging
 
         if _OCR_AVAILABLE:
             t = threading.Thread(target=self._run, name="tsw-ocr", daemon=True)
@@ -295,7 +296,12 @@ class TswOcr:
                         self._task    = task
                         self._task_ts = now
                 if dist is not None:
-                    _log.debug("OCR → %.1f m  task=%s", dist, task)
+                    # Only log when distance changes significantly (>5m)
+                    _should_log = (self._last_logged_dist is None
+                                   or abs(dist - self._last_logged_dist) > 5.0)
+                    if _should_log:
+                        _log.debug("OCR → %.1f m  task=%s", dist, task)
+                        self._last_logged_dist = dist
             except Exception as exc:
                 _log.debug("OCR error: %s", exc)
             elapsed = time.monotonic() - t0

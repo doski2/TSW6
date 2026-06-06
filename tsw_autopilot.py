@@ -339,6 +339,7 @@ def main():
                     ocr_task=_ocr_task,
                     doors_dmi=telem.get("doors_dmi"),
                     supervision=telem.get("supervision", "csm"),
+                    speed_limits_ahead=telem.get("speed_limits_ahead"),
                 )
                 if not args.no_control:
                     gov.apply_action(action, hwnd, conn)

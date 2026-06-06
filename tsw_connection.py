@@ -59,6 +59,12 @@ class TswConnection:
         self._timetable: dict = self._load_timetable()   # paradas programadas por servicio
         self._device_creds: Optional[dict] = None  # {device_id, device_secret}
 
+        # ── Throttle de logging repetitivo ────────────────────────────────────
+        self._log_throttle_planning: float = 0.0     # última vez que se logueó planning_delta items
+        self._log_throttle_stations: float = 0.0     # última vez que se logueó stations
+        self._log_last_timetable_result: Optional[int] = None  # último resultado del filtro timetable
+        self._LOG_THROTTLE_INTERVAL = 5.0            # mínimo 5s entre logs repetitivos
+
     # ── Carga del timetable ─────────────────────────────────────────────────
 
     @staticmethod
@@ -233,7 +239,7 @@ class TswConnection:
         while not self._sse_stop.is_set():
             url = self._sse_url()
             try:
-                r = self._session.get(url, stream=True, timeout=(3, None))
+                r = self._session.get(url, stream=True, timeout=(3, 30))
                 event_type = None
                 for raw_line in r.iter_lines(decode_unicode=True):
                     if self._sse_stop.is_set():
@@ -307,21 +313,28 @@ class TswConnection:
                                         st["name"].split(",")[0].strip().lower() in scheduled_lower
                                     ]
                                     if len(parsed["stations"]) != before:
-                                        _log.debug(
-                                            "Timetable filter: %d → %d estaciones eliminadas=%s",
-                                            before, len(parsed["stations"]),
-                                            [st["name"] for st in
-                                             self._last_route_stations or []
-                                             if st.get("name", "?") != "?" and
-                                             st["name"].split(",")[0].strip().lower()
-                                             not in scheduled_lower],
-                                        )
-                                _log.debug("stations: %s",
-                                           [(s["name"],
-                                             round(s["distance_m"]),
-                                             f"andén {s['platform_length_m']:.0f}m"
-                                             if s.get("platform_length_m") else None)
-                                            for s in parsed.get("stations", [])])
+                                        # Only log when the filter result changes
+                                        _new_count = len(parsed["stations"])
+                                        if _new_count != self._log_last_timetable_result:
+                                            _log.debug(
+                                                "Timetable filter: %d → %d estaciones eliminadas=%s",
+                                                before, _new_count,
+                                                [st["name"] for st in
+                                                 self._last_route_stations or []
+                                                 if st.get("name", "?") != "?" and
+                                                 st["name"].split(",")[0].strip().lower()
+                                                 not in scheduled_lower],
+                                            )
+                                            self._log_last_timetable_result = _new_count
+                                _now_st = time.time()
+                                if _now_st - self._log_throttle_stations >= self._LOG_THROTTLE_INTERVAL:
+                                    _log.debug("stations: %s",
+                                               [(s["name"],
+                                                 round(s["distance_m"]),
+                                                 f"andén {s['platform_length_m']:.0f}m"
+                                                 if s.get("platform_length_m") else None)
+                                                for s in parsed.get("stations", [])])
+                                    self._log_throttle_stations = _now_st
                                 self._telem = parsed
                                 if self.mode != "companion":
                                     self.mode = "companion"
@@ -333,11 +346,13 @@ class TswConnection:
                             if event_type == "companion_dmi_planning_delta":
                                 gradient_pct = (data.get("gradient_percent") or {}).get("value")
                                 route_stations = self._parse_planning_stations(data)
+                                speed_limits = self._parse_planning_speed_limits(data)
                                 # service_name puede estar en route_monitor en el futuro
                             else:
                                 # Compatibilidad con dashboard_snapshot antiguo
                                 gradient_pct = None
                                 route_stations = self._parse_route_stations(data)
+                                speed_limits = []
                                 typed = (data.get("feed", {}).get("typed") or {})
                                 identity = typed.get("identity") or {}
                                 svc_raw = identity.get("service_name")
@@ -363,6 +378,8 @@ class TswConnection:
                                         _log.info("planning_delta paradas: %s",
                                                   [s["name"] for s in route_stations])
                                     self._last_route_stations = route_stations
+                                if speed_limits:
+                                    self._telem["speed_limits_ahead"] = speed_limits
                         except Exception:
                             pass
                     elif raw_line.startswith("data:") and event_type == "engine_event":
@@ -414,8 +431,7 @@ class TswConnection:
                 time.sleep(3)
     # ── Parseo de estaciones desde companion_dmi_planning_delta ────────────────────
 
-    @staticmethod
-    def _parse_planning_stations(data: dict) -> list:
+    def _parse_planning_stations(self, data: dict) -> list:
         """
         Extrae paradas desde companion_dmi_planning_delta.route_monitor.items.
         Usa items de tipo 'platform' con label no vacío.
@@ -425,7 +441,10 @@ class TswConnection:
             # Log diagnóstico: tipos de items disponibles (solo en primer evento)
             if items:
                 types_seen = list({i.get("type") for i in items if isinstance(i, dict)})
-                _log.debug("planning_delta items: %d total, tipos=%s", len(items), types_seen)
+                _now = time.time()
+                if _now - self._log_throttle_planning >= self._LOG_THROTTLE_INTERVAL:
+                    _log.debug("planning_delta items: %d total, tipos=%s", len(items), types_seen)
+                    self._log_throttle_planning = _now
             seen: dict[str, dict] = {}
             for item in items:
                 if not isinstance(item, dict) or item.get("type") != "platform":
@@ -449,6 +468,48 @@ class TswConnection:
             return sorted(seen.values(), key=lambda x: x["distance_m"])
         except Exception:
             return []
+
+    @staticmethod
+    def _parse_planning_speed_limits(data: dict) -> list:
+        """
+        Extrae límites de velocidad futuros desde companion_dmi_planning_delta.route_monitor.items.
+        Devuelve lista de {limit_mph, distance_m} ordenados por distancia.
+        Cada entrada representa un cambio de límite de velocidad por delante del tren.
+        """
+        KPH_TO_MPH = 0.621371
+        try:
+            items = (data.get("route_monitor") or {}).get("items") or []
+            limits: list[dict] = []
+            for item in items:
+                if not isinstance(item, dict) or item.get("type") != "speed_limit":
+                    continue
+                # Estructura esperada: distance_start_m, speed_limit.value (kph)
+                dist = item.get("distance_start_m") or item.get("distance_end_m")
+                if dist is None:
+                    continue
+                dist = float(dist)
+                if dist <= 0:
+                    continue
+                # El valor del límite puede estar en varias ubicaciones
+                sl = item.get("speed_limit") or item.get("speed") or {}
+                if isinstance(sl, dict):
+                    val_kph = sl.get("value") or sl.get("kph")
+                else:
+                    val_kph = sl
+                if val_kph is None:
+                    continue
+                val_kph = float(val_kph)
+                if val_kph <= 0:
+                    continue
+                limits.append({
+                    "limit_mph": round(val_kph * KPH_TO_MPH, 1),
+                    "distance_m": dist,
+                })
+            limits.sort(key=lambda x: x["distance_m"])
+            return limits
+        except Exception:
+            return []
+
     # ── Parseo del dashboard_snapshot (puertas) ─────────────────────────────
 
     @staticmethod
