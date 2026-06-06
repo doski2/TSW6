@@ -239,7 +239,7 @@ class TswConnection:
         while not self._sse_stop.is_set():
             url = self._sse_url()
             try:
-                r = self._session.get(url, stream=True, timeout=(3, None))
+                r = self._session.get(url, stream=True, timeout=(3, 30))
                 event_type = None
                 for raw_line in r.iter_lines(decode_unicode=True):
                     if self._sse_stop.is_set():
@@ -431,8 +431,7 @@ class TswConnection:
                 time.sleep(3)
     # ── Parseo de estaciones desde companion_dmi_planning_delta ────────────────────
 
-    @staticmethod
-    def _parse_planning_stations(data: dict) -> list:
+    def _parse_planning_stations(self, data: dict) -> list:
         """
         Extrae paradas desde companion_dmi_planning_delta.route_monitor.items.
         Usa items de tipo 'platform' con label no vacío.

@@ -8,7 +8,6 @@ Aplica la acción enviando teclas al juego mediante ThrottleController / BrakeCo
 """
 
 import logging
-import math
 import time
 from typing import Optional
 
@@ -20,13 +19,11 @@ from tsw_keys import VK_A, VK_D, KEY_HOLD_MS, send_key
 from governor_constants import (
     SAFETY_MARGIN, RATE_TOLERANCE, SERVICE_MAX_BRAKE,
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
-    P1_MIN_NEXT_LIMIT_MPH, P1_REACT_S, P1_ACK_GUARD_S,
-    P1_ALERTA_FACTOR, P1_EMERGENCIA_DIST, P1_EMERGENCIA_MPH,
-    P1_CRITICO_DIST, P1_CRITICO_MPH,
     STATION_STOPPED_MPH, NOTCH_NEUTRAL,
 )
 from governor_physics import TrainPhysics
 from governor_station import StationFSM
+from braking_advisor import BrakingAdvisor
 
 _gov_log = logging.getLogger("tsw.governor")
 
@@ -48,6 +45,7 @@ class SpeedGovernor:
         # Instanciar submódulos físicos y de estación
         self._physics = TrainPhysics()
         self._fsm     = StationFSM()
+        self._braking = BrakingAdvisor()
 
         # Seguimiento de atascos en el mando
         self._accel_stuck_count: int = 0
@@ -56,8 +54,6 @@ class SpeedGovernor:
         # Seguimiento de ack para detectar la transición ack→libre
         self._ack_was_required: bool = False
         self._ack_approach_warned: bool = False  # aviso previo al ACK (1 vez)
-        self._p1_nomarker_cycles: int = 0   # ciclos consecutivos P1 sin marcador
-        self._p1_last_next_limit: Optional[float] = None  # para detectar cambio de límite
 
         # P3: Anti-oscilación (banda muerta de 2 ciclos antes de cambiar dirección)
         self._p3_last_direction: Optional[str] = None  # "up" | "down" | None
@@ -407,124 +403,27 @@ class SpeedGovernor:
                 return "BRAKE"
 
         # ── P1: Frenado anticipado al próximo límite de velocidad ───────────────
-        # P1-MEJORADO: 4 niveles de urgencia progresiva
         _p1_active = (self.station_state not in ("APPROACHING", "DEPARTING")
                       or speed_mph > 10.0)
         if not _p1_active:
-            self._p1_nomarker_cycles = 0
-            self._p1_last_next_limit = None
-
-        _nl = next_limit_mph
-        _dn = distance_next_m
-
-        # ── Frenado anticipatorio desde planning_delta speed_limits ────────────
-        # Si planning_delta expone límites futuros, usar el más restrictivo
-        # que requiera frenar antes de lo que el DMI indica.
-        if _p1_active and speed_limits_ahead:
-            for sl in speed_limits_ahead:
-                sl_limit = sl.get("limit_mph")
-                sl_dist  = sl.get("distance_m")
-                if sl_limit is None or sl_dist is None:
-                    continue
-                if sl_limit >= speed_mph:
-                    continue  # no necesita frenar
-                # Calcular si este límite requiere frenar antes que el DMI next_limit
-                bd_needed = self.braking_distance(
-                    speed_mph, sl_limit, gradient_pct=gradient_pct) * 1.2
-                if sl_dist <= bd_needed:
-                    # Este límite de planning es más urgente
-                    if _nl is None or sl_limit < _nl or (_dn is not None and sl_dist < _dn):
-                        _nl = sl_limit
-                        _dn = sl_dist
-
-        # Reset ciclos si next_limit cambia más de 2 mph (señales consecutivas)
-        if _nl is not None and self._p1_last_next_limit is not None:
-            if abs(_nl - self._p1_last_next_limit) > 2.0:
-                self._p1_nomarker_cycles = 0
-        self._p1_last_next_limit = _nl
-
-        # Filtro mejorado: usar siempre que next_limit < effective_limit
-        # (eliminado el filtro antiguo _nl < speed + 15)
-        if (_p1_active
-                and _nl is not None
-                and _dn is not None
-                and _nl >= P1_MIN_NEXT_LIMIT_MPH
-                and _nl < effective_limit):
-            v_ms    = speed_mph * 0.44704
-            # Escalar react_m con pendiente: mayor en bajada
-            _grad_factor = 1.0 + abs(gradient_pct or 0.0) / 2.0
-            react_m = v_ms * (P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor
-            _accel  = self.acceleration_ms2
-            bd      = self.braking_distance(speed_mph, _nl,
-                                            gradient_pct=gradient_pct,
-                                            current_accel_ms2=_accel)
-            bd_hor  = max(bd + react_m, 1.0)
-            profile_cap = effective_limit
-            _exceso = speed_mph - _nl
-
-            # ── P1-CRITICO: dist ≤ 20m con exceso > 10mph → FULLSTOP ────────
-            if (_dn <= P1_CRITICO_DIST and _exceso > P1_CRITICO_MPH):
-                _gov_log.critical(
-                    "P1 CRITICO  spd=%.1f  next_lim=%.1f  dist=%.0fm  exceso=%.1f",
-                    speed_mph, _nl, _dn, _exceso)
-                self.effective_limit = _nl
-                return "FULLSTOP"
-
-            # ── P1-EMERGENCIA: dist ≤ bd×0.5 O dist ≤ 50m con exceso > 5mph ─
-            if ((_exceso > 0 and _dn <= bd * 0.5)
-                    or (_dn <= P1_EMERGENCIA_DIST and _exceso > P1_EMERGENCIA_MPH)):
-                self._p1_nomarker_cycles += 1
-                _gov_log.warning(
-                    "P1 EMERGENCIA  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm  exceso=%.1f",
-                    speed_mph, _nl, _dn, bd, _exceso)
-                self.effective_limit = _nl
-                return "HARDBRAKE"
-
-            # ── P1-SERVICIO: dist ≤ bd → BRAKE (freno de servicio) ────────
-            # Solo fuerza retorno cuando realmente no queda margen de reacción.
-            # Cuando bd < dist ≤ bd_hor, el perfil gradual (P1-ALERTA) reduce
-            # effective_limit y P2 se encarga del control por tasa.
-            if _exceso > 0 and _dn <= bd:
-                self._p1_nomarker_cycles += 1
-                if self._p1_nomarker_cycles == 1:
-                    _gov_log.warning(
-                        "P1 SERVICIO (COAST)  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
-                        speed_mph, _nl, _dn, bd)
-                    effective_limit = min(effective_limit, _nl + _exceso * 0.3)
-                    self.effective_limit = effective_limit
-                    if self.throttle.notch > 0:
-                        return "COAST"
-                    return "BRAKE"
-                _gov_log.warning(
-                    "P1 SERVICIO (BRAKE)  spd=%.1f  next_lim=%.1f  dist=%.0fm  bd=%.0fm",
-                    speed_mph, _nl, _dn, bd)
-                effective_limit = min(effective_limit, _nl)
-                self.effective_limit = effective_limit
-                return "BRAKE"
-
-            # ── P1-ALERTA: dist ≤ bd_hor × 1.5 → perfil gradual ─────────────
-            if _nl < speed_mph - 0.3:
-                _frac = min(1.0, _dn / bd_hor)
-                profile_cap = _nl + (speed_mph - _nl) * _frac
-                k2 = self._eff_k_stop ** 2
-                p1_ceil = math.sqrt(_nl ** 2 + k2 * (_dn + react_m))
-                profile_cap = min(profile_cap, p1_ceil)
-                effective_limit = min(effective_limit, profile_cap)
-                _gov_log.debug(
-                    "P1 ALERTA perfil  spd=%.1f  next_lim=%.1f  dist=%.0fm  "
-                    "bd_hor=%.0fm  cap=%.1f",
-                    speed_mph, _nl, _dn, bd_hor, profile_cap)
-
-            if self.should_brake_for_next(speed_mph, _nl, _dn,
-                                          gradient_pct=gradient_pct,
-                                          react_s=(P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor,
-                                          current_accel_ms2=_accel):
-                effective_limit = min(effective_limit, profile_cap)
-
-            # Si no entramos en SERVICIO/EMERGENCIA/CRITICO, resetear ciclos
-            self._p1_nomarker_cycles = 0
+            self._braking.reset()
         else:
-            self._p1_nomarker_cycles = 0
+            p1_action, effective_limit = self._braking.evaluate(
+                speed_mph=speed_mph,
+                next_limit_mph=next_limit_mph,
+                distance_next_m=distance_next_m,
+                effective_limit=effective_limit,
+                gradient_pct=gradient_pct,
+                acceleration_ms2=self.acceleration_ms2,
+                braking_distance_fn=self.braking_distance,
+                should_brake_fn=self.should_brake_for_next,
+                eff_k_stop=self._eff_k_stop,
+                throttle_notch=self.throttle.notch,
+                speed_limits_ahead=speed_limits_ahead,
+            )
+            if p1_action is not None:
+                self.effective_limit = effective_limit
+                return p1_action
 
         self.effective_limit = effective_limit
         error = effective_limit - speed_mph
