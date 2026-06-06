@@ -45,6 +45,16 @@ P1_REACT_S = 2.0
 # intervenir. A 52 mph ≈ 69 m de adelanto adicional sobre el SAFETY_MARGIN.
 P1_ACK_GUARD_S = 1.0
 
+# ── P1 mejorado: umbrales de urgencia progresiva ─────────────────────────────
+P1_ALERTA_FACTOR    = 1.5   # dist ≤ bd_hor × 1.5 → perfil gradual
+P1_EMERGENCIA_DIST  = 50.0  # metros: dist ≤ 50m con exceso > 5mph → HARDBRAKE
+P1_EMERGENCIA_MPH   = 5.0   # mph de exceso para P1-EMERGENCIA
+P1_CRITICO_DIST     = 20.0  # metros: dist ≤ 20m con exceso > 10mph → FULLSTOP
+P1_CRITICO_MPH      = 10.0  # mph de exceso para P1-CRITICO
+
+# ── Física: umbral de gradiente crítico ───────────────────────────────────────
+CRITICAL_DECEL_THRESHOLD = 0.3  # m/s²: si effective_decel < este valor → forzar MAX_BRAKE
+
 # ── Paradas en estación ───────────────────────────────────────────────────────
 
 STATION_APPROACH_M     = 150   # metros extra antes de empezar a frenar para parar

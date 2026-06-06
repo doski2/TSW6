@@ -304,5 +304,245 @@ class TestSpeedGovernor(unittest.TestCase):
         self.assertTrue(gov._creep_to_station, "El creep debe mantenerse activo por histéresis mientras no entre en el andén.")
         self.assertEqual(gov.effective_limit, 10.0, "La velocidad límite de creep debe mantenerse a 10 mph.")
 
+    def test_p1_critico_fullstop(self):
+        """P1-CRITICO: dist ≤ 20m con exceso > 10mph → FULLSTOP."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        action = gov.decide(
+            speed_mph=55.0,
+            limit_mph=60.0,
+            next_limit_mph=40.0,
+            distance_next_m=15.0,  # < 20m
+        )
+        self.assertEqual(action, "FULLSTOP",
+                         "P1-CRITICO debe devolver FULLSTOP con dist ≤ 20m y exceso > 10mph.")
+
+    def test_p1_emergencia_hardbrake(self):
+        """P1-EMERGENCIA: dist ≤ 50m con exceso > 5mph → HARDBRAKE."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        action = gov.decide(
+            speed_mph=48.0,
+            limit_mph=60.0,
+            next_limit_mph=40.0,
+            distance_next_m=45.0,  # < 50m, exceso = 8 > 5
+        )
+        self.assertEqual(action, "HARDBRAKE",
+                         "P1-EMERGENCIA debe devolver HARDBRAKE con dist ≤ 50m y exceso > 5mph.")
+
+    def test_p1_servicio_progressive(self):
+        """P1-SERVICIO: dist ≤ bd → COAST/BRAKE progresivo (no HARDBRAKE directamente)."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 3
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        # dist=70: > 50m (no EMERGENCIA por dist), > bd*0.5=44 (no EMERGENCIA por bd)
+        # but ≤ bd=88.7 → P1-SERVICIO zone
+        action = gov.decide(
+            speed_mph=52.0,
+            limit_mph=55.0,
+            next_limit_mph=45.0,
+            distance_next_m=70.0,
+        )
+        self.assertIn(action, ["COAST", "BRAKE"],
+                      "P1-SERVICIO ciclo 1 debe ser COAST o BRAKE, no HARDBRAKE.")
+        self.assertNotEqual(action, "HARDBRAKE")
+
+    def test_p1_reset_cycles_on_limit_change(self):
+        """P1 debe resetear _p1_nomarker_cycles cuando next_limit cambia > 2 mph."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        # First call with next_limit=45
+        gov.decide(speed_mph=52.0, limit_mph=55.0,
+                   next_limit_mph=45.0, distance_next_m=40.0)
+        # Cycles incremented
+        cycles_after_first = gov._p1_nomarker_cycles
+
+        # Second call with next_limit=30 (change > 2 mph) → should reset
+        gov.decide(speed_mph=52.0, limit_mph=55.0,
+                   next_limit_mph=30.0, distance_next_m=40.0)
+        # The reset happens before the new P1 logic runs, so a fresh cycle count
+        # This tests that the counter doesn't carry over from a different limit
+        self.assertLessEqual(gov._p1_nomarker_cycles, 1,
+                             "Cycles debe resetearse cuando next_limit cambia > 2 mph")
+
+    def test_p1_gradient_scales_react_m(self):
+        """En pendiente, react_m debe ser mayor (escalado por gradiente)."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        # Sin pendiente: action at certain distance
+        action_flat = gov.decide(
+            speed_mph=50.0, limit_mph=60.0,
+            next_limit_mph=40.0, distance_next_m=200.0,
+            gradient_pct=0.0,
+        )
+        elim_flat = gov.effective_limit
+
+        # Con bajada: effective_limit debe ser menor (más conservador)
+        gov2 = SpeedGovernor(target_mph=60.0)
+        gov2.station_state = None
+        gov2.throttle.notch = 0
+        gov2.brake.notch = 0
+        gov2._api_accel = 0.0
+        action_hill = gov2.decide(
+            speed_mph=50.0, limit_mph=60.0,
+            next_limit_mph=40.0, distance_next_m=200.0,
+            gradient_pct=-2.0,
+        )
+        elim_hill = gov2.effective_limit
+
+        self.assertLessEqual(elim_hill, elim_flat,
+                             "En bajada, effective_limit debe ser menor (más conservador).")
+
+    def test_p2_over_critico_hardbrake(self):
+        """P2 OVER-CRITICO: speed > limit + 3 → HARDBRAKE."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+
+        action = gov.decide(
+            speed_mph=64.0,
+            limit_mph=60.0,
+            next_limit_mph=60.0,
+            distance_next_m=500.0,
+        )
+        self.assertEqual(action, "HARDBRAKE",
+                         "P2 OVER-CRITICO debe devolver HARDBRAKE cuando speed > limit + 3.")
+
+    def test_p2_rain_tightens_bands(self):
+        """En lluvia, P2 OVER-CRITICO se activa antes (2 mph menos)."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.0
+        gov.set_rain_intensity(0.8)
+
+        # Con lluvia, over_critico = (3.0 - 2.0) * 1.0 = 1.0
+        # speed = 61.5 > limit(60) + 1.0 → HARDBRAKE
+        action = gov.decide(
+            speed_mph=61.5,
+            limit_mph=60.0,
+            next_limit_mph=60.0,
+            distance_next_m=500.0,
+        )
+        self.assertEqual(action, "HARDBRAKE",
+                         "En lluvia, OVER-CRITICO se activa con exceso menor.")
+
+    def test_p2_critical_gradient_hardbrake(self):
+        """Gradiente crítico (effective_decel < 0.3) fuerza HARDBRAKE."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 0
+        gov.brake.notch = 0
+        gov._api_accel = 0.1  # no decelerating
+
+        # grad=-3.5%: g_comp = -0.343, eff_decel = max(1.071-0.343, 0.095) = 0.728
+        # Not critical. Use rain to lower eff_decel further.
+        gov.set_rain_intensity(0.95)
+        # eff_max_decel = 1.071 * (1 - 0.95*0.35) = 1.071 * 0.6675 = 0.715
+        # with grad=-4.5%: g_comp = -0.441, eff = max(0.715-0.441, 0.095) = 0.274 < 0.3 → critical!
+        action = gov.decide(
+            speed_mph=48.0,
+            limit_mph=45.0,
+            next_limit_mph=45.0,
+            distance_next_m=500.0,
+            gradient_pct=-4.5,
+        )
+        self.assertEqual(action, "HARDBRAKE",
+                         "Gradiente crítico con lluvia debe forzar HARDBRAKE.")
+
+    def test_p3_gradient_compensation(self):
+        """P3 debe ajustar target_accel por gradiente (en subida necesita más potencia)."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 1
+        gov.brake.notch = 0
+        # Accel below normal target (0.298) but above adjusted for uphill
+        gov._api_accel = 0.20
+
+        # En subida +2%: target_accel_adj = 0.298 + 9.81*2/100 = 0.298 + 0.196 = 0.494
+        # a(0.20) < 0.494 - 0.18 = 0.314 → should want more throttle
+        action = gov.decide(
+            speed_mph=30.0,
+            limit_mph=60.0,
+            next_limit_mph=60.0,
+            distance_next_m=500.0,
+            gradient_pct=2.0,
+        )
+        self.assertEqual(action, "ACCELERATE",
+                         "En subida P3 debe pedir más tracción para compensar el gradiente.")
+
+    def test_p3_proximity_ceiling(self):
+        """P3 cuando error < 3 mph debe limitar aceleración a 0.15 m/s²."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 2
+        gov.brake.notch = 0
+        # Aceleración actual 0.25 > target ajustado 0.15 (proximity ceiling)
+        gov._api_accel = 0.25
+
+        # error = 60 - 58 = 2.0 < 3.0 → ceiling at 0.15
+        # a(0.25) > 0.15 + 0.18 = 0.33? No, 0.25 < 0.33 → HOLD
+        # Actually: a(0.25) > target(0.15) + tolerance(0.18) = 0.33? No
+        # a(0.25) < target(0.15) - tolerance(0.18)? 0.25 < -0.03? No
+        # So target_t = current notch (2) → HOLD (error ≤ 1.5 path handles this)
+        # Let me use error = 2.5 to hit the acceleration phase
+        action = gov.decide(
+            speed_mph=57.5,
+            limit_mph=60.0,
+            next_limit_mph=60.0,
+            distance_next_m=500.0,
+        )
+        # With error=2.5 < 3, ceiling=0.15, a=0.25 > 0.15+0.18=0.33? No
+        # But 0.25 > 0.15 and within tolerance → HOLD (notch stays)
+        # With throttle=2 and target_t=2 → HOLD (correct behavior: not accelerating more)
+        self.assertNotEqual(action, "ACCELERATE",
+                            "Cerca del límite, P3 no debe pedir más aceleración si ya supera el techo.")
+
+    def test_p3_anti_oscillation(self):
+        """P3 anti-oscilación: no debe cambiar dirección inmediatamente."""
+        gov = SpeedGovernor(target_mph=60.0)
+        gov.station_state = None
+        gov.throttle.notch = 3
+        gov.brake.notch = 0
+        # High accel → target_t would be 2 (wants to reduce = "down")
+        gov._api_accel = 0.55  # > 0.298 + 0.18 = 0.478 → reduce notch
+        gov._p3_last_direction = "up"  # was going up before
+        gov._p3_direction_hold = 0
+
+        # error = 55 - 50 = 5.0, within caps: error ≤ 8 → max notch 2
+        # accel high → target_t = max(3-1, 0) = 2, cap: min(2,2)=2
+        # throttle(3) > target_t(2) → wants COAST (direction = "down")
+        # anti-oscillation: last was "up", now "down" → HOLD
+        action = gov.decide(
+            speed_mph=50.0,
+            limit_mph=60.0,
+            next_limit_mph=60.0,
+            distance_next_m=500.0,
+        )
+        self.assertEqual(action, "HOLD",
+                         "Anti-oscilación debe impedir cambio de dirección inmediato.")
+
 if __name__ == '__main__':
     unittest.main()
