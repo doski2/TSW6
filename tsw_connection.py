@@ -59,6 +59,12 @@ class TswConnection:
         self._timetable: dict = self._load_timetable()   # paradas programadas por servicio
         self._device_creds: Optional[dict] = None  # {device_id, device_secret}
 
+        # ── Throttle de logging repetitivo ────────────────────────────────────
+        self._log_throttle_planning: float = 0.0     # última vez que se logueó planning_delta items
+        self._log_throttle_stations: float = 0.0     # última vez que se logueó stations
+        self._log_last_timetable_result: Optional[int] = None  # último resultado del filtro timetable
+        self._LOG_THROTTLE_INTERVAL = 5.0            # mínimo 5s entre logs repetitivos
+
     # ── Carga del timetable ─────────────────────────────────────────────────
 
     @staticmethod
@@ -307,21 +313,28 @@ class TswConnection:
                                         st["name"].split(",")[0].strip().lower() in scheduled_lower
                                     ]
                                     if len(parsed["stations"]) != before:
-                                        _log.debug(
-                                            "Timetable filter: %d → %d estaciones eliminadas=%s",
-                                            before, len(parsed["stations"]),
-                                            [st["name"] for st in
-                                             self._last_route_stations or []
-                                             if st.get("name", "?") != "?" and
-                                             st["name"].split(",")[0].strip().lower()
-                                             not in scheduled_lower],
-                                        )
-                                _log.debug("stations: %s",
-                                           [(s["name"],
-                                             round(s["distance_m"]),
-                                             f"andén {s['platform_length_m']:.0f}m"
-                                             if s.get("platform_length_m") else None)
-                                            for s in parsed.get("stations", [])])
+                                        # Only log when the filter result changes
+                                        _new_count = len(parsed["stations"])
+                                        if _new_count != self._log_last_timetable_result:
+                                            _log.debug(
+                                                "Timetable filter: %d → %d estaciones eliminadas=%s",
+                                                before, _new_count,
+                                                [st["name"] for st in
+                                                 self._last_route_stations or []
+                                                 if st.get("name", "?") != "?" and
+                                                 st["name"].split(",")[0].strip().lower()
+                                                 not in scheduled_lower],
+                                            )
+                                            self._log_last_timetable_result = _new_count
+                                _now_st = time.time()
+                                if _now_st - self._log_throttle_stations >= self._LOG_THROTTLE_INTERVAL:
+                                    _log.debug("stations: %s",
+                                               [(s["name"],
+                                                 round(s["distance_m"]),
+                                                 f"andén {s['platform_length_m']:.0f}m"
+                                                 if s.get("platform_length_m") else None)
+                                                for s in parsed.get("stations", [])])
+                                    self._log_throttle_stations = _now_st
                                 self._telem = parsed
                                 if self.mode != "companion":
                                     self.mode = "companion"
@@ -425,7 +438,10 @@ class TswConnection:
             # Log diagnóstico: tipos de items disponibles (solo en primer evento)
             if items:
                 types_seen = list({i.get("type") for i in items if isinstance(i, dict)})
-                _log.debug("planning_delta items: %d total, tipos=%s", len(items), types_seen)
+                _now = time.time()
+                if _now - self._log_throttle_planning >= self._LOG_THROTTLE_INTERVAL:
+                    _log.debug("planning_delta items: %d total, tipos=%s", len(items), types_seen)
+                    self._log_throttle_planning = _now
             seen: dict[str, dict] = {}
             for item in items:
                 if not isinstance(item, dict) or item.get("type") != "platform":
