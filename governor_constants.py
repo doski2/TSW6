@@ -32,6 +32,11 @@ CONTROL_INTERVAL       = 1.0   # segundos entre pulsaciones de ACCELERATE
 CONTROL_INTERVAL_BRAKE = 0.4   # COAST / BRAKE / FULLSTOP (respuesta más rápida)
 CONTROL_INTERVAL_EMERG = 0.25  # HARDBRAKE y ACK
 
+# ── Histéresis de frenado TSM/overspeed (v3) ─────────────────────────────────
+# Exceso mínimo sobre límite para activar BRAKE (antes era 0.0)
+P2_TSM_BRAKE_THRESHOLD   = 0.5   # mph: exceso mínimo para BRAKE con sup=tsm
+P2_LIMIT_BRAKE_THRESHOLD = 1.0   # mph: exceso mínimo para BRAKE por límite de vía
+
 # Límite mínimo creíble para next_limit_mph de la API (0 = dato inválido)
 P1_MIN_NEXT_LIMIT_MPH = 1.0
 
