@@ -16,8 +16,9 @@ import time
 import unittest
 
 from online_learner import (
-    OnlineLearner, _speed_band_index, _TRACTION_NOTCHES,
+    OnlineLearner, _speed_band_index, _grad_band_index, _TRACTION_NOTCHES,
     _BRAKE_NOTCHES, _MAX_NOTCH, _COAST_NOTCH, _CLAMP, _INITIAL_REFS,
+    _GRAD_BANDS, GRAD_FLAT_THRESHOLD, _gravity_compensation,
     MIN_STABLE_S, MIN_SAMPLES,
 )
 
@@ -164,6 +165,8 @@ class TestPersistence(unittest.TestCase):
             # Simular aprendizaje
             learner._ema_bands[1][7] = 0.55
             learner._n_bands[1][7] = 20
+            learner._ema_grad_bands[2][7] = 0.60  # bajada
+            learner._n_grad_bands[2][7] = 5
             learner._recalculate_combined()
             learner._save()
 
@@ -171,9 +174,59 @@ class TestPersistence(unittest.TestCase):
             learner2 = OnlineLearner(save_path=path)
             self.assertEqual(learner2._n_bands[1].get(7, 0), 20)
             self.assertAlmostEqual(learner2._ema_bands[1][7], 0.55, places=3)
+            # v3: gradient bands persistence
+            self.assertEqual(learner2._n_grad_bands[2].get(7, 0), 5)
+            self.assertAlmostEqual(learner2._ema_grad_bands[2][7], 0.60, places=3)
         finally:
             try:
                 os.unlink(path)
+            except FileNotFoundError:
+                pass
+
+
+class TestGradientBands(unittest.TestCase):
+    """Verifica la separación por bandas de gradiente (v3)."""
+
+    def test_flat_band(self):
+        """|grad| < 0.5% → flat (0)."""
+        self.assertEqual(_grad_band_index(0.0), 0)
+        self.assertEqual(_grad_band_index(0.3), 0)
+        self.assertEqual(_grad_band_index(-0.4), 0)
+
+    def test_uphill_band(self):
+        """grad < -0.5% → uphill (1)."""
+        self.assertEqual(_grad_band_index(-1.0), 1)
+        self.assertEqual(_grad_band_index(-0.6), 1)
+
+    def test_downhill_band(self):
+        """grad > +0.5% → downhill (2)."""
+        self.assertEqual(_grad_band_index(1.0), 2)
+        self.assertEqual(_grad_band_index(0.6), 2)
+
+    def test_gravity_compensation(self):
+        """Compensación gravitacional correcta."""
+        # 1% bajada → +0.0981 m/s²
+        self.assertAlmostEqual(_gravity_compensation(1.0), 0.0981, places=3)
+        # 1% subida → -0.0981 m/s²
+        self.assertAlmostEqual(_gravity_compensation(-1.0), -0.0981, places=3)
+        # Plano → 0
+        self.assertAlmostEqual(_gravity_compensation(0.0), 0.0, places=5)
+
+    def test_gradient_band_confidence(self):
+        """confidence_by_gradient devuelve datos por banda."""
+        learner = OnlineLearner(save_path="/tmp/test_learner_grad.json")
+        try:
+            learner._ema_grad_bands[0][7] = 0.3
+            learner._n_grad_bands[0][7] = 5
+            learner._ema_grad_bands[2][7] = 0.4
+            learner._n_grad_bands[2][7] = 3
+            conf = learner.confidence_by_gradient()
+            self.assertEqual(conf["flat"]["ACCEL(n7)"], 5)
+            self.assertEqual(conf["downhill"]["ACCEL(n7)"], 3)
+            self.assertEqual(conf["uphill"]["ACCEL(n7)"], 0)
+        finally:
+            try:
+                os.unlink("/tmp/test_learner_grad.json")
             except FileNotFoundError:
                 pass
 

@@ -38,6 +38,13 @@ class TrainPhysics:
         self.target_accel_ms2 = TARGET_ACCEL_MS2
         self.coast_decel_ms2  = COAST_DECEL_MS2
 
+        # D: Transición throttle→brake medida dinámicamente
+        self.brake_transition_s: float = BRAKE_TRANSITION_S  # valor inicial hardcodeado
+        self._transition_start_t: Optional[float] = None
+        self._transition_start_accel: Optional[float] = None
+        self._transition_measurements: list[float] = []
+        self._MAX_TRANSITION_SAMPLES = 10
+
         # Clima: factor de reducción de adherencia 0.0 (seco) … 1.0 (tormenta)
         self._rain_intensity: float = 0.0
         self._WET_DECEL_REDUCTION = 0.35
@@ -74,6 +81,37 @@ class TrainPhysics:
         if updated:
             _log.info("OnlineLearner actualizó constantes: %s", updated)
             self._apply_constants(updated)
+
+    # ── D: Medición dinámica de BRAKE_TRANSITION_S ────────────────────────────
+
+    def start_brake_transition(self) -> None:
+        """Llamar cuando se inicia una transición de throttle a brake.
+        Registra el timestamp para medir el tiempo real de transición."""
+        self._transition_start_t = time.time()
+        self._transition_start_accel = self.acceleration_ms2
+
+    def end_brake_transition(self) -> None:
+        """Llamar cuando se confirma que el freno está actuando (aceleración negativa).
+        Calcula el tiempo real de transición y actualiza la constante."""
+        if self._transition_start_t is None:
+            return
+        elapsed = time.time() - self._transition_start_t
+        self._transition_start_t = None
+        self._transition_start_accel = None
+
+        # Solo aceptar mediciones razonables (0.1 a 3.0 segundos)
+        if 0.1 <= elapsed <= 3.0:
+            self._transition_measurements.append(elapsed)
+            if len(self._transition_measurements) > self._MAX_TRANSITION_SAMPLES:
+                self._transition_measurements.pop(0)
+            # Actualizar constante como media de las mediciones
+            avg_transition = sum(self._transition_measurements) / len(self._transition_measurements)
+            if abs(avg_transition - self.brake_transition_s) > 0.05:
+                _log.info(
+                    "Brake transition actualizado: %.2fs → %.2fs (n=%d)",
+                    self.brake_transition_s, avg_transition,
+                    len(self._transition_measurements))
+                self.brake_transition_s = avg_transition
 
     # ── Clima / lluvia ───────────────────────────────────────────────────────
 
@@ -183,7 +221,7 @@ class TrainPhysics:
         else:
             effective_decel = decel
         if current_accel_ms2 is not None and current_accel_ms2 > 0.0:
-            t_trans = BRAKE_TRANSITION_S
+            t_trans = self.brake_transition_s  # D: usar valor medido dinámicamente
             v_peak = v1 + current_accel_ms2 * t_trans
             d_trans = v1 * t_trans + 0.5 * current_accel_ms2 * t_trans ** 2
             d_brake = (v_peak ** 2 - v2 ** 2) / (2 * effective_decel)

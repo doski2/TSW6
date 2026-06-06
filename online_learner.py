@@ -2,12 +2,9 @@
 """
 online_learner.py — Aprendizaje en línea de constantes físicas del tren.
 
-Observa los períodos de notch estable en tramo plano mientras el autopilot
-conduce y actualiza las constantes de frenado/tracción/inercia mediante
-media móvil exponencial (EMA), persistiendo el resultado en JSON.
-
-Solo acepta mediciones con |gradiente| < MAX_GRAD_PCT para garantizar
-datos de referencia sin corrección (evita errores de compensación).
+Observa los períodos de notch estable mientras el autopilot conduce y
+actualiza las constantes de frenado/tracción/inercia mediante media móvil
+exponencial (EMA), persistiendo el resultado en JSON.
 
 Notches observados (handle combinado 0-8):
   0 → MAX_DECEL_MS2    (Freno-4 máximo)
@@ -23,6 +20,11 @@ Mejoras v2:
   - Límites duros (clamp) en constantes aprendidas
   - Decay/reset si diverge >50% del valor inicial
   - Separación por banda de velocidad (0-30, 30-60, 60+ mph)
+
+Mejoras v3:
+  - Separación por banda de gradiente (plano/subida/bajada)
+  - Compensación gravitacional en mediciones fuera del plano
+  - Permite aprender en pendientes (antes solo en plano)
 """
 
 import json
@@ -39,8 +41,11 @@ EMA_ALPHA    = 0.10   # tasa EMA (~20 muestras para converger al 90 %)
 MIN_SAMPLES  = 3      # mínimo de muestras antes de confiar en un valor
 MIN_STABLE_S = 2.0    # segundos de notch estable requeridos
 MIN_DV_MPH   = 0.6    # cambio mínimo de velocidad en la ventana
-MAX_GRAD_PCT = 1.0    # |gradiente| máximo (%) para considerar "plano"
+MAX_GRAD_PCT = 3.0    # |gradiente| máximo (%) para aceptar mediciones (ampliado v3)
 MIN_SPEED    = 5.0    # mph mínimo (descarta mediciones cerca de parado)
+
+# Umbral de gradiente para separar bandas (v3)
+GRAD_FLAT_THRESHOLD = 0.5  # |grad| < 0.5% = plano
 
 # Notches que se observan y a qué constante alimentan
 _BRAKE_NOTCHES    = (1, 2, 3)   # promedio → TARGET_DECEL_MS2
@@ -64,6 +69,11 @@ _MAX_DIVERGENCE_RATIO = 0.50  # 50% del valor inicial → reset
 # ── Bandas de velocidad para separar aprendizaje ──────────────────────────────
 _SPEED_BANDS = ((0, 30), (30, 60), (60, 200))  # mph rangos
 
+# ── Bandas de gradiente (v3) ──────────────────────────────────────────────────
+# 0=plano (|grad|<0.5%), 1=subida (grad<-0.5%), 2=bajada (grad>+0.5%)
+_GRAD_BANDS = ("flat", "uphill", "downhill")
+_NUM_GRAD_BANDS = len(_GRAD_BANDS)
+
 # Valores iniciales de referencia para detección de divergencia
 _INITIAL_REFS = {
     "TARGET_ACCEL_MS2": 0.298,
@@ -81,6 +91,22 @@ def _speed_band_index(speed_mph: float) -> int:
     return len(_SPEED_BANDS) - 1
 
 
+def _grad_band_index(grad_pct: float) -> int:
+    """Devuelve el índice de banda de gradiente: 0=plano, 1=subida, 2=bajada."""
+    if abs(grad_pct) < GRAD_FLAT_THRESHOLD:
+        return 0  # plano
+    elif grad_pct < -GRAD_FLAT_THRESHOLD:
+        return 1  # subida (grad negativo = pendiente ascendente)
+    else:
+        return 2  # bajada (grad positivo = pendiente descendente)
+
+
+def _gravity_compensation(grad_pct: float) -> float:
+    """Componente gravitacional a restar de la medición para normalizar a plano.
+    Positivo en bajada (gravedad ayuda), negativo en subida (gravedad frena)."""
+    return 9.81 * (grad_pct / 100.0)
+
+
 class OnlineLearner:
     """
     Aprende por EMA los valores de aceleración para cada notch del handle.
@@ -92,9 +118,13 @@ class OnlineLearner:
 
     def __init__(self, save_path: str = DEFAULT_PATH):
         self.save_path = save_path
-        # Almacenamiento por banda: band_idx → {notch → ema_value}
+        # Almacenamiento por banda de velocidad: band_idx → {notch → ema_value}
         self._ema_bands: list[dict[int, float]] = [{} for _ in _SPEED_BANDS]
         self._n_bands:   list[dict[int, int]]   = [{} for _ in _SPEED_BANDS]
+
+        # Almacenamiento por banda de gradiente (v3): grad_band_idx → {notch → ema}
+        self._ema_grad_bands: list[dict[int, float]] = [{} for _ in _GRAD_BANDS]
+        self._n_grad_bands:   list[dict[int, int]]   = [{} for _ in _GRAD_BANDS]
 
         # Compatibilidad: EMA combinada (media ponderada de bandas)
         self._ema: dict[int, float] = {}   # notch → valor EMA combinado
@@ -142,7 +172,7 @@ class OnlineLearner:
         if t1 - t0 < MIN_STABLE_S:
             return None
 
-        # 4. Gradiente plano
+        # 4. Gradiente máximo absoluto (filtro de seguridad ampliado v3)
         if max(abs(g) for _, _, _, g, _ in self._window) > MAX_GRAD_PCT:
             return None
 
@@ -163,19 +193,29 @@ class OnlineLearner:
         else:
             measured = dv * 0.44704 / (t1 - t0)   # mph/s → m/s²
 
+        # ── v3: Compensar componente gravitacional para normalizar a plano ────
+        avg_grad = sum(g for _, _, _, g, _ in self._window) / len(self._window)
+        grad_band = _grad_band_index(avg_grad)
+        if abs(avg_grad) >= GRAD_FLAT_THRESHOLD:
+            # Restar la componente gravitacional para obtener la fuerza del tren
+            g_comp = _gravity_compensation(avg_grad)
+            measured_normalized = measured - g_comp
+        else:
+            measured_normalized = measured
+
         # ── Filtro de coherencia de signo ─────────────────────────────────────
-        # Tracción (notch >= 5): solo aceptar aceleración positiva
-        if notch in _TRACTION_NOTCHES and measured < 0:
+        # Tracción (notch >= 5): solo aceptar aceleración positiva (normalizada)
+        if notch in _TRACTION_NOTCHES and measured_normalized < 0:
             _log.debug(
-                "Learner DESCARTADO notch=%d  a_medida=%.3f (negativa en tracción)",
-                notch, measured)
+                "Learner DESCARTADO notch=%d  a_medida=%.3f  a_norm=%.3f (negativa en tracción)",
+                notch, measured, measured_normalized)
             self._window.clear()
             return None
-        # Freno (notch <= 3): solo aceptar aceleración negativa (desaceleración)
-        if notch in (_MAX_NOTCH, *_BRAKE_NOTCHES) and measured > 0:
+        # Freno (notch <= 3): solo aceptar aceleración negativa (normalizada)
+        if notch in (_MAX_NOTCH, *_BRAKE_NOTCHES) and measured_normalized > 0:
             _log.debug(
-                "Learner DESCARTADO notch=%d  a_medida=%.3f (positiva en freno)",
-                notch, measured)
+                "Learner DESCARTADO notch=%d  a_medida=%.3f  a_norm=%.3f (positiva en freno)",
+                notch, measured, measured_normalized)
             self._window.clear()
             return None
 
@@ -183,24 +223,38 @@ class OnlineLearner:
         avg_speed = sum(speeds) / len(speeds)
         band_idx = _speed_band_index(avg_speed)
 
-        # ── Actualizar EMA por banda ──────────────────────────────────────────
+        # ── Actualizar EMA por banda de velocidad (usa valor normalizado) ─────
         band_ema = self._ema_bands[band_idx]
         band_n   = self._n_bands[band_idx]
 
         if notch not in band_ema:
-            band_ema[notch] = measured
+            band_ema[notch] = measured_normalized
             band_n[notch]   = 1
         else:
-            band_ema[notch] = EMA_ALPHA * measured + (1 - EMA_ALPHA) * band_ema[notch]
+            band_ema[notch] = EMA_ALPHA * measured_normalized + (1 - EMA_ALPHA) * band_ema[notch]
             band_n[notch]   = min(band_n[notch] + 1, 9999)
+
+        # ── v3: Actualizar EMA por banda de gradiente (valor bruto sin normalizar) ─
+        grad_ema = self._ema_grad_bands[grad_band]
+        grad_n   = self._n_grad_bands[grad_band]
+
+        if notch not in grad_ema:
+            grad_ema[notch] = measured
+            grad_n[notch]   = 1
+        else:
+            grad_ema[notch] = EMA_ALPHA * measured + (1 - EMA_ALPHA) * grad_ema[notch]
+            grad_n[notch]   = min(grad_n[notch] + 1, 9999)
 
         # ── Recalcular EMA combinada (media ponderada por nº muestras) ────────
         self._recalculate_combined()
 
         _log.info(
-            "Learner notch=%d  a_medida=%.3f  a_ema=%.3f  n=%d  band=%d-%dmph",
-            notch, measured, self._ema.get(notch, 0.0), self._n.get(notch, 0),
+            "Learner notch=%d  a_medida=%.3f  a_norm=%.3f  a_ema=%.3f  n=%d  "
+            "band=%d-%dmph  grad_band=%s",
+            notch, measured, measured_normalized,
+            self._ema.get(notch, 0.0), self._n.get(notch, 0),
             _SPEED_BANDS[band_idx][0], _SPEED_BANDS[band_idx][1],
+            _GRAD_BANDS[grad_band],
         )
 
         # Vaciar ventana para evitar solapamiento de mediciones
@@ -330,6 +384,50 @@ class OnlineLearner:
                                   for n in _OBSERVED}
         return result
 
+    def confidence_by_gradient(self) -> dict[str, dict[str, int]]:
+        """Devuelve el número de muestras por notch y banda de gradiente (v3)."""
+        labels = {
+            0: "MAX_DECEL(n0)",
+            1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
+            4: "COAST(n4)",
+            7: "ACCEL(n7)", 8: "ACCEL(n8)",
+        }
+        result = {}
+        for i, band_name in enumerate(_GRAD_BANDS):
+            result[band_name] = {labels[n]: self._n_grad_bands[i].get(n, 0)
+                                 for n in _OBSERVED}
+        return result
+
+    def get_gradient_constants(self, grad_band: int) -> dict:
+        """Devuelve constantes para una banda de gradiente específica (valor bruto).
+        Útil para predecir comportamiento real en pendiente sin compensar."""
+        result: dict = {}
+        grad_ema = self._ema_grad_bands[grad_band]
+        grad_n = self._n_grad_bands[grad_band]
+
+        def _trusted_abs_g(notch: int) -> Optional[float]:
+            if grad_n.get(notch, 0) >= MIN_SAMPLES and notch in grad_ema:
+                return abs(grad_ema[notch])
+            return None
+
+        def _trusted_avg_g(notches: tuple) -> Optional[float]:
+            vals = [v for n in notches if (v := _trusted_abs_g(n)) is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        v = _trusted_abs_g(_MAX_NOTCH)
+        if v is not None and v > 0.3:
+            result["MAX_DECEL_MS2"] = v
+        v = _trusted_avg_g(_BRAKE_NOTCHES)
+        if v is not None and v > 0.15:
+            result["TARGET_DECEL_MS2"] = v
+        v = _trusted_abs_g(_COAST_NOTCH)
+        if v is not None:
+            result["COAST_DECEL_MS2"] = v
+        v = _trusted_avg_g(_TRACTION_NOTCHES)
+        if v is not None and v > 0.05:
+            result["TARGET_ACCEL_MS2"] = v
+        return result
+
     # ── Persistencia ─────────────────────────────────────────────────────────
 
     def _load(self) -> None:
@@ -354,6 +452,17 @@ class OnlineLearner:
                     self._ema_bands[1] = legacy_ema
                     self._n_bands[1]   = legacy_n
 
+                # v3: cargar bandas de gradiente
+                if "ema_grad_bands" in d:
+                    for i, band_data in enumerate(d["ema_grad_bands"]):
+                        if i < len(self._ema_grad_bands):
+                            self._ema_grad_bands[i] = {int(k): float(v)
+                                                      for k, v in band_data.items()}
+                    for i, band_data in enumerate(d.get("n_grad_bands", [])):
+                        if i < len(self._n_grad_bands):
+                            self._n_grad_bands[i] = {int(k): int(v)
+                                                    for k, v in band_data.items()}
+
                 self._recalculate_combined()
                 consts = self.get_constants()
                 _log.info("OnlineLearner cargado: %s  constantes_confiables=%s",
@@ -372,6 +481,11 @@ class OnlineLearner:
                                       for band in self._ema_bands],
                         "n_bands":   [{str(k): v for k, v in band.items()}
                                       for band in self._n_bands],
+                        # v3: bandas de gradiente
+                        "ema_grad_bands": [{str(k): v for k, v in band.items()}
+                                           for band in self._ema_grad_bands],
+                        "n_grad_bands":   [{str(k): v for k, v in band.items()}
+                                           for band in self._n_grad_bands],
                         # Legacy compat: also write combined values
                         "ema": {str(k): v for k, v in self._ema.items()},
                         "n":   {str(k): v for k, v in self._n.items()},

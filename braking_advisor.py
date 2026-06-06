@@ -148,6 +148,13 @@ class BrakingAdvisor:
                 "bd_hor=%.0fm  cap=%.1f",
                 speed_mph, _nl, _dn, bd_hor, profile_cap)
 
+            # B/D: Pre-frenado con gradiente favorable (bajada hacia límite inferior)
+            # Si estamos en bajada y la gravedad ayuda a acelerar, iniciar COAST antes
+            if (gradient_pct is not None and gradient_pct < -0.5
+                    and _dn <= bd_hor * 1.2
+                    and throttle_notch > 0):
+                return "COAST", effective_limit
+
         if should_brake_fn(speed_mph, _nl, _dn,
                            gradient_pct=gradient_pct,
                            react_s=(P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor,

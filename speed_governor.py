@@ -20,6 +20,7 @@ from governor_constants import (
     SAFETY_MARGIN, RATE_TOLERANCE, SERVICE_MAX_BRAKE,
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
     STATION_STOPPED_MPH, NOTCH_NEUTRAL,
+    P2_TSM_BRAKE_THRESHOLD, P2_LIMIT_BRAKE_THRESHOLD,
 )
 from governor_physics import TrainPhysics
 from governor_station import StationFSM
@@ -457,14 +458,27 @@ class SpeedGovernor:
                     speed_mph, limit_mph, _over_crit)
                 return "HARDBRAKE"
 
-        # P2: Crucero pegado al límite de vía
+        # P2: Crucero pegado al límite de vía (C: histéresis configurable para BRAKE)
         if (error >= 0 and limit_mph is not None
                 and self.station_state not in ("APPROACHING", "STOPPED")):
-            if speed_mph > limit_mph:
+            _p2_excess = speed_mph - limit_mph
+            if _p2_excess >= P2_LIMIT_BRAKE_THRESHOLD:
+                # Exceso >= threshold: BRAKE
                 if self.throttle.notch > 0:
                     return "COAST"
                 return "BRAKE"
+            if _p2_excess > 0.0:
+                # Exceso 0-threshold: solo quitar tracción, no frenar
+                if self.throttle.notch > 0:
+                    return "COAST"
+                return "HOLD"
             if speed_mph > limit_mph - 0.5 and self.throttle.notch > 0:
+                return "COAST"
+            # B: Pre-compensación de gradiente en bajada
+            # Si gradiente favorable (bajada) y velocidad cerca del límite → COAST preventivo
+            if (gradient_pct is not None and gradient_pct < -0.5
+                    and speed_mph > limit_mph - 2.0
+                    and self.throttle.notch > 0):
                 return "COAST"
 
         # ── P2: Overspeed (por effective_limit o límite) ───────────────────────
@@ -526,13 +540,20 @@ class SpeedGovernor:
                         speed_mph, effective_limit, error)
                     return "HARDBRAKE"
 
-            # TSM/overspeed: COAST→BRAKE inmediato (banda OVER-LEVE desaparece)
+            # TSM/overspeed: COAST→BRAKE con histéresis (C: threshold configurable)
+            # No frenar por excesos mínimos para evitar oscilaciones
             if supervision in ("tsm", "overspeed") and speed_mph > limit_mph - 1.5:
+                _tsm_excess = speed_mph - limit_mph
+                if _tsm_excess < P2_TSM_BRAKE_THRESHOLD:
+                    # Exceso menor al threshold: solo COAST si hay tracción, si no HOLD
+                    if _tsm_excess > 0 and self.throttle.notch > 0:
+                        return "COAST"
+                    return "HOLD"
                 if _decel_ok:
                     return "HOLD"
                 _gov_log.info(
-                    "P2 BRAKE (tsm/overspeed)  spd=%.1f  lim=%.1f  sup=%s",
-                    speed_mph, limit_mph, supervision)
+                    "P2 BRAKE (tsm/overspeed)  spd=%.1f  lim=%.1f  sup=%s  exceso=%.1f",
+                    speed_mph, limit_mph, supervision, _tsm_excess)
                 return "BRAKE"
             if gradient_pct is not None and gradient_pct < -0.5:
                 if speed_mph > effective_limit:
@@ -731,10 +752,17 @@ class SpeedGovernor:
                 return True
 
         elif action in ("BRAKE", "FULLSTOP"):
+            # D: Medir transición throttle→brake
             if self.throttle.is_active:
+                self._physics.start_brake_transition()
                 self.throttle.coast(hwnd)
                 self.last_control = now
                 return True
+            # D: Detectar cuando el freno empieza a actuar
+            a = self.acceleration_ms2
+            if (self._physics._transition_start_t is not None
+                    and a is not None and a < -0.05):
+                self._physics.end_brake_transition()
             if action == "FULLSTOP":
                 steps = 1
                 max_b = BrakeController.MAX_NOTCH
