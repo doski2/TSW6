@@ -13,8 +13,9 @@ from typing import Optional
 
 from colorama import Fore, Style
 
+from typing import Any
+
 from governor_constants import NOTCH_LABELS
-from speed_governor import SpeedGovernor
 from tsw_connection import TswConnection
 
 # ── Colores por acción ────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ _first_render = True       # primer render: limpiar pantalla una sola vez
 
 # ── Dashboard principal ───────────────────────────────────────────────────────
 
-def render_dashboard(gov: SpeedGovernor, telem: dict, conn: TswConnection,
+def render_dashboard(gov: Any, telem: dict, conn: TswConnection,
                      hwnd: Optional[int], fps: float) -> None:
     """Renderiza el dashboard en consola sin parpadeo (sobreescribe en su sitio)."""
     global _first_render

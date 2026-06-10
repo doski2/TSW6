@@ -16,12 +16,12 @@ import os
 import statistics
 from typing import Optional
 
-# Constantes actuales del speed_governor (para comparar)
+# Constantes actuales de governor_constants.py (para comparar con datos del profiler)
 CURRENT_CONSTANTS = {
-    "MAX_DECEL_MS2":    0.900,
-    "TARGET_ACCEL_MS2": 0.494,
-    "TARGET_DECEL_MS2": 0.440,
-    "COAST_DECEL_MS2":  0.103,
+    "MAX_DECEL_MS2":    1.071,
+    "TARGET_ACCEL_MS2": 0.298,
+    "TARGET_DECEL_MS2": 0.433,
+    "COAST_DECEL_MS2":  0.095,
 }
 
 NOTCH_LABELS: dict[int, str] = {
@@ -101,7 +101,7 @@ def main() -> None:
     parser.add_argument("--dir",   default="logs",
                         help="Carpeta con los CSV (default: logs/)")
     parser.add_argument("--apply", action="store_true",
-                        help="Actualizar speed_governor.py con los valores calculados")
+                        help="Actualizar governor_constants.py con los valores calculados")
     args = parser.parse_args()
 
     rows, files_read = load_csvs(args.dir)
@@ -178,7 +178,7 @@ def main() -> None:
 
 
 def _apply_to_governor(recs: dict[str, Optional[float]]) -> None:
-    path = os.path.join(os.path.dirname(__file__), "speed_governor.py")
+    path = os.path.join(os.path.dirname(__file__), "governor_constants.py")
     if not os.path.exists(path):
         print(f"\nNo se encontró {path}")
         return
@@ -201,11 +201,11 @@ def _apply_to_governor(recs: dict[str, Optional[float]]) -> None:
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.write(src)
-        print("\nActualizado speed_governor.py:")
+        print("\nActualizado governor_constants.py:")
         for c in changed:
             print(c)
     else:
-        print("\nNo se encontraron las constantes en speed_governor.py")
+        print("\nNo se encontraron las constantes en governor_constants.py")
 
 
 if __name__ == "__main__":

@@ -18,9 +18,21 @@ BRAKE_TRANSITION_S = 0.5     # segundos para transición aceleración→neutro�
 # ── Protocolo de tracción / frenado de servicio ───────────────────────────────
 # Basado en teoría de tracción ferroviaria: control por tasa de aceleración
 # en lugar de control proporcional por error de velocidad.
-TARGET_ACCEL_MS2 = 0.298   # tasa de aceleración objetivo (arranque → crucero)
-TARGET_DECEL_MS2 = 0.433   # tasa de deceleración objetivo (frenado de servicio)
-RATE_TOLERANCE   = 0.18    # banda muerta ±0.18 m/s² alrededor del objetivo
+TARGET_ACCEL_MS2      = 0.301   # tasa de aceleración objetivo (arranque → crucero)
+TARGET_DECEL_MS2      = 0.433   # tasa de deceleración objetivo (frenado de servicio)
+RATE_TOLERANCE        = 0.18    # banda muerta ±0.18 m/s² para decisiones de frenado (P2)
+
+# ── P3: Control por proyección de velocidad ───────────────────────────────────
+# En lugar de perseguir una tasa de aceleración instantánea, P3 proyecta la
+# velocidad a P3_LOOKAHEAD_S segundos y solo mueve el notch si la trayectoria
+# sale de la banda ±P3_SPEED_TOL_MPH alrededor del objetivo.
+# Ventaja: el acelerómetro ya incorpora el efecto del gradiente, por lo que
+# ruido o cambios pequeños de gradiente NO generan cambios de muesca.
+P3_LOOKAHEAD_S     = 8.0    # horizonte de proyección (s): v_proj = v + a·t
+P3_SPEED_TOL_MPH   = 2.0    # mph: banda muerta en velocidad proyectada
+P3_RAMP_MAX_MPH    = 10.0   # mph: rampa suave de arranque — notch máx 2 por debajo
+# Ciclos de banda muerta anti-oscilación antes de permitir cambio de dirección de notch
+P3_DEADBAND_CYCLES = 3      # 3 ciclos × ~200ms = 600ms de estabilización
 
 # Notch 4 = freno máximo: solo para parada final en andén y emergencia.
 # El frenado de servicio (reducciones de límite) usa como mucho notch 3.

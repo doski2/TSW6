@@ -194,21 +194,24 @@ class TestGradientBands(unittest.TestCase):
         self.assertEqual(_grad_band_index(-0.4), 0)
 
     def test_uphill_band(self):
-        """grad < -0.5% → uphill (1)."""
-        self.assertEqual(_grad_band_index(-1.0), 1)
-        self.assertEqual(_grad_band_index(-0.6), 1)
+        """grad > +0.5% → uphill (1). Convención: positivo = subida."""
+        self.assertEqual(_grad_band_index(1.0), 1)
+        self.assertEqual(_grad_band_index(0.6), 1)
 
     def test_downhill_band(self):
-        """grad > +0.5% → downhill (2)."""
-        self.assertEqual(_grad_band_index(1.0), 2)
-        self.assertEqual(_grad_band_index(0.6), 2)
+        """grad < -0.5% → downhill (2). Convención: negativo = bajada."""
+        self.assertEqual(_grad_band_index(-1.0), 2)
+        self.assertEqual(_grad_band_index(-0.6), 2)
 
     def test_gravity_compensation(self):
-        """Compensación gravitacional correcta."""
-        # 1% bajada → +0.0981 m/s²
-        self.assertAlmostEqual(_gravity_compensation(1.0), 0.0981, places=3)
-        # 1% subida → -0.0981 m/s²
-        self.assertAlmostEqual(_gravity_compensation(-1.0), -0.0981, places=3)
+        """Compensación gravitacional correcta (convención: positivo = subida).
+        measured_normalized = measured - _gravity_compensation(grad)
+        En subida (grad>0): comp negativa → normalizado = measured + |comp| (reduce decel de subida).
+        En bajada (grad<0): comp positiva → normalizado = measured - |comp| (reduce accel de bajada)."""
+        # 1% subida → comp = -0.0981 m/s² (restarlo suma desaceleración extra por gravedad)
+        self.assertAlmostEqual(_gravity_compensation(1.0), -0.0981, places=3)
+        # 1% bajada → comp = +0.0981 m/s² (restarlo quita la ayuda de la gravedad)
+        self.assertAlmostEqual(_gravity_compensation(-1.0), 0.0981, places=3)
         # Plano → 0
         self.assertAlmostEqual(_gravity_compensation(0.0), 0.0, places=5)
 

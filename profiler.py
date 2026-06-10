@@ -45,10 +45,10 @@ GRAD_BAND_WIDTH     = 0.5   # ancho de banda de gradiente (%)
 # ── Constantes actuales del speed_governor (para comparar en el resumen) ─────
 
 CURRENT_CONSTANTS = {
-    "MAX_DECEL_MS2":    0.900,
-    "TARGET_ACCEL_MS2": 0.494,
-    "TARGET_DECEL_MS2": 0.440,
-    "COAST_DECEL_MS2":  0.103,
+    "MAX_DECEL_MS2":    1.071,
+    "TARGET_ACCEL_MS2": 0.298,
+    "TARGET_DECEL_MS2": 0.433,
+    "COAST_DECEL_MS2":  0.095,
 }
 
 # ── Clasificación de vehículos ────────────────────────────────────────────────

@@ -70,7 +70,8 @@ _MAX_DIVERGENCE_RATIO = 0.50  # 50% del valor inicial → reset
 _SPEED_BANDS = ((0, 30), (30, 60), (60, 200))  # mph rangos
 
 # ── Bandas de gradiente (v3) ──────────────────────────────────────────────────
-# 0=plano (|grad|<0.5%), 1=subida (grad<-0.5%), 2=bajada (grad>+0.5%)
+# Convención idéntica al resto del código: positivo = subida, negativo = bajada.
+# 0=plano (|grad|<0.5%), 1=subida (grad>+0.5%), 2=bajada (grad<-0.5%)
 _GRAD_BANDS = ("flat", "uphill", "downhill")
 _NUM_GRAD_BANDS = len(_GRAD_BANDS)
 
@@ -92,19 +93,23 @@ def _speed_band_index(speed_mph: float) -> int:
 
 
 def _grad_band_index(grad_pct: float) -> int:
-    """Devuelve el índice de banda de gradiente: 0=plano, 1=subida, 2=bajada."""
+    """Devuelve el índice de banda de gradiente: 0=plano, 1=subida, 2=bajada.
+    Convención (igual que governor_physics): positivo = subida, negativo = bajada."""
     if abs(grad_pct) < GRAD_FLAT_THRESHOLD:
         return 0  # plano
-    elif grad_pct < -GRAD_FLAT_THRESHOLD:
-        return 1  # subida (grad negativo = pendiente ascendente)
+    elif grad_pct > GRAD_FLAT_THRESHOLD:
+        return 1  # subida (grad positivo = pendiente ascendente)
     else:
-        return 2  # bajada (grad positivo = pendiente descendente)
+        return 2  # bajada (grad negativo = pendiente descendente)
 
 
 def _gravity_compensation(grad_pct: float) -> float:
     """Componente gravitacional a restar de la medición para normalizar a plano.
-    Positivo en bajada (gravedad ayuda), negativo en subida (gravedad frena)."""
-    return 9.81 * (grad_pct / 100.0)
+    Convención: positivo = subida (gravedad frena → comp negativa),
+                negativo = bajada (gravedad ayuda → comp positiva).
+    Se usa como: measured_normalized = measured - _gravity_compensation(grad)
+    lo que equivale a: measured + |g_comp_bajada| o measured - |g_comp_subida|."""
+    return -9.81 * (grad_pct / 100.0)
 
 
 class OnlineLearner:

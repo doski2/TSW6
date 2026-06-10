@@ -159,7 +159,14 @@ class BrakingAdvisor:
                            gradient_pct=gradient_pct,
                            react_s=(P1_REACT_S + P1_ACK_GUARD_S) * _grad_factor,
                            current_accel_ms2=_accel):
+            # La física dice que ya hay que frenar: reducir el límite Y devolver COAST
+            # para garantizar que el gobernador actúe sin esperar a que P2 lo detecte.
             effective_limit = min(effective_limit, profile_cap)
+            _log.debug(
+                "P1 ALERTA (should_brake)  spd=%.1f  next_lim=%.1f  dist=%.0fm  cap=%.1f  → COAST",
+                speed_mph, _nl, _dn, profile_cap)
+            if throttle_notch > 0:
+                return "COAST", effective_limit
 
         # No urgency triggered → reset cycles
         self._nomarker_cycles = 0

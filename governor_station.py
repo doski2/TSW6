@@ -291,5 +291,3 @@ class StationFSM:
             if self._creep_to_station:
                 eff_lim = min(eff_lim, 10.0)
             return None, eff_lim
-
-        return None, 0.0

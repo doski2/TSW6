@@ -73,6 +73,10 @@ echo  Si no, el autopilot pedira los datos manualmente.
 echo.
 pause
 %PY% tsw_autopilot.py --profile
+echo.
+echo  Analizando datos de calibracion...
+echo.
+%PY% analyze.py --apply
 goto fin
 
 :op2
@@ -95,10 +99,6 @@ goto fin
 goto fin
 
 :fin
-echo.
-echo  Autopilot detenido. Analizando datos de calibracion...
-echo.
-%PY% analyze.py --apply
 echo.
 pause
 goto menu
