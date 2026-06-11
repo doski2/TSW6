@@ -22,15 +22,16 @@ TARGET_ACCEL_MS2      = 0.301   # tasa de aceleración objetivo (arranque → cr
 TARGET_DECEL_MS2      = 0.433   # tasa de deceleración objetivo (frenado de servicio)
 RATE_TOLERANCE        = 0.18    # banda muerta ±0.18 m/s² para decisiones de frenado (P2)
 
-# ── P3: Control por proyección de velocidad ───────────────────────────────────
-# En lugar de perseguir una tasa de aceleración instantánea, P3 proyecta la
-# velocidad a P3_LOOKAHEAD_S segundos y solo mueve el notch si la trayectoria
-# sale de la banda ±P3_SPEED_TOL_MPH alrededor del objetivo.
-# Ventaja: el acelerómetro ya incorpora el efecto del gradiente, por lo que
-# ruido o cambios pequeños de gradiente NO generan cambios de muesca.
-P3_LOOKAHEAD_S     = 8.0    # horizonte de proyección (s): v_proj = v + a·t
-P3_SPEED_TOL_MPH   = 2.0    # mph: banda muerta en velocidad proyectada
-P3_RAMP_MAX_MPH    = 10.0   # mph: rampa suave de arranque — notch máx 2 por debajo
+# ── P3: Rastreo de aceleración objetivo ──────────────────────────────────────
+# En lugar de proyectar la velocidad futura, P3 calcula la aceleración
+# necesaria para alcanzar el límite en P3_LOOKAHEAD_S segundos:
+#   a_target = min(error_mph × 0.44704 / P3_LOOKAHEAD_S, TARGET_ACCEL_MS2)
+# y compara con la aceleración real medida por el acelerómetro.
+# Resultado: se usa la muesca MÍNIMA que produce la aceleración correcta;
+# nunca se va a tracción máxima si el tren ya acelera suficientemente.
+# Ventaja: elimina el ciclo "acelera a fondo → proyecta exceso → suelta".
+P3_LOOKAHEAD_S     = 8.0    # constante de tiempo (s): cuánto tarda en llegar al límite
+P3_ACCEL_TOL_MS2   = 0.05   # m/s²: banda muerta ±tol alrededor de a_target
 # Ciclos de banda muerta anti-oscilación antes de permitir cambio de dirección de notch
 P3_DEADBAND_CYCLES = 3      # 3 ciclos × ~200ms = 600ms de estabilización
 

@@ -26,7 +26,7 @@ import time
 from typing import Optional
 
 from governor_constants import (
-    P3_LOOKAHEAD_S, P3_SPEED_TOL_MPH, P3_DEADBAND_CYCLES,
+    P3_LOOKAHEAD_S, P3_ACCEL_TOL_MS2, P3_DEADBAND_CYCLES,
     CONTROL_INTERVAL, P2_LIMIT_BRAKE_THRESHOLD, P2_TSM_BRAKE_THRESHOLD,
     RATE_TOLERANCE, STATION_STOPPED_MPH,
 )
@@ -551,23 +551,31 @@ class SpeedDecider:
             self.last_action = "HOLD"
             return "HOLD"
 
-        # ── P3: Control por proyección de velocidad ───────────────────────
+        # ── P3: Rastreo de aceleración objetivo ──────────────────────────────
+        # Calcula la aceleración necesaria para alcanzar el límite en
+        # P3_LOOKAHEAD_S segundos y ajusta la muesca según la diferencia
+        # con la aceleración medida. Usa la muesca MÍNIMA que produce a_target;
+        # nunca va a tracción máxima si el tren ya acelera suficientemente.
         if a is not None:
-            v_proj_mph = speed + (a * P3_LOOKAHEAD_S) / 0.44704
-            proj_err   = effective_limit - v_proj_mph
+            # Aceleración objetivo: escala con el error de velocidad
+            # (cerca del límite → muy poca aceleración → notch bajo)
+            a_target = min(
+                max(error * 0.44704 / P3_LOOKAHEAD_S, 0.0),
+                self._physics.target_accel_ms2,
+            )
 
             _log.debug(
-                "P3 proj  spd=%.1f  a=%.3f  v_proj=%.1f  elim=%.1f  proj_err=%.1f  grad=%.1f%%",
-                speed, a, v_proj_mph, effective_limit, proj_err, grad)
+                "P3 accel  spd=%.1f  a=%.3f  a_target=%.3f  err=%.1f  grad=%.1f%%",
+                speed, a, a_target, error, grad)
 
-            if proj_err > P3_SPEED_TOL_MPH:
+            if a < a_target - P3_ACCEL_TOL_MS2:
                 target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
-            elif proj_err < -P3_SPEED_TOL_MPH:
+            elif a > a_target + P3_ACCEL_TOL_MS2:
                 target_t = max(th_n - 1, 0)
             else:
                 target_t = th_n
         else:
-            # Tabla abierta por error + compensación de gradiente (sin acelerómetro)
+            # Sin acelerómetro: tabla abierta por error + compensación de gradiente
             if error > 15.0:
                 target_t = 4
             elif error > 8.0:

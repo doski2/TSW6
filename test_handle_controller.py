@@ -9,7 +9,7 @@ Verifica:
 """
 
 import time
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +21,7 @@ from handle_controller import HandleController, SafetyWatchdog, _NOTCH_NEUTRAL, 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _state(**overrides) -> TrainState:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         speed_mph=40.0, limit_mph=50.0, target_mph=0.0,
         handle_notch=4, acceleration_ms2=None, gradient_pct=0.0,
         rain_intensity=0.0, next_limit_mph=None, distance_next_m=None,
@@ -157,7 +157,7 @@ class TestKeyboard:
         s = _state(handle_notch=4)  # ya en neutro
 
         with patch("handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, object())
+            result = c.execute("COAST", s, None, 1)
         assert result is False
         mock_send.assert_not_called()
 
@@ -175,7 +175,7 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=6, ack_required=False)
         with patch("handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, object())
+            result = c.execute("COAST", s, None, 1)
         assert result is False
         mock_send.assert_not_called()
 
@@ -189,7 +189,7 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=5, ack_required=False)
         with patch("handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, object())
+            result = c.execute("COAST", s, None, 1)
         assert result is True
 
     def test_coast_allowed_after_grace_period(self):
@@ -198,7 +198,7 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=6, ack_required=False)
         with patch("handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, object())
+            result = c.execute("COAST", s, None, 1)
         assert result is True
 
     def test_coast_not_suppressed_during_ack(self):
@@ -208,7 +208,7 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=6, ack_required=True)  # ACK activo
         with patch("handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, object())
+            result = c.execute("COAST", s, None, 1)
         assert result is True
 
 

@@ -10,7 +10,7 @@ Verifica:
 """
 
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -21,7 +21,7 @@ from speed_decider import SpeedDecider
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _state(**overrides) -> TrainState:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         speed_mph=40.0, limit_mph=50.0, target_mph=0.0,
         handle_notch=4, acceleration_ms2=0.3, gradient_pct=0.0,
         rain_intensity=0.0, next_limit_mph=None, distance_next_m=None,
@@ -118,38 +118,54 @@ class TestP2Cruise:
         assert action == "HARDBRAKE"
 
 
-# ── P3: Proyección de velocidad ───────────────────────────────────────────────
+# ── P3: Rastreo de aceleración objetivo ──────────────────────────────────────
 
-class TestP3VelocityProjection:
-    def test_far_below_limit_accelerates(self):
-        """Muy por debajo del límite sin acelerómetro: debe querer acelerar."""
+class TestP3AccelerationTracking:
+    def test_far_below_limit_no_accel_data_accelerates(self):
+        """Sin acelerómetro y lejos del límite: tabla abierta → ACCELERATE."""
         d = _decider()
-        # handle en neutro, 15 mph por debajo del límite, sin aceleración API
         s = _state(speed_mph=25.0, limit_mph=50.0, handle_notch=4,
                    acceleration_ms2=None)
         action = d.decide(s)
         assert action == "ACCELERATE"
 
-    def test_projection_at_limit_hold(self):
-        """Proyección de velocidad justo en el límite: HOLD."""
+    def test_accel_below_target_accelerates(self):
+        """Aceleración medida < a_target → añadir muesca (ACCELERATE)."""
         d = _decider()
-        # speed=48, limit=50, a=0.11 m/s², lookahead=8s
-        # v_proj = 48 + (0.11 * 8) / 0.44704 ≈ 48 + 1.97 ≈ 49.97
-        # proj_err = 50 - 49.97 = 0.03 < P3_SPEED_TOL_MPH(2.0) → HOLD
-        s = _state(speed_mph=48.0, limit_mph=50.0, handle_notch=4,
-                   acceleration_ms2=0.11)
+        # error=10 mph, a_target = min(10*0.44704/8, TARGET_ACCEL) ≈ 0.301 m/s²
+        # a=0.1 < 0.301 - 0.05 = 0.251 → ACCELERATE
+        s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
+                   acceleration_ms2=0.1)
+        action = d.decide(s)
+        assert action == "ACCELERATE"
+
+    def test_accel_matches_target_hold(self):
+        """Aceleración medida ≈ a_target (dentro de tolerancia) → HOLD."""
+        d = _decider()
+        # error=10 mph → a_target = min(10*0.44704/8, TARGET_ACCEL=0.301) = 0.301 m/s²
+        # a=0.30 → |0.30 - 0.301| = 0.001 < P3_ACCEL_TOL=0.05 → HOLD
+        s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=6,
+                   acceleration_ms2=0.30)
         action = d.decide(s)
         assert action == "HOLD"
 
-    def test_projection_too_fast_coast(self):
-        """Proyección supera límite: debería COAST o bajar notch."""
+    def test_accel_above_target_coasts(self):
+        """Aceleración medida >> a_target → bajar muesca (COAST)."""
         d = _decider()
-        # speed=48, a=0.5 m/s², v_proj = 48 + (0.5*8)/0.44704 ≈ 57
-        # proj_err = 50 - 57 = -7 < -P3_SPEED_TOL_MPH → target_t = max(0-1, 0) = 0
-        # throttle_notch=0 y target_t=0 → no hay cambio → HOLD
-        # Si throttle_notch=1, target_t=0 → COAST
-        s = _state(speed_mph=48.0, limit_mph=50.0, handle_notch=5,
-                   acceleration_ms2=0.5)
+        # error=5 mph → a_target = min(5*0.44704/8, 0.301) = 0.279 m/s²
+        # a=0.6 > 0.279 + 0.05 = 0.329 → COAST
+        s = _state(speed_mph=45.0, limit_mph=50.0, handle_notch=7,
+                   acceleration_ms2=0.6)
+        action = d.decide(s)
+        assert action == "COAST"
+
+    def test_near_limit_uses_low_notch(self):
+        """Cerca del límite a_target es pequeño: aceleración media → COAST o HOLD (no ACCELERATE)."""
+        d = _decider()
+        # error=2 mph → a_target = min(2*0.44704/8, 0.301) = 0.112 m/s²
+        # a=0.3 > 0.112 + 0.05 = 0.162 → COAST
+        s = _state(speed_mph=48.0, limit_mph=50.0, handle_notch=7,
+                   acceleration_ms2=0.3)
         action = d.decide(s)
         assert action in ("COAST", "HOLD")
 
@@ -158,16 +174,14 @@ class TestP3VelocityProjection:
         from governor_constants import P3_DEADBAND_CYCLES
 
         d = _decider()
-        # Primer ciclo: proyección baja → sube notch (direction="up")
-        # speed=40, limit=50, a≈0.01: v_proj ≈ 40.18, proj_err=9.82 > 2 → ACCELERATE
-        s_acc = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=4,
+        # Primer ciclo: a baja → sube notch (direction="up")
+        # error=10 mph, a=0.01 < a_target-tol → ACCELERATE, last_dir="up"
+        s_acc = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
                        acceleration_ms2=0.01)
-        d.decide(s_acc)  # establece last_direction = "up"
+        d.decide(s_acc)
 
-        # Siguiente ciclo: proyección muy alta → quiere bajar notch (direction="down")
-        # speed=40, limit=50, handle=5 (throttle_notch=1), a=0.8:
-        # v_proj = 40 + (0.8*8)/0.44704 ≈ 54.3, proj_err = -4.3 → target_t=0 < th_n=1
-        # Cambio de dirección up→down: debe activar deadband → HOLD
+        # Siguiente ciclo: a muy alta → quiere bajar notch (direction="down")
+        # error=10, a=0.8 > a_target+0.05 → COAST. Cambio up→down: deadband → HOLD
         s_coast = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
                          acceleration_ms2=0.8)
         for i in range(P3_DEADBAND_CYCLES):

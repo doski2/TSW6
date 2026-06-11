@@ -5,6 +5,7 @@ Verifica construcción, propiedades derivadas y conversión desde telemetría.
 """
 
 import time
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,7 @@ from train_state import TrainState, build_train_state
 
 def _state(**overrides) -> TrainState:
     """Construye un TrainState con valores sensatos por defecto."""
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         speed_mph=40.0, limit_mph=50.0, target_mph=0.0,
         handle_notch=4, acceleration_ms2=None, gradient_pct=0.0,
         rain_intensity=0.0, next_limit_mph=None, distance_next_m=None,
