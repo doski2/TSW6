@@ -57,6 +57,7 @@ class TswConnection:
         self._last_route_stations: list = []   # caché de estaciones del dashboard_snapshot
         self._service_name: Optional[str] = None  # headcode del servicio activo
         self._vehicle_name: Optional[str] = None   # nombre del loco (friendly_name)
+        self._last_controls: dict = {}             # último snapshot crudo de controls.* (Fase 0)
         self._timetable: dict = self._load_timetable()   # paradas programadas por servicio
         self._device_creds: Optional[dict] = None  # {device_id, device_secret}
 
@@ -81,6 +82,201 @@ class TswConnection:
             }
         except Exception:
             return {}
+    # ── Controles del companion (Fase 0 freight NA) ───────────────────────────
+
+    # Mapeo API controls → claves en _telem (persistidas entre deltas)
+    _CONTROL_MAP: dict[str, str] = {
+        "throttle_notch":           "handle_notch",
+        "train_brake_handle":       "train_brake_notch",
+        "locomotive_brake_handle":  "ind_brake_notch",
+        "electric_brake_handle":    "dyn_brake_notch",
+    }
+
+    # Subclaves típicas dentro de brake_gauges (NA freight)
+    _BRAKE_GAUGE_TRAIN = frozenset({
+        "train", "train_brake", "automatic", "auto", "automatic_brake",
+        "automaticbrake",  # endpoint TSW: AutomaticBrake (tsw-en.yaml)
+    })
+    _BRAKE_GAUGE_IND = frozenset({
+        "independent", "ind", "locomotive", "loco", "direct", "independent_brake",
+        "independentbrake",  # endpoint TSW: IndependentBrake
+    })
+    _BRAKE_GAUGE_DYN = frozenset({
+        "dynamic", "dyn", "electric", "dynamic_brake", "electric_brake",
+        "dynamicbrake",  # endpoint TSW: DynamicBrake
+    })
+
+    @staticmethod
+    def _flatten_control_node(name: str, raw: object, prefix: str = "") -> dict[str, object]:
+        """
+        Aplana un nodo controls.* recursivamente.
+
+        brake_gauges en NA freight suele ser un dict anidado sin .value en la raíz;
+        el parser anterior lo descartaba silenciosamente.
+        """
+        out: dict[str, object] = {}
+        key = f"{prefix}.{name}" if prefix else name
+
+        if isinstance(raw, dict):
+            val = raw.get("value")
+            if val is not None and not isinstance(val, (dict, list)):
+                out[key] = val
+            for meta in ("status", "phase", "label", "display", "text", "percentage"):
+                meta_val = raw.get(meta)
+                if meta_val is not None and not isinstance(meta_val, (dict, list)):
+                    out[f"{key}.{meta}"] = meta_val
+            for sub_name, sub_raw in raw.items():
+                if sub_name in ("value", "status", "phase", "label", "display",
+                                "text", "percentage"):
+                    continue
+                if isinstance(sub_raw, (dict, list)):
+                    out.update(TswConnection._flatten_control_node(
+                        sub_name, sub_raw, prefix=key))
+                elif sub_raw is not None:
+                    out[f"{key}.{sub_name}"] = sub_raw
+        elif raw is not None:
+            out[key] = raw
+        return out
+
+    @classmethod
+    def _controls_from_delta(cls, data: dict) -> dict[str, object]:
+        """Extrae controls.* planos y anidados (p. ej. brake_gauges.train.value)."""
+        out: dict[str, object] = {}
+        ctrls = data.get("controls")
+        if not isinstance(ctrls, dict):
+            return out
+        for name, raw in ctrls.items():
+            out.update(cls._flatten_control_node(name, raw))
+        return out
+
+    @classmethod
+    def _match_flat_key(cls, key: str, tokens: frozenset[str]) -> bool:
+        parts = {p.lower() for p in key.replace("_", ".").split(".")}
+        return bool(parts & tokens)
+
+    @classmethod
+    def _derive_brake_telem(cls, ctrls: dict[str, object], parsed: dict) -> None:
+        """Deriva % / fase / muescas de frenos desde claves planas o anidadas."""
+        # RailBridge v3+: posición real en *.handle_position (sesión SD40-2 confirmada)
+        _HANDLE_POS: dict[str, tuple[str, str]] = {
+            "train_brake_handle.handle_position":      ("train_brake_value", "train_brake_notch"),
+            "locomotive_brake_handle.handle_position": ("ind_brake_value",   "ind_brake_notch"),
+            "electric_brake_handle.handle_position":   ("dyn_brake_value",   "dyn_brake_notch"),
+        }
+        for key, (val_key, notch_key) in _HANDLE_POS.items():
+            val = ctrls.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                parsed[val_key] = float(val)
+                parsed[notch_key] = cls._coerce_control_value(val)
+
+        active = ctrls.get("electric_brake_handle.is_active")
+        if isinstance(active, bool):
+            parsed["dyn_brake_active"] = active
+
+        for key, val in ctrls.items():
+            kl = key.lower()
+            if kl.endswith((".confidence", ".provenance", ".source")):
+                continue
+
+            if kl in ("automatic_brake_status", "train_brake_status",
+                      "train_brake_handle.status", "train_brake_handle.phase",
+                      "train_brake_handle.label"):
+                parsed["train_brake_phase"] = str(val)
+            elif kl in ("direct_brake_status", "independent_brake_status",
+                        "locomotive_brake_status",
+                        "locomotive_brake_handle.status",
+                        "locomotive_brake_handle.phase",
+                        "locomotive_brake_handle.label"):
+                parsed["ind_brake_phase"] = str(val)
+            elif kl in ("dynamic_brake_status", "electric_brake_status",
+                        "electric_brake_handle.status",
+                        "electric_brake_handle.phase",
+                        "electric_brake_handle.label"):
+                parsed["dyn_brake_phase"] = str(val)
+            elif kl.endswith(".phase") or kl.endswith(".status") or kl.endswith(".label"):
+                if cls._match_flat_key(kl, cls._BRAKE_GAUGE_TRAIN):
+                    parsed["train_brake_phase"] = str(val)
+                elif cls._match_flat_key(kl, cls._BRAKE_GAUGE_IND):
+                    parsed["ind_brake_phase"] = str(val)
+                elif cls._match_flat_key(kl, cls._BRAKE_GAUGE_DYN):
+                    parsed["dyn_brake_phase"] = str(val)
+
+            # Fallback brake_gauges (solo si no hay handle_position)
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                continue
+            if key.endswith(".handle_position") or key.endswith(".is_active"):
+                continue
+
+            if ("train_brake_value" not in parsed
+                    and (key == "train_brake_handle"
+                         or cls._match_flat_key(kl, cls._BRAKE_GAUGE_TRAIN))):
+                parsed["train_brake_value"] = val
+                parsed["train_brake_notch"] = cls._coerce_control_value(val)
+            elif ("ind_brake_value" not in parsed
+                  and (key == "locomotive_brake_handle"
+                       or cls._match_flat_key(kl, cls._BRAKE_GAUGE_IND))):
+                parsed["ind_brake_value"] = val
+                parsed["ind_brake_notch"] = cls._coerce_control_value(val)
+            elif ("dyn_brake_value" not in parsed
+                  and (key == "electric_brake_handle"
+                       or cls._match_flat_key(kl, cls._BRAKE_GAUGE_DYN))):
+                coerced = cls._coerce_control_value(val)
+                parsed["dyn_brake_notch"] = coerced
+                parsed["dyn_brake_value"] = val
+
+    @staticmethod
+    def _coerce_control_value(val: object) -> object:
+        """Normaliza a int si es entero, si no deja float."""
+        if isinstance(val, bool):
+            return int(val)
+        if isinstance(val, int):
+            return val
+        if isinstance(val, float):
+            return int(val) if val == int(val) else val
+        try:
+            f = float(val)  # type: ignore[arg-type]
+            return int(f) if f == int(f) else f
+        except (TypeError, ValueError):
+            return val
+
+    def _apply_controls_delta(self, data: dict, parsed: dict) -> None:
+        """Fusiona controles del delta en parsed y guarda snapshot crudo."""
+        ctrls = self._controls_from_delta(data)
+        if not ctrls:
+            return
+        self._last_controls = dict(ctrls)
+        for api_key, telem_key in self._CONTROL_MAP.items():
+            if api_key in ctrls:
+                parsed[telem_key] = self._coerce_control_value(ctrls[api_key])
+        self._derive_brake_telem(ctrls, parsed)
+
+    def get_last_controls(self) -> dict:
+        """Último snapshot crudo de data['controls'] (todos los campos de la API)."""
+        return dict(self._last_controls)
+
+    def get_controls_snapshot(self) -> dict:
+        """Vista unificada de mandos + telemetría básica (para diagnóstico Fase 0)."""
+        with self._telem_lock:
+            t = dict(self._telem)
+        return {
+            "vehicle":           self.get_vehicle_name(),
+            "throttle":          t.get("handle_notch"),
+            "train_brake":       t.get("train_brake_notch"),
+            "train_brake_pct":   t.get("train_brake_value"),
+            "train_brake_phase": t.get("train_brake_phase"),
+            "ind_brake":         t.get("ind_brake_notch"),
+            "ind_brake_pct":     t.get("ind_brake_value"),
+            "ind_brake_phase":   t.get("ind_brake_phase"),
+            "dyn_brake":         t.get("dyn_brake_notch"),
+            "dyn_brake_active":  t.get("dyn_brake_active"),
+            "dyn_brake_phase":   t.get("dyn_brake_phase"),
+            "speed_mph":         t.get("speed_mph"),
+            "limit_mph":         t.get("limit_mph"),
+            "gradient_pct":      t.get("gradient_pct"),
+            "accel_mps2":        t.get("accel_mps2"),
+            "raw_controls":      self.get_last_controls(),
+        }
+
     # ── Credenciales de dispositivo (pairing v2) ────────────────────────────────
 
     def _get_device_creds(self) -> dict:
@@ -288,10 +484,8 @@ class TswConnection:
                         try:
                             data = json.loads(raw_line[5:].strip())
                             parsed = self._parse_dmi(data)
-                            # handle_notch ahora en companion_dmi_delta.controls.throttle_notch.value
-                            tn = (data.get("controls") or {}).get("throttle_notch")
-                            if isinstance(tn, dict) and tn.get("value") is not None:
-                                parsed["handle_notch"] = int(tn["value"])
+                            # Controles: throttle + frenos NA (persistidos entre deltas)
+                            self._apply_controls_delta(data, parsed)
                             # Nombre del loco (una sola vez, desde los mensajes)
                             if self._vehicle_name is None:
                                 _nm = self._extract_loco_name(data.get("messages"))
@@ -306,6 +500,13 @@ class TswConnection:
                                     parsed["doors_dmi"] = self._telem["doors_dmi"]
                                 # Conservar handle_notch si no vino en este ciclo
                                 parsed.setdefault("handle_notch", self._telem.get("handle_notch"))
+                                for _k in (
+                                    "train_brake_notch", "train_brake_value", "train_brake_phase",
+                                    "ind_brake_notch", "ind_brake_value", "ind_brake_phase",
+                                    "dyn_brake_notch", "dyn_brake_value", "dyn_brake_phase",
+                                    "dyn_brake_active",
+                                ):
+                                    parsed.setdefault(_k, self._telem.get(_k))
                                 # Conservar gradient del último companion_dmi_planning_delta
                                 parsed.setdefault("gradient_pct", self._telem.get("gradient_pct"))
                                 # Actualizar service_name si el DMI lo incluye

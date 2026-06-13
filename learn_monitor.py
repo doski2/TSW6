@@ -32,6 +32,7 @@ from profiler import COMP_PORT, get_vehicle_name, notch_label
 from tsw_connection import TswConnection
 from online_learner import (
     OnlineLearner, path_for_vehicle, _SPEED_BANDS, _speed_band_index,
+    MIN_SPEED, MIN_SPEED_FREIGHT,
 )
 
 # ── Configuración ─────────────────────────────────────────────────────────────
@@ -288,7 +289,19 @@ def main() -> None:
                         help=f"Muestras por celda (default: {TARGET_SAMPLES})")
     parser.add_argument("--reset", action="store_true",
                         help="Borra calibration.json y empieza de cero")
+    parser.add_argument("--freight", action="store_true",
+                        help=f"Modo mercancías: velocidad mínima {MIN_SPEED_FREIGHT:.0f} mph "
+                             f"(por defecto {MIN_SPEED:.0f} mph para pasajeros)")
+    parser.add_argument("--min-speed", type=float, default=None, metavar="MPH",
+                        help="Velocidad mínima personalizada (mph) para aceptar muestras")
     args = parser.parse_args()
+
+    if args.min_speed is not None:
+        min_speed = max(0.5, args.min_speed)
+    elif args.freight:
+        min_speed = MIN_SPEED_FREIGHT
+    else:
+        min_speed = MIN_SPEED
 
     _enable_utf8()
 
@@ -334,9 +347,12 @@ def main() -> None:
         os.remove(profile_path)
         print("Perfil borrado — empezando de cero.")
 
-    learner = OnlineLearner(vehicle=vehicle)
+    learner = OnlineLearner(vehicle=vehicle, min_speed=min_speed)
     monitor = LearnMonitor(learner, vehicle, max(1, args.target),
                            vehicle_known=vehicle_known)
+
+    modo_vel = "mercancías" if min_speed <= MIN_SPEED_FREIGHT else "pasajeros"
+    print(f"Vel. mín. : {min_speed:.0f} mph ({modo_vel})")
 
     # Búsqueda en segundo plano del nombre del tren (solo si aún no se conoce).
     # get_vehicle_name bloquea ~2 s, por eso corre en un hilo y no en el bucle.

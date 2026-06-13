@@ -42,7 +42,8 @@ MIN_SAMPLES  = 3      # mínimo de muestras antes de confiar en un valor
 MIN_STABLE_S = 2.0    # segundos de notch estable requeridos
 MIN_DV_MPH   = 0.6    # cambio mínimo de velocidad en la ventana
 MAX_GRAD_PCT = 3.0    # |gradiente| máximo (%) para aceptar mediciones (ampliado v3)
-MIN_SPEED    = 5.0    # mph mínimo (descarta mediciones cerca de parado)
+MIN_SPEED          = 5.0    # mph mínimo pasajeros (descarta mediciones cerca de parado)
+MIN_SPEED_FREIGHT  = 2.0    # mph mínimo mercancías (circulan más despacio)
 
 # Umbral de gradiente para separar bandas (v3)
 GRAD_FLAT_THRESHOLD = 0.5  # |grad| < 0.5% = plano
@@ -152,9 +153,11 @@ class OnlineLearner:
 
     DEFAULT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "calibration.json")
 
-    def __init__(self, save_path: str = DEFAULT_PATH, vehicle: Optional[str] = None):
+    def __init__(self, save_path: str = DEFAULT_PATH, vehicle: Optional[str] = None,
+                 min_speed: Optional[float] = None):
         # Si se da un nombre de tren, usar su perfil dedicado
         self.save_path = path_for_vehicle(vehicle) if vehicle else save_path
+        self._min_speed = min_speed if min_speed is not None else MIN_SPEED
         # Almacenamiento por banda de velocidad: band_idx → {notch → ema_value}
         self._ema_bands: list[dict[int, float]] = [{} for _ in _SPEED_BANDS]
         self._n_bands:   list[dict[int, int]]   = [{} for _ in _SPEED_BANDS]
@@ -308,9 +311,9 @@ class OnlineLearner:
             self.last_reason = f"gradiente >{MAX_GRAD_PCT:.0f}% (no fiable)"
             return None
 
-        # 5. Velocidad mínima
-        if min(v for _, v, _, _, _ in self._window) < MIN_SPEED:
-            self.last_reason = f"velocidad <{MIN_SPEED:.0f} mph"
+        # 5. Velocidad mínima (configurable: pasajeros 5 mph, mercancías ~2 mph)
+        if min(v for _, v, _, _, _ in self._window) < self._min_speed:
+            self.last_reason = f"velocidad <{self._min_speed:.0f} mph"
             return None
 
         # 6. Cambio de velocidad apreciable (confirma que el notch tiene efecto)

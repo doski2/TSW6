@@ -44,16 +44,20 @@ echo.
 echo    El monitor te guia para calibrar cada muesca del tren.
 echo    Conduce manualmente siguiendo las instrucciones en pantalla.
 echo.
-echo    1. Continuar aprendizaje (mantiene el progreso actual)
-echo    2. Empezar de cero (borra calibration.json)
-echo    3. Salir
+echo    1. Continuar aprendizaje — pasajeros (vel. min. 5 mph)
+echo    2. Continuar aprendizaje — mercancias (vel. min. 2 mph)
+echo    3. Empezar de cero — pasajeros
+echo    4. Empezar de cero — mercancias
+echo    5. Salir
 echo.
 set /p "OP=  Opcion [1]: "
 if "%OP%"=="" set "OP=1"
 
 if "%OP%"=="1" goto continuar
-if "%OP%"=="2" goto reset
-if "%OP%"=="3" exit /b 0
+if "%OP%"=="2" goto continuar_freight
+if "%OP%"=="3" goto reset
+if "%OP%"=="4" goto reset_freight
+if "%OP%"=="5" exit /b 0
 goto menu
 
 :continuar
@@ -61,9 +65,19 @@ cls
 %PY% learn_monitor.py
 goto fin
 
+:continuar_freight
+cls
+%PY% learn_monitor.py --freight
+goto fin
+
 :reset
 cls
 %PY% learn_monitor.py --reset
+goto fin
+
+:reset_freight
+cls
+%PY% learn_monitor.py --reset --freight
 goto fin
 
 :fin
