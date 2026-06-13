@@ -189,6 +189,55 @@ class TestP3AccelerationTracking:
             assert action == "HOLD", f"Ciclo {i}: esperaba HOLD, recibí {action}"
 
 
+class TestPredictiveNotchSelection:
+    """Selección predictiva de la muesca mínima suficiente (datos por muesca)."""
+
+    def _decider_with_data(self) -> SpeedDecider:
+        from online_learner import _speed_band_index, MIN_SAMPLES
+        d = _decider()
+        lr = d._physics.learner
+        band = _speed_band_index(15.0)
+        # Tracción-1..4 (handle 5..8) aceleración aprendida (plano), n suficiente
+        for notch, a in ((5, 0.06), (6, 0.18), (7, 0.45), (8, 0.55)):
+            lr._ema_bands[band][notch] = a
+            lr._n_bands[band][notch]   = MIN_SAMPLES
+        return d
+
+    def test_picks_minimum_sufficient_notch(self):
+        """a_target=0.15 → la muesca mínima suficiente es Tracción-2 (handle6, t=2)."""
+        d = self._decider_with_data()
+        assert d._select_notch_predictive(0.15, 15.0, 0.0) == 2
+
+    def test_low_target_picks_lowest(self):
+        """a_target pequeño (por encima del umbral de soltar) → Tracción-1 (t=1)."""
+        d = self._decider_with_data()
+        # 0.10 > tol(0.05) → no suelta; Tracción-1 (0.06) ya alcanza 0.10-tol
+        assert d._select_notch_predictive(0.10, 15.0, 0.0) == 1
+
+    def test_high_target_picks_max(self):
+        """a_target inalcanzable → tracción máxima (t=4)."""
+        d = self._decider_with_data()
+        assert d._select_notch_predictive(2.0, 15.0, 0.0) == 4
+
+    def test_zero_target_releases_to_neutral(self):
+        """a_target ~0 → soltar a neutro (t=0)."""
+        d = self._decider_with_data()
+        assert d._select_notch_predictive(0.0, 15.0, 0.0) == 0
+
+    def test_no_data_returns_none(self):
+        """Sin datos aprendidos → None (P3 usa fallback reactivo)."""
+        d = _decider()
+        assert d._select_notch_predictive(0.2, 15.0, 0.0) is None
+
+    def test_uphill_needs_higher_notch(self):
+        """En subida la misma a_target exige una muesca mayor (gravedad)."""
+        d = self._decider_with_data()
+        flat = d._select_notch_predictive(0.15, 15.0, 0.0)
+        up   = d._select_notch_predictive(0.15, 15.0, 2.0)
+        assert flat is not None and up is not None
+        assert up >= flat
+
+
 # ── last_action tracking ──────────────────────────────────────────────────────
 
 class TestLastAction:

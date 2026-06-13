@@ -234,5 +234,54 @@ class TestGradientBands(unittest.TestCase):
                 pass
 
 
+class TestPredictAccel(unittest.TestCase):
+    """Verifica la predicción de aceleración por muesca (selección de muesca mínima)."""
+
+    def setUp(self):
+        self.learner = OnlineLearner(save_path="/tmp/test_learner_pred.json")
+        # Datos por banda 0 (0-30 mph), normalizados a plano:
+        band = _speed_band_index(15.0)
+        self.learner._ema_bands[band][5] = 0.06   # Tracción-1
+        self.learner._n_bands[band][5]   = MIN_SAMPLES
+        self.learner._ema_bands[band][6] = 0.18   # Tracción-2
+        self.learner._n_bands[band][6]   = MIN_SAMPLES
+        self.learner._ema_bands[band][7] = 0.45   # Tracción-3
+        self.learner._n_bands[band][7]   = MIN_SAMPLES
+
+    def tearDown(self):
+        try:
+            os.unlink("/tmp/test_learner_pred.json")
+        except FileNotFoundError:
+            pass
+
+    def test_flat_returns_learned_value(self):
+        """En plano devuelve el valor aprendido (sin componente de gravedad)."""
+        val = self.learner.predict_accel(6, 15.0, 0.0)
+        assert val is not None
+        self.assertAlmostEqual(val, 0.18, places=3)
+
+    def test_uphill_subtracts_gravity(self):
+        """En subida la aceleración real baja por la gravedad."""
+        flat = self.learner.predict_accel(6, 15.0, 0.0)
+        up   = self.learner.predict_accel(6, 15.0, 1.0)
+        assert flat is not None and up is not None
+        self.assertLess(up, flat)
+        # real = plano + comp(grad);  comp(1%) = -0.0981
+        self.assertAlmostEqual(up, 0.18 - 0.0981, places=3)
+
+    def test_insufficient_samples_returns_none(self):
+        """Muesca sin muestras suficientes y sin EMA combinada → None."""
+        self.assertIsNone(self.learner.predict_accel(8, 15.0, 0.0))
+
+    def test_falls_back_to_combined(self):
+        """Si la banda no tiene datos pero la EMA combinada sí, la usa."""
+        self.learner._ema[8] = 0.5
+        self.learner._n[8]   = MIN_SAMPLES
+        # A 200 mph no hay datos por banda → usa la combinada
+        val = self.learner.predict_accel(8, 200.0, 0.0)
+        assert val is not None
+        self.assertAlmostEqual(val, 0.5, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()

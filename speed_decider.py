@@ -93,12 +93,49 @@ class SpeedDecider:
 
     def feed_learner(self, speed_mph: float, handle_notch: int,
                      gradient_pct: float, accel_ms2: Optional[float]) -> None:
-        """Alimenta el aprendiz online. Llamar una vez por ciclo."""
-        throttle_n = max(0, handle_notch - 4)  # solo zona de tracción
-        self._physics.feed_learner(speed_mph, throttle_n, gradient_pct, accel_ms2)
+        """Alimenta el aprendiz online. Llamar una vez por ciclo.
+
+        El learner usa la escala del handle combinado 0-8 (0=freno máx,
+        4=neutro, 8=tracción máx), así que se pasa handle_notch tal cual.
+        (Antes se restaba 4 y se registraban muescas erróneas.)"""
+        self._physics.feed_learner(speed_mph, handle_notch, gradient_pct, accel_ms2)
 
     def set_rain_intensity(self, intensity: float) -> None:
         self._physics.set_rain_intensity(intensity)
+
+    def _select_notch_predictive(self, a_target: float, speed: float,
+                                  grad: float) -> Optional[int]:
+        """
+        Elige la muesca de tracción (0-4) MÍNIMA cuya aceleración aprendida
+        alcanza `a_target` en las condiciones actuales (velocidad+gradiente).
+
+        Muesca de tracción t ↔ muesca del handle t+4 (Tracción-t).
+        Devuelve None si no hay datos de calibración suficientes para ninguna
+        muesca de tracción (entonces P3 usa el ajuste reactivo ±1).
+        """
+        # Objetivo ~0 → soltar a neutro (no acelerar cerca del límite)
+        if a_target <= P3_ACCEL_TOL_MS2:
+            return 0
+
+        have_data = False
+        for t in range(1, _MAX_THROTTLE_NOTCH + 1):
+            pred = self._physics.predict_accel(t + 4, speed, grad)
+            if pred is None:
+                continue
+            have_data = True
+            if pred >= a_target - P3_ACCEL_TOL_MS2:
+                return t  # muesca mínima suficiente
+        # Ninguna alcanza el objetivo: tracción máxima (si había datos)
+        return _MAX_THROTTLE_NOTCH if have_data else None
+
+    def set_vehicle_profile(self, vehicle: str) -> None:
+        """Carga el perfil de calibración del tren detectado (perfiles por tren)."""
+        self._physics.set_vehicle_profile(vehicle)
+
+    def adopt_vehicle_profile(self, vehicle: str) -> None:
+        """Adopta el perfil del tren detectado a mitad de sesión conservando
+        lo aprendido en lo que va de sesión (lo fusiona con el perfil en disco)."""
+        self._physics.adopt_vehicle_profile(vehicle)
 
     # ── Propiedades delegadas para el dashboard ────────────────────────────
 
@@ -553,9 +590,9 @@ class SpeedDecider:
 
         # ── P3: Rastreo de aceleración objetivo ──────────────────────────────
         # Calcula la aceleración necesaria para alcanzar el límite en
-        # P3_LOOKAHEAD_S segundos y ajusta la muesca según la diferencia
-        # con la aceleración medida. Usa la muesca MÍNIMA que produce a_target;
-        # nunca va a tracción máxima si el tren ya acelera suficientemente.
+        # P3_LOOKAHEAD_S segundos y elige la muesca MÍNIMA que, según lo
+        # aprendido, alcanza esa aceleración (selección predictiva). Si no
+        # hay datos aprendidos suficientes, cae al ajuste reactivo ±1.
         if a is not None:
             # Aceleración objetivo: escala con el error de velocidad
             # (cerca del límite → muy poca aceleración → notch bajo)
@@ -564,16 +601,29 @@ class SpeedDecider:
                 self._physics.target_accel_ms2,
             )
 
-            _log.debug(
-                "P3 accel  spd=%.1f  a=%.3f  a_target=%.3f  err=%.1f  grad=%.1f%%",
-                speed, a, a_target, error, grad)
-
-            if a < a_target - P3_ACCEL_TOL_MS2:
-                target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
-            elif a > a_target + P3_ACCEL_TOL_MS2:
-                target_t = max(th_n - 1, 0)
+            pred_t = self._select_notch_predictive(a_target, speed, grad)
+            if pred_t is None:
+                # Fallback reactivo: sin calibración por muesca suficiente
+                if a < a_target - P3_ACCEL_TOL_MS2:
+                    target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
+                elif a > a_target + P3_ACCEL_TOL_MS2:
+                    target_t = max(th_n - 1, 0)
+                else:
+                    target_t = th_n
             else:
-                target_t = th_n
+                target_t = pred_t
+                # Trim de realimentación: si ya estamos en la muesca elegida
+                # pero la aceleración real se desvía, corrige ±1.
+                if th_n == target_t:
+                    if a < a_target - P3_ACCEL_TOL_MS2:
+                        target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
+                    elif a > a_target + P3_ACCEL_TOL_MS2:
+                        target_t = max(th_n - 1, 0)
+
+            _log.debug(
+                "P3 accel  spd=%.1f  a=%.3f  a_target=%.3f  pred_t=%s  "
+                "target_t=%d  err=%.1f  grad=%.1f%%",
+                speed, a, a_target, pred_t, target_t, error, grad)
         else:
             # Sin acelerómetro: tabla abierta por error + compensación de gradiente
             if error > 15.0:

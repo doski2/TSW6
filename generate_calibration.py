@@ -51,8 +51,10 @@ def process_log(log_path, output_path=None):
     _BRAKE_NOTCHES = (1, 2, 3)
     _MAX_NOTCH = 0
     _COAST_NOTCH = 4
+    _TRACTION_LOW = (5, 6)
     _TRACTION_NOTCHES = (7, 8)
-    _OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH, *_TRACTION_NOTCHES}
+    _OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH,
+                 *_TRACTION_LOW, *_TRACTION_NOTCHES}
     
     for timestamp, speed, notch, grad in samples:
         _window.append((timestamp, speed, notch, grad, None))

@@ -51,9 +51,15 @@ GRAD_FLAT_THRESHOLD = 0.5  # |grad| < 0.5% = plano
 _BRAKE_NOTCHES    = (1, 2, 3)   # promedio → TARGET_DECEL_MS2
 _MAX_NOTCH        = 0           # → MAX_DECEL_MS2
 _COAST_NOTCH      = 4           # → COAST_DECEL_MS2
+_TRACTION_LOW     = (5, 6)      # Tracción-1/2: datos por muesca (estrategia mínima)
 _TRACTION_NOTCHES = (7, 8)      # promedio → TARGET_ACCEL_MS2
 
-_OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH, *_TRACTION_NOTCHES}
+# Se observan TODAS las muescas (0-8): cada una guarda su EMA por muesca, que
+# es lo que necesita la estrategia de "muesca mínima". Las muescas 5 y 6
+# (Tracción-1/2) antes se descartaban, por eso una conducción suave no
+# guardaba nada.
+_OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH,
+             *_TRACTION_LOW, *_TRACTION_NOTCHES}
 
 # ── Límites duros (clamp) para constantes aprendidas ──────────────────────────
 _CLAMP = {
@@ -112,6 +118,31 @@ def _gravity_compensation(grad_pct: float) -> float:
     return -9.81 * (grad_pct / 100.0)
 
 
+_PROFILES_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "logs", "profiles")
+
+
+def sanitize_vehicle_name(name: str) -> str:
+    """Convierte un nombre de tren en un slug seguro para nombre de archivo.
+    Ej: 'Class 323 DMS' → 'Class_323_DMS'.  Vacío/None → 'default'."""
+    if not name:
+        return "default"
+    out = []
+    for ch in str(name).strip():
+        out.append(ch if ch.isalnum() else "_")
+    slug = "".join(out).strip("_")
+    # Colapsar guiones bajos consecutivos
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "default"
+
+
+def path_for_vehicle(name: str) -> str:
+    """Devuelve la ruta del perfil de calibración para un tren dado.
+    logs/profiles/<slug>.json"""
+    return os.path.join(_PROFILES_DIR, f"{sanitize_vehicle_name(name)}.json")
+
+
 class OnlineLearner:
     """
     Aprende por EMA los valores de aceleración para cada notch del handle.
@@ -121,8 +152,9 @@ class OnlineLearner:
 
     DEFAULT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "calibration.json")
 
-    def __init__(self, save_path: str = DEFAULT_PATH):
-        self.save_path = save_path
+    def __init__(self, save_path: str = DEFAULT_PATH, vehicle: Optional[str] = None):
+        # Si se da un nombre de tren, usar su perfil dedicado
+        self.save_path = path_for_vehicle(vehicle) if vehicle else save_path
         # Almacenamiento por banda de velocidad: band_idx → {notch → ema_value}
         self._ema_bands: list[dict[int, float]] = [{} for _ in _SPEED_BANDS]
         self._n_bands:   list[dict[int, int]]   = [{} for _ in _SPEED_BANDS]
@@ -138,7 +170,97 @@ class OnlineLearner:
         # Ventana deslizante: (t, speed_mph, notch, grad_pct, accel_ms2|None)
         self._window: list[tuple[float, float, int, float, Optional[float]]] = []
 
+        # Diagnóstico: motivo del último feed (para el monitor en vivo)
+        self.last_reason: str = "esperando datos"
+
         self._load()
+
+    # ── Cambio de perfil por tren ──────────────────────────────────────────────
+
+    def load_profile(self, vehicle: str) -> dict:
+        """
+        Cambia al perfil de calibración del tren indicado y lo recarga.
+        Resetea el estado en memoria y carga el JSON del perfil (si existe).
+        Devuelve las constantes confiables del perfil cargado (o {} si nuevo).
+        """
+        new_path = path_for_vehicle(vehicle)
+        if new_path == self.save_path:
+            return self.get_constants()
+
+        self.save_path = new_path
+        # Resetear todo el estado en memoria antes de cargar el perfil nuevo
+        self._ema_bands = [{} for _ in _SPEED_BANDS]
+        self._n_bands   = [{} for _ in _SPEED_BANDS]
+        self._ema_grad_bands = [{} for _ in _GRAD_BANDS]
+        self._n_grad_bands   = [{} for _ in _GRAD_BANDS]
+        self._ema = {}
+        self._n   = {}
+        self._window = []
+
+        self._load()
+        consts = self.get_constants()
+        _log.info("OnlineLearner perfil cargado: %s  constantes=%s",
+                  os.path.basename(self.save_path), list(consts.keys()))
+        return consts
+
+    def adopt_profile(self, vehicle: str) -> None:
+        """
+        Cambia al perfil del tren indicado CONSERVANDO las muestras ya
+        acumuladas en memoria: las fusiona (EMA ponderada por nº de muestras)
+        con lo que hubiera en el perfil destino en disco.
+
+        Pensado para cuando el nombre del tren se detecta a mitad de sesión:
+        lo capturado antes de saber el nombre no se pierde.
+        """
+        import copy
+        new_path = path_for_vehicle(vehicle)
+        if new_path == self.save_path:
+            return
+
+        # 1. Copia de lo aprendido en memoria hasta ahora
+        mem_ema_bands = copy.deepcopy(self._ema_bands)
+        mem_n_bands   = copy.deepcopy(self._n_bands)
+        mem_ema_grad  = copy.deepcopy(self._ema_grad_bands)
+        mem_n_grad    = copy.deepcopy(self._n_grad_bands)
+        n_prev = sum(sum(b.values()) for b in mem_n_bands)
+
+        # 2. Rebind y cargar el perfil destino (resetea memoria)
+        self.save_path = new_path
+        self._ema_bands = [{} for _ in _SPEED_BANDS]
+        self._n_bands   = [{} for _ in _SPEED_BANDS]
+        self._ema_grad_bands = [{} for _ in _GRAD_BANDS]
+        self._n_grad_bands   = [{} for _ in _GRAD_BANDS]
+        self._ema = {}
+        self._n   = {}
+        self._load()
+
+        # 3. Fusionar lo de memoria con lo del perfil destino
+        def _merge(dst_ema: dict, dst_n: dict,
+                   src_ema: dict, src_n: dict) -> None:
+            for notch, s_n in src_n.items():
+                s_e = src_ema.get(notch)
+                if s_e is None or s_n <= 0:
+                    continue
+                d_n = dst_n.get(notch, 0)
+                d_e = dst_ema.get(notch)
+                if d_e is not None and d_n > 0:
+                    dst_ema[notch] = (d_e * d_n + s_e * s_n) / (d_n + s_n)
+                    dst_n[notch]   = d_n + s_n
+                else:
+                    dst_ema[notch] = s_e
+                    dst_n[notch]   = s_n
+
+        for b in range(len(_SPEED_BANDS)):
+            _merge(self._ema_bands[b], self._n_bands[b],
+                   mem_ema_bands[b], mem_n_bands[b])
+        for g in range(len(_GRAD_BANDS)):
+            _merge(self._ema_grad_bands[g], self._n_grad_bands[g],
+                   mem_ema_grad[g], mem_n_grad[g])
+
+        self._recalculate_combined()
+        self._save()
+        _log.info("OnlineLearner perfil adoptado: %s  (fusionadas %d muestras previas)",
+                  os.path.basename(self.save_path), n_prev)
 
     # ── Alimentar muestras ───────────────────────────────────────────────────
 
@@ -158,6 +280,7 @@ class OnlineLearner:
                         if t >= cutoff]
 
         if len(self._window) < 4:
+            self.last_reason = f"acumulando muestras ({len(self._window)}/4)"
             return None
 
         # ── Filtros ──────────────────────────────────────────────────────────
@@ -165,30 +288,36 @@ class OnlineLearner:
         # 1. Notch estable en toda la ventana
         notches_in_window = [n for _, _, n, _, _ in self._window]
         if len(set(notches_in_window)) != 1:
+            self.last_reason = "muesca inestable (mantén la misma ~2s)"
             return None
 
         # 2. Solo notches de interés
         if notch not in _OBSERVED:
+            self.last_reason = f"muesca {notch} no observada"
             return None
 
         # 3. Duración mínima
         t0 = self._window[0][0]
         t1 = self._window[-1][0]
         if t1 - t0 < MIN_STABLE_S:
+            self.last_reason = f"muesca estable {t1 - t0:.1f}/{MIN_STABLE_S:.0f}s"
             return None
 
         # 4. Gradiente máximo absoluto (filtro de seguridad ampliado v3)
         if max(abs(g) for _, _, _, g, _ in self._window) > MAX_GRAD_PCT:
+            self.last_reason = f"gradiente >{MAX_GRAD_PCT:.0f}% (no fiable)"
             return None
 
         # 5. Velocidad mínima
         if min(v for _, v, _, _, _ in self._window) < MIN_SPEED:
+            self.last_reason = f"velocidad <{MIN_SPEED:.0f} mph"
             return None
 
         # 6. Cambio de velocidad apreciable (confirma que el notch tiene efecto)
         speeds = [v for _, v, _, _, _ in self._window]
         dv = speeds[-1] - speeds[0]
         if abs(dv) < MIN_DV_MPH:
+            self.last_reason = f"sin cambio de velocidad (Δ{abs(dv):.2f}<{MIN_DV_MPH} mph)"
             return None
 
         # ── Medir aceleración ─────────────────────────────────────────────────
@@ -210,10 +339,11 @@ class OnlineLearner:
 
         # ── Filtro de coherencia de signo ─────────────────────────────────────
         # Tracción (notch >= 5): solo aceptar aceleración positiva (normalizada)
-        if notch in _TRACTION_NOTCHES and measured_normalized < 0:
+        if notch in (*_TRACTION_LOW, *_TRACTION_NOTCHES) and measured_normalized < 0:
             _log.debug(
                 "Learner DESCARTADO notch=%d  a_medida=%.3f  a_norm=%.3f (negativa en tracción)",
                 notch, measured, measured_normalized)
+            self.last_reason = "aceleración negativa en tracción (descartada)"
             self._window.clear()
             return None
         # Freno (notch <= 3): solo aceptar aceleración negativa (normalizada)
@@ -221,6 +351,7 @@ class OnlineLearner:
             _log.debug(
                 "Learner DESCARTADO notch=%d  a_medida=%.3f  a_norm=%.3f (positiva en freno)",
                 notch, measured, measured_normalized)
+            self.last_reason = "aceleración positiva en freno (descartada)"
             self._window.clear()
             return None
 
@@ -253,6 +384,8 @@ class OnlineLearner:
         # ── Recalcular EMA combinada (media ponderada por nº muestras) ────────
         self._recalculate_combined()
 
+        self.last_reason = (f"✓ registrada muesca {notch}  a={measured_normalized:+.2f} "
+                            f"(n={self._n.get(notch, 0)})")
         _log.info(
             "Learner notch=%d  a_medida=%.3f  a_norm=%.3f  a_ema=%.3f  n=%d  "
             "band=%d-%dmph  grad_band=%s",
@@ -364,12 +497,50 @@ class OnlineLearner:
 
         return result
 
+    def predict_accel(self, notch: int, speed_mph: float,
+                      grad_pct: float) -> Optional[float]:
+        """
+        Predice la aceleración REAL (m/s², con signo) de una muesca a la
+        velocidad y gradiente actuales, usando lo aprendido.
+
+        El valor por banda está normalizado a terreno plano (compensado de
+        gravedad), así que se le vuelve a sumar la componente gravitacional
+        del gradiente actual para obtener la aceleración real esperada.
+
+        Prioridad de datos:
+          1) banda de velocidad actual (si tiene >= MIN_SAMPLES muestras)
+          2) EMA combinada del notch (si tiene >= MIN_SAMPLES)
+          3) None si no hay datos fiables.
+        """
+        band = _speed_band_index(speed_mph)
+        flat: Optional[float] = None
+
+        if (self._n_bands[band].get(notch, 0) >= MIN_SAMPLES
+                and notch in self._ema_bands[band]):
+            flat = self._ema_bands[band][notch]
+        elif self._n.get(notch, 0) >= MIN_SAMPLES and notch in self._ema:
+            flat = self._ema[notch]
+
+        if flat is None:
+            return None
+
+        # Volver a añadir la gravedad del gradiente actual (real = plano + g_comp)
+        return flat + _gravity_compensation(grad_pct)
+
+    def predict_samples(self, notch: int, speed_mph: float) -> int:
+        """Nº de muestras que respaldan la predicción de un notch a esta
+        velocidad (banda actual + combinada). Útil para decidir confianza."""
+        band = _speed_band_index(speed_mph)
+        n_band = self._n_bands[band].get(notch, 0)
+        return n_band if n_band >= MIN_SAMPLES else self._n.get(notch, 0)
+
     def confidence(self) -> dict[str, int]:
         """Devuelve el número de muestras por notch relevante."""
         labels = {
             0: "MAX_DECEL(n0)",
             1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
             4: "COAST(n4)",
+            5: "ACCEL(n5)", 6: "ACCEL(n6)",
             7: "ACCEL(n7)", 8: "ACCEL(n8)",
         }
         return {labels[n]: self._n.get(n, 0) for n in _OBSERVED}
@@ -380,6 +551,7 @@ class OnlineLearner:
             0: "MAX_DECEL(n0)",
             1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
             4: "COAST(n4)",
+            5: "ACCEL(n5)", 6: "ACCEL(n6)",
             7: "ACCEL(n7)", 8: "ACCEL(n8)",
         }
         result = {}
@@ -395,6 +567,7 @@ class OnlineLearner:
             0: "MAX_DECEL(n0)",
             1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
             4: "COAST(n4)",
+            5: "ACCEL(n5)", 6: "ACCEL(n6)",
             7: "ACCEL(n7)", 8: "ACCEL(n8)",
         }
         result = {}
@@ -474,6 +647,12 @@ class OnlineLearner:
                           self.save_path, list(consts.keys()))
         except Exception as _exc:
             _log.warning("OnlineLearner: no se pudo cargar calibración (%s) — empezando desde cero", _exc)
+
+    def save(self) -> None:
+        """Persiste el estado actual a disco (cuenta de muestras incluida),
+        independientemente de si ya hay constantes confiables. Útil para que
+        el progreso del monitor de aprendizaje no se pierda entre sesiones."""
+        self._save()
 
     def _save(self) -> None:
         try:

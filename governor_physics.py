@@ -82,6 +82,24 @@ class TrainPhysics:
             _log.info("OnlineLearner actualizó constantes: %s", updated)
             self._apply_constants(updated)
 
+    def predict_accel(self, notch: int, speed_mph: float,
+                      grad_pct: float) -> Optional[float]:
+        """Aceleración real esperada (m/s², con signo) de una muesca según
+        lo aprendido, o None si no hay datos fiables. Passthrough al learner."""
+        return self.learner.predict_accel(notch, speed_mph, grad_pct)
+
+    def set_vehicle_profile(self, vehicle: str) -> None:
+        """Carga el perfil de calibración del tren detectado y aplica sus
+        constantes. Si el perfil no existe, parte de los valores por defecto."""
+        consts = self.learner.load_profile(vehicle)
+        self._apply_constants(consts)
+
+    def adopt_vehicle_profile(self, vehicle: str) -> None:
+        """Adopta el perfil del tren detectado a mitad de sesión SIN perder
+        las muestras ya aprendidas (las fusiona con el perfil en disco)."""
+        self.learner.adopt_profile(vehicle)
+        self._apply_constants(self.learner.get_constants())
+
     # ── D: Medición dinámica de BRAKE_TRANSITION_S ────────────────────────────
 
     def start_brake_transition(self) -> None:

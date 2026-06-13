@@ -44,7 +44,7 @@ from train_state import build_train_state                  # noqa: E402
 from speed_decider import SpeedDecider                     # noqa: E402
 from handle_controller import HandleController, SafetyWatchdog  # noqa: E402
 from dashboard import render_dashboard, KeyListener        # noqa: E402
-from profiler import Profiler, Sample                      # noqa: E402
+from profiler import Profiler, Sample, get_vehicle_name     # noqa: E402
 from tsw_ocr import TswOcr                                 # noqa: E402
 
 # ── Configuración ─────────────────────────────────────────────────────────────
@@ -139,6 +139,9 @@ def main():
                         help="Distancia en millas a la próxima parada")
     parser.add_argument("--profile", action="store_true",
                         help="Registrar datos de calibración mientras conduce")
+    parser.add_argument("--learn", action="store_true",
+                        help="Re-aprender la calibración en vivo (por defecto NO: "
+                             "el perfil se calibra con aprender.bat y aquí solo se usa)")
     args = parser.parse_args()
 
     print(Fore.CYAN + Style.BRIGHT + "\n  TSW6 Autopilot  –  iniciando...\n" + Style.RESET_ALL)
@@ -205,6 +208,15 @@ def main():
     _handle_synced = False
     _last_state_handle: int = 4  # para reset_neutral al salir
 
+    # ── Detección de tren para perfil de calibración ────────────────────
+    # El nombre puede no estar disponible al arrancar, así que se busca en un
+    # hilo de fondo (get_vehicle_name bloquea ~2 s; no debe correr en el bucle
+    # de control). Se sigue buscando mientras se conduce y, al encontrarlo, se
+    # adopta el perfil fusionando lo ya aprendido; luego deja de buscar.
+    _vehicle_profiled = False
+    _veh_detected: dict[str, Optional[str]] = {"v": None}
+    _veh_thread_started = False
+
     telem: dict = {}
     loop_times: list[float] = []
 
@@ -268,6 +280,39 @@ def main():
                     except ValueError:
                         pass
 
+            # ── Detección de tren → carga del perfil de calibración ───────
+            # Arranca el hilo de búsqueda una vez (modo companion) y sigue
+            # buscando indefinidamente hasta encontrar el nombre.
+            if (not _vehicle_profiled and conn.mode == "companion"
+                    and conn.comp_base):
+                if not _veh_thread_started:
+                    _veh_thread_started = True
+                    _comp_base = conn.comp_base
+
+                    def _search_vehicle() -> None:
+                        while _veh_detected["v"] is None:
+                            # Preferir el nombre del loco del stream (no bloquea);
+                            # /vehicles queda como reserva.
+                            name = conn.get_vehicle_name() or get_vehicle_name(_comp_base)
+                            if name:
+                                _veh_detected["v"] = name
+                                return
+                            time.sleep(5.0)
+
+                    threading.Thread(target=_search_vehicle, daemon=True).start()
+
+                if _veh_detected["v"]:
+                    _veh = _veh_detected["v"]
+                    # --learn: fusiona lo aprendido en sesión; por defecto solo carga.
+                    if args.learn:
+                        decider.adopt_vehicle_profile(_veh)
+                    else:
+                        decider.set_vehicle_profile(_veh)
+                    _log.info("Perfil de tren cargado: %s", _veh)
+                    print(Fore.CYAN + f"  Tren: {_veh} — perfil de calibración cargado"
+                          + Style.RESET_ALL)
+                    _vehicle_profiled = True
+
             # ── Telemetría: sincronización del handle ─────────────────────
             speed       = telem.get("speed_mph")
             limit       = telem.get("limit_mph")
@@ -302,12 +347,16 @@ def main():
                     api_accel   = api_accel,
                     gradient_pct= telem.get("gradient_pct") or 0.0,
                 )
-                decider.feed_learner(
-                    speed_mph   = speed,
-                    handle_notch= _last_state_handle,
-                    gradient_pct= telem.get("gradient_pct") or 0.0,
-                    accel_ms2   = api_accel,
-                )
+                # Solo re-aprende si se pide explícitamente (--learn). Por
+                # defecto la calibración viene de aprender.bat y aquí no se
+                # toca, para no desviar el perfil ya calibrado.
+                if args.learn:
+                    decider.feed_learner(
+                        speed_mph   = speed,
+                        handle_notch= _last_state_handle,
+                        gradient_pct= telem.get("gradient_pct") or 0.0,
+                        accel_ms2   = api_accel,
+                    )
 
             # ── Rain ─────────────────────────────────────────────────────
             _rain = telem.get("rain_intensity", 0.0) or 0.0

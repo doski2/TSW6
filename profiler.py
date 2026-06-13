@@ -194,7 +194,7 @@ def sse_stream(base_url: str):
                         if raw.startswith("event:"):
                             event_type = raw[6:].strip()
                         elif raw.startswith("data:") and event_type in (
-                            "dmi_snapshot", "dashboard_snapshot"
+                            "dmi_snapshot", "dashboard_snapshot", "companion_dmi_delta"
                         ):
                             try:
                                 yield event_type, json.loads(raw[5:].strip())

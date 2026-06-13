@@ -56,6 +56,7 @@ class TswConnection:
         self._dist_unit      = "m"   # 'm' o 'yd', auto-detectado del snapshot
         self._last_route_stations: list = []   # caché de estaciones del dashboard_snapshot
         self._service_name: Optional[str] = None  # headcode del servicio activo
+        self._vehicle_name: Optional[str] = None   # nombre del loco (friendly_name)
         self._timetable: dict = self._load_timetable()   # paradas programadas por servicio
         self._device_creds: Optional[dict] = None  # {device_id, device_secret}
 
@@ -291,6 +292,12 @@ class TswConnection:
                             tn = (data.get("controls") or {}).get("throttle_notch")
                             if isinstance(tn, dict) and tn.get("value") is not None:
                                 parsed["handle_notch"] = int(tn["value"])
+                            # Nombre del loco (una sola vez, desde los mensajes)
+                            if self._vehicle_name is None:
+                                _nm = self._extract_loco_name(data.get("messages"))
+                                if _nm:
+                                    self._vehicle_name = _nm
+                                    _log.info("Loco detectado: %r", _nm)
                             with self._telem_lock:
                                 # Conservar doors_open (ya no viene en este evento)
                                 parsed.setdefault("doors_open", self._telem.get("doors_open", False))
@@ -860,3 +867,34 @@ class TswConnection:
             return {}
         with self._telem_lock:
             return dict(self._telem)
+
+    @staticmethod
+    def _extract_loco_name(messages) -> Optional[str]:
+        """Extrae el nombre del loco de los mensajes del DMI.
+
+        RailBridge envía un mensaje con source_detail
+        'backend:engine_event.loco_changed.friendly_name' y text como
+        'Loco - RVM BCC WRM Class323 DMS A C'. Devuelve la parte tras 'Loco - '.
+        """
+        if not isinstance(messages, list):
+            return None
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            sd = str(m.get("source_detail", ""))
+            if "loco_changed.friendly_name" in sd or m.get("id") == "app:1":
+                text = str(m.get("text", "")).strip()
+                if not text:
+                    continue
+                # Quitar prefijo 'Loco - ' si está presente
+                for pre in ("Loco - ", "Loco-", "Loco "):
+                    if text.startswith(pre):
+                        text = text[len(pre):].strip()
+                        break
+                if text and text.lower() not in ("none", ""):
+                    return text
+        return None
+
+    def get_vehicle_name(self) -> Optional[str]:
+        """Nombre del loco detectado en el stream (o None si aún no llegó)."""
+        return self._vehicle_name
