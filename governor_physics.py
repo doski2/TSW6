@@ -15,6 +15,7 @@ import time
 from typing import Optional
 
 from online_learner import OnlineLearner
+from freight_learner import FreightLearner, create_learner, profile_layout_from_file
 from governor_constants import (
     MAX_DECEL_MS2, SAFETY_MARGIN, COAST_DECEL_MS2, BRAKE_TRANSITION_S,
     TARGET_ACCEL_MS2, TARGET_DECEL_MS2, CRITICAL_DECEL_THRESHOLD,
@@ -49,8 +50,9 @@ class TrainPhysics:
         self._rain_intensity: float = 0.0
         self._WET_DECEL_REDUCTION = 0.35
 
-        # Aprendiz online
-        self.learner = OnlineLearner()
+        # Aprendiz online (combined o freight_na según tren)
+        self._layout = "combined"
+        self.learner = create_learner()
         self._apply_constants(self.learner.get_constants())
 
     # ── Aprendizaje online ───────────────────────────────────────────────────
@@ -76,28 +78,75 @@ class TrainPhysics:
 
     def feed_learner(self, speed_mph: float, current_notch: int,
                      grad_pct: float, accel_ms2: Optional[float]) -> None:
-        """Alimenta el aprendiz online con telemetría del ciclo actual."""
+        """Alimenta el aprendiz online (layout combined)."""
+        if isinstance(self.learner, FreightLearner):
+            return
         updated = self.learner.feed(speed_mph, current_notch, grad_pct, accel_ms2)
         if updated:
             _log.info("OnlineLearner actualizó constantes: %s", updated)
             self._apply_constants(updated)
 
+    def feed_learner_freight(self, axis: str, level: float,
+                             speed_mph: float, grad_pct: float,
+                             accel_ms2: Optional[float],
+                             controls: dict) -> None:
+        """Alimenta FreightLearner (layout freight_na)."""
+        if not isinstance(self.learner, FreightLearner):
+            return
+        updated = self.learner.feed(axis, level, speed_mph, grad_pct, accel_ms2, controls)
+        if updated:
+            _log.info("FreightLearner actualizó: %s", updated)
+            self._apply_constants(updated)
+
     def predict_accel(self, notch: int, speed_mph: float,
                       grad_pct: float) -> Optional[float]:
-        """Aceleración real esperada (m/s², con signo) de una muesca según
-        lo aprendido, o None si no hay datos fiables. Passthrough al learner."""
+        if isinstance(self.learner, FreightLearner):
+            return self.learner.predict_accel("throttle", float(notch), speed_mph, grad_pct)
         return self.learner.predict_accel(notch, speed_mph, grad_pct)
+
+    def _rebind_learner(self, vehicle: str) -> None:
+        path = self.learner.save_path
+        from online_learner import path_for_vehicle
+        new_path = path_for_vehicle(vehicle)
+        file_layout = profile_layout_from_file(new_path)
+        try:
+            from control_layout import detect_control_layout
+            layout = file_layout or detect_control_layout(vehicle)
+        except Exception:
+            layout = file_layout or "combined"
+        if layout != self._layout or type(self.learner).__name__ != (
+                "FreightLearner" if layout == "freight_na" else "OnlineLearner"):
+            self.learner = create_learner(vehicle=vehicle, layout=layout,
+                                          min_speed=getattr(self.learner, "_min_speed", None))
+            self._layout = layout
+        else:
+            self.learner.load_profile(vehicle)
 
     def set_vehicle_profile(self, vehicle: str) -> None:
         """Carga el perfil de calibración del tren detectado y aplica sus
         constantes. Si el perfil no existe, parte de los valores por defecto."""
-        consts = self.learner.load_profile(vehicle)
-        self._apply_constants(consts)
+        self._rebind_learner(vehicle)
+        self._apply_constants(self.learner.get_constants())
 
     def adopt_vehicle_profile(self, vehicle: str) -> None:
         """Adopta el perfil del tren detectado a mitad de sesión SIN perder
         las muestras ya aprendidas (las fusiona con el perfil en disco)."""
-        self.learner.adopt_profile(vehicle)
+        from online_learner import path_for_vehicle
+        new_path = path_for_vehicle(vehicle)
+        file_layout = profile_layout_from_file(new_path)
+        try:
+            from control_layout import detect_control_layout
+            layout = file_layout or detect_control_layout(vehicle)
+        except Exception:
+            layout = file_layout or "combined"
+        want_freight = layout == "freight_na"
+        is_freight = isinstance(self.learner, FreightLearner)
+        if want_freight != is_freight:
+            self.learner = create_learner(vehicle=vehicle, layout=layout,
+                                          min_speed=getattr(self.learner, "_min_speed", None))
+            self._layout = layout
+        else:
+            self.learner.adopt_profile(vehicle)
         self._apply_constants(self.learner.get_constants())
 
     # ── D: Medición dinámica de BRAKE_TRANSITION_S ────────────────────────────

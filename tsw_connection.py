@@ -18,6 +18,8 @@ from typing import Optional
 
 import requests  # type: ignore[import-untyped]
 
+from control_layout import detect_control_layout
+
 _log = logging.getLogger("tsw.connection")
 
 # ── Configuración del companion ───────────────────────────────────────────────
@@ -1063,11 +1065,15 @@ class TswConnection:
         return 0.0
 
     def get_telemetry(self) -> dict:
-        """Devuelve el último snapshot parseado (thread-safe)."""
+        """Devuelve el último snapshot parseado (thread-safe) + layout y vehículo."""
         if self.mode in ("manual", "searching"):
             return {}
         with self._telem_lock:
-            return dict(self._telem)
+            out = dict(self._telem)
+        vehicle = self.get_vehicle_name()
+        out["vehicle_name"] = vehicle
+        out["control_layout"] = detect_control_layout(vehicle)
+        return out
 
     @staticmethod
     def _extract_loco_name(messages) -> Optional[str]:

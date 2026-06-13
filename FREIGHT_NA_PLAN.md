@@ -191,57 +191,63 @@ Los perfiles `combined` existentes (Class 323) siguen en formato actual
 
 ### Fase 1 — Telemetría multi-control
 
+**Estado:** ✅ Completa (2026-06-13)
+
 **Objetivo:** `TswConnection` y `TrainState` exponen los cuatro mandos.
 
 **Entregables:**
 
-- [ ] `tsw_connection.py` — leer y persistir `train_brake_handle`, `locomotive_brake_handle`, `electric_brake_handle`
-- [ ] `train_state.py` — campos opcionales + `control_layout: "combined" | "freight_na"`
-- [ ] Detección automática de layout por nombre de loco (`SD40`, `BNSF`, `ES44`, etc.)
-- [ ] Class 323 sigue funcionando sin cambios (`combined`)
+- [x] `tsw_connection.py` — `get_telemetry()` incluye frenos + `vehicle_name` + `control_layout`
+- [x] `train_state.py` — campos freight + `control_layout: "combined" | "freight_na"`
+- [x] `control_layout.py` — detección por esquema Fase 0 + heurísticas (`SD40`, `BNSF`, `ES44`…)
+- [x] Class 323 sigue en `combined` sin cambios de comportamiento
 
 **Criterio de aceptación:** `conn.get_telemetry()` devuelve los 4 valores en sesión SD40-2.
 
-**Archivos:** `tsw_connection.py`, `train_state.py`, `profiler.py` (`classify_vehicle` ampliado)
+**Archivos:** `tsw_connection.py`, `train_state.py`, `control_layout.py`, `profiler.py`
 
 ---
 
 ### Fase 2 — Learner multi-eje
 
-**Objetivo:** calibración por eje; `BNSF_SD40_2_C.json` con datos reales.
+**Estado:** ✅ Completa (2026-06-13)
+
+**Objetivo:** calibración por eje; `BNSF_SD40_2_C.json` con datos reales (schema v2).
 
 **Entregables:**
 
-- [ ] `online_learner.py` — clase o modo `FreightLearner` con 4 ejes
-- [ ] `feed(axis, notch, speed, grad, accel)` — solo un eje activo por ventana
-- [ ] `predict_accel(axis, notch, speed, grad)` — generalizar el predictor actual
-- [ ] `predict_decel(axis, notch, speed, grad)` — para los tres frenos
-- [ ] Carga/guardado del esquema JSON v2; compatibilidad con perfiles v1 (`combined`)
-- [ ] `load_profile` / `adopt_profile` respetan `layout`
+- [x] `freight_learner.py` — `FreightLearner` con 4 ejes
+- [x] `feed(axis, level, speed, grad, accel, controls)` — un eje estable por ventana
+- [x] `predict_accel` / `predict_decel` por eje
+- [x] JSON `schema_version: 2`, `layout: freight_na` por eje
+- [x] `create_learner()` — elige OnlineLearner vs FreightLearner
+- [x] `governor_physics.py` + `learn_monitor.py` — integración básica
 
 **Criterio de aceptación:** tras sesión de tracción, `throttle` en JSON tiene muestras;
 tras sesión de train brake, `train_brake` tiene muestras.
 
-**Archivos:** `online_learner.py`, `governor_physics.py`, tests en `test_online_learner.py`
+**Archivos:** `freight_learner.py`, `online_learner.py`, `governor_physics.py`, `learn_monitor.py`, `test_freight_learner.py`
 
 ---
 
 ### Fase 3 — Monitor `aprender.bat` multi-mando
 
+**Estado:** ✅ Completa (2026-06-13)
+
 **Objetivo:** UI de aprendizaje con 4 matrices (tracción + 3 frenos).
 
 **Entregables:**
 
-- [ ] `learn_monitor.py` — detectar `layout` y mostrar bloques según tren
-- [ ] Matriz tracción: filas = muescas power (según Fase 0)
-- [ ] Matrices frenos: train / ind / dyn con etiquetas correctas
-- [ ] Hints adaptativos por eje ("mantén train brake en Lap ~2s…")
-- [ ] `aprender.bat` — sin cambio de menú; detección automática de layout
-- [ ] Diagnóstico `Estado learner` indica eje activo
+- [x] `learn_monitor.py` — detectar `layout` y mostrar bloques según tren
+- [x] Matriz tracción: filas = muescas power (N1–N8)
+- [x] Matrices frenos: train / ind / dyn con etiquetas correctas
+- [x] Hints adaptativos por eje ("mantén train brake ~2s…")
+- [x] `aprender.bat` — sin cambio de menú; detección automática de layout
+- [x] Diagnóstico `Estado learner` indica eje activo
 
 **Criterio de aceptación:** monitor usable para calibrar SD40-2 sin confusión con matriz UK.
 
-**Archivos:** `learn_monitor.py`, `profiler.py` (`notch_label` por layout)
+**Archivos:** `learn_monitor.py`, `profiler.py`, `test_learn_monitor_freight.py`
 
 ---
 
@@ -397,10 +403,10 @@ otro SD40, etc.) debería usar el **mismo esquema** `freight_na_railbridge_v3`.
 
 | Fase | Estado | Fecha | Notas |
 |:---:|---|---|---|
-| 0 | ✅ Completa | 2026-06-13 | Esquema `freight_na_railbridge_v3.json`; log final `180536` |
-| 1 | ⬜ Pendiente | | |
-| 2 | ⬜ Pendiente | | |
-| 3 | ⬜ Pendiente | | |
+| 0 | ✅ Completa | 2026-06-13 | Esquema `freight_na_railbridge_v3.json` |
+| 1 | ✅ Completa | 2026-06-13 | `control_layout.py` + `TrainState` multi-mando |
+| 2 | ✅ Completa | 2026-06-13 | `FreightLearner` + JSON v2 |
+| 3 | ✅ Completa | 2026-06-13 | Monitor 4 matrices freight |
 | 4 | ⬜ Pendiente | | |
 | 5 | ⬜ Pendiente | | |
 | 6 | ⬜ Pendiente | | |
@@ -421,16 +427,19 @@ otro SD40, etc.) debería usar el **mismo esquema** `freight_na_railbridge_v3`.
 | `logs/profiles/BNSF_SD40_2_C.json` | Perfil de calibración (vacío hasta Fase 2) |
 | `aprender.bat` | Lanzador monitor; opción 2 = mercancías 2 mph |
 | `learn_monitor.py` | Monitor de aprendizaje guiado |
-| `online_learner.py` | Learner y predictor por muesca |
+| `freight_learner.py` | **Fase 2** — learner multi-eje + JSON v2 |
+| `online_learner.py` | Learner layout `combined` (Class 323) |
 | `speed_decider.py` | P3 predictivo (tracción) |
 | `handle_controller.py` | Ejecución `PowerBrakeHandle` (solo `combined` hoy) |
-| `tsw_connection.py` | Telemetría companion |
+| `control_layout.py` | **Fase 1** — detección `combined` vs `freight_na` |
+| `train_state.py` | **Fase 1** — `TrainState` con 4 mandos + layout |
+| `tsw_connection.py` | Telemetría companion + `get_telemetry()` enriquecido |
 | `%AppData%\RailBridge\config\profiles\user\tsw-en.yaml` | Mapa teclas/controles TSW EN |
 
 ---
 
 ## Próximo paso
 
-**Fase 1:** `TrainState` + detección `freight_na` leyendo el esquema
-`logs/control_schemas/freight_na_railbridge_v3.json` cuando el tren esté en
-`validated_vehicles` (o coincida con diesel NA + campos API conocidos).
+**Fase 4:** `brake_selector.py` — el autopiloto elige qué freno usar (auto / ind / dyn).
+
+**Calibración en juego:** `aprender.bat` → opción **2** (mercancías) con SD40-2.

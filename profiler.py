@@ -68,6 +68,11 @@ VEHICLE_TYPES: dict[str, str] = {
     "class 70":   "freight",
     "class 37":   "freight",
     "class 47":   "freight",
+    "sd40":       "freight-na",
+    "sd70":       "freight-na",
+    "es44":       "freight-na",
+    "gp38":       "freight-na",
+    "bnsf":       "freight-na",
 }
 
 NOTCH_LABELS: dict[int, str] = {
@@ -103,6 +108,45 @@ def grad_band_label(g: float) -> str:
 
 def notch_label(n: int) -> str:
     return NOTCH_LABELS.get(n, f"Notch-{n}")
+
+
+# Filas de matriz freight_na (niveles cuantizados que el learner observa)
+FREIGHT_AXIS_ROWS: dict[str, tuple[str, tuple[int, ...]]] = {
+    "throttle":    ("TRACCIÓN",            (1, 2, 3, 4, 5, 6, 7, 8)),
+    "train_brake": ("FRENO AUTOMÁTICO",    (2, 3, 4, 5, 6, 7, 8, 9, 10)),
+    "ind_brake":   ("FRENO INDEPENDIENTE", (-8, -6, -4, -2, 2, 4, 6, 8)),
+    "dyn_brake":   ("FRENO DINÁMICO",      (1, 2, 3, 4, 5, 6, 7, 8)),
+}
+
+
+def control_level_label(axis: str, level: int) -> str:
+    """Etiqueta de fila en la matriz de calibración freight_na."""
+    if axis == "throttle":
+        return "Idle" if level == 0 else f"N{level}"
+    if axis == "train_brake":
+        return f"{level * 10}%"
+    if axis == "ind_brake":
+        if level == 0:
+            return "0%"
+        return f"{level * 10:+d}%"
+    if axis == "dyn_brake":
+        return "Off" if level == 0 else f"D{level}"
+    return str(level)
+
+
+def control_value_label(axis: str, value: Optional[float]) -> str:
+    """Etiqueta del valor actual de telemetría (cabecera freight)."""
+    if value is None:
+        return "?"
+    if axis == "throttle":
+        return f"N{int(round(value))}"
+    if axis == "train_brake":
+        return f"{max(0.0, value) * 100:.0f}%"
+    if axis == "ind_brake":
+        return f"{value * 100:+.0f}%"
+    if axis == "dyn_brake":
+        return "Off" if value < 0.02 else f"D{int(round(value * 8))}"
+    return f"{value:.2f}"
 
 
 # ── Estructuras de datos ──────────────────────────────────────────────────────

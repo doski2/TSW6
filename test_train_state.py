@@ -180,3 +180,39 @@ class TestBuildTrainState:
         assert s.gradient_pct == 0.0
         assert s.rain_intensity == 0.0
         assert s.supervision == "csm"
+
+
+class TestFreightNaLayout:
+    def test_detect_layout_from_vehicle_name(self):
+        telem = {
+            "vehicle_name": "BNSF SD40-2 C",
+            "handle_notch": 5,
+            "train_brake_value": 0.5,
+            "ind_brake_value": 0.0,
+            "dyn_brake_value": 0.25,
+            "dyn_brake_active": True,
+        }
+        s = build_train_state(telem)
+        assert s.control_layout == "freight_na"
+        assert s.handle_notch == 5
+        assert s.throttle_notch == 5
+        assert s.throttle_active
+        assert not s.brake_notch
+        assert s.brake_active
+        assert s.train_brake_value == 0.5
+        assert s.dyn_brake_active is True
+
+    def test_combined_unchanged(self):
+        telem = {"vehicle_name": "Class 323", "handle_notch": 6}
+        s = build_train_state(telem)
+        assert s.control_layout == "combined"
+        assert s.throttle_notch == 2
+        assert s.throttle_active
+
+    def test_explicit_control_layout_in_telem(self):
+        s = build_train_state({
+            "control_layout": "freight_na",
+            "handle_notch": 3,
+        })
+        assert s.control_layout == "freight_na"
+        assert s.throttle_notch == 3

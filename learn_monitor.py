@@ -28,12 +28,25 @@ import threading
 import time
 from typing import Optional
 
-from profiler import COMP_PORT, get_vehicle_name, notch_label
+from profiler import (
+    COMP_PORT, FREIGHT_AXIS_ROWS, control_level_label, control_value_label,
+    get_vehicle_name, notch_label,
+)
 from tsw_connection import TswConnection
 from online_learner import (
-    OnlineLearner, path_for_vehicle, _SPEED_BANDS, _speed_band_index,
+    path_for_vehicle, _SPEED_BANDS, _speed_band_index,
     MIN_SPEED, MIN_SPEED_FREIGHT,
 )
+from freight_learner import (
+    FreightLearner, create_learner, freight_quantize_level, infer_active_axis,
+)
+
+_AXIS_HINT = {
+    "throttle":    "tracción",
+    "train_brake": "freno automático",
+    "ind_brake":   "freno independiente",
+    "dyn_brake":   "freno dinámico",
+}
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 
@@ -62,14 +75,15 @@ def _bar(pct: float, width: int = 30) -> str:
 
 
 class LearnMonitor:
-    """Dashboard guiado sobre el conteo de muestras del OnlineLearner."""
+    """Dashboard guiado sobre el conteo de muestras del learner."""
 
-    def __init__(self, learner: OnlineLearner, vehicle: str, target: int,
-                 vehicle_known: bool = True):
+    def __init__(self, learner, vehicle: str, target: int,
+                 vehicle_known: bool = True, layout: str = "combined"):
         self.learner = learner
         self.vehicle = vehicle
         self.target = target
         self.vehicle_known = vehicle_known
+        self.layout = layout
 
         self._last_render = 0.0
         self._last_save = 0.0
@@ -83,16 +97,41 @@ class LearnMonitor:
         self._cur_grad = 0.0
         self._cur_band = 0
         self._cur_limit: Optional[float] = None
+        self._cur_controls: dict = {}
+        self._cur_axis: Optional[str] = None
+        self._cur_level: Optional[float] = None
+
+    @property
+    def _is_freight(self) -> bool:
+        return (self.layout == "freight_na"
+                or isinstance(self.learner, FreightLearner))
 
     # ── Conteo de muestras por celda (lee el estado interno del learner) ──────
 
     def _count(self, band: int, notch: int) -> int:
         return self.learner._n_bands[band].get(notch, 0)
 
+    def _count_freight(self, axis: str, band: int, level: int) -> int:
+        if isinstance(self.learner, FreightLearner):
+            return self.learner.band_count(axis, band, level)
+        return 0
+
     def _is_complete(self, band: int, notch: int) -> bool:
         return self._count(band, notch) >= self.target
 
+    def _is_complete_freight(self, axis: str, band: int, level: int) -> bool:
+        return self._count_freight(axis, band, level) >= self.target
+
     def _total_progress(self) -> tuple[int, int]:
+        if self._is_freight:
+            done = total = 0
+            for axis, (_, rows) in FREIGHT_AXIS_ROWS.items():
+                for lv in rows:
+                    for b in range(len(_SPEED_BANDS)):
+                        total += 1
+                        if self._is_complete_freight(axis, b, lv):
+                            done += 1
+            return done, total
         done = sum(
             1 for b in range(len(_SPEED_BANDS)) for n in _NOTCH_ROWS
             if self._is_complete(b, n)
@@ -101,7 +140,7 @@ class LearnMonitor:
         return done, total
 
     def render_waiting(self, speed: Optional[float]) -> None:
-        """Pantalla de espera hasta conocer la muesca (llega solo al cambiar)."""
+        """Pantalla de espera hasta conocer mandos o velocidad."""
         now = time.time()
         if now - self._last_render < 0.5:
             return
@@ -111,10 +150,16 @@ class LearnMonitor:
         print(f"  MONITOR DE APRENDIZAJE   ·   {self.vehicle}")
         print("═" * 64)
         spd = f"{speed:.1f} mph" if speed is not None else "?"
-        print(f"  Esperando posición del acelerador…   (velocidad: {spd})")
-        print()
-        print("  El companion solo envía la muesca cuando CAMBIA.")
-        print("  ► Mueve el acelerador/freno una muesca para que se detecte.")
+        if self._is_freight:
+            print(f"  Esperando telemetría de mandos…   (velocidad: {spd})")
+            print()
+            print("  El companion envía posiciones al CAMBIAR un mando.")
+            print("  ► Mueve tracción o algún freno para que se detecte.")
+        else:
+            print(f"  Esperando posición del acelerador…   (velocidad: {spd})")
+            print()
+            print("  El companion solo envía la muesca cuando CAMBIA.")
+            print("  ► Mueve el acelerador/freno una muesca para que se detecte.")
         print(f"  Snapshots recibidos: {self._snaps}")
         print("═" * 64)
 
@@ -151,12 +196,57 @@ class LearnMonitor:
             self._last_render = now
             self.render()
 
+    def feed_freight(self, speed: float, grad: float,
+                     accel: Optional[float], limit: Optional[float],
+                     ack: bool, controls: dict,
+                     axis: Optional[str], level: Optional[float]) -> None:
+        """Alimenta FreightLearner cuando se detecta un eje activo."""
+        self._cur_speed = speed
+        self._cur_notch = int(controls.get("throttle") or 0)
+        self._cur_grad = grad
+        self._cur_band = _speed_band_index(speed)
+        self._cur_limit = limit
+        self._cur_accel = accel
+        self._cur_controls = dict(controls)
+        self._cur_axis = axis
+        self._cur_level = level
+        self._ack_active = ack
+
+        if not ack and axis and level is not None and isinstance(self.learner, FreightLearner):
+            self.learner.feed(axis, level, speed, grad, accel, controls)
+
+        now = time.time()
+        if now - self._last_save >= 5.0:
+            self._last_save = now
+            self.learner.save()
+        if now - self._last_render >= 0.5:
+            self._last_render = now
+            self.render()
+
     # ── Captura oportunista (se adapta a ti, no al revés) ─────────────────────
 
     def _pending_in_band(self, band: int) -> list[int]:
         return [n for n in _NOTCH_ROWS if not self._is_complete(band, n)]
 
+    def _pending_freight_in_band(self, axis: str, band: int) -> list[int]:
+        _, rows = FREIGHT_AXIS_ROWS[axis]
+        return [lv for lv in rows if not self._is_complete_freight(axis, band, lv)]
+
+    def _freight_active_level(self, axis: str) -> Optional[int]:
+        if axis == "throttle":
+            v = self._cur_controls.get("throttle")
+        else:
+            v = self._cur_controls.get(axis)
+        if v is None:
+            return None
+        return freight_quantize_level(axis, float(v))
+
     def _hints(self) -> list[str]:
+        if self._is_freight:
+            return self._hints_freight()
+        return self._hints_combined()
+
+    def _hints_combined(self) -> list[str]:
         """
         Devuelve líneas informativas/opcionales. Nunca exige una acción que
         contradiga el límite o la parada del escenario: solo informa de lo que
@@ -214,9 +304,128 @@ class LearnMonitor:
         lines.append("Solo cuando los límites y las paradas del escenario te lo permitan.")
         return lines
 
+    def _hints_freight(self) -> list[str]:
+        band = self._cur_band
+        lo, hi = _SPEED_BANDS[band]
+        lines: list[str] = []
+
+        active = self._cur_axis or (
+            isinstance(self.learner, FreightLearner) and self.learner.last_axis)
+        if active and active in FREIGHT_AXIS_ROWS:
+            lv = self._freight_active_level(active)
+            if lv is not None and lv in FREIGHT_AXIS_ROWS[active][1]:
+                if not self._is_complete_freight(active, band, lv):
+                    need = self.target - self._count_freight(active, band, lv)
+                    lines.append(
+                        f"Capturando {_AXIS_HINT[active]} "
+                        f"{control_level_label(active, lv)} @ {lo}-{hi} mph "
+                        f"→ mantén ~2 s  (faltan {need})")
+
+        for axis, (_, rows) in FREIGHT_AXIS_ROWS.items():
+            pending = self._pending_freight_in_band(axis, band)
+            if not pending:
+                continue
+            labels = ", ".join(control_level_label(axis, lv) for lv in pending[:4])
+            extra = f" +{len(pending) - 4}" if len(pending) > 4 else ""
+            lines.append(
+                f"Pendiente {_AXIS_HINT[axis]} @ {lo}-{hi} mph: {labels}{extra}")
+
+        if not lines:
+            done, total = self._total_progress()
+            if done >= total:
+                return ["¡Todas las celdas completas! El tren está calibrado."]
+            return [f"Banda {lo}-{hi} mph completa en todos los ejes. "
+                    "Conduce a otra velocidad para seguir capturando."]
+
+        if abs(self._cur_grad) > 0.5:
+            lines.append(
+                f"En pendiente ({self._cur_grad:+.1f}%): prioriza freno dinámico "
+                "o train brake; evita calibrar tracción en fuerte gradiente.")
+        elif self._cur_speed > 5:
+            lines.append(
+                "Sugerencia: un solo mando estable ~2 s; no muevas otros ejes "
+                "mientras captura.")
+
+        lines.append("Orden recomendado: tracción → freno auto → dyn → freno ind.")
+        return lines
+
     # ── Render ────────────────────────────────────────────────────────────────
 
     def render(self) -> None:
+        if self._is_freight:
+            self._render_freight()
+        else:
+            self._render_combined()
+
+    def _render_matrix_block(self, title: str, axis: str,
+                             rows: tuple[int, ...]) -> None:
+        col_hdr = f"  {'Nivel':<14}"
+        for lo, hi in _SPEED_BANDS:
+            col_hdr += f"{lo}-{hi}".center(10)
+        print(f"  {title}")
+        print(col_hdr)
+        for lv in rows:
+            row = f"  {control_level_label(axis, lv):<14}"
+            for b in range(len(_SPEED_BANDS)):
+                c = self._count_freight(axis, b, lv)
+                mark = "✓" if c >= self.target else "·"
+                cell = f"{min(c, self.target)}/{self.target}{mark}"
+                row += cell.center(10)
+            print(row)
+        print()
+
+    def _render_freight(self) -> None:
+        _clear()
+        done, total = self._total_progress()
+        pct = done / total if total else 0.0
+
+        veh_str = self.vehicle
+        if not self.vehicle_known:
+            veh_str += "  (buscando nombre…)"
+        print("═" * 64)
+        print(f"  MONITOR FREIGHT NA (multi-mando)   ·   {veh_str}")
+        print(f"  Un mando estable ~2 s por captura  ·  objetivo: {self.target}/celda")
+        print(f"  Perfil: {os.path.basename(self.learner.save_path)}")
+        print("═" * 64)
+
+        for axis, (title, rows) in FREIGHT_AXIS_ROWS.items():
+            self._render_matrix_block(title, axis, rows)
+
+        print("  " + "─" * 60)
+        print(f"  Progreso global: [{_bar(pct)}] {done}/{total}  ({pct*100:.0f}%)")
+        print("═" * 64)
+
+        atp = "  ⚠ ATP ACTIVO (aprendizaje en pausa)" if self._ack_active else ""
+        lim_str = (f"lím={self._cur_limit:.0f} mph"
+                   if self._cur_limit else "lím=?")
+        accel_str = (f"a={self._cur_accel:+.2f} m/s²" if self._cur_accel is not None
+                     else "a=dv/dt")
+        ctrl = self._cur_controls
+        mandos = (f"thr={control_value_label('throttle', ctrl.get('throttle'))}  "
+                  f"auto={control_value_label('train_brake', ctrl.get('train_brake'))}  "
+                  f"ind={control_value_label('ind_brake', ctrl.get('ind_brake'))}  "
+                  f"dyn={control_value_label('dyn_brake', ctrl.get('dyn_brake'))}")
+        print(f"  Mandos: {mandos}")
+        print(f"  Vel={self._cur_speed:5.1f} mph   {lim_str}   "
+              f"grad={self._cur_grad:+.1f}%   {accel_str}{atp}")
+
+        axis_hint = ""
+        if isinstance(self.learner, FreightLearner):
+            if self._cur_axis:
+                axis_hint = f"eje activo={_AXIS_HINT.get(self._cur_axis, self._cur_axis)}   "
+            elif self.learner.last_axis:
+                axis_hint = f"último eje={_AXIS_HINT.get(self.learner.last_axis, self.learner.last_axis)}   "
+        print(f"  Estado learner: {self.learner.last_reason}   {axis_hint}"
+              f"(snapshots: {self._snaps})")
+
+        print()
+        for line in self._hints():
+            print(f"  ► {line}")
+        print()
+        print("  Ctrl+C para terminar.  Progreso guardado en el perfil del tren.")
+        print("═" * 64)
+
+    def _render_combined(self) -> None:
         _clear()
         done, total = self._total_progress()
         pct = done / total if total else 0.0
@@ -262,7 +471,10 @@ class LearnMonitor:
               f"spd={self._cur_speed:5.1f} mph   {lim_str}   "
               f"grad={self._cur_grad:+.1f}%   {accel_str}{atp}")
         # Diagnóstico en vivo: por qué (no) se está registrando la muestra
-        print(f"  Estado learner: {self.learner.last_reason}   "
+        axis_hint = ""
+        if isinstance(self.learner, FreightLearner) and self.learner.last_axis:
+            axis_hint = f"eje={self.learner.last_axis}   "
+        print(f"  Estado learner: {self.learner.last_reason}   {axis_hint}"
               f"(snapshots: {self._snaps})")
 
         # Captura oportunista (informativo, se adapta a tu conducción)
@@ -347,9 +559,11 @@ def main() -> None:
         os.remove(profile_path)
         print("Perfil borrado — empezando de cero.")
 
-    learner = OnlineLearner(vehicle=vehicle, min_speed=min_speed)
+    learner = create_learner(vehicle=vehicle, min_speed=min_speed)
+    init_layout = "freight_na" if isinstance(learner, FreightLearner) else "combined"
     monitor = LearnMonitor(learner, vehicle, max(1, args.target),
-                           vehicle_known=vehicle_known)
+                           vehicle_known=vehicle_known, layout=init_layout)
+    prev_controls: Optional[dict] = None
 
     modo_vel = "mercancías" if min_speed <= MIN_SPEED_FREIGHT else "pasajeros"
     print(f"Vel. mín. : {min_speed:.0f} mph ({modo_vel})")
@@ -382,8 +596,16 @@ def main() -> None:
             limit = telem.get("limit_mph")
             ack   = bool(telem.get("ack_required", False))
 
-            # Necesitamos al menos velocidad y muesca conocidas para alimentar.
-            if speed is None or notch is None:
+            layout = telem.get("control_layout", "combined")
+            is_freight = isinstance(learner, FreightLearner) or layout == "freight_na"
+            monitor.layout = "freight_na" if is_freight else "combined"
+
+            if speed is None:
+                monitor.render_waiting(speed)
+                time.sleep(0.2)
+                continue
+
+            if not is_freight and notch is None:
                 monitor.render_waiting(speed)
                 time.sleep(0.2)
                 continue
@@ -394,6 +616,14 @@ def main() -> None:
                 name = _detected_name["v"]
                 old_path = learner.save_path
                 learner.adopt_profile(name)
+                new_learner = create_learner(vehicle=name, min_speed=min_speed)
+                if type(new_learner) is not type(learner):
+                    new_learner.adopt_profile(name)
+                    learner = new_learner
+                    monitor.learner = learner
+                    monitor.layout = ("freight_na"
+                                      if isinstance(learner, FreightLearner)
+                                      else "combined")
                 # Borrar el temporal 'Desconocido' (sus datos ya se fusionaron)
                 if (old_path != learner.save_path
                         and os.path.basename(old_path) == "Desconocido.json"
@@ -405,8 +635,21 @@ def main() -> None:
                 monitor.vehicle = name
                 monitor.vehicle_known = True
                 vehicle = name
+                monitor.layout = ("freight_na" if isinstance(learner, FreightLearner)
+                                  else "combined")
 
-            monitor.feed(speed, int(notch), grad, accel, limit, ack)
+            if is_freight:
+                controls = {
+                    "throttle": float(notch if notch is not None else 0),
+                    "train_brake": float(telem.get("train_brake_value") or 0.0),
+                    "ind_brake": float(telem.get("ind_brake_value") or 0.0),
+                    "dyn_brake": float(telem.get("dyn_brake_value") or 0.0),
+                }
+                axis, level = infer_active_axis(prev_controls, controls)
+                monitor.feed_freight(speed, grad, accel, limit, ack, controls, axis, level)
+                prev_controls = controls
+            else:
+                monitor.feed(speed, int(notch), grad, accel, limit, ack)
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass

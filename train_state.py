@@ -13,8 +13,10 @@ en módulo sin modificarse.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+
+from control_layout import detect_control_layout
 
 
 @dataclass(frozen=True)
@@ -38,8 +40,8 @@ class TrainState:
     target_mph: float                  # velocidad objetivo del operador (0 = seguir límite)
 
     # ── Handle combinado PowerBrakeHandle (Class 323) ─────────────────────
-    # 0 = freno máx … 4 = neutro … 8 = tracción máx
-    # REGLA PRINCIPAL: siempre leído de telemetría, nunca de un contador interno
+    # combined: 0 = freno máx … 4 = neutro … 8 = tracción máx
+    # freight_na: handle_notch = solo tracción 0–8 (ralentí + muescas)
     handle_notch: int
 
     # ── Física ───────────────────────────────────────────────────────────
@@ -71,30 +73,55 @@ class TrainState:
     # ── Configuración del operador ────────────────────────────────────────
     paused: bool
 
+    # ── Layout freight NA (Fase 1; defaults = combined UK) ────────────────
+    control_layout: str = "combined"
+    train_brake_value: Optional[float] = None
+    ind_brake_value:   Optional[float] = None
+    dyn_brake_value:   Optional[float] = None
+    dyn_brake_active:  Optional[bool] = None
+
     # ── Metadata ─────────────────────────────────────────────────────────
-    timestamp: float
+    timestamp: float = field(default_factory=time.time)
 
     # ── Propiedades derivadas (calculadas, no almacenadas) ────────────────
 
     @property
     def throttle_notch(self) -> int:
-        """Zona de tracción del handle: 0-4 (handle 4→8)."""
+        """Muescas de tracción: freight 0–8 directo; combined handle 5–8 → 1–4."""
+        if self.control_layout == "freight_na":
+            return int(self.handle_notch)
         return max(0, self.handle_notch - 4)
 
     @property
     def brake_notch(self) -> int:
-        """Zona de freno del handle: 0-4 (handle 4→0)."""
+        """Zona de freno del handle combinado (0 en freight_na — frenos van aparte)."""
+        if self.control_layout == "freight_na":
+            return 0
         return max(0, 4 - self.handle_notch)
 
     @property
     def throttle_active(self) -> bool:
-        """True si el handle está en zona de tracción (handle > 4)."""
+        if self.control_layout == "freight_na":
+            return int(self.handle_notch) > 0
         return self.handle_notch > 4
 
     @property
     def brake_active(self) -> bool:
-        """True si el handle está en zona de freno (handle < 4)."""
+        if self.control_layout == "freight_na":
+            tb = self.train_brake_value or 0.0
+            ib = self.ind_brake_value or 0.0
+            db = self.dyn_brake_value or 0.0
+            return (
+                tb > 0.05
+                or ib > 0.05
+                or db > 0.02
+                or bool(self.dyn_brake_active)
+            )
         return self.handle_notch < 4
+
+    @property
+    def is_freight_na(self) -> bool:
+        return self.control_layout == "freight_na"
 
     @property
     def effective_target(self) -> float:
@@ -127,11 +154,37 @@ def build_train_state(
     stations_raw   = telem.get("stations")
     speed_lims_raw = telem.get("speed_limits_ahead")
 
+    vehicle = telem.get("vehicle_name")
+    layout = telem.get("control_layout") or detect_control_layout(
+        str(vehicle) if vehicle else None)
+
+    def _float_or_none(key: str) -> Optional[float]:
+        v = telem.get(key)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    dyn_active = telem.get("dyn_brake_active")
+    if isinstance(dyn_active, bool):
+        dyn_active_val: Optional[bool] = dyn_active
+    elif dyn_active is None:
+        dyn_active_val = None
+    else:
+        dyn_active_val = bool(dyn_active)
+
     return TrainState(
         speed_mph          = float(telem.get("speed_mph") or 0.0),
         limit_mph          = float(telem.get("limit_mph") or 0.0),
         target_mph         = target_mph,
         handle_notch       = int(telem.get("handle_notch") or 4),
+        control_layout     = str(layout),
+        train_brake_value  = _float_or_none("train_brake_value"),
+        ind_brake_value    = _float_or_none("ind_brake_value"),
+        dyn_brake_value    = _float_or_none("dyn_brake_value"),
+        dyn_brake_active   = dyn_active_val,
         acceleration_ms2   = acceleration_ms2,
         gradient_pct       = float(telem.get("gradient_pct") or 0.0),
         rain_intensity     = float(telem.get("rain_intensity") or 0.0),
