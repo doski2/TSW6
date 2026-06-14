@@ -2,23 +2,15 @@
 """
 learn_monitor.py — Monitor de aprendizaje guiado para calibración del tren.
 
-A diferencia de profiler.py (que solo escucha pasivamente), este monitor te
-GUÍA: muestra una matriz de objetivos (muesca × banda de velocidad), te dice
-qué hacer en cada momento para completar las celdas que faltan, y alimenta el
-OnlineLearner en vivo — de modo que logs/calibration.json se actualiza mientras
-conduces manualmente.
-
-Cuando todas las celdas están completas, el autopilot sabe exactamente cuánto
-acelera y frena cada muesca en cada rango de velocidad.
-
-Objetivo de cada celda: TARGET_SAMPLES muestras limpias
-(muesca estable ≥ 2 s, cambio de velocidad apreciable, |gradiente| < 3 %).
+Muestra matrices de objetivos (muesca × banda de velocidad, o 4 ejes en freight),
+guía qué capturar y alimenta OnlineLearner / FreightLearner en vivo.
+Los perfiles se guardan en logs/profiles/<tren>.json.
 
 Uso:
+    aprender.bat
     python learn_monitor.py
-    python learn_monitor.py --host 192.168.1.5
-    python learn_monitor.py --target 5      (muestras por celda)
-    python learn_monitor.py --reset         (borra calibration.json y empieza de cero)
+    python learn_monitor.py --freight
+    python learn_monitor.py --reset
 """
 
 import argparse
@@ -28,17 +20,19 @@ import threading
 import time
 from typing import Optional
 
-from profiler import (
+from control_layout import detect_control_layout
+from train_labels import (
     COMP_PORT, FREIGHT_AXIS_ROWS, control_level_label, control_value_label,
     get_vehicle_name, notch_label,
 )
 from tsw_connection import TswConnection
 from online_learner import (
-    path_for_vehicle, _SPEED_BANDS, _speed_band_index,
+    OnlineLearner, path_for_vehicle, _SPEED_BANDS, _speed_band_index,
     MIN_SPEED, MIN_SPEED_FREIGHT,
 )
 from freight_learner import (
-    FreightLearner, create_learner, freight_quantize_level, infer_active_axis,
+    FreightLearner, create_learner, freight_quantize_level,
+    infer_active_axis, resolve_feed_axis,
 )
 
 _AXIS_HINT = {
@@ -74,6 +68,62 @@ def _bar(pct: float, width: int = 30) -> str:
     return "█" * filled + "·" * (width - filled)
 
 
+def _resolve_vehicle_name(vehicle: str, conn: TswConnection,
+                          detected: Optional[str]) -> str:
+    """Nombre del loco para perfil/learner (stream, API o detección en hilo)."""
+    if vehicle and vehicle.strip() and vehicle != "Desconocido":
+        return vehicle.strip()
+    from_stream = conn.get_vehicle_name()
+    if from_stream:
+        return from_stream
+    if detected:
+        return detected
+    return vehicle or "Desconocido"
+
+
+def _ensure_freight_learner(learner, vehicle: str, conn: TswConnection,
+                            detected: Optional[str], min_speed: float):
+    """Sustituye OnlineLearner por FreightLearner si el tren es freight_na."""
+    veh = _resolve_vehicle_name(vehicle, conn, detected)
+    if isinstance(learner, FreightLearner):
+        _adopt_vehicle_profile(learner, veh)
+        return learner, veh
+    new = create_learner(vehicle=veh, layout="freight_na", min_speed=min_speed)
+    if isinstance(new, FreightLearner):
+        _adopt_vehicle_profile(new, veh)
+        return new, veh
+    return learner, vehicle
+
+
+def _adopt_vehicle_profile(learner, vehicle: str) -> None:
+    """Mueve el perfil de Desconocido.json al nombre real del loco."""
+    if not vehicle or vehicle == "Desconocido":
+        return
+    new_path = path_for_vehicle(vehicle)
+    if learner.save_path == new_path:
+        return
+    old_path = learner.save_path
+    learner.adopt_profile(vehicle)
+    if (os.path.basename(old_path) == "Desconocido.json"
+            and os.path.exists(old_path)
+            and old_path != learner.save_path):
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+
+def _sync_vehicle_from_telem(vehicle: str, conn: TswConnection,
+                             detected: Optional[str],
+                             telem: dict) -> str:
+    """Nombre del loco: argumento, stream SSE o telemetría enriquecida."""
+    name = _resolve_vehicle_name(vehicle, conn, detected)
+    stream_name = telem.get("vehicle_name")
+    if stream_name and str(stream_name).strip():
+        return str(stream_name).strip()
+    return name
+
+
 class LearnMonitor:
     """Dashboard guiado sobre el conteo de muestras del learner."""
 
@@ -100,6 +150,7 @@ class LearnMonitor:
         self._cur_controls: dict = {}
         self._cur_axis: Optional[str] = None
         self._cur_level: Optional[float] = None
+        self._learner_mismatch = False
 
     @property
     def _is_freight(self) -> bool:
@@ -212,8 +263,12 @@ class LearnMonitor:
         self._cur_level = level
         self._ack_active = ack
 
-        if not ack and axis and level is not None and isinstance(self.learner, FreightLearner):
-            self.learner.feed(axis, level, speed, grad, accel, controls)
+        if not ack and axis and level is not None:
+            if isinstance(self.learner, FreightLearner):
+                self._learner_mismatch = False
+                self.learner.feed(axis, level, speed, grad, accel, controls)
+            else:
+                self._learner_mismatch = True
 
         now = time.time()
         if now - self._last_save >= 5.0:
@@ -337,10 +392,14 @@ class LearnMonitor:
             return [f"Banda {lo}-{hi} mph completa en todos los ejes. "
                     "Conduce a otra velocidad para seguir capturando."]
 
-        if abs(self._cur_grad) > 0.5:
+        if abs(self._cur_grad) > 2.0:
             lines.append(
-                f"En pendiente ({self._cur_grad:+.1f}%): prioriza freno dinámico "
-                "o train brake; evita calibrar tracción en fuerte gradiente.")
+                f"Pendiente fuerte ({self._cur_grad:+.1f}%): prioriza freno dinámico "
+                "o train brake; evita calibrar tracción (>2%).")
+        elif abs(self._cur_grad) > 0.5:
+            lines.append(
+                f"Pendiente suave ({self._cur_grad:+.1f}%): se compensa; "
+                "llano es más preciso pero puedes capturar.")
         elif self._cur_speed > 5:
             lines.append(
                 "Sugerencia: un solo mando estable ~2 s; no muevas otros ejes "
@@ -410,12 +469,17 @@ class LearnMonitor:
               f"grad={self._cur_grad:+.1f}%   {accel_str}{atp}")
 
         axis_hint = ""
-        if isinstance(self.learner, FreightLearner):
+        if self._learner_mismatch:
+            axis_hint = "⚠ learner UK en tren freight — reinicia aprender.bat   "
+        elif isinstance(self.learner, FreightLearner):
             if self._cur_axis:
                 axis_hint = f"eje activo={_AXIS_HINT.get(self._cur_axis, self._cur_axis)}   "
             elif self.learner.last_axis:
                 axis_hint = f"último eje={_AXIS_HINT.get(self.learner.last_axis, self.learner.last_axis)}   "
-        print(f"  Estado learner: {self.learner.last_reason}   {axis_hint}"
+        reason = self.learner.last_reason
+        if self._learner_mismatch:
+            reason = "learner incorrecto (perfil UK) — reinicia aprender.bat"
+        print(f"  Estado learner: {reason}   {axis_hint}"
               f"(snapshots: {self._snaps})")
 
         print()
@@ -500,7 +564,7 @@ def main() -> None:
     parser.add_argument("--target", type=int, default=TARGET_SAMPLES,
                         help=f"Muestras por celda (default: {TARGET_SAMPLES})")
     parser.add_argument("--reset", action="store_true",
-                        help="Borra calibration.json y empieza de cero")
+                        help="Borra el perfil del tren y empieza de cero")
     parser.add_argument("--freight", action="store_true",
                         help=f"Modo mercancías: velocidad mínima {MIN_SPEED_FREIGHT:.0f} mph "
                              f"(por defecto {MIN_SPEED:.0f} mph para pasajeros)")
@@ -559,11 +623,19 @@ def main() -> None:
         os.remove(profile_path)
         print("Perfil borrado — empezando de cero.")
 
-    learner = create_learner(vehicle=vehicle, min_speed=min_speed)
+    init_layout_hint: Optional[str] = "freight_na" if args.freight else None
+    if init_layout_hint is None and vehicle_known:
+        if detect_control_layout(vehicle) == "freight_na":
+            init_layout_hint = "freight_na"
+
+    learner = create_learner(vehicle=vehicle, min_speed=min_speed,
+                             layout=init_layout_hint)
     init_layout = "freight_na" if isinstance(learner, FreightLearner) else "combined"
     monitor = LearnMonitor(learner, vehicle, max(1, args.target),
                            vehicle_known=vehicle_known, layout=init_layout)
     prev_controls: Optional[dict] = None
+    capture_axis: Optional[str] = None
+    capture_level: Optional[float] = None
 
     modo_vel = "mercancías" if min_speed <= MIN_SPEED_FREIGHT else "pasajeros"
     print(f"Vel. mín. : {min_speed:.0f} mph ({modo_vel})")
@@ -597,6 +669,14 @@ def main() -> None:
             ack   = bool(telem.get("ack_required", False))
 
             layout = telem.get("control_layout", "combined")
+            resolved_vehicle = _sync_vehicle_from_telem(
+                vehicle, conn, _detected_name["v"], telem)
+            if resolved_vehicle and resolved_vehicle != "Desconocido":
+                _adopt_vehicle_profile(learner, resolved_vehicle)
+                vehicle = resolved_vehicle
+                monitor.vehicle = resolved_vehicle
+                monitor.vehicle_known = True
+
             is_freight = isinstance(learner, FreightLearner) or layout == "freight_na"
             monitor.layout = "freight_na" if is_freight else "combined"
 
@@ -614,29 +694,22 @@ def main() -> None:
             # fusionando lo capturado hasta ahora; luego deja de buscar.
             if not monitor.vehicle_known and _detected_name["v"]:
                 name = _detected_name["v"]
-                old_path = learner.save_path
-                learner.adopt_profile(name)
-                new_learner = create_learner(vehicle=name, min_speed=min_speed)
-                if type(new_learner) is not type(learner):
-                    new_learner.adopt_profile(name)
-                    learner = new_learner
-                    monitor.learner = learner
-                    monitor.layout = ("freight_na"
-                                      if isinstance(learner, FreightLearner)
-                                      else "combined")
-                # Borrar el temporal 'Desconocido' (sus datos ya se fusionaron)
-                if (old_path != learner.save_path
-                        and os.path.basename(old_path) == "Desconocido.json"
-                        and os.path.exists(old_path)):
-                    try:
-                        os.remove(old_path)
-                    except OSError:
-                        pass
+                _adopt_vehicle_profile(learner, name)
                 monitor.vehicle = name
                 monitor.vehicle_known = True
                 vehicle = name
                 monitor.layout = ("freight_na" if isinstance(learner, FreightLearner)
                                   else "combined")
+
+            if layout == "freight_na" and not isinstance(learner, FreightLearner):
+                learner, veh_resolved = _ensure_freight_learner(
+                    learner, vehicle, conn, _detected_name["v"], min_speed)
+                monitor.learner = learner
+                monitor._learner_mismatch = False
+                if veh_resolved and veh_resolved != "Desconocido":
+                    vehicle = veh_resolved
+                    monitor.vehicle = veh_resolved
+                    monitor.vehicle_known = True
 
             if is_freight:
                 controls = {
@@ -645,11 +718,13 @@ def main() -> None:
                     "ind_brake": float(telem.get("ind_brake_value") or 0.0),
                     "dyn_brake": float(telem.get("dyn_brake_value") or 0.0),
                 }
-                axis, level = infer_active_axis(prev_controls, controls)
+                axis, level, capture_axis, capture_level = resolve_feed_axis(
+                    prev_controls, controls, capture_axis, capture_level)
                 monitor.feed_freight(speed, grad, accel, limit, ack, controls, axis, level)
                 prev_controls = controls
             else:
-                monitor.feed(speed, int(notch), grad, accel, limit, ack)
+                assert notch is not None
+                monitor.feed(speed, notch, grad, accel, limit, ack)
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass

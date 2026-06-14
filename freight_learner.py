@@ -37,6 +37,7 @@ _log = logging.getLogger("tsw.learner.freight")
 
 FREIGHT_AXES = ("throttle", "train_brake", "ind_brake", "dyn_brake")
 _LEVEL_EPS = 0.02
+_LEVEL_DRIFT = _LEVEL_EPS * 2
 
 
 def profile_layout_from_file(path: str) -> Optional[str]:
@@ -139,6 +140,54 @@ def infer_active_axis(prev: Optional[dict], curr: dict) -> tuple[Optional[str], 
     if len(candidates) == 1:
         return candidates[0]
     return None, None
+
+
+def sole_calibrable_axis(controls: dict) -> tuple[Optional[str], Optional[float]]:
+    """Un solo mando en rango calibrable (p. ej. N5 sin tocar frenos)."""
+    candidates: list[tuple[str, float]] = []
+    t = controls.get("throttle")
+    if t is not None and freight_quantize_level("throttle", float(t)) >= 1:
+        candidates.append(("throttle", float(t)))
+    tb = controls.get("train_brake")
+    if tb is not None and freight_quantize_level("train_brake", float(tb)) >= 2:
+        candidates.append(("train_brake", float(tb)))
+    ib = controls.get("ind_brake")
+    if ib is not None and abs(freight_quantize_level("ind_brake", float(ib))) >= 2:
+        candidates.append(("ind_brake", float(ib)))
+    db = controls.get("dyn_brake")
+    if db is not None and freight_quantize_level("dyn_brake", float(db)) >= 1:
+        candidates.append(("dyn_brake", float(db)))
+    if len(candidates) == 1:
+        return candidates[0]
+    return None, None
+
+
+def resolve_feed_axis(
+    prev: Optional[dict],
+    curr: dict,
+    locked_axis: Optional[str],
+    locked_level: Optional[float],
+) -> tuple[Optional[str], Optional[float], Optional[str], Optional[float]]:
+    """
+    Eje a alimentar en cada snapshot: cambio detectado, mando bloqueado estable,
+    o un único mando calibrable sin cambio previo.
+    Devuelve feed_axis, feed_level, nuevo locked_axis, nuevo locked_level.
+    """
+    changed_axis, changed_level = infer_active_axis(prev, curr)
+    if changed_axis and changed_level is not None:
+        locked_axis, locked_level = changed_axis, changed_level
+
+    if locked_axis is not None and locked_level is not None:
+        cur = curr.get(locked_axis)
+        if cur is not None and abs(float(cur) - float(locked_level)) <= _LEVEL_DRIFT:
+            return locked_axis, float(cur), locked_axis, locked_level
+        locked_axis, locked_level = None, None
+
+    sole_axis, sole_level = sole_calibrable_axis(curr)
+    if sole_axis is not None:
+        return sole_axis, sole_level, sole_axis, sole_level
+
+    return None, None, None, None
 
 
 class FreightLearner:
@@ -441,14 +490,27 @@ def create_learner(vehicle: Optional[str] = None,
                    min_speed: Optional[float] = None,
                    save_path: Optional[str] = None):
     path = save_path or (path_for_vehicle(vehicle) if vehicle else OnlineLearner.DEFAULT_PATH)
-    if layout is None:
-        layout = profile_layout_from_file(path)
-    if layout is None and vehicle:
+
+    vehicle_layout: Optional[str] = None
+    if vehicle:
         try:
             from control_layout import detect_control_layout
-            layout = detect_control_layout(vehicle)
+            vehicle_layout = detect_control_layout(vehicle)
         except Exception:
+            vehicle_layout = None
+
+    if layout is None:
+        file_layout = profile_layout_from_file(path)
+        # Loco freight_na por nombre prevalece sobre perfil v1 vacío/legacy
+        if vehicle_layout == "freight_na":
+            layout = "freight_na"
+        elif file_layout is not None:
+            layout = file_layout
+        elif vehicle_layout is not None:
+            layout = vehicle_layout
+        else:
             layout = "combined"
+
     if layout == "freight_na":
         return FreightLearner(save_path=path, vehicle=vehicle, min_speed=min_speed)
     return OnlineLearner(save_path=path, vehicle=vehicle, min_speed=min_speed)

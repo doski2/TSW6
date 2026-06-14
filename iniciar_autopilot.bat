@@ -72,11 +72,7 @@ echo  CONSEJO: Activa el boton CMP en RailBridge para telemetria automatica.
 echo  Si no, el autopilot pedira los datos manualmente.
 echo.
 pause
-%PY% tsw_autopilot.py --profile
-echo.
-echo  Analizando datos de calibracion...
-echo.
-%PY% analyze.py --apply
+%PY% tsw_autopilot.py
 goto fin
 
 :op2

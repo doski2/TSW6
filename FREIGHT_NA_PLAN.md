@@ -204,7 +204,7 @@ Los perfiles `combined` existentes (Class 323) siguen en formato actual
 
 **Criterio de aceptación:** `conn.get_telemetry()` devuelve los 4 valores en sesión SD40-2.
 
-**Archivos:** `tsw_connection.py`, `train_state.py`, `control_layout.py`, `profiler.py`
+**Archivos:** `tsw_connection.py`, `train_state.py`, `control_layout.py`, `train_labels.py`
 
 ---
 
@@ -247,7 +247,7 @@ tras sesión de train brake, `train_brake` tiene muestras.
 
 **Criterio de aceptación:** monitor usable para calibrar SD40-2 sin confusión con matriz UK.
 
-**Archivos:** `learn_monitor.py`, `profiler.py`, `test_learn_monitor_freight.py`
+**Archivos:** `learn_monitor.py`, `train_labels.py`, `test_learn_monitor_freight.py`
 
 ---
 
@@ -420,7 +420,7 @@ otro SD40, etc.) debería usar el **mismo esquema** `freight_na_railbridge_v3`.
 | `FREIGHT_NA_PLAN.md` | Este plan (fases 0–6) |
 | `control_diag.py` | **Fase 0** — diagnóstico mandos en vivo |
 | `diag_controles.bat` | Lanzador Fase 0 |
-| `PROFILER_PLAN.md` | Plan original Class 323 (layout `combined`) |
+| `train_labels.py` | Etiquetas de mandos UK/freight + `get_vehicle_name` |
 | `logs/profiles/RVM_BCC_WRM_Class323_DMS_A_C.json` | Perfil de referencia UK |
 | `logs/control_schemas/freight_na_railbridge_v3.json` | **Fase 0** — plantilla controles NA reutilizable |
 | `logs/control_schemas/BNSF_SD40_2_C.json` | Validación Fase 0 del SD40-2 |

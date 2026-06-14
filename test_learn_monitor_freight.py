@@ -8,7 +8,7 @@ import unittest
 from freight_learner import FreightLearner
 from learn_monitor import LearnMonitor
 from online_learner import _SPEED_BANDS
-from profiler import FREIGHT_AXIS_ROWS, control_level_label, control_value_label
+from train_labels import FREIGHT_AXIS_ROWS, control_level_label, control_value_label
 
 
 class TestControlLabels(unittest.TestCase):

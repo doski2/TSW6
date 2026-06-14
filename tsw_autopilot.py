@@ -44,7 +44,7 @@ from train_state import build_train_state                  # noqa: E402
 from speed_decider import SpeedDecider                     # noqa: E402
 from handle_controller import HandleController, SafetyWatchdog  # noqa: E402
 from dashboard import render_dashboard, KeyListener        # noqa: E402
-from profiler import Profiler, Sample, get_vehicle_name     # noqa: E402
+from train_labels import get_vehicle_name
 from tsw_ocr import TswOcr                                 # noqa: E402
 
 # ── Configuración ─────────────────────────────────────────────────────────────
@@ -137,8 +137,6 @@ def main():
                         help="Forzar introducción manual de telemetría")
     parser.add_argument("--stop", type=float, default=None, metavar="MILLAS",
                         help="Distancia en millas a la próxima parada")
-    parser.add_argument("--profile", action="store_true",
-                        help="Registrar datos de calibración mientras conduce")
     parser.add_argument("--learn", action="store_true",
                         help="Re-aprender la calibración en vivo (por defecto NO: "
                              "el perfil se calibra con aprender.bat y aquí solo se usa)")
@@ -177,15 +175,6 @@ def main():
         decider.target_stop_min_m = args.stop * 1609.344
         _log.info("Parada manual: %.2f millas (%.0f m)",
                   args.stop, decider.target_stop_min_m)
-
-    # ── Profiler de calibración (opcional) ──────────────────────────────
-    _profiler: Optional[Profiler] = None
-    _prof_last_notch: Optional[int] = None
-    _prof_notch_since: float = 0.0
-    _PROF_STABLE_S = 1.5
-    if args.profile:
-        _profiler = Profiler(vehicle_name="autopilot", output_dir=str(_log_dir))
-        print(Fore.CYAN + "  Profiler activo – registrando calibración automática" + Style.RESET_ALL)
 
     kl = KeyListener()
     kl.start()
@@ -416,31 +405,6 @@ def main():
             else:
                 decider.last_action = "HOLD"
 
-            # ── Profiler: registrar muestra si notch lleva ≥1.5s estable ─
-            if _profiler is not None:
-                cur_notch = telem.get("handle_notch")
-                now = time.perf_counter()
-                if cur_notch != _prof_last_notch:
-                    _prof_last_notch   = cur_notch
-                    _prof_notch_since  = now
-                elif (cur_notch is not None and speed is not None
-                      and now - _prof_notch_since >= _PROF_STABLE_S):
-                    stations   = telem.get("stations") or []
-                    nxt        = stations[0] if stations else None
-                    sample     = Sample(
-                        t=time.time(),
-                        speed=speed,
-                        notch=cur_notch,
-                        grad=telem.get("gradient_pct") or 0.0,
-                        accel=telem.get("accel_mps2"),
-                        next_stop=nxt["name"]              if nxt else None,
-                        next_stop_dist=nxt["distance_m"]   if nxt else None,
-                        next_stop_plat_m=nxt.get("platform_length_m") if nxt else None,
-                        limit_mph=limit,
-                        service=telem.get("service_name"),
-                    )
-                    _profiler.feed(sample, corrupt=telem.get("ack_required", False))
-
             # FPS
             elapsed    = time.perf_counter() - t0
             loop_times.append(elapsed)
@@ -460,10 +424,6 @@ def main():
 
     # ── Limpieza ─────────────────────────────────────────────────────────
     ocr.stop()
-
-    if _profiler is not None:
-        print(f"\n  {Fore.CYAN}Guardando datos de calibración...{Style.RESET_ALL}")
-        _profiler.summarize()
 
     if not args.no_control and hwnd:
         print(f"\n  {Fore.YELLOW}Llevando maneta a posición neutra...{Style.RESET_ALL}")
