@@ -18,7 +18,6 @@ Notches observados (handle combinado 0-8):
 Mejoras v2:
   - Filtro de coherencia de signo (tracción no acepta a<0, freno no acepta a>0)
   - Límites duros (clamp) en constantes aprendidas
-  - Decay/reset si diverge >50% del valor inicial
   - Separación por banda de velocidad (0-30, 30-60, 60+ mph)
 
 Mejoras v3:
@@ -70,9 +69,6 @@ _CLAMP = {
     "MAX_DECEL_MS2":    (0.50, 1.50),
 }
 
-# ── Divergencia máxima antes de resetear EMA ──────────────────────────────────
-_MAX_DIVERGENCE_RATIO = 0.50  # 50% del valor inicial → reset
-
 # ── Bandas de velocidad para separar aprendizaje ──────────────────────────────
 _SPEED_BANDS = ((0, 30), (30, 60), (60, 200))  # mph rangos
 
@@ -81,14 +77,6 @@ _SPEED_BANDS = ((0, 30), (30, 60), (60, 200))  # mph rangos
 # 0=plano (|grad|<0.5%), 1=subida (grad>+0.5%), 2=bajada (grad<-0.5%)
 _GRAD_BANDS = ("flat", "uphill", "downhill")
 _NUM_GRAD_BANDS = len(_GRAD_BANDS)
-
-# Valores iniciales de referencia para detección de divergencia
-_INITIAL_REFS = {
-    "TARGET_ACCEL_MS2": 0.298,
-    "TARGET_DECEL_MS2": 0.433,
-    "COAST_DECEL_MS2":  0.095,
-    "MAX_DECEL_MS2":    1.071,
-}
 
 
 def _speed_band_index(speed_mph: float) -> int:
@@ -401,9 +389,6 @@ class OnlineLearner:
         # Vaciar ventana para evitar solapamiento de mediciones
         self._window.clear()
 
-        # ── Decay/reset si diverge demasiado del valor inicial ────────────────
-        self._check_divergence()
-
         # Guardar y devolver constantes si hay suficiente confianza
         consts = self.get_constants()
         if consts:
@@ -428,35 +413,6 @@ class OnlineLearner:
             if total_n > 0:
                 self._ema[notch] = weighted_sum / total_n
                 self._n[notch]   = total_n
-
-    def _check_divergence(self) -> None:
-        """Resetea EMA de un notch si diverge >50% de su valor inicial."""
-        for const_name, ref_val in _INITIAL_REFS.items():
-            if const_name == "TARGET_ACCEL_MS2":
-                notches = _TRACTION_NOTCHES
-            elif const_name == "TARGET_DECEL_MS2":
-                notches = _BRAKE_NOTCHES
-            elif const_name == "COAST_DECEL_MS2":
-                notches = (_COAST_NOTCH,)
-            elif const_name == "MAX_DECEL_MS2":
-                notches = (_MAX_NOTCH,)
-            else:
-                continue
-
-            for notch in notches:
-                if notch in self._ema and self._n.get(notch, 0) >= MIN_SAMPLES:
-                    current = abs(self._ema[notch])
-                    if abs(current - ref_val) / ref_val > _MAX_DIVERGENCE_RATIO:
-                        _log.warning(
-                            "Learner RESET notch=%d  ema=%.3f diverge >50%% de ref=%.3f "
-                            "— reseteando todas las bandas",
-                            notch, self._ema[notch], ref_val)
-                        for band_ema in self._ema_bands:
-                            band_ema.pop(notch, None)
-                        for band_n in self._n_bands:
-                            band_n.pop(notch, None)
-                        self._ema.pop(notch, None)
-                        self._n.pop(notch, None)
 
     # ── Constantes físicas derivadas ─────────────────────────────────────────
 

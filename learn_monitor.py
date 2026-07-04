@@ -21,8 +21,9 @@ import time
 from typing import Optional
 
 from control_layout import detect_control_layout
+from control_schema import combined_notch_rows, freight_axis_rows
 from train_labels import (
-    COMP_PORT, FREIGHT_AXIS_ROWS, control_level_label, control_value_label,
+    COMP_PORT, control_level_label, control_value_label,
     get_vehicle_name, notch_label,
 )
 from tsw_connection import TswConnection
@@ -157,6 +158,12 @@ class LearnMonitor:
         return (self.layout == "freight_na"
                 or isinstance(self.learner, FreightLearner))
 
+    def _notch_rows(self) -> tuple[int, ...]:
+        return combined_notch_rows(self.vehicle, tuple(_NOTCH_ROWS))
+
+    def _freight_rows(self) -> dict[str, tuple[str, tuple[int, ...]]]:
+        return freight_axis_rows(self.vehicle)
+
     # ── Conteo de muestras por celda (lee el estado interno del learner) ──────
 
     def _count(self, band: int, notch: int) -> int:
@@ -176,7 +183,7 @@ class LearnMonitor:
     def _total_progress(self) -> tuple[int, int]:
         if self._is_freight:
             done = total = 0
-            for axis, (_, rows) in FREIGHT_AXIS_ROWS.items():
+            for axis, (_, rows) in self._freight_rows().items():
                 for lv in rows:
                     for b in range(len(_SPEED_BANDS)):
                         total += 1
@@ -184,10 +191,10 @@ class LearnMonitor:
                             done += 1
             return done, total
         done = sum(
-            1 for b in range(len(_SPEED_BANDS)) for n in _NOTCH_ROWS
+            1 for b in range(len(_SPEED_BANDS)) for n in self._notch_rows()
             if self._is_complete(b, n)
         )
-        total = len(_SPEED_BANDS) * len(_NOTCH_ROWS)
+        total = len(_SPEED_BANDS) * len(self._notch_rows())
         return done, total
 
     def render_waiting(self, speed: Optional[float]) -> None:
@@ -281,10 +288,10 @@ class LearnMonitor:
     # ── Captura oportunista (se adapta a ti, no al revés) ─────────────────────
 
     def _pending_in_band(self, band: int) -> list[int]:
-        return [n for n in _NOTCH_ROWS if not self._is_complete(band, n)]
+        return [n for n in self._notch_rows() if not self._is_complete(band, n)]
 
     def _pending_freight_in_band(self, axis: str, band: int) -> list[int]:
-        _, rows = FREIGHT_AXIS_ROWS[axis]
+        _, rows = self._freight_rows()[axis]
         return [lv for lv in rows if not self._is_complete_freight(axis, band, lv)]
 
     def _freight_active_level(self, axis: str) -> Optional[int]:
@@ -313,7 +320,7 @@ class LearnMonitor:
 
         # Si esta muesca está capturando ahora mismo, dilo (feedback positivo)
         capturando = ""
-        if self._cur_notch in _NOTCH_ROWS and not self._is_complete(band, self._cur_notch):
+        if self._cur_notch in self._notch_rows() and not self._is_complete(band, self._cur_notch):
             need = self.target - self._count(band, self._cur_notch)
             capturando = (f"Capturando {notch_label(self._cur_notch)} "
                           f"@ {lo}-{hi} mph  → faltan {need}")
@@ -366,9 +373,9 @@ class LearnMonitor:
 
         active = self._cur_axis or (
             isinstance(self.learner, FreightLearner) and self.learner.last_axis)
-        if active and active in FREIGHT_AXIS_ROWS:
+        if active and active in self._freight_rows():
             lv = self._freight_active_level(active)
-            if lv is not None and lv in FREIGHT_AXIS_ROWS[active][1]:
+            if lv is not None and lv in self._freight_rows()[active][1]:
                 if not self._is_complete_freight(active, band, lv):
                     need = self.target - self._count_freight(active, band, lv)
                     lines.append(
@@ -376,7 +383,7 @@ class LearnMonitor:
                         f"{control_level_label(active, lv)} @ {lo}-{hi} mph "
                         f"→ mantén ~2 s  (faltan {need})")
 
-        for axis, (_, rows) in FREIGHT_AXIS_ROWS.items():
+        for axis, (_, rows) in self._freight_rows().items():
             pending = self._pending_freight_in_band(axis, band)
             if not pending:
                 continue
@@ -447,7 +454,7 @@ class LearnMonitor:
         print(f"  Perfil: {os.path.basename(self.learner.save_path)}")
         print("═" * 64)
 
-        for axis, (title, rows) in FREIGHT_AXIS_ROWS.items():
+        for axis, (title, rows) in self._freight_rows().items():
             self._render_matrix_block(title, axis, rows)
 
         print("  " + "─" * 60)
@@ -512,7 +519,7 @@ class LearnMonitor:
         print("  " + "─" * 60)
 
         # Filas (muescas observadas)
-        for n in _NOTCH_ROWS:
+        for n in self._notch_rows():
             row = f"  {notch_label(n):<16}"
             for b in range(len(_SPEED_BANDS)):
                 c = self._count(b, n)

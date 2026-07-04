@@ -8,7 +8,7 @@ multi-eje (SD40-2, etc.).
 
 Uso:
   python control_diag.py
-  python control_diag.py --save   # guarda resumen en logs/control_diag_*.txt
+  python control_diag.py --save   # guarda resumen + logs/control_schemas/<tren>.json
 
 Instrucciones en sesión:
   1. Arranca TSW6 + RailBridge CMP
@@ -27,6 +27,11 @@ from datetime import datetime
 from typing import Any, Optional
 
 from tsw_connection import TswConnection
+from control_schema import (
+    build_vehicle_schema,
+    register_freight_vehicle,
+    save_vehicle_schema,
+)
 
 # Mandos principales (mapeo telem → etiqueta humana)
 _PRIMARY = (
@@ -81,10 +86,11 @@ def _clear() -> None:
 
 
 class SessionStats:
-    """Min/max y historial de cambios por campo."""
+    """Min/max, valores únicos vistos e historial de cambios por campo."""
 
     def __init__(self) -> None:
         self.minmax: dict[str, tuple[Any, Any]] = {}
+        self.seen_values: dict[str, set[Any]] = {}
         self.changes: list[str] = []
         self._last: dict[str, Any] = {}
         self.seen_api_keys: set[str] = set()
@@ -134,6 +140,7 @@ class SessionStats:
     def _track(self, key: str, val: Any) -> None:
         if val is None:
             return
+        self.seen_values.setdefault(key, set()).add(val)
         if key not in self.minmax:
             self.minmax[key] = (val, val)
         else:
@@ -203,7 +210,7 @@ def _render(snap: dict, stats: SessionStats, recent: list[str],
             print(line)
 
     print()
-    print("  Ctrl+C para terminar y ver resumen (min/max por mando)")
+    print("  Ctrl+C para terminar → resumen + control_schema en logs/control_schemas/")
     print("═" * 72)
 
 
@@ -347,7 +354,7 @@ def main() -> None:
         print("  ¿Estás en cabina con el tren encendido y CMP activo?")
 
     print()
-    print("  Copia los min/max a FREIGHT_NA_PLAN.md → sección Resultados Fase 0")
+    print("  Siguiente paso: aprender.bat con este tren en cabina")
     print("═" * 72)
 
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -355,6 +362,21 @@ def main() -> None:
     slug = (vehicle or "desconocido").replace(" ", "_")[:40]
     path = os.path.join(log_dir, f"control_diag_{slug}_{stamp}.txt")
     _write_summary(path, stats, vehicle)
+
+    schema = build_vehicle_schema(
+        vehicle or "", stats.minmax, stats.seen_values, path)
+    if schema:
+        schema_path = save_vehicle_schema(schema)
+        print(f"\n  Esquema guardado: {schema_path}")
+        obs = schema.get("observed_notches") or {}
+        for axis, levels in obs.items():
+            print(f"    {axis}: {levels}")
+        if schema.get("layout") == "freight_na":
+            register_freight_vehicle(schema["vehicle"], path)
+            print("    Registrado en freight_na_railbridge_v3.json")
+    else:
+        print("\n  AVISO: no se guardó control_schema (¿nombre de tren o muescas?)")
+        print("  Mueve al menos tracción/handle por todo el rango y repite.")
 
 
 if __name__ == "__main__":

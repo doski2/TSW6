@@ -64,14 +64,23 @@ def detect_control_layout(vehicle_name: Optional[str]) -> str:
     Devuelve 'combined' o 'freight_na'.
 
     Prioridad:
-      1. Lista validated_vehicles del esquema Fase 0
-      2. Heurísticas _FREIGHT_NA_HINTS / _COMBINED_HINTS en el nombre
-      3. Por defecto 'combined' (Class 323 y desconocidos UK)
+      1. Esquema Fase 0 del tren en logs/control_schemas/<tren>.json
+      2. Lista validated_vehicles del esquema plantilla freight NA
+      3. Heurísticas _FREIGHT_NA_HINTS / _COMBINED_HINTS en el nombre
+      4. Por defecto 'combined' (Class 323 y desconocidos UK)
     """
     if not vehicle_name or not str(vehicle_name).strip():
         return LAYOUT_COMBINED
 
     name = str(vehicle_name).strip()
+
+    try:
+        from control_schema import load_vehicle_schema
+        veh_schema = load_vehicle_schema(name)
+        if veh_schema and veh_schema.get("layout") in (LAYOUT_COMBINED, LAYOUT_FREIGHT_NA):
+            return str(veh_schema["layout"])
+    except Exception:
+        pass
     if name in validated_freight_vehicles():
         return LAYOUT_FREIGHT_NA
 

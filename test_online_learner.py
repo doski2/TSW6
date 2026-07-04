@@ -5,7 +5,6 @@ test_online_learner.py — Tests para el OnlineLearner v2.
 Verifica:
   - Filtros de coherencia de signo
   - Límites duros (clamp)
-  - Decay/reset ante divergencia
   - Separación por banda de velocidad
 """
 
@@ -17,7 +16,7 @@ import unittest
 
 from online_learner import (
     OnlineLearner, _speed_band_index, _grad_band_index, _TRACTION_NOTCHES,
-    _BRAKE_NOTCHES, _MAX_NOTCH, _COAST_NOTCH, _CLAMP, _INITIAL_REFS,
+    _BRAKE_NOTCHES, _MAX_NOTCH, _COAST_NOTCH, _CLAMP,
     _GRAD_BANDS, GRAD_FLAT_THRESHOLD, _gravity_compensation,
     MIN_STABLE_S, MIN_SAMPLES,
 )
@@ -106,32 +105,6 @@ class TestClampLimits(unittest.TestCase):
         consts = self.learner.get_constants()
         if "COAST_DECEL_MS2" in consts:
             self.assertGreaterEqual(consts["COAST_DECEL_MS2"], 0.02)
-
-
-class TestDivergenceReset(unittest.TestCase):
-    """Verifica que el learner resetea cuando diverge >50%."""
-
-    def setUp(self):
-        self.learner = OnlineLearner(save_path="/tmp/test_learner_div.json")
-
-    def tearDown(self):
-        try:
-            os.unlink("/tmp/test_learner_div.json")
-        except FileNotFoundError:
-            pass
-
-    def test_divergence_triggers_reset(self):
-        """Si TARGET_ACCEL diverge >50%, se resetean las bandas."""
-        ref = _INITIAL_REFS["TARGET_ACCEL_MS2"]
-        for notch in _TRACTION_NOTCHES:
-            for i in range(len(self.learner._ema_bands)):
-                self.learner._ema_bands[i][notch] = ref * 0.3  # 70% menor
-                self.learner._n_bands[i][notch] = 15
-        self.learner._recalculate_combined()
-        self.learner._check_divergence()
-        # After reset, n should be 0
-        for notch in _TRACTION_NOTCHES:
-            self.assertEqual(self.learner._n.get(notch, 0), 0)
 
 
 class TestSpeedBands(unittest.TestCase):

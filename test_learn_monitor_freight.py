@@ -44,7 +44,7 @@ class TestLearnMonitorFreight(unittest.TestCase):
     def test_total_progress_cells(self):
         expected = sum(
             len(rows) * len(_SPEED_BANDS)
-            for _, rows in FREIGHT_AXIS_ROWS.values())
+            for _, rows in self.monitor._freight_rows().values())
         done, total = self.monitor._total_progress()
         self.assertEqual(total, expected)
         self.assertEqual(done, 0)

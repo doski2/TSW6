@@ -28,13 +28,15 @@ echo  ════════════════════════�
 echo    FASE 0 — DIAGNOSTICO DE MANDOS
 echo  ════════════════════════════════════════════════════════════
 echo.
-echo    Antes de calibrar el SD40-2, este modo muestra en vivo
-echo    los valores de traccion y los 3 frenos que envia el juego.
+echo    Recorre las muescas del tren (un mando a la vez).
+echo    Al terminar guarda:
+echo      · logs/control_diag_*.txt          (resumen)
+echo      · logs/control_schemas/^<Tren^>.json  (muescas para aprender)
 echo.
 echo    1. Arranca TSW6 y RailBridge (boton CMP)
-echo    2. Sube al BNSF SD40-2
-echo    3. Mueve UN mando a la vez y mira que numero cambia
-echo    4. Ctrl+C al terminar — se guarda resumen en logs/
+echo    2. Sube al tren que quieras calibrar despues
+echo    3. Mueve UN mando a la vez por todo su rango
+echo    4. Ctrl+C — luego usa aprender.bat con el mismo tren
 echo.
 pause
 
