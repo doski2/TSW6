@@ -23,10 +23,10 @@ from typing import Optional
 from control_layout import detect_control_layout
 from control_schema import combined_notch_rows, freight_axis_rows
 from train_labels import (
-    COMP_PORT, control_level_label, control_value_label,
-    get_vehicle_name, notch_label,
+    control_level_label, control_value_label,
+    notch_label,
 )
-from tsw_connection import TswConnection
+from tsw_telemetry_source import TswTelemetrySource
 from online_learner import (
     OnlineLearner, path_for_vehicle, _SPEED_BANDS, _speed_band_index,
     MIN_SPEED, MIN_SPEED_FREIGHT,
@@ -47,6 +47,10 @@ _AXIS_HINT = {
 
 TARGET_SAMPLES = 8   # muestras limpias por celda para marcarla como completada
 
+# Bucle ~20 Hz (alineado con probe UE4SS); pantalla consola ~8 Hz.
+_LOOP_SLEEP_S = 0.05
+_DISPLAY_MIN_S = 0.12
+
 # Muescas que el learner realmente observa (5 y 6 = Tracción-1/2 no se calibran:
 # el learner promedia 7 y 8 para TARGET_ACCEL). Orden lógico para la matriz.
 _NOTCH_ROWS = [0, 1, 2, 3, 4, 5, 6, 7, 8]
@@ -64,12 +68,24 @@ def _clear() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
+def _screen_begin() -> None:
+    _clear()
+
+
+def _screen_end() -> None:
+    pass
+
+
+def _screen_reset() -> None:
+    _clear()
+
+
 def _bar(pct: float, width: int = 30) -> str:
     filled = int(round(pct * width))
     return "█" * filled + "·" * (width - filled)
 
 
-def _resolve_vehicle_name(vehicle: str, conn: TswConnection,
+def _resolve_vehicle_name(vehicle: str, conn: TswTelemetrySource,
                           detected: Optional[str]) -> str:
     """Nombre del loco para perfil/learner (stream, API o detección en hilo)."""
     if vehicle and vehicle.strip() and vehicle != "Desconocido":
@@ -82,7 +98,7 @@ def _resolve_vehicle_name(vehicle: str, conn: TswConnection,
     return vehicle or "Desconocido"
 
 
-def _ensure_freight_learner(learner, vehicle: str, conn: TswConnection,
+def _ensure_freight_learner(learner, vehicle: str, conn: TswTelemetrySource,
                             detected: Optional[str], min_speed: float):
     """Sustituye OnlineLearner por FreightLearner si el tren es freight_na."""
     veh = _resolve_vehicle_name(vehicle, conn, detected)
@@ -114,7 +130,7 @@ def _adopt_vehicle_profile(learner, vehicle: str) -> None:
             pass
 
 
-def _sync_vehicle_from_telem(vehicle: str, conn: TswConnection,
+def _sync_vehicle_from_telem(vehicle: str, conn: TswTelemetrySource,
                              detected: Optional[str],
                              telem: dict) -> str:
     """Nombre del loco: argumento, stream SSE o telemetría enriquecida."""
@@ -129,12 +145,14 @@ class LearnMonitor:
     """Dashboard guiado sobre el conteo de muestras del learner."""
 
     def __init__(self, learner, vehicle: str, target: int,
-                 vehicle_known: bool = True, layout: str = "combined"):
+                 vehicle_known: bool = True, layout: str = "combined",
+                 auto_render: bool = True):
         self.learner = learner
         self.vehicle = vehicle
         self.target = target
         self.vehicle_known = vehicle_known
         self.layout = layout
+        self._auto_render = auto_render
 
         self._last_render = 0.0
         self._last_save = 0.0
@@ -200,10 +218,12 @@ class LearnMonitor:
     def render_waiting(self, speed: Optional[float]) -> None:
         """Pantalla de espera hasta conocer mandos o velocidad."""
         now = time.time()
-        if now - self._last_render < 0.5:
+        if now - self._last_render < _DISPLAY_MIN_S:
+            return
+        if not self._auto_render:
             return
         self._last_render = now
-        _clear()
+        _screen_begin()
         print("═" * 64)
         print(f"  MONITOR DE APRENDIZAJE   ·   {self.vehicle}")
         print("═" * 64)
@@ -211,15 +231,16 @@ class LearnMonitor:
         if self._is_freight:
             print(f"  Esperando telemetría de mandos…   (velocidad: {spd})")
             print()
-            print("  El companion envía posiciones al CAMBIAR un mando.")
+            print("  La API envía posiciones al CAMBIAR un mando.")
             print("  ► Mueve tracción o algún freno para que se detecte.")
         else:
             print(f"  Esperando posición del acelerador…   (velocidad: {spd})")
             print()
-            print("  El companion solo envía la muesca cuando CAMBIA.")
+            print("  La telemetría solo actualiza la muesca cuando CAMBIA.")
             print("  ► Mueve el acelerador/freno una muesca para que se detecte.")
         print(f"  Snapshots recibidos: {self._snaps}")
         print("═" * 64)
+        _screen_end()
 
     # ── Procesar una muestra de telemetría ───────────────────────────────────
 
@@ -249,8 +270,8 @@ class LearnMonitor:
             self._last_save = now
             self.learner.save()
 
-        # Refrescar pantalla como máximo 2 veces/s para evitar parpadeo
-        if now - self._last_render >= 0.5:
+        # Refrescar pantalla (~8 Hz)
+        if self._auto_render and now - self._last_render >= _DISPLAY_MIN_S:
             self._last_render = now
             self.render()
 
@@ -281,7 +302,7 @@ class LearnMonitor:
         if now - self._last_save >= 5.0:
             self._last_save = now
             self.learner.save()
-        if now - self._last_render >= 0.5:
+        if self._auto_render and now - self._last_render >= _DISPLAY_MIN_S:
             self._last_render = now
             self.render()
 
@@ -418,10 +439,12 @@ class LearnMonitor:
     # ── Render ────────────────────────────────────────────────────────────────
 
     def render(self) -> None:
+        _screen_begin()
         if self._is_freight:
-            self._render_freight()
+            self._render_freight_body()
         else:
-            self._render_combined()
+            self._render_combined_body()
+        _screen_end()
 
     def _render_matrix_block(self, title: str, axis: str,
                              rows: tuple[int, ...]) -> None:
@@ -440,8 +463,7 @@ class LearnMonitor:
             print(row)
         print()
 
-    def _render_freight(self) -> None:
-        _clear()
+    def _render_freight_body(self) -> None:
         done, total = self._total_progress()
         pct = done / total if total else 0.0
 
@@ -496,8 +518,7 @@ class LearnMonitor:
         print("  Ctrl+C para terminar.  Progreso guardado en el perfil del tren.")
         print("═" * 64)
 
-    def _render_combined(self) -> None:
-        _clear()
+    def _render_combined_body(self) -> None:
         done, total = self._total_progress()
         pct = done / total if total else 0.0
 
@@ -563,9 +584,6 @@ class LearnMonitor:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Monitor de aprendizaje guiado — TSW6 autopilot")
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="IP del RailBridge Companion (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=COMP_PORT)
     parser.add_argument("--vehicle", default=None,
                         help="Nombre del vehículo (override de la detección)")
     parser.add_argument("--target", type=int, default=TARGET_SAMPLES,
@@ -575,9 +593,16 @@ def main() -> None:
     parser.add_argument("--freight", action="store_true",
                         help=f"Modo mercancías: velocidad mínima {MIN_SPEED_FREIGHT:.0f} mph "
                              f"(por defecto {MIN_SPEED:.0f} mph para pasajeros)")
+    parser.add_argument("--console", action="store_true",
+                        help="Monitor en consola (por defecto: ventana gráfica)")
     parser.add_argument("--min-speed", type=float, default=None, metavar="MPH",
                         help="Velocidad mínima personalizada (mph) para aceptar muestras")
     args = parser.parse_args()
+
+    if not args.console:
+        from learn_monitor_gui import main as gui_main
+        gui_main()
+        return
 
     if args.min_speed is not None:
         min_speed = max(0.5, args.min_speed)
@@ -588,27 +613,22 @@ def main() -> None:
 
     _enable_utf8()
 
-    # Conexión vía TswConnection (misma que el autopilot: gestiona el
-    # emparejamiento de dispositivo y la persistencia de deltas, necesarios
-    # para recibir el stream completo de telemetría del companion).
-    conn = TswConnection()
-    print("Buscando RailBridge Companion…")
+    # Conexión vía API HTTP TSW (sin RailBridge).
+    conn = TswTelemetrySource()
+    print("Buscando TSW6 (UE4SS probe o HTTPAPI)…")
     for _ in range(30):
         conn.probe()
-        if conn.mode == "companion" and conn.comp_base:
+        if conn.mode in ("ue4ss", "tsw_api"):
             break
         time.sleep(1.0)
-    if conn.mode != "companion" or not conn.comp_base:
-        print("ERROR: No se pudo conectar al RailBridge Companion.")
-        print("       ¿Está activo el botón CMP en RailBridge y TSW6 ejecutándose?")
+    if conn.mode not in ("ue4ss", "tsw_api"):
+        print("ERROR: No se pudo conectar a TSW6.")
+        print("       ¿TelemetryProbeMod activo o TSW6 con -HTTPAPI (en cabina)?")
         sys.exit(1)
-    base_url = conn.comp_base
-    print(f"Conectado a {base_url}")
+    print(f"Conectado: {conn.last_probe_info}")
 
-    # Nombre del tren: el loco se detecta del propio stream del companion
-    # (conn.get_vehicle_name); /vehicles queda como reserva.
     def _detect_name() -> Optional[str]:
-        return conn.get_vehicle_name() or get_vehicle_name(base_url)
+        return conn.get_vehicle_name()
 
     # Detectar vehículo (define el perfil donde se guarda la calibración).
     # Si no aparece al arrancar (es habitual el primer momento), seguimos
@@ -689,12 +709,12 @@ def main() -> None:
 
             if speed is None:
                 monitor.render_waiting(speed)
-                time.sleep(0.2)
+                time.sleep(_LOOP_SLEEP_S)
                 continue
 
             if not is_freight and notch is None:
                 monitor.render_waiting(speed)
-                time.sleep(0.2)
+                time.sleep(_LOOP_SLEEP_S)
                 continue
 
             # ¿El hilo de búsqueda encontró el nombre? Adoptar el perfil real
@@ -732,12 +752,12 @@ def main() -> None:
             else:
                 assert notch is not None
                 monitor.feed(speed, notch, grad, accel, limit, ack)
-            time.sleep(0.2)
+            time.sleep(_LOOP_SLEEP_S)
     except KeyboardInterrupt:
         pass
     finally:
         learner.save()  # persistir progreso aunque no haya constantes confiables
-        _clear()
+        _screen_reset()
         done, total = monitor._total_progress()
         consts = learner.get_constants()
         print("═" * 64)

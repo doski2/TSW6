@@ -68,8 +68,8 @@ goto menu
 
 :op1
 echo.
-echo  CONSEJO: Activa el boton CMP en RailBridge para telemetria automatica.
-echo  Si no, el autopilot pedira los datos manualmente.
+echo  CONSEJO: TSW6 con UE4SS probe + -HTTPAPI (mandos y planning DriverAid).
+echo  Se abrira la interfaz grafica del autopilot.
 echo.
 pause
 %PY% tsw_autopilot.py

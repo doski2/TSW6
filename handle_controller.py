@@ -8,7 +8,7 @@ Dos clases en este módulo:
     - Recibe (action, TrainState, conn, hwnd) y envía un paso de control
     - USA state.handle_notch como fuente de verdad (nunca un contador interno)
     - RPC preferido (set_control_value), teclado como fallback
-    - Detecta interferencia del companion y suprime COAST durante 1.5s
+    - Detecta interferencia externa y suprime COAST durante 1.5s
     - Sin stuck-detection ni force_neutral automáticos
 
   SafetyWatchdog
@@ -54,7 +54,7 @@ class HandleController:
     Ciclo de execute():
       1. Rate-limit por tipo de acción
       2. Leer posición real del handle desde state.handle_notch
-      3. Detectar si el companion/jugador ha subido el notch externamente
+      3. Detectar si el jugador ha subido el notch externamente
       4. Calcular notch objetivo (un solo paso hacia el destino)
       5. Suprimir COAST si hubo subida externa reciente
       6. Enviar comando: RPC o teclado
@@ -86,8 +86,8 @@ class HandleController:
     # ── RPC helpers ───────────────────────────────────────────────────────
 
     def _use_rpc(self, conn: Optional[object]) -> bool:
-        """True si RPC disponible y no penalizado."""
-        if conn is None or getattr(conn, "mode", None) != "companion":
+        """True si API TSW disponible y no penalizado."""
+        if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
             return False
         return self._rpc_disabled_until <= time.time()
 
@@ -159,7 +159,7 @@ class HandleController:
 
         current = state.handle_notch  # SIEMPRE telemetría
 
-        # Detectar incremento externo del notch (companion / jugador).
+        # Detectar incremento externo del notch (jugador / otro sistema).
         # Solo se cuenta como "externo" si el salto es > 1 posición, porque
         # nuestros propios comandos (+1 por ciclo) pueden aparecer con un ciclo
         # de retraso en la telemetría y provocarían falsos positivos.
@@ -172,7 +172,7 @@ class HandleController:
 
         # Suprimir COAST durante _GRACE_AFTER_EXT tras subida externa,
         # EXCEPTO en modo ACK donde el ATP tiene control y la supresión
-        # solo prolonga la lucha entre autopilot, companion y ATP.
+        # solo prolonga la lucha entre autopilot y ATP.
         ack = getattr(state, "ack_required", False)
         if (action == "COAST"
                 and not ack
@@ -269,11 +269,6 @@ class HandleController:
             time.sleep(pause)
             pos += 1
         _log.info("reset_neutral: handle en neutro")
-
-    @property
-    def in_sync_cooldown(self) -> bool:
-        """True durante los 5s de gracia tras un force_neutral."""
-        return (time.time() - self._last_sync_t) < 5.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

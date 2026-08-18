@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-train_labels.py — Etiquetas de mandos y utilidades del companion.
+train_labels.py — Etiquetas de mandos y utilidades de telemetría.
 
 Constantes compartidas por learn_monitor, control_diag, etc.
 """
@@ -8,11 +8,6 @@ Constantes compartidas por learn_monitor, control_diag, etc.
 from __future__ import annotations
 
 from typing import Optional
-
-import requests
-
-COMP_PORT = 51160
-COMP_TOKEN = "aaeeb63be194470bb7f97c98b93635aa"
 
 NOTCH_LABELS: dict[int, str] = {
     0: "Freno-4(max)",
@@ -67,23 +62,3 @@ def control_value_label(axis: str, value: Optional[float]) -> str:
     if axis == "dyn_brake":
         return "Off" if value < 0.02 else f"D{int(round(value * 8))}"
     return f"{value:.2f}"
-
-
-def get_vehicle_name(base_url: str) -> Optional[str]:
-    """Intenta leer el nombre del vehículo desde /vehicles."""
-    try:
-        r = requests.get(
-            f"{base_url}/vehicles",
-            headers={"Authorization": f"Bearer {COMP_TOKEN}"},
-            timeout=2,
-        )
-        if r.status_code == 200:
-            vehicles = r.json()
-            if isinstance(vehicles, list) and vehicles:
-                v = vehicles[0]
-                name = v.get("name") or v.get("displayName") or v.get("className")
-                if name and str(name).strip().lower() not in ("none", ""):
-                    return str(name).strip()
-    except Exception:
-        pass
-    return None

@@ -9,14 +9,12 @@ import os
 import sys
 import time
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 from colorama import Fore, Style
 
-from typing import Any
-
 from governor_constants import NOTCH_LABELS
-from tsw_connection import TswConnection
+from tsw_telemetry_source import TswTelemetrySource
 
 # ── Colores por acción ────────────────────────────────────────────────────────
 
@@ -79,7 +77,7 @@ _first_render = True       # primer render: limpiar pantalla una sola vez
 
 # ── Dashboard principal ───────────────────────────────────────────────────────
 
-def render_dashboard(gov: Any, telem: dict, conn: TswConnection,
+def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
                      hwnd: Optional[int], fps: float) -> None:
     """Renderiza el dashboard en consola sin parpadeo (sobreescribe en su sitio)."""
     global _first_render
@@ -94,12 +92,12 @@ def render_dashboard(gov: Any, telem: dict, conn: TswConnection,
 
     action      = gov.last_action
     action_col  = ACTION_COLOR.get(action, Fore.WHITE)
-    mode_str    = {"companion":  "RailBridge CMP ✓",
-                   "tsw_api":    "TSW API directa ✓",
+    mode_str    = {"ue4ss":     "UE4SS probe ✓",
+                   "tsw_api":    "TSW API ✓",
                    "manual":     "MANUAL",
                    "searching":  "Buscando conexión...",
                   }.get(conn.mode, conn.mode)
-    mode_col    = Fore.GREEN  if conn.mode in ("companion", "tsw_api") else \
+    mode_col    = Fore.GREEN  if conn.mode in ("ue4ss", "tsw_api") else \
                   Fore.YELLOW if conn.mode == "manual" else Fore.RED
     hwnd_str    = f"hwnd={hwnd:#010x}" if hwnd else "ventana TSW no encontrada"
 
@@ -110,7 +108,7 @@ def render_dashboard(gov: Any, telem: dict, conn: TswConnection,
                        else gov.braking_distance(speed, next_lim)
         dist_str = f"{dist_next:5.0f} m" if dist_next is not None else "  ??? m"
         brake_bar_str = braking_bar(dist_next or 0, needed_brake)
-        marker_info = f"[CMP {needed_brake:.0f}m]" if brake_marker is not None \
+        marker_info = f"[API {needed_brake:.0f}m]" if brake_marker is not None \
                       else f"(estimado {needed_brake:.0f} m)"
         needed_str = marker_info
     else:
@@ -244,7 +242,7 @@ def render_dashboard(gov: Any, telem: dict, conn: TswConnection,
 
     if conn.mode == "searching":
         line_conn1 = f"  {Style.DIM}  Último intento: {conn.last_probe_info}{Style.RESET_ALL}"
-        line_conn2 = f"  {Fore.YELLOW}  → Abre TSW6 y/o activa el botón CMP en RailBridge{Style.RESET_ALL}"
+        line_conn2 = f"  {Fore.YELLOW}  → Arranca TSW6 (UE4SS probe o -HTTPAPI) y carga un escenario{Style.RESET_ALL}"
     else:
         line_conn1 = f"  {Style.DIM}{hwnd_str}{Style.RESET_ALL}"
         line_conn2 = ""

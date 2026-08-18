@@ -1,0 +1,51 @@
+"""Tests de driver_aid_parser."""
+
+from driver_aid_parser import (
+    parse_driver_aid_planning,
+    parse_gradient_pct,
+    parse_track_data_stations,
+)
+
+
+def test_parse_gradient_pct():
+    assert parse_gradient_pct({"gradient": 1.5}) == 1.5
+    assert parse_gradient_pct({"gradient": {"value": -0.8}}) == -0.8
+
+
+def test_parse_driver_aid_next_limit():
+    data = {
+        "distanceToNextSpeedLimit": 20000.0,  # 200 m
+        "nextSpeedLimit": {"value": 8.94},    # ~20 mph
+        "nextSpeedLimits": [
+            {"distanceToNextSpeedLimit": 15000.0, "value": {"value": 13.41}},
+        ],
+    }
+    out = parse_driver_aid_planning(data)
+    assert out["distance_next_m"] == 200.0
+    assert abs(out["next_limit_mph"] - 20.0) < 1.0
+    assert len(out["speed_limits_ahead"]) == 1
+    assert out["speed_limits_ahead"][0]["distance_m"] == 150.0
+
+
+def test_parse_track_data_stations_dedup():
+    track = {
+        "markers": [
+            {
+                "markerType": "Platform",
+                "markerName": "Lichfield City, andén 2",
+                "distanceToStationCM": 4700.0,
+                "platformLength": 20000.0,
+            },
+            {
+                "markerType": "Platform",
+                "markerName": "Shenstone",
+                "distanceToStationCM": 120000.0,
+                "platformLength": 15000.0,
+            },
+        ],
+    }
+    st = parse_track_data_stations(track)
+    assert len(st) == 2
+    assert st[0]["name"].startswith("Lichfield")
+    assert st[0]["distance_m"] == 47.0
+    assert st[0]["platform_length_m"] == 200.0

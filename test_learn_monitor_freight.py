@@ -62,7 +62,7 @@ class TestLearnMonitorFreight(unittest.TestCase):
             "ind_brake": 0.0,
             "dyn_brake": 0.0,
         }
-        self.monitor._render_freight()
+        self.monitor.render()
 
     def test_hints_freight_mentions_axis(self):
         hints = self.monitor._hints_freight()

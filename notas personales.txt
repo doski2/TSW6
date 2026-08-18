@@ -1,3 +1,0 @@
-probar diag_controles si guarda correctamente los controles en los perfiles
-probar aprender.bat si no reset el aprendizaje de pasajeros
-

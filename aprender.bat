@@ -42,7 +42,7 @@ echo    TSW6 — MONITOR DE APRENDIZAJE GUIADO
 echo  ════════════════════════════════════════════════════════════
 echo.
 echo    El monitor te guia para calibrar cada muesca del tren.
-echo    Conduce manualmente siguiendo las instrucciones en pantalla.
+echo    Conduce manualmente — se abre una ventana con la matriz de calibracion.
 echo.
 echo    1. Continuar aprendizaje — pasajeros (vel. min. 5 mph)
 echo    2. Continuar aprendizaje — mercancias (vel. min. 2 mph)

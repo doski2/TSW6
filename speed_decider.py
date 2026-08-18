@@ -275,9 +275,9 @@ class SpeedDecider:
         # Durante ACK el ATP tiene control total. Solo:
         #   - COAST si hay tracción activa (liberar la maneta al neutro)
         #   - HOLD en todo lo demás (no interferir con el frenado del ATP)
-        # No enviamos ACCELERATE para liberar frenos: el companion o el ATP
-        # pueden estar frenando intencionadamente (ej. parada en estación) y
-        # el ACCELERATE genera un bucle companion-boost→COAST-suprimido→decel.
+        # No enviamos ACCELERATE para liberar frenos: el ATP
+        # puede estar frenando intencionadamente (ej. parada en estación) y
+        # el ACCELERATE genera un bucle boost→COAST-suprimido→decel.
         if state.ack_required:
             now_t = time.monotonic()
             if not self._ack_was_required:
@@ -293,7 +293,7 @@ class SpeedDecider:
                 elapsed = now_t - self._ack_started_t
                 _log.warning(
                     "ACK lleva %.0fs activo con tren parado — "
-                    "confirma la alerta en el DMI o en RailBridge Companion "
+                    "confirma la alerta en el DMI "
                     "(botón ACK / Acknowledge) para que el autopilot pueda salir.",
                     elapsed)
                 self._ack_last_warn_t = now_t
