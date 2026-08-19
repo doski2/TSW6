@@ -123,6 +123,7 @@ def dispatch_brake(
     control: str,
     value: float,
     schema: Optional[dict] = None,
+    timeout: Optional[float] = None,
 ) -> dict[str, Any]:
     """
     Valida y envía un mando de freno.
@@ -141,7 +142,7 @@ def dispatch_brake(
         return {"ok": False, "error": "command_not_allowed", "control": control, "path": path}
 
     clamped = clamp_brake_value(path, value)
-    result = client.set_value(path, clamped)
+    result = client.set_value(path, clamped, timeout=timeout)
     result["control"] = control
     result["path"] = path
     if result.get("ok"):
@@ -153,6 +154,7 @@ def dispatch_combined_notch(
     client: TswApiClient,
     notch: int,
     schema: Optional[dict] = None,
+    timeout: Optional[float] = None,
 ) -> dict[str, Any]:
     """Atajo UK: envía muesca 0–8 al handle combinado."""
     return dispatch_brake(
@@ -160,4 +162,5 @@ def dispatch_combined_notch(
         "combined_brake",
         combined_notch_to_value(notch),
         schema,
+        timeout=timeout,
     )

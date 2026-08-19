@@ -69,6 +69,52 @@ def parse_gradient_pct(node: Any) -> Optional[float]:
     return None
 
 
+def _merge_limit_entry(
+    limits: list[dict[str, float]],
+    dist_m: float,
+    lim_mph: float,
+    *,
+    dedupe_m: float = 8.0,
+) -> None:
+    """Añade un límite a la cola si no hay otro a distancia similar."""
+    for existing in limits:
+        if abs(existing["distance_m"] - dist_m) <= dedupe_m:
+            if lim_mph < existing["limit_mph"]:
+                existing["limit_mph"] = round(lim_mph, 1)
+            return
+    limits.append({
+        "limit_mph": round(float(lim_mph), 1),
+        "distance_m": round(float(dist_m), 1),
+    })
+
+
+def build_speed_limits_queue(data: dict[str, Any]) -> list[dict[str, float]]:
+    """
+    Cola unificada de cambios de límite adelante (ordenada por distancia).
+
+    Fusiona ``nextSpeedLimit`` + ``distanceToNextSpeedLimit`` con
+    ``nextSpeedLimits[]`` para que P1 y la GUI vean al menos los 2 próximos.
+    """
+    limits: list[dict[str, float]] = []
+
+    dist_m = _cm_to_m(data.get("distanceToNextSpeedLimit"))
+    next_ms = _scalar_ms(data.get("nextSpeedLimit"))
+    if next_ms is not None and dist_m is not None:
+        _merge_limit_entry(limits, dist_m, float(next_ms) * MS_TO_MPH)
+
+    for item in data.get("nextSpeedLimits") or []:
+        if not isinstance(item, dict):
+            continue
+        d_m = _cm_to_m(item.get("distanceToNextSpeedLimit"))
+        lim_ms = _scalar_ms(item.get("value"))
+        if d_m is None or lim_ms is None:
+            continue
+        _merge_limit_entry(limits, d_m, float(lim_ms) * MS_TO_MPH)
+
+    limits.sort(key=lambda x: x["distance_m"])
+    return limits
+
+
 def parse_driver_aid_planning(data: Any) -> dict[str, Any]:
     """
     Campos de planning para P1: próximo límite y cola de límites adelante.
@@ -83,32 +129,14 @@ def parse_driver_aid_planning(data: Any) -> dict[str, Any]:
     if grad is not None:
         out["gradient_pct"] = grad
 
-    dist_m = _cm_to_m(data.get("distanceToNextSpeedLimit"))
-    next_ms = _scalar_ms(data.get("nextSpeedLimit"))
-    if next_ms is not None:
-        out["next_limit_mph"] = float(next_ms) * MS_TO_MPH
-    if dist_m is not None:
-        out["distance_next_m"] = dist_m
-
-    limits: list[dict[str, float]] = []
-    for item in data.get("nextSpeedLimits") or []:
-        if not isinstance(item, dict):
-            continue
-        d_m = _cm_to_m(item.get("distanceToNextSpeedLimit"))
-        lim_ms = _scalar_ms(item.get("value"))
-        if d_m is None or lim_ms is None:
-            continue
-        limits.append({
-            "limit_mph": round(float(lim_ms) * MS_TO_MPH, 1),
-            "distance_m": round(d_m, 1),
-        })
-    limits.sort(key=lambda x: x["distance_m"])
+    limits = build_speed_limits_queue(data)
     if limits:
         out["speed_limits_ahead"] = limits
-        if out.get("next_limit_mph") is None:
-            out["next_limit_mph"] = limits[0]["limit_mph"]
-        if out.get("distance_next_m") is None:
-            out["distance_next_m"] = limits[0]["distance_m"]
+        out["next_limit_mph"] = limits[0]["limit_mph"]
+        out["distance_next_m"] = limits[0]["distance_m"]
+        if len(limits) > 1:
+            out["next_limit_2_mph"] = limits[1]["limit_mph"]
+            out["distance_next_2_m"] = limits[1]["distance_m"]
 
     return out
 

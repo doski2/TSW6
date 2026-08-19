@@ -44,12 +44,31 @@ VK_SEMICOLON  = 0xBA   # train_brake_decrease  (tecla ;)
 # Duración de pulsación por notch (Class 323)
 KEY_HOLD_MS = 350      # ~350 ms = 1 notch en el PowerBrakeHandle
 
+SW_RESTORE = 9
+
+
+def focus_window(hwnd: int) -> bool:
+    """Intenta poner la ventana del juego en primer plano (necesario para teclas)."""
+    if not hwnd:
+        return False
+    try:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        return bool(user32.SetForegroundWindow(hwnd))
+    except Exception:
+        return False
+
 
 # ── Función de envío ──────────────────────────────────────────────────────────
 
-def send_key(hwnd: int, vk_code: int, hold_ms: int = KEY_HOLD_MS) -> None:
+def send_key(hwnd: int, vk_code: int, hold_ms: int = KEY_HOLD_MS,
+             focus: bool = True) -> None:
     """Envía tecla vía SendInput (bloquea durante hold_ms).
-    `hwnd` se conserva por compatibilidad pero no se usa; SendInput es global."""
+
+    Si ``focus`` es True, intenta activar la ventana TSW antes de pulsar.
+    """
+    if focus and hwnd:
+        focus_window(hwnd)
     scan = user32.MapVirtualKeyW(vk_code, 0)
 
     def _inp(flags: int) -> _INPUT:

@@ -29,6 +29,7 @@ from typing import Optional
 
 from governor_constants import (
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
+    CONTROL_INTERVAL_RPC,
     SERVICE_MAX_BRAKE,
 )
 from tsw_keys import VK_A, VK_D, KEY_HOLD_MS, send_key
@@ -86,10 +87,15 @@ class HandleController:
     # ── RPC helpers ───────────────────────────────────────────────────────
 
     def _use_rpc(self, conn: Optional[object]) -> bool:
-        """True si API TSW disponible y no penalizado."""
+        """True si HTTPAPI disponible y no penalizado."""
         if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
             return False
-        return self._rpc_disabled_until <= time.time()
+        if self._rpc_disabled_until > time.time():
+            return False
+        has_api = getattr(conn, "has_control_api", None)
+        if callable(has_api):
+            return bool(has_api())
+        return False
 
     def _try_rpc(self, conn: object, control: str, val: float) -> bool:
         """Intenta llamada RPC y actualiza el contador de fallos."""
@@ -153,7 +159,9 @@ class HandleController:
             return False
 
         now = time.time()
-        interval = self._INTERVALS.get(action, CONTROL_INTERVAL)
+        use_rpc = self._use_rpc(conn)
+        interval = (CONTROL_INTERVAL_RPC if use_rpc
+                    else self._INTERVALS.get(action, CONTROL_INTERVAL))
         if now - self._last_control < interval:
             return False
 
@@ -186,10 +194,33 @@ class HandleController:
         if target == current:
             return False
 
-        new_notch = current + (1 if target > current else -1)
+        if use_rpc:
+            new_notch = target
+            if action == "ACCELERATE":
+                eff = (state.target_mph if state.target_mph > 0
+                       else state.limit_mph)
+                gap = eff - state.speed_mph
+                if gap <= 5:
+                    new_notch = min(_MAX_NOTCH, current + 1)
+                elif gap > 25:
+                    new_notch = min(_MAX_NOTCH, current + 3)
+                elif gap > 12:
+                    new_notch = min(_MAX_NOTCH, current + 2)
+            elif action == "COAST" and current > _NOTCH_NEUTRAL:
+                eff = (state.target_mph if state.target_mph > 0
+                       else state.limit_mph)
+                overshoot = state.speed_mph - eff
+                if overshoot > 8:
+                    new_notch = max(_NOTCH_NEUTRAL, current - 3)
+                elif overshoot > 3:
+                    new_notch = max(_NOTCH_NEUTRAL, current - 2)
+                else:
+                    new_notch = current - 1
+        else:
+            new_notch = current + (1 if target > current else -1)
 
         # Intentar RPC primero
-        if self._use_rpc(conn):
+        if use_rpc:
             val = new_notch / float(_MAX_NOTCH)
             if self._try_rpc(conn, "PowerBrakeHandle", val):
                 _log.debug(
@@ -199,9 +230,9 @@ class HandleController:
                 return True
             # RPC falló: caer a teclado en esta misma llamada
 
-        # Fallback: teclado
+        # Fallback: teclado (requiere TSW en primer plano)
         if hwnd is None:
-            _log.debug("execute: no hwnd — ignorando acción %s", action)
+            _log.warning("execute: sin hwnd — no se puede enviar %s por teclado", action)
             return False
 
         if new_notch > current:

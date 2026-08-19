@@ -104,6 +104,19 @@ class TrainPhysics:
             return self.learner.predict_accel("throttle", float(notch), speed_mph, grad_pct)
         return self.learner.predict_accel(notch, speed_mph, grad_pct)
 
+    def predict_throttle_ceiling(self, handle_notch: int) -> float:
+        """Techo mph de la muesca de tracción (handle 5–8)."""
+        if isinstance(self.learner, FreightLearner):
+            return 200.0
+        return self.learner.predict_throttle_ceiling(handle_notch)
+
+    def predict_brake_decel_ms2(self, handle_notch: int, speed_mph: float,
+                                grad_pct: float = 0.0) -> Optional[float]:
+        """Decel aprendida por muesca de freno (0–3), o None."""
+        if isinstance(self.learner, FreightLearner):
+            return None
+        return self.learner.predict_brake_decel_ms2(handle_notch, speed_mph, grad_pct)
+
     def _rebind_learner(self, vehicle: str) -> None:
         path = self.learner.save_path
         from online_learner import path_for_vehicle

@@ -32,8 +32,9 @@ RATE_TOLERANCE        = 0.18    # banda muerta ±0.18 m/s² para decisiones de f
 # Ventaja: elimina el ciclo "acelera a fondo → proyecta exceso → suelta".
 P3_LOOKAHEAD_S     = 8.0    # constante de tiempo (s): cuánto tarda en llegar al límite
 P3_ACCEL_TOL_MS2   = 0.05   # m/s²: banda muerta ±tol alrededor de a_target
+P3_COAST_MIN_ERROR_MPH = 8.0  # no soltar tracción si faltan >8 mph al objetivo
 # Ciclos de banda muerta anti-oscilación antes de permitir cambio de dirección de notch
-P3_DEADBAND_CYCLES = 3      # 3 ciclos × ~200ms = 600ms de estabilización
+P3_DEADBAND_CYCLES = 5      # 5 ciclos × 100ms = 500ms de estabilización
 
 # Notch 4 = freno máximo: solo para parada final en andén y emergencia.
 # El frenado de servicio (reducciones de límite) usa como mucho notch 3.
@@ -41,9 +42,10 @@ SERVICE_MAX_BRAKE = 3
 
 # ── Histéresis del controlador ────────────────────────────────────────────────
 
-CONTROL_INTERVAL       = 1.0   # segundos entre pulsaciones de ACCELERATE
-CONTROL_INTERVAL_BRAKE = 0.4   # COAST / BRAKE / FULLSTOP (respuesta más rápida)
+CONTROL_INTERVAL       = 0.35   # teclado: ~1 notch cada 350ms + margen
+CONTROL_INTERVAL_BRAKE = 0.35   # COAST / BRAKE / FULLSTOP
 CONTROL_INTERVAL_EMERG = 0.25  # HARDBRAKE y ACK
+CONTROL_INTERVAL_RPC   = 0.12  # HTTPAPI: mandos directos sin esperar tecla
 
 # ── Histéresis de frenado TSM/overspeed (v3) ─────────────────────────────────
 # Exceso mínimo sobre límite para activar BRAKE (antes era 0.0)

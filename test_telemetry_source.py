@@ -98,9 +98,9 @@ def test_get_telemetry_from_ue4ss_poll(tmp_path: Path):
     conn._ue4ss_path = getdata
     conn._vehicle_name = "RVM_BCC_WRM_Class323_DMS_A_C"
     conn._telem = {"speed_mph": 1.0, "handle_notch": 4}
-    with patch.object(conn, "_poll_driver_aid_planning", return_value={}) as mock_plan:
+    with patch.object(conn, "_kick_planning_refresh") as mock_kick:
         telem = conn.get_telemetry()
-    mock_plan.assert_called_once()
+    mock_kick.assert_called_once()
     assert telem["handle_notch"] == 6
     assert telem["gradient_pct"] == 1.5
     assert telem["control_layout"] == "combined"
@@ -117,9 +117,10 @@ def test_ue4ss_polls_driver_aid_when_gradient_missing(tmp_path: Path):
     conn.mode = "ue4ss"
     conn._ue4ss_path = getdata
     planning = {"gradient_pct": 0.8, "next_limit_mph": 20.0, "distance_next_m": 150.0}
-    with patch.object(conn, "_poll_driver_aid_planning", return_value=planning) as mock_plan:
+    conn._planning_cache = planning
+    with patch.object(conn, "_kick_planning_refresh") as mock_kick:
         telem = conn.get_telemetry()
-    mock_plan.assert_called_once()
+    mock_kick.assert_called_once()
     assert telem["gradient_pct"] == 0.8
     assert telem["next_limit_mph"] == 20.0
     assert telem["distance_next_m"] == 150.0
@@ -141,7 +142,8 @@ def test_ue4ss_planning_on_slow_tick_with_probe_gradient(tmp_path: Path):
         "distance_next_m": 80.0,
         "stations": [{"name": "Test", "distance_m": 500.0}],
     }
-    with patch.object(conn, "_poll_driver_aid_planning", return_value=planning):
+    conn._planning_cache = planning
+    with patch.object(conn, "_kick_planning_refresh"):
         telem = conn.get_telemetry()
     assert telem["gradient_pct"] == 1.2  # probe wins
     assert telem["next_limit_mph"] == 25.0

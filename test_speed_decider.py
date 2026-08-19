@@ -118,124 +118,28 @@ class TestP2Cruise:
         assert action == "HARDBRAKE"
 
 
-# ── P3: Rastreo de aceleración objetivo ──────────────────────────────────────
+# ── Solo frenado (sin tracción automática) ─────────────────────────────────────
 
-class TestP3AccelerationTracking:
-    def test_far_below_limit_no_accel_data_accelerates(self):
-        """Sin acelerómetro y lejos del límite: tabla abierta → ACCELERATE."""
+class TestBrakeOnly:
+    def test_below_limit_holds(self):
+        """Sin tracción automática: no acelera aunque falte velocidad."""
         d = _decider()
         s = _state(speed_mph=25.0, limit_mph=50.0, handle_notch=4,
                    acceleration_ms2=None)
-        action = d.decide(s)
-        assert action == "ACCELERATE"
+        assert d.decide(s) == "HOLD"
 
-    def test_accel_below_target_accelerates(self):
-        """Aceleración medida < a_target → añadir muesca (ACCELERATE)."""
+    def test_overspeed_still_brakes(self):
         d = _decider()
-        # error=10 mph, a_target = min(10*0.44704/8, TARGET_ACCEL) ≈ 0.301 m/s²
-        # a=0.1 < 0.301 - 0.05 = 0.251 → ACCELERATE
-        s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
-                   acceleration_ms2=0.1)
-        action = d.decide(s)
-        assert action == "ACCELERATE"
+        s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=7,
+                   acceleration_ms2=0.1, station_state=None)
+        assert d.decide(s) in ("COAST", "BRAKE", "HARDBRAKE")
 
-    def test_accel_matches_target_hold(self):
-        """Aceleración medida ≈ a_target (dentro de tolerancia) → HOLD."""
+    def test_brake_residual_holds(self):
+        """Freno residual: conductor libera manualmente."""
         d = _decider()
-        # error=10 mph → a_target = min(10*0.44704/8, TARGET_ACCEL=0.301) = 0.301 m/s²
-        # a=0.30 → |0.30 - 0.301| = 0.001 < P3_ACCEL_TOL=0.05 → HOLD
-        s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=6,
-                   acceleration_ms2=0.30)
-        action = d.decide(s)
-        assert action == "HOLD"
-
-    def test_accel_above_target_coasts(self):
-        """Aceleración medida >> a_target → bajar muesca (COAST)."""
-        d = _decider()
-        # error=5 mph → a_target = min(5*0.44704/8, 0.301) = 0.279 m/s²
-        # a=0.6 > 0.279 + 0.05 = 0.329 → COAST
-        s = _state(speed_mph=45.0, limit_mph=50.0, handle_notch=7,
-                   acceleration_ms2=0.6)
-        action = d.decide(s)
-        assert action == "COAST"
-
-    def test_near_limit_uses_low_notch(self):
-        """Cerca del límite a_target es pequeño: aceleración media → COAST o HOLD (no ACCELERATE)."""
-        d = _decider()
-        # error=2 mph → a_target = min(2*0.44704/8, 0.301) = 0.112 m/s²
-        # a=0.3 > 0.112 + 0.05 = 0.162 → COAST
-        s = _state(speed_mph=48.0, limit_mph=50.0, handle_notch=7,
-                   acceleration_ms2=0.3)
-        action = d.decide(s)
-        assert action in ("COAST", "HOLD")
-
-    def test_anti_oscillation_hold(self):
-        """Anti-oscilación: cambio de dirección se retrasa P3_DEADBAND_CYCLES ciclos."""
-        from governor_constants import P3_DEADBAND_CYCLES
-
-        d = _decider()
-        # Primer ciclo: a baja → sube notch (direction="up")
-        # error=10 mph, a=0.01 < a_target-tol → ACCELERATE, last_dir="up"
-        s_acc = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
-                       acceleration_ms2=0.01)
-        d.decide(s_acc)
-
-        # Siguiente ciclo: a muy alta → quiere bajar notch (direction="down")
-        # error=10, a=0.8 > a_target+0.05 → COAST. Cambio up→down: deadband → HOLD
-        s_coast = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=5,
-                         acceleration_ms2=0.8)
-        for i in range(P3_DEADBAND_CYCLES):
-            action = d.decide(s_coast)
-            assert action == "HOLD", f"Ciclo {i}: esperaba HOLD, recibí {action}"
-
-
-class TestPredictiveNotchSelection:
-    """Selección predictiva de la muesca mínima suficiente (datos por muesca)."""
-
-    def _decider_with_data(self) -> SpeedDecider:
-        from online_learner import _speed_band_index, MIN_SAMPLES
-        d = _decider()
-        lr = d._physics.learner
-        band = _speed_band_index(15.0)
-        # Tracción-1..4 (handle 5..8) aceleración aprendida (plano), n suficiente
-        for notch, a in ((5, 0.06), (6, 0.18), (7, 0.45), (8, 0.55)):
-            lr._ema_bands[band][notch] = a
-            lr._n_bands[band][notch]   = MIN_SAMPLES
-        return d
-
-    def test_picks_minimum_sufficient_notch(self):
-        """a_target=0.15 → la muesca mínima suficiente es Tracción-2 (handle6, t=2)."""
-        d = self._decider_with_data()
-        assert d._select_notch_predictive(0.15, 15.0, 0.0) == 2
-
-    def test_low_target_picks_lowest(self):
-        """a_target pequeño (por encima del umbral de soltar) → Tracción-1 (t=1)."""
-        d = self._decider_with_data()
-        # 0.10 > tol(0.05) → no suelta; Tracción-1 (0.06) ya alcanza 0.10-tol
-        assert d._select_notch_predictive(0.10, 15.0, 0.0) == 1
-
-    def test_high_target_picks_max(self):
-        """a_target inalcanzable → tracción máxima (t=4)."""
-        d = self._decider_with_data()
-        assert d._select_notch_predictive(2.0, 15.0, 0.0) == 4
-
-    def test_zero_target_releases_to_neutral(self):
-        """a_target ~0 → soltar a neutro (t=0)."""
-        d = self._decider_with_data()
-        assert d._select_notch_predictive(0.0, 15.0, 0.0) == 0
-
-    def test_no_data_returns_none(self):
-        """Sin datos aprendidos → None (P3 usa fallback reactivo)."""
-        d = _decider()
-        assert d._select_notch_predictive(0.2, 15.0, 0.0) is None
-
-    def test_uphill_needs_higher_notch(self):
-        """En subida la misma a_target exige una muesca mayor (gravedad)."""
-        d = self._decider_with_data()
-        flat = d._select_notch_predictive(0.15, 15.0, 0.0)
-        up   = d._select_notch_predictive(0.15, 15.0, 2.0)
-        assert flat is not None and up is not None
-        assert up >= flat
+        s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=2,
+                   acceleration_ms2=0.0, station_state=None)
+        assert d.decide(s) == "HOLD"
 
 
 # ── last_action tracking ──────────────────────────────────────────────────────

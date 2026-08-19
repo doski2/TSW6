@@ -148,7 +148,7 @@ def main() -> None:
             manual=args.manual,
             learn=args.learn,
             stop_miles=args.stop,
-            loop_hz=5.0,
+            loop_hz=10.0,
         ))
 
 

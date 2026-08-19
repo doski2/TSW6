@@ -256,5 +256,26 @@ class TestPredictAccel(unittest.TestCase):
         self.assertAlmostEqual(val, 0.5, places=3)
 
 
+class TestThrottleCeiling(unittest.TestCase):
+    def setUp(self):
+        self.learner = OnlineLearner(save_path="/tmp/test_learner_ceil.json")
+
+    def tearDown(self):
+        try:
+            os.unlink("/tmp/test_learner_ceil.json")
+        except FileNotFoundError:
+            pass
+
+    def test_default_ceiling_traction1(self):
+        self.assertAlmostEqual(self.learner.predict_throttle_ceiling(5), 15.0)
+
+    def test_learned_ceiling_persisted(self):
+        self.learner._throttle_ceiling[5] = 14.2
+        self.learner._throttle_ceiling_n[5] = MIN_SAMPLES
+        self.learner._save()
+        other = OnlineLearner(save_path="/tmp/test_learner_ceil.json")
+        self.assertAlmostEqual(other.predict_throttle_ceiling(5), 14.2)
+
+
 if __name__ == "__main__":
     unittest.main()

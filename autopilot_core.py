@@ -74,6 +74,8 @@ class AutopilotSnapshot:
     handle_notch: Optional[int] = None
     next_limit_mph: Optional[float] = None
     distance_next_m: Optional[float] = None
+    next_limit_2_mph: Optional[float] = None
+    distance_next_2_m: Optional[float] = None
     brake_marker_m: Optional[float] = None
     gradient_pct: Optional[float] = None
     acceleration_ms2: Optional[float] = None
@@ -90,6 +92,8 @@ class AutopilotSnapshot:
     ocr_task: Optional[str] = None
     rain_intensity: float = 0.0
     supervision: str = ""
+    control_api_ok: bool = False
+    last_cmd_sent: bool = False
 
 
 class _GuiLogHandler(logging.Handler):
@@ -141,6 +145,9 @@ class AutopilotEngine:
         self.snapshot = AutopilotSnapshot(target_mph=config.target_mph)
         self._running = True
         self._manual_prompt: Optional[Callable[[], dict]] = None
+        self._control_api_ok = False
+        self._control_api_check_t = 0.0
+        self._log_cycle_n = 0
 
         self._log_buffer: Deque[str] = deque(maxlen=80)
         self._log = logging.getLogger("tsw.autopilot")
@@ -248,7 +255,8 @@ class AutopilotEngine:
                 api_accel=api_accel,
                 gradient_pct=self.telem.get("gradient_pct") or 0.0,
             )
-            if self.config.learn:
+            if self.config.learn or (self._last_state_handle is not None
+                                    and self._last_state_handle <= 3):
                 self.decider.feed_learner(
                     speed_mph=speed,
                     handle_notch=self._last_state_handle,
@@ -259,12 +267,15 @@ class AutopilotEngine:
         rain = self.telem.get("rain_intensity", 0.0) or 0.0
         self.decider.set_rain_intensity(rain)
 
-        ocr_dist = self.ocr.get_distance()
-        ocr_task = self.ocr.get_task()
+        need_ocr = self._needs_ocr()
+        self.ocr.set_active(need_ocr)
+        ocr_dist = self.ocr.get_distance() if need_ocr else None
+        ocr_task = self.ocr.get_task() if need_ocr else None
 
         action = "HOLD"
         final = "HOLD"
         override: Optional[str] = None
+        cmd_sent = False
 
         if speed is not None and limit is not None and self.conn.mode != "searching":
             state = build_train_state(
@@ -282,7 +293,7 @@ class AutopilotEngine:
             final = override or action
 
             if not self.config.no_control:
-                self.controller.execute(final, state, self.conn, self.hwnd)
+                cmd_sent = self.controller.execute(final, state, self.conn, self.hwnd)
 
             self._log_cycle(speed, limit, action, final)
         else:
@@ -293,6 +304,11 @@ class AutopilotEngine:
         if len(self.loop_times) > 20:
             self.loop_times.pop(0)
         fps = 1.0 / (sum(self.loop_times) / len(self.loop_times)) if self.loop_times else 0.0
+
+        now = time.monotonic()
+        if now - self._control_api_check_t >= 5.0:
+            self._control_api_ok = self.conn.has_control_api()
+            self._control_api_check_t = now
 
         self.snapshot = AutopilotSnapshot(
             speed_mph=speed,
@@ -307,6 +323,8 @@ class AutopilotEngine:
             handle_notch=self.telem.get("handle_notch"),
             next_limit_mph=self.telem.get("next_limit_mph"),
             distance_next_m=self.telem.get("distance_next_m"),
+            next_limit_2_mph=self.telem.get("next_limit_2_mph"),
+            distance_next_2_m=self.telem.get("distance_next_2_m"),
             brake_marker_m=self.telem.get("brake_marker_m"),
             gradient_pct=self.telem.get("gradient_pct"),
             acceleration_ms2=self.decider.acceleration_ms2,
@@ -323,8 +341,18 @@ class AutopilotEngine:
             ocr_task=ocr_task,
             rain_intensity=rain,
             supervision=str(self.telem.get("supervision") or ""),
+            control_api_ok=self._control_api_ok,
+            last_cmd_sent=cmd_sent,
         )
         return self.snapshot
+
+    def _needs_ocr(self) -> bool:
+        if self.decider.station_state in ("APPROACHING", "STOPPED", "DEPARTING"):
+            return True
+        for st in (self.telem.get("stations") or [])[:1]:
+            if st.get("distance_m", 99999) < 1500:
+                return True
+        return False
 
     def sleep_remainder(self, elapsed: float) -> None:
         target_dt = 1.0 / self.config.loop_hz if self.conn.mode != "manual" else 1.0
@@ -333,7 +361,10 @@ class AutopilotEngine:
     def _detect_vehicle(self) -> None:
         if self._vehicle_profiled or self.conn.mode not in ("ue4ss", "tsw_api"):
             return
-        if not self._veh_thread_started:
+        name = self.telem.get("vehicle_name") or self.conn.get_vehicle_name()
+        if name:
+            self._veh_detected["v"] = name
+        elif not self._veh_thread_started:
             self._veh_thread_started = True
 
             def _search() -> None:
@@ -376,6 +407,9 @@ class AutopilotEngine:
 
     def _log_cycle(self, speed: float, limit: float,
                    action: str, final: str) -> None:
+        self._log_cycle_n += 1
+        if self._log_cycle_n % 20 != 0:
+            return
         telem = self.telem
         dmi_d = telem.get("doors_dmi")
         dmi_d_str = "O" if dmi_d is True else ("C" if dmi_d is False else "?")

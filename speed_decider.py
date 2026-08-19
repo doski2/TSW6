@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-speed_decider.py — Lógica de decisión de velocidad (P1 + P2 + P3 + FSM).
+speed_decider.py — Lógica de decisión de velocidad (P1 + P2 + FSM).
+
+Solo frenado automático: el conductor acelera manualmente.
+P1 usa planificador estilo Dastsc (``brake_planner.py``).
 
 SpeedDecider recibe un TrainState y devuelve una acción de control:
-  ACCELERATE | COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
+  COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
 
 Separación de responsabilidades:
   - SpeedDecider: SOLO decide qué hacer, sin saber cómo ejecutarlo
@@ -13,8 +16,7 @@ Separación de responsabilidades:
 Estado interno permitido:
   - TrainPhysics (acelerómetro, learner)
   - StationFSM (máquina de estados de paradas)
-  - BrakingAdvisor (contador de ciclos P1)
-  - P3 anti-oscilación (2 variables: last_dir, hold_count)
+  - BrakingAdvisor (plan Dastsc + emergencias P1)
   - ACK state (2 booleans)
 
 No hay seguimiento de notch interno. Toda la posición del handle se lee
@@ -26,7 +28,6 @@ import time
 from typing import Optional
 
 from governor_constants import (
-    P3_LOOKAHEAD_S, P3_ACCEL_TOL_MS2, P3_DEADBAND_CYCLES,
     CONTROL_INTERVAL, P2_LIMIT_BRAKE_THRESHOLD, P2_TSM_BRAKE_THRESHOLD,
     RATE_TOLERANCE, STATION_STOPPED_MPH,
 )
@@ -36,9 +37,6 @@ from governor_station import StationFSM
 from train_state import TrainState
 
 _log = logging.getLogger("tsw.governor")
-
-# Número máximo de notch de tracción en el half-handle (0-4)
-_MAX_THROTTLE_NOTCH = 4
 
 
 class SpeedDecider:
@@ -60,13 +58,8 @@ class SpeedDecider:
         self._fsm       = StationFSM()
         self._braking   = BrakingAdvisor()
 
-        # Configuración del operador
         self.target_mph: float = target_mph
         self.paused:     bool  = False
-
-        # P3 anti-oscilación
-        self._p3_last_direction: Optional[str] = None
-        self._p3_direction_hold: int           = 0
 
         # ACK (ATP activo)
         self._ack_was_required:    bool  = False
@@ -102,31 +95,6 @@ class SpeedDecider:
 
     def set_rain_intensity(self, intensity: float) -> None:
         self._physics.set_rain_intensity(intensity)
-
-    def _select_notch_predictive(self, a_target: float, speed: float,
-                                  grad: float) -> Optional[int]:
-        """
-        Elige la muesca de tracción (0-4) MÍNIMA cuya aceleración aprendida
-        alcanza `a_target` en las condiciones actuales (velocidad+gradiente).
-
-        Muesca de tracción t ↔ muesca del handle t+4 (Tracción-t).
-        Devuelve None si no hay datos de calibración suficientes para ninguna
-        muesca de tracción (entonces P3 usa el ajuste reactivo ±1).
-        """
-        # Objetivo ~0 → soltar a neutro (no acelerar cerca del límite)
-        if a_target <= P3_ACCEL_TOL_MS2:
-            return 0
-
-        have_data = False
-        for t in range(1, _MAX_THROTTLE_NOTCH + 1):
-            pred = self._physics.predict_accel(t + 4, speed, grad)
-            if pred is None:
-                continue
-            have_data = True
-            if pred >= a_target - P3_ACCEL_TOL_MS2:
-                return t  # muesca mínima suficiente
-        # Ninguna alcanza el objetivo: tracción máxima (si había datos)
-        return _MAX_THROTTLE_NOTCH if have_data else None
 
     def set_vehicle_profile(self, vehicle: str) -> None:
         """Carga el perfil de calibración del tren detectado (perfiles por tren)."""
@@ -240,10 +208,10 @@ class SpeedDecider:
         Decide la acción de control para el ciclo actual.
 
         Capas de prioridad (mayor a menor):
-          ACK (ATP) → FSM estación → P1 (frenado anticipado) → P2 (crucero/overspeed) → P3 (aceleración)
+          ACK (ATP) → FSM estación → P1 (plan Dastsc) → P2 (overspeed)
 
         Garantía: siempre devuelve una de:
-          ACCELERATE | COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
+          COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
         """
         self._last_state = state
 
@@ -390,6 +358,8 @@ class SpeedDecider:
                 eff_k_stop         = self._physics.eff_k_stop,
                 throttle_notch     = th_n,
                 speed_limits_ahead = speed_lims_list,
+                base_decel_ms2     = self._physics.eff_max_decel,
+                predict_decel      = self._physics.predict_brake_decel_ms2,
             )
             if p1_action is not None:
                 self.effective_limit = effective_limit
@@ -439,7 +409,7 @@ class SpeedDecider:
                 act = "COAST" if th_act else "HOLD"
                 self.last_action = act
                 return act
-            if speed > limit - 0.5 and th_act:
+            if speed > limit and th_act:
                 self.last_action = "COAST"
                 return "COAST"
             if grad < -0.5 and speed > limit - 2.0 and th_act:
@@ -468,11 +438,6 @@ class SpeedDecider:
                             "si" if self._fsm._ocr_used else "no")
                         self.last_action = "FULLSTOP"
                         return "FULLSTOP"
-                    if (a is not None
-                            and a_now > max(a_need * 1.6, self._physics.max_decel_ms2)
-                            and br_act):
-                        self.last_action = "ACCELERATE"
-                        return "ACCELERATE"
                     self.last_action = "HOLD"
                     return "HOLD"
                 else:
@@ -485,11 +450,6 @@ class SpeedDecider:
                             f"{a:.2f}" if a is not None else "?")
                         self.last_action = "BRAKE"
                         return "BRAKE"
-                    if (a is not None
-                            and a < -(self._physics.target_decel_ms2 + RATE_TOLERANCE)
-                            and br_act):
-                        self.last_action = "ACCELERATE"
-                        return "ACCELERATE"
                     self.last_action = "HOLD"
                     return "HOLD"
 
@@ -545,19 +505,12 @@ class SpeedDecider:
             self.last_action = "HOLD"
             return "HOLD"
 
-        # ── Liberar freno residual antes de continuar ─────────────────────
+        # Freno residual en parada: conductor libera manualmente
         if br_act:
-            if (state.station_state == "STOPPED"
-                    or (state.station_state == "APPROACHING"
-                        and speed <= STATION_STOPPED_MPH + 1.0
-                        and effective_limit <= 1.0)):
-                if state.station_state != "DEPARTING":
-                    self.last_action = "HOLD"
-                    return "HOLD"
-            self.last_action = "ACCELERATE"
-            return "ACCELERATE"
+            self.last_action = "HOLD"
+            return "HOLD"
 
-        # Guardia: no acelerar en APPROACHING sin creep activo
+        # Guardia: soltar tracción en APPROACHING sin creep
         if state.station_state == "APPROACHING" and not self._fsm._creep_to_station:
             if th_act and (a is None or a > 0.15):
                 self.last_action = "COAST"
@@ -571,98 +524,5 @@ class SpeedDecider:
             self.last_action = "HOLD"
             return "HOLD"
 
-        # Crucero (error <= 1.5 mph): mantener velocidad sin P3
-        if error <= 1.5:
-            if error <= -0.3:
-                if th_act and (a is None or a > 0.15):
-                    self.last_action = "COAST"
-                    return "COAST"
-                self.last_action = "HOLD"
-                return "HOLD"
-            if th_act and (a is None or a > 0.30):
-                self.last_action = "COAST"
-                return "COAST"
-            if a is not None and a < -0.05 and not br_act:
-                self.last_action = "ACCELERATE"
-                return "ACCELERATE"
-            self.last_action = "HOLD"
-            return "HOLD"
-
-        # ── P3: Rastreo de aceleración objetivo ──────────────────────────────
-        # Calcula la aceleración necesaria para alcanzar el límite en
-        # P3_LOOKAHEAD_S segundos y elige la muesca MÍNIMA que, según lo
-        # aprendido, alcanza esa aceleración (selección predictiva). Si no
-        # hay datos aprendidos suficientes, cae al ajuste reactivo ±1.
-        if a is not None:
-            # Aceleración objetivo: escala con el error de velocidad
-            # (cerca del límite → muy poca aceleración → notch bajo)
-            a_target = min(
-                max(error * 0.44704 / P3_LOOKAHEAD_S, 0.0),
-                self._physics.target_accel_ms2,
-            )
-
-            pred_t = self._select_notch_predictive(a_target, speed, grad)
-            if pred_t is None:
-                # Fallback reactivo: sin calibración por muesca suficiente
-                if a < a_target - P3_ACCEL_TOL_MS2:
-                    target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
-                elif a > a_target + P3_ACCEL_TOL_MS2:
-                    target_t = max(th_n - 1, 0)
-                else:
-                    target_t = th_n
-            else:
-                target_t = pred_t
-                # Trim de realimentación: si ya estamos en la muesca elegida
-                # pero la aceleración real se desvía, corrige ±1.
-                if th_n == target_t:
-                    if a < a_target - P3_ACCEL_TOL_MS2:
-                        target_t = min(th_n + 1, _MAX_THROTTLE_NOTCH)
-                    elif a > a_target + P3_ACCEL_TOL_MS2:
-                        target_t = max(th_n - 1, 0)
-
-            _log.debug(
-                "P3 accel  spd=%.1f  a=%.3f  a_target=%.3f  pred_t=%s  "
-                "target_t=%d  err=%.1f  grad=%.1f%%",
-                speed, a, a_target, pred_t, target_t, error, grad)
-        else:
-            # Sin acelerómetro: tabla abierta por error + compensación de gradiente
-            if error > 15.0:
-                target_t = 4
-            elif error > 8.0:
-                target_t = 3
-            elif error > 4.0:
-                target_t = 2
-            else:
-                target_t = 1
-            if grad > 0.5:
-                target_t = min(target_t + 1, _MAX_THROTTLE_NOTCH)
-            elif grad < -1.0:
-                target_t = max(target_t - 1, 0)
-
-        # Anti-oscilación: banda muerta de P3_DEADBAND_CYCLES antes de cambiar dirección
-        if th_n > target_t:
-            _new_dir: Optional[str] = "down"
-        elif th_n < target_t:
-            _new_dir = "up"
-        else:
-            _new_dir = None
-            self._p3_direction_hold = 0
-
-        if _new_dir is not None and self._p3_last_direction is not None:
-            if _new_dir != self._p3_last_direction:
-                if self._p3_direction_hold < P3_DEADBAND_CYCLES:
-                    self._p3_direction_hold += 1
-                    self.last_action = "HOLD"
-                    return "HOLD"
-                self._p3_direction_hold = 0
-
-        self._p3_last_direction = _new_dir
-
-        if th_n > target_t:
-            self.last_action = "COAST"
-            return "COAST"
-        if th_n < target_t and not br_act:
-            self.last_action = "ACCELERATE"
-            return "ACCELERATE"
         self.last_action = "HOLD"
         return "HOLD"

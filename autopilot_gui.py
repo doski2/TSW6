@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -20,8 +21,8 @@ from autopilot_core import AutopilotConfig, AutopilotEngine, AutopilotSnapshot
 
 _PADX = 8
 _PADY = 4
-_UI_MS = 100
-_LOOP_HZ = 5.0
+_UI_MS = 80
+_LOOP_HZ = 10.0
 
 _ACTION_COLORS = {
     "ACCELERATE": "#2a7",
@@ -41,6 +42,8 @@ class AutopilotApp:
         self._running = True
         self._ui_tick = 0
         self._last_snap: Optional[AutopilotSnapshot] = None
+        self._snap_lock = threading.Lock()
+        self._control_error: Optional[str] = None
 
         root.title("TSW6 — Autopilot")
         root.geometry("900x780")
@@ -52,7 +55,9 @@ class AutopilotApp:
             style.theme_use("vista")
 
         self._build_ui()
-        self._schedule_tick()
+        threading.Thread(target=self._control_loop, daemon=True,
+                         name="autopilot-control").start()
+        self._schedule_ui_refresh()
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self.root)
@@ -132,6 +137,8 @@ class AutopilotApp:
             "Velocidad",
             "Límite vía",
             "Límite efectivo",
+            "Próx. límite",
+            "2º límite",
             "Handle (API)",
             "Aceleración",
             "Gradiente",
@@ -151,6 +158,8 @@ class AutopilotApp:
             self.lbl_speed,
             self.lbl_limit,
             self.lbl_eff_limit,
+            self.lbl_next_limit,
+            self.lbl_next_limit_2,
             self.lbl_handle,
             self.lbl_accel,
             self.lbl_grad,
@@ -179,6 +188,8 @@ class AutopilotApp:
 
         self.lbl_next_brake = ttk.Label(lim_frame, text="", foreground="#a60")
         self.lbl_next_brake.pack(anchor=tk.W, padx=6, pady=2)
+        self.lbl_next_brake_2 = ttk.Label(lim_frame, text="", foreground="#a60")
+        self.lbl_next_brake_2.pack(anchor=tk.W, padx=6, pady=2)
 
         st_frame = ttk.LabelFrame(parent, text="Estaciones programadas")
         st_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
@@ -237,23 +248,35 @@ class AutopilotApp:
         except ValueError:
             messagebox.showwarning("Parada", "Introduce un número válido.")
 
-    def _schedule_tick(self) -> None:
-        if not self._running:
-            return
-        try:
+    def _control_loop(self) -> None:
+        while self._running:
             t0 = time.perf_counter()
-            snap = self.engine.tick()
-            self._last_snap = snap
-            self._ui_tick += 1
-            if self._ui_tick % 2 == 0:
-                self._refresh_ui(snap)
+            try:
+                snap = self.engine.tick()
+                with self._snap_lock:
+                    self._last_snap = snap
+            except Exception as exc:
+                self._control_error = str(exc)
+                self._running = False
+                self.root.after(0, self._on_control_error)
+                return
             elapsed = time.perf_counter() - t0
             self.engine.sleep_remainder(elapsed)
-        except Exception as exc:
-            self._running = False
-            messagebox.showerror("Error", f"Error en bucle de control:\n{exc}")
+
+    def _on_control_error(self) -> None:
+        messagebox.showerror(
+            "Error",
+            f"Error en bucle de control:\n{self._control_error or 'desconocido'}")
+
+    def _schedule_ui_refresh(self) -> None:
+        if not self._running and self._control_error:
             return
-        self.root.after(_UI_MS, self._schedule_tick)
+        with self._snap_lock:
+            snap = self._last_snap
+        if snap is not None:
+            self._refresh_ui(snap)
+        if self._running:
+            self.root.after(_UI_MS, self._schedule_ui_refresh)
 
     def _refresh_ui(self, s: AutopilotSnapshot) -> None:
         mode_labels = {
@@ -264,7 +287,15 @@ class AutopilotApp:
         }
         mode = mode_labels.get(s.conn_mode, s.conn_mode)
         col = "#2a7" if s.conn_mode in ("ue4ss", "tsw_api") else "#a60"
-        self.lbl_conn.configure(text=f"Fuente: {mode}", foreground=col)
+        if s.control_api_ok:
+            ctrl_txt = "Mandos: HTTPAPI ✓"
+            ctrl_col = "#2a7"
+        else:
+            ctrl_txt = "Mandos: sin HTTPAPI (arranca con -HTTPAPI)"
+            ctrl_col = "#c33"
+        self.lbl_conn.configure(
+            text=f"Fuente: {mode}   ·   {ctrl_txt}",
+            foreground=col if s.control_api_ok else ctrl_col)
 
         if s.vehicle_name:
             self.lbl_vehicle.configure(text=f"Tren: {s.vehicle_name}")
@@ -276,6 +307,12 @@ class AutopilotApp:
         self.lbl_limit.configure(
             text=f"{lim:.0f} mph" if lim is not None else "—")
         self.lbl_eff_limit.configure(text=f"{s.effective_limit:.1f} mph")
+        self.lbl_next_limit.configure(
+            text=self._format_limit_ahead(
+                s.next_limit_mph, s.distance_next_m, s.speed_mph))
+        self.lbl_next_limit_2.configure(
+            text=self._format_limit_ahead(
+                s.next_limit_2_mph, s.distance_next_2_m, s.speed_mph))
         self.lbl_handle.configure(
             text=str(s.handle_notch) if s.handle_notch is not None else "?")
         if s.acceleration_ms2 is not None:
@@ -307,7 +344,8 @@ class AutopilotApp:
         if s.override:
             extra = f"  (override: {s.override})"
         self.lbl_action.configure(
-            text=f"{action}{extra}  ← decider: {s.action}",
+            text=f"{action}{extra}  ← decider: {s.action}"
+                 f"  {'[cmd OK]' if s.last_cmd_sent else '[sin cmd]'}",
             foreground=color)
         self.lbl_fps.configure(text=f"{s.fps:.1f} Hz")
 
@@ -348,20 +386,18 @@ class AutopilotApp:
             ))
 
         if s.next_limit_mph is not None and s.distance_next_m is not None:
-            need = s.brake_marker_m
-            if need is None and s.speed_mph is not None:
-                need = self.engine.decider.braking_distance(
-                    s.speed_mph, s.next_limit_mph)
-            if need:
-                ok = s.distance_next_m >= need
-                self.lbl_next_brake.configure(
-                    text=(f"P1: {'OK' if ok else 'FRENAR'} — "
-                          f"dist {s.distance_next_m:.0f}m / necesario ~{need:.0f}m"),
-                    foreground="#2a7" if ok else "#c33")
-            else:
-                self.lbl_next_brake.configure(text="", foreground="#a60")
+            self.lbl_next_brake.configure(
+                **self._p1_brake_style(
+                    s, s.next_limit_mph, s.distance_next_m, label="P1 #1"))
         else:
             self.lbl_next_brake.configure(text="Sin datos de próximo límite")
+
+        if s.next_limit_2_mph is not None and s.distance_next_2_m is not None:
+            self.lbl_next_brake_2.configure(
+                **self._p1_brake_style(
+                    s, s.next_limit_2_mph, s.distance_next_2_m, label="P1 #2"))
+        else:
+            self.lbl_next_brake_2.configure(text="")
 
         for st in s.stations[:8]:
             self.tree_stations.insert("", tk.END, values=(
@@ -370,6 +406,33 @@ class AutopilotApp:
                 f"{st.get('platform_length_m', st.get('platform_m', 0)):.0f}"
                 if st.get("platform_length_m") or st.get("platform_m") else "—",
             ))
+
+    def _format_limit_ahead(
+            self, mph: Optional[float], dist_m: Optional[float],
+            speed_mph: Optional[float]) -> str:
+        if mph is None or dist_m is None:
+            return "—"
+        extra = ""
+        if speed_mph is not None and mph < speed_mph - 0.5:
+            extra = "  ↓"
+        return f"{mph:.0f} mph @ {dist_m:.0f} m{extra}"
+
+    def _p1_brake_style(
+            self, s: AutopilotSnapshot, limit_mph: float, dist_m: float,
+            *, label: str) -> dict:
+        need = None
+        if s.speed_mph is not None:
+            need = self.engine.decider.braking_distance(
+                s.speed_mph, limit_mph)
+        if not need:
+            return {"text": f"{label}: —", "foreground": "#a60"}
+        ok = dist_m >= need
+        return {
+            "text": (f"{label}: {'OK' if ok else 'FRENAR'} — "
+                     f"{limit_mph:.0f} mph @ {dist_m:.0f}m "
+                     f"(freno ~{need:.0f}m)"),
+            "foreground": "#2a7" if ok else "#c33",
+        }
 
     def _refresh_log(self) -> None:
         lines = self.engine.log_lines[-40:]
@@ -420,6 +483,19 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
 
     engine = AutopilotEngine(config, log_path=log_path)
     logging.getLogger("tsw.autopilot").info("Autopilot GUI — log: %s", log_path)
+
+    if not config.no_control and not engine.conn.has_control_api():
+        warn = tk.Tk()
+        warn.withdraw()
+        messagebox.showwarning(
+            "HTTPAPI necesaria para mandos",
+            "No se detectó la API HTTP de TSW6 (-HTTPAPI).\n\n"
+            "Sin ella el autopilot NO puede mover el mando mientras "
+            "esta ventana está abierta.\n\n"
+            "Cierra el juego, añade -HTTPAPI a las opciones de lanzamiento "
+            "y vuelve a cargar el escenario.",
+            parent=warn)
+        warn.destroy()
 
     if config.manual:
         def _manual_prompt() -> dict:

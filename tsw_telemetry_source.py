@@ -34,7 +34,10 @@ _log = logging.getLogger("tsw.telemetry")
 
 DRIVABLE = "CurrentDrivableActor"
 MS_TO_MPH = 2.236936
-SLOW_EVERY = 5
+SLOW_EVERY = 30
+PLANNING_MIN_INTERVAL_S = 4.0
+CONTROL_API_TIMEOUT = 0.35
+PLANNING_READ_TIMEOUT = 1.0
 UE4SS_STALE_S = 0.75
 
 _SLOW_READS: dict[str, str] = {
@@ -132,6 +135,13 @@ class TswTelemetrySource:
         self._poll_tick = 0
         self._slow: dict[str, Any] = {}
         self._ue4ss_path = _ue4ss_path()
+        self._planning_cache: dict[str, Any] = {}
+        self._planning_lock = threading.Lock()
+        self._planning_refreshing = False
+        self._planning_last_kick = 0.0
+        self._api_lock = threading.Lock()
+        self._api_ok_cache: Optional[bool] = None
+        self._api_ok_ts = 0.0
 
     def probe(self) -> str:
         """Detecta UE4SS (GetData.txt) o HTTPAPI."""
@@ -204,26 +214,33 @@ class TswTelemetrySource:
         return True
 
     def _poll_driver_aid_planning(self) -> dict[str, Any]:
-        """DriverAid.Data + TrackData (~1 Hz) para P1 y paradas."""
+        """DriverAid.Data + TrackData (en hilo aparte) para P1 y paradas."""
         if not self._ensure_api_client(silent=True):
             return {}
-        client = self._client
-        if client is None:
+        if not self._api_lock.acquire(blocking=True, timeout=2.5):
             return {}
+        try:
+            client = self._client
+            if client is None:
+                return {}
 
-        out: dict[str, Any] = {}
-        data = client.get_node("DriverAid.Data")
-        if data is not None:
-            self._slow["driver_aid"] = data
-            out.update(parse_driver_aid_planning(data))
+            out: dict[str, Any] = {}
+            data = client.get_node("DriverAid.Data",
+                                   timeout=PLANNING_READ_TIMEOUT)
+            if data is not None:
+                self._slow["driver_aid"] = data
+                out.update(parse_driver_aid_planning(data))
 
-        track = client.get_node("DriverAid.TrackData")
-        if track is not None:
-            self._slow["track_data"] = track
-            stations = parse_track_data_stations(track)
-            if stations:
-                out["stations"] = stations
-        return out
+            track = client.get_node("DriverAid.TrackData",
+                                    timeout=PLANNING_READ_TIMEOUT)
+            if track is not None:
+                self._slow["track_data"] = track
+                stations = parse_track_data_stations(track)
+                if stations:
+                    out["stations"] = stations
+            return out
+        finally:
+            self._api_lock.release()
 
     def _merge_planning(self, parsed: dict[str, Any],
                         planning: dict[str, Any],
@@ -250,9 +267,9 @@ class TswTelemetrySource:
             return
 
         self._poll_tick += 1
-        planning: dict[str, Any] = {}
         if self._poll_tick == 1 or self._poll_tick % SLOW_EVERY == 0:
-            planning = self._poll_driver_aid_planning()
+            self._kick_planning_refresh()
+        planning = self._get_cached_planning()
 
         age_ms = 0.0
         try:
@@ -355,26 +372,69 @@ class TswTelemetrySource:
         out["control_layout"] = detect_control_layout(vehicle)
         return out
 
+    def has_control_api(self) -> bool:
+        """True si HTTPAPI está disponible para escribir mandos."""
+        now = time.monotonic()
+        if self._api_ok_cache is not None and now - self._api_ok_ts < 10.0:
+            return self._api_ok_cache
+        self._api_ok_cache = self._ensure_api_client(silent=True)
+        self._api_ok_ts = now
+        return self._api_ok_cache
+
+    def _kick_planning_refresh(self) -> None:
+        """Actualiza DriverAid en segundo plano (no bloquea el bucle de control)."""
+        now = time.monotonic()
+        if now - self._planning_last_kick < PLANNING_MIN_INTERVAL_S:
+            return
+        if not self._ensure_api_client(silent=True):
+            return
+        if self._planning_refreshing:
+            return
+        self._planning_last_kick = now
+        self._planning_refreshing = True
+
+        def _work() -> None:
+            try:
+                result = self._poll_driver_aid_planning()
+                with self._planning_lock:
+                    self._planning_cache = result
+            finally:
+                self._planning_refreshing = False
+
+        threading.Thread(target=_work, daemon=True, name="tsw-planning").start()
+
+    def _get_cached_planning(self) -> dict[str, Any]:
+        with self._planning_lock:
+            return dict(self._planning_cache)
+
     def get_vehicle_name(self) -> Optional[str]:
         return self._vehicle_name
 
     def set_control_value(self, control: str, val: float) -> bool:
-        """Escritura de mandos vía API TSW (funciona con modo lectura ``ue4ss``)."""
+        """Escritura de mandos vía API TSW (prioridad sobre planning)."""
         if not self._ensure_api_client(silent=True):
             return False
-        client = self._client
-        if client is None:
+        if not self._api_lock.acquire(blocking=False):
+            _log.debug("set_control_value: API ocupada, reintentar próximo ciclo")
             return False
-        name = str(control or "").strip()
-        if name == "PowerBrakeHandle":
-            notch = combined_value_to_notch(val)
-            result = dispatch_combined_notch(client, notch)
-        else:
-            result = dispatch_brake(client, name, val)
-        ok = bool(result.get("ok"))
-        if not ok:
-            _log.debug("set_control_value falló: %s", result)
-        return ok
+        try:
+            client = self._client
+            if client is None:
+                return False
+            name = str(control or "").strip()
+            if name == "PowerBrakeHandle":
+                notch = combined_value_to_notch(val)
+                result = dispatch_combined_notch(
+                    client, notch, timeout=CONTROL_API_TIMEOUT)
+            else:
+                result = dispatch_brake(
+                    client, name, val, timeout=CONTROL_API_TIMEOUT)
+            ok = bool(result.get("ok"))
+            if not ok:
+                _log.debug("set_control_value falló: %s", result)
+            return ok
+        finally:
+            self._api_lock.release()
 
 
 # Alias para migración gradual de imports

@@ -107,13 +107,28 @@ class TswApiClient:
         encoded = encode_control_path(node_name)
         return self.get_json(f"/list/{encoded}")
 
-    def get_node(self, node_endpoint: str) -> Optional[dict[str, Any]]:
+    def get_node(self, node_endpoint: str,
+                 timeout: Optional[float] = None) -> Optional[dict[str, Any]]:
         """
         GET /get/{ruta} — lectura HUD u otras propiedades del actor en cabina.
         Devuelve el dict ``Values`` si Result == Success.
         """
         encoded = encode_control_path(node_endpoint)
-        data = self.get_json(f"/get/{encoded}")
+        req_timeout = self.timeout if timeout is None else timeout
+        path = f"/get/{encoded}"
+        url = f"{self.base_url}{path}"
+        try:
+            r = self._session.get(
+                url, headers=self._headers(), timeout=req_timeout)
+            if r.status_code != 200:
+                _log.debug("GET %s → %d", path, r.status_code)
+                return None
+            data = r.json()
+        except requests.exceptions.ConnectionError:
+            return None
+        except Exception as exc:
+            _log.debug("GET %s error: %s", path, exc)
+            return None
         if not isinstance(data, dict) or data.get("Result") != "Success":
             return None
         values = data.get("Values")
@@ -136,19 +151,21 @@ class TswApiClient:
                         pass
         return None
 
-    def set_value(self, control_path: str, value: float) -> dict[str, Any]:
+    def set_value(self, control_path: str, value: float,
+                  timeout: Optional[float] = None) -> dict[str, Any]:
         """
         PATCH /set/{path}.Value?Value={n}
         Devuelve {ok: bool, ...} sin lanzar excepciones de red.
         """
         encoded = encode_control_path(control_path)
         url = f"{self.base_url}/set/{encoded}.Value"
+        req_timeout = self.timeout if timeout is None else timeout
         try:
             r = self._session.patch(
                 url,
                 headers=self._headers(),
                 params={"Value": value},
-                timeout=self.timeout,
+                timeout=req_timeout,
             )
             if r.status_code == 200:
                 return {"ok": True, "path": control_path, "value": value}

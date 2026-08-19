@@ -160,8 +160,9 @@ def _detect_task(img: "_Img.Image") -> Optional[str]:
     w, h = img.size
     top_h = max(1, int(h * 0.60))
     top = img.crop((0, 0, w, top_h))
-    pixels = list(top.getdata())
-    ratio = pixels.count(255) / len(pixels) if pixels else 0.0
+    hist = top.histogram()
+    total = sum(hist)
+    ratio = (hist[255] / total) if total else 0.0
     # ratio debug removed (was ~2 logs/sec noise; use logging.TRACE if needed)
     if ratio > 0.30:
         return "stop"
@@ -231,6 +232,7 @@ class TswOcr:
         self._lock       = threading.Lock()
         self._stop_ev    = threading.Event()
         self._active     = _OCR_AVAILABLE
+        self._ocr_enabled = _OCR_AVAILABLE
         self._last_logged_dist: Optional[float] = None  # throttle OCR distance logging
 
         if _OCR_AVAILABLE:
@@ -240,6 +242,10 @@ class TswOcr:
         else:
             _log.debug("TswOcr desactivado")
 
+    def set_active(self, active: bool) -> None:
+        """Activa/desactiva OCR (ahorra CPU lejos de estación)."""
+        self._ocr_enabled = active and _OCR_AVAILABLE
+
     # ── API pública ────────────────────────────────────────────────────────────
 
     def get_distance(self) -> Optional[float]:
@@ -248,7 +254,7 @@ class TswOcr:
         Devuelve None si el OCR no está disponible, no se detectó
         ninguna distancia o el último resultado tiene más de RESULT_TTL segundos.
         """
-        if not self._active:
+        if not self._active or not self._ocr_enabled:
             return None
         with self._lock:
             if time.monotonic() - self._dist_ts > self.RESULT_TTL:
@@ -262,7 +268,7 @@ class TswOcr:
         'board' → icono de embarque (CARGAR VIAJEROS)    — puertas abiertas.
         None    → sin tarea visible o OCR no disponible.
         """
-        if not self._active:
+        if not self._active or not self._ocr_enabled:
             return None
         with self._lock:
             if time.monotonic() - self._task_ts > self.RESULT_TTL:
@@ -278,31 +284,31 @@ class TswOcr:
     def _run(self) -> None:
         while not self._stop_ev.is_set():
             t0 = time.monotonic()
-            try:
-                dist, task = _capture_and_ocr(self._hwnd)
-                now = time.monotonic()
-                with self._lock:
+            if self._ocr_enabled:
+                try:
+                    dist, task = _capture_and_ocr(self._hwnd)
+                    now = time.monotonic()
+                    with self._lock:
+                        if dist is not None:
+                            if dist > self.MAX_DIST_M:
+                                _log.debug(
+                                    "OCR rechazado (%.0f m > máx %.0f m)",
+                                    dist, self.MAX_DIST_M,
+                                )
+                                dist = None
+                            else:
+                                self._dist    = dist
+                                self._dist_ts = now
+                        if task is not None:
+                            self._task    = task
+                            self._task_ts = now
                     if dist is not None:
-                        if dist > self.MAX_DIST_M:
-                            _log.debug(
-                                "OCR rechazado (%.0f m > máx %.0f m)",
-                                dist, self.MAX_DIST_M,
-                            )
-                            dist = None
-                        else:
-                            self._dist    = dist
-                            self._dist_ts = now
-                    if task is not None:
-                        self._task    = task
-                        self._task_ts = now
-                if dist is not None:
-                    # Only log when distance changes significantly (>5m)
-                    _should_log = (self._last_logged_dist is None
-                                   or abs(dist - self._last_logged_dist) > 5.0)
-                    if _should_log:
-                        _log.debug("OCR → %.1f m  task=%s", dist, task)
-                        self._last_logged_dist = dist
-            except Exception as exc:
-                _log.debug("OCR error: %s", exc)
+                        _should_log = (self._last_logged_dist is None
+                                       or abs(dist - self._last_logged_dist) > 5.0)
+                        if _should_log:
+                            _log.debug("OCR → %.1f m  task=%s", dist, task)
+                            self._last_logged_dist = dist
+                except Exception as exc:
+                    _log.debug("OCR error: %s", exc)
             elapsed = time.monotonic() - t0
             self._stop_ev.wait(max(0.0, self.POLL_S - elapsed))

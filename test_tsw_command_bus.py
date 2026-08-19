@@ -59,7 +59,8 @@ class TestDispatchBrake(unittest.TestCase):
         result = dispatch_brake(self.client, "combined_brake", 0.25)
         self.assertTrue(result["ok"])
         self.assertEqual(result["path"], "PowerBrakeHandle")
-        self.client.set_value.assert_called_once_with("PowerBrakeHandle", 0.25)
+        self.client.set_value.assert_called_once_with(
+            "PowerBrakeHandle", 0.25, timeout=None)
 
     def test_dispatch_rejects_emergency(self):
         result = dispatch_brake(self.client, "EmergencyBrake", 1.0)
@@ -75,11 +76,13 @@ class TestDispatchBrake(unittest.TestCase):
     def test_dispatch_combined_notch_shortcut(self):
         result = dispatch_combined_notch(self.client, 2)  # freno B2 ≈ 0.25
         self.assertTrue(result["ok"])
-        self.client.set_value.assert_called_once_with("PowerBrakeHandle", 0.25)
+        self.client.set_value.assert_called_once_with(
+            "PowerBrakeHandle", 0.25, timeout=None)
 
     def test_dispatch_clamps_high_value(self):
         dispatch_brake(self.client, "AutomaticBrake", 9.0)
-        self.client.set_value.assert_called_once_with("AutomaticBrake", 1.0)
+        self.client.set_value.assert_called_once_with(
+            "AutomaticBrake", 1.0, timeout=None)
 
 
 if __name__ == "__main__":

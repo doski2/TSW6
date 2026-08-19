@@ -58,6 +58,15 @@ _TRACTION_NOTCHES = (7, 8)      # promedio → TARGET_ACCEL_MS2
 # es lo que necesita la estrategia de "muesca mínima". Las muescas 5 y 6
 # (Tracción-1/2) antes se descartaban, por eso una conducción suave no
 # guardaba nada.
+# Defaults Class 323 hasta que el perfil aprenda techo por muesca (handle 5–8)
+_DEFAULT_THROTTLE_CEILING: dict[int, float] = {
+    5: 15.0,   # Tracción-1
+    6: 28.0,   # Tracción-2
+    7: 45.0,   # Tracción-3
+    8: 200.0,  # Tracción-4
+}
+_CEILING_SATURATE_A_MS2 = 0.10   # |a| bajo → muesca en equilibrio
+
 _OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH,
              *_TRACTION_LOW, *_TRACTION_NOTCHES}
 
@@ -161,6 +170,10 @@ class OnlineLearner:
         # Ventana deslizante: (t, speed_mph, notch, grad_pct, accel_ms2|None)
         self._window: list[tuple[float, float, int, float, Optional[float]]] = []
 
+        # Techo de velocidad sostenible por muesca de tracción (handle 5–8)
+        self._throttle_ceiling: dict[int, float] = {}
+        self._throttle_ceiling_n: dict[int, int] = {}
+
         # Diagnóstico: motivo del último feed (para el monitor en vivo)
         self.last_reason: str = "esperando datos"
 
@@ -187,6 +200,8 @@ class OnlineLearner:
         self._ema = {}
         self._n   = {}
         self._window = []
+        self._throttle_ceiling = {}
+        self._throttle_ceiling_n = {}
 
         self._load()
         consts = self.get_constants()
@@ -375,6 +390,25 @@ class OnlineLearner:
         # ── Recalcular EMA combinada (media ponderada por nº muestras) ────────
         self._recalculate_combined()
 
+        # ── Techo de velocidad por muesca (tracción en equilibrio) ────────────
+        if notch in (5, 6, 7, 8):
+            if (abs(measured) < _CEILING_SATURATE_A_MS2
+                    and abs(dv) < MIN_DV_MPH * 1.2):
+                spd = avg_speed
+                prev = self._throttle_ceiling.get(notch)
+                if prev is None:
+                    self._throttle_ceiling[notch] = spd
+                else:
+                    self._throttle_ceiling[notch] = max(
+                        prev,
+                        EMA_ALPHA * spd + (1.0 - EMA_ALPHA) * prev)
+                self._throttle_ceiling_n[notch] = min(
+                    self._throttle_ceiling_n.get(notch, 0) + 1, 9999)
+                _log.debug(
+                    "Learner techo muesca %d → %.1f mph (n=%d)",
+                    notch, self._throttle_ceiling[notch],
+                    self._throttle_ceiling_n[notch])
+
         self.last_reason = (f"✓ registrada muesca {notch}  a={measured_normalized:+.2f} "
                             f"(n={self._n.get(notch, 0)})")
         _log.info(
@@ -485,6 +519,35 @@ class OnlineLearner:
 
         # Volver a añadir la gravedad del gradiente actual (real = plano + g_comp)
         return flat + _gravity_compensation(grad_pct)
+
+    def predict_brake_decel_ms2(self, handle_notch: int, speed_mph: float,
+                                grad_pct: float = 0.0) -> Optional[float]:
+        """
+        Deceleración de servicio (m/s², positiva) para muescas de freno 0–3.
+
+        Usa la misma EMA por muesca/banda que ya alimenta el perfil JSON.
+        """
+        if handle_notch not in (0, 1, 2, 3):
+            return None
+        a = self.predict_accel(handle_notch, speed_mph, grad_pct)
+        if a is None or a >= -0.05:
+            return None
+        return abs(a)
+
+    def predict_throttle_ceiling(self, handle_notch: int) -> float:
+        """
+        Velocidad máxima (mph) que esta muesca de tracción puede sostener.
+
+        Usa perfil aprendido si hay muestras; si no, defaults Class 323.
+        """
+        if handle_notch in self._throttle_ceiling:
+            if self._throttle_ceiling_n.get(handle_notch, 0) >= MIN_SAMPLES:
+                return self._throttle_ceiling[handle_notch]
+            if self._throttle_ceiling_n.get(handle_notch, 0) >= 1:
+                learned = self._throttle_ceiling[handle_notch]
+                default = _DEFAULT_THROTTLE_CEILING.get(handle_notch, 200.0)
+                return min(learned, default) if learned < default else learned
+        return _DEFAULT_THROTTLE_CEILING.get(handle_notch, 200.0)
 
     def predict_samples(self, notch: int, speed_mph: float) -> int:
         """Nº de muestras que respaldan la predicción de un notch a esta
@@ -601,6 +664,13 @@ class OnlineLearner:
                                                     for k, v in band_data.items()}
 
                 self._recalculate_combined()
+                if "throttle_ceiling" in d:
+                    self._throttle_ceiling = {
+                        int(k): float(v)
+                        for k, v in d["throttle_ceiling"].items()}
+                    self._throttle_ceiling_n = {
+                        int(k): int(v)
+                        for k, v in d.get("throttle_ceiling_n", {}).items()}
                 consts = self.get_constants()
                 _log.info("OnlineLearner cargado: %s  constantes_confiables=%s",
                           self.save_path, list(consts.keys()))
@@ -632,6 +702,10 @@ class OnlineLearner:
                         # Legacy compat: also write combined values
                         "ema": {str(k): v for k, v in self._ema.items()},
                         "n":   {str(k): v for k, v in self._n.items()},
+                        "throttle_ceiling": {
+                            str(k): v for k, v in self._throttle_ceiling.items()},
+                        "throttle_ceiling_n": {
+                            str(k): v for k, v in self._throttle_ceiling_n.items()},
                     },
                     f, indent=2,
                 )
