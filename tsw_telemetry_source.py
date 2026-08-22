@@ -178,6 +178,21 @@ class TswTelemetrySource:
         self._ensure_api_client(silent=True)
         return True
 
+    def connect_fast(self) -> str:
+        """Arranque GUI: solo UE4SS, sin esperar HTTPAPI (~2 s)."""
+        if self.try_connect_ue4ss():
+            return "ue4ss"
+        self.mode = "searching"
+        if not self._ue4ss_path.is_file():
+            self.last_probe_info = (
+                "Sin GetData.txt — install_ue4ss_probe.bat + F7 en cabina"
+            )
+        else:
+            self.last_probe_info = (
+                f"GetData.txt sin actualizar (> {UE4SS_STALE_S:.1f}s) — F7 en cabina"
+            )
+        return "searching"
+
     def probe(self) -> str:
         """Detecta UE4SS (GetData.txt) o HTTPAPI."""
         if self.try_connect_ue4ss():
@@ -236,7 +251,7 @@ class TswTelemetrySource:
             self._diag_poll_miss += 1
         if now - self._diag_last_log_t < 3.0:
             return
-        elapsed = now - self._diag_last_log_t if self._diag_last_log_t > 0 else 3.0
+        elapsed = now - self._diag_last_log_t if self._diag_last_log_t > 0 else 1.0
         hz = self._diag_poll_n / elapsed if elapsed > 0 else 0.0
         seq = snap.seq if snap else None
         seq_delta = (

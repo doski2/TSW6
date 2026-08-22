@@ -153,7 +153,9 @@ class AutopilotEngine:
         self._ipc_armed = False
         self._log_cycle_n = 0
         self._telem_ready_logged = False
+        self._telem_partial_logged = False
         self._searching_warn_t = 0.0
+        self._heartbeat_t = 0.0
 
         if not config.no_control:
             self.conn.purge_ipc_on_start()
@@ -179,7 +181,10 @@ class AutopilotEngine:
 
         self._probe_lock = threading.Lock()
         with self._probe_lock:
-            self.conn.probe()
+            mode = self.conn.connect_fast()
+        self._log.info(
+            "Conexión inicial: modo=%s — %s",
+            mode, self.conn.last_probe_info)
         threading.Thread(target=self._bg_probe, daemon=True).start()
 
     @property
@@ -263,6 +268,7 @@ class AutopilotEngine:
 
         self._log_searching_hint()
         self._log_telemetry_ready()
+        self._log_heartbeat()
 
         if not self.hwnd:
             self.hwnd = find_tsw_window()
@@ -427,27 +433,61 @@ class AutopilotEngine:
         if self.conn.mode != "searching":
             return
         now = time.monotonic()
-        if now - self._searching_warn_t < 15.0:
+        if self._searching_warn_t > 0 and now - self._searching_warn_t < 10.0:
             return
+        first = self._searching_warn_t == 0.0
         self._searching_warn_t = now
-        self._log.warning(
-            "Sin probe UE4SS (%s) — carga escenario, F7 activo, install_ue4ss_probe.bat",
-            self.conn.last_probe_info)
+        msg = (
+            "Sin probe UE4SS (%s) — carga escenario, F7 activo, "
+            "install_ue4ss_probe.bat"
+        )
+        if first:
+            self._log.info(msg, self.conn.last_probe_info)
+        else:
+            self._log.warning(msg, self.conn.last_probe_info)
 
     def _log_telemetry_ready(self) -> None:
         if self._telem_ready_logged or self.conn.mode not in ("ue4ss", "tsw_api"):
             return
         speed = self.telem.get("speed_mph")
         limit = self.telem.get("limit_mph")
-        if speed is None or limit is None:
+        if speed is not None and limit is not None:
+            self._telem_ready_logged = True
+            self._log.info(
+                "Telemetría lista: modo=%s  spd=%.1f  lim=%.0f  notch=%s  mandos=%s",
+                self.conn.mode,
+                float(speed),
+                float(limit),
+                self.telem.get("handle_notch", "?"),
+                self.conn.control_channel())
             return
-        self._telem_ready_logged = True
-        self._log.info(
-            "Telemetría lista: modo=%s  spd=%.1f  lim=%.0f  notch=%s  mandos=%s",
-            self.conn.mode,
+        if self._telem_partial_logged or speed is None:
+            return
+        self._telem_partial_logged = True
+        self._log.warning(
+            "Telemetría parcial: spd=%.1f  lim=%s  seq=%s  "
+            "(falta límite vía en probe — ¿en cabina con F7?)",
             float(speed),
-            float(limit),
-            self.telem.get("handle_notch", "?"),
+            f"{limit:.0f}" if limit is not None else "—",
+            self.telem.get("probe_seq", "?"))
+
+    def _log_heartbeat(self) -> None:
+        """Estado cada ~2 s visible en panel Depuración."""
+        now = time.monotonic()
+        if now - self._heartbeat_t < 2.0:
+            return
+        self._heartbeat_t = now
+        t = self.telem
+        spd = t.get("speed_mph")
+        lim = t.get("limit_mph")
+        dist = t.get("distance_next_m")
+        self._log.info(
+            "heartbeat modo=%s  spd=%s  lim=%s  seq=%s  dist=%s  mandos=%s",
+            self.conn.mode,
+            f"{spd:.1f}" if spd is not None else "—",
+            f"{lim:.0f}" if lim is not None else "—",
+            t.get("probe_seq", "?"),
+            f"{dist:.1f}m" if dist is not None else "—",
             self.conn.control_channel())
 
     def _sync_handle(self) -> None:
