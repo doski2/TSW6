@@ -30,6 +30,21 @@ def test_parse_driver_aid_next_limit():
     assert out["distance_next_2_m"] == 200.0
 
 
+def test_build_speed_limits_queue_skips_zero_distance():
+    """En cartel (dist=0) usa nextSpeedLimits[], no el par primario."""
+    data = {
+        "distanceToNextSpeedLimit": 0.0,
+        "nextSpeedLimit": {"value": 26.82},  # 60 mph — límite actual
+        "nextSpeedLimits": [
+            {"distanceToNextSpeedLimit": 392167.0, "value": {"value": 22.35}},  # 50 mph
+        ],
+    }
+    limits = build_speed_limits_queue(data)
+    assert len(limits) == 1
+    assert limits[0]["distance_m"] > 3900.0
+    assert abs(limits[0]["limit_mph"] - 50.0) < 1.0
+
+
 def test_build_speed_limits_queue_dedupes_near_duplicates():
     data = {
         "distanceToNextSpeedLimit": 50000.0,

@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from driver_aid_parser import parse_driver_aid_planning
 from governor_constants import NOTCH_LABELS
 
 try:
@@ -109,6 +110,10 @@ class ProbeSnapshot:
     max_speed_ms: Optional[float] = None
     speed_limit_ms: Optional[float] = None
     gradient_pct: Optional[float] = None
+    dist_limit_cm: Optional[float] = None
+    next_limit_ms: Optional[float] = None
+    dist_limit2_cm: Optional[float] = None
+    next_limit2_ms: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -126,8 +131,30 @@ class ProbeSnapshot:
             max_speed_ms=data.get("max_speed_ms"),
             speed_limit_ms=data.get("speed_limit_ms"),
             gradient_pct=data.get("gradient_pct"),
+            dist_limit_cm=data.get("dist_limit_cm"),
+            next_limit_ms=data.get("next_limit_ms"),
+            dist_limit2_cm=data.get("dist_limit2_cm"),
+            next_limit2_ms=data.get("next_limit2_ms"),
             vehicle=str(data.get("vehicle") or "?"),
         )
+
+    def has_limit_planning(self) -> bool:
+        return self.dist_limit_cm is not None and self.next_limit_ms is not None
+
+    def planning_dict(self) -> dict[str, Any]:
+        """Planning P1 desde campos probe (reutiliza driver_aid_parser)."""
+        if not self.has_limit_planning():
+            return {}
+        data: dict[str, Any] = {
+            "distanceToNextSpeedLimit": self.dist_limit_cm,
+            "nextSpeedLimit": {"value": self.next_limit_ms},
+        }
+        if self.dist_limit2_cm is not None and self.next_limit2_ms is not None:
+            data["nextSpeedLimits"] = [{
+                "distanceToNextSpeedLimit": self.dist_limit2_cm,
+                "value": {"value": self.next_limit2_ms},
+            }]
+        return parse_driver_aid_planning(data)
 
     def to_telemetry_dict(self) -> dict[str, Any]:
         """Dict aproximado al de tsw_monitor / get_telemetry."""

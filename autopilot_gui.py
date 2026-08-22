@@ -21,8 +21,8 @@ from autopilot_core import AutopilotConfig, AutopilotEngine, AutopilotSnapshot
 
 _PADX = 8
 _PADY = 4
-_UI_MS = 80
-_LOOP_HZ = 10.0
+_UI_MS = 50
+_LOOP_HZ = 20.0
 
 _ACTION_COLORS = {
     "ACCELERATE": "#2a7",
@@ -42,6 +42,8 @@ class AutopilotApp:
         self._running = True
         self._ui_tick = 0
         self._last_snap: Optional[AutopilotSnapshot] = None
+        self._last_limits_sig: Optional[tuple] = None
+        self._last_stations_sig: Optional[tuple] = None
         self._snap_lock = threading.Lock()
         self._control_error: Optional[str] = None
 
@@ -287,15 +289,25 @@ class AutopilotApp:
         }
         mode = mode_labels.get(s.conn_mode, s.conn_mode)
         col = "#2a7" if s.conn_mode in ("ue4ss", "tsw_api") else "#a60"
-        if s.control_api_ok:
+        ch = s.control_channel
+        if ch == "ipc":
+            ctrl_txt = "Mandos: SendCommand ✓"
+            ctrl_col = "#2a7"
+        elif ch == "http":
             ctrl_txt = "Mandos: HTTPAPI ✓"
             ctrl_col = "#2a7"
         else:
-            ctrl_txt = "Mandos: sin HTTPAPI (arranca con -HTTPAPI)"
+            ctrl_txt = "Mandos: no disponibles (probe UE4SS o -HTTPAPI)"
             ctrl_col = "#c33"
+        plan_txt = ""
+        if s.stations:
+            plan_txt = "   ·   Estaciones: HTTP"
+        elif s.next_limit_mph is not None:
+            plan_txt = "   ·   Límites: probe"
+        conn_ok = s.conn_mode in ("ue4ss", "tsw_api")
         self.lbl_conn.configure(
-            text=f"Fuente: {mode}   ·   {ctrl_txt}",
-            foreground=col if s.control_api_ok else ctrl_col)
+            text=f"Fuente: {mode}   ·   {ctrl_txt}{plan_txt}",
+            foreground=col if conn_ok else ctrl_col)
 
         if s.vehicle_name:
             self.lbl_vehicle.configure(text=f"Tren: {s.vehicle_name}")
@@ -347,7 +359,14 @@ class AutopilotApp:
             text=f"{action}{extra}  ← decider: {s.action}"
                  f"  {'[cmd OK]' if s.last_cmd_sent else '[sin cmd]'}",
             foreground=color)
-        self.lbl_fps.configure(text=f"{s.fps:.1f} Hz")
+        self.lbl_fps.configure(
+            text=(
+                f"{s.fps:.1f} Hz"
+                f"   ·   probe seq={s.probe_seq if s.probe_seq is not None else '?'}"
+                f"   age={s.probe_age_ms:.0f}ms"
+                if s.probe_age_ms is not None
+                else f"{s.fps:.1f} Hz   ·   probe seq={s.probe_seq if s.probe_seq is not None else '?'}"
+            ))
 
         self._refresh_planning(s)
         self._refresh_log()
@@ -361,10 +380,6 @@ class AutopilotApp:
         self.lbl_ocr.configure(text=f"OCR: {ocr}")
 
     def _refresh_planning(self, s: AutopilotSnapshot) -> None:
-        for tree in (self.tree_limits, self.tree_stations):
-            for item in tree.get_children():
-                tree.delete(item)
-
         ahead = s.speed_limits_ahead
         if not ahead and s.next_limit_mph is not None:
             ahead = [{
@@ -372,18 +387,43 @@ class AutopilotApp:
                 "distance_m": s.distance_next_m,
                 "brake_marker_m": s.brake_marker_m,
             }]
-        for entry in ahead[:8]:
-            if isinstance(entry, dict):
-                mph = entry.get("limit_mph", entry.get("mph", "?"))
-                dist = entry.get("distance_m", entry.get("dist_m"))
-                brake = entry.get("brake_marker_m", entry.get("brake_m"))
-            else:
-                mph, dist, brake = entry[0], entry[1] if len(entry) > 1 else None, None
-            self.tree_limits.insert("", tk.END, values=(
-                f"{mph:.0f}" if isinstance(mph, (int, float)) else str(mph),
-                f"{dist:.0f}" if isinstance(dist, (int, float)) else "—",
-                f"{brake:.0f}" if isinstance(brake, (int, float)) else "—",
-            ))
+        limits_sig = tuple(
+            (e.get("limit_mph"), round(float(e.get("distance_m", 0)), 1))
+            for e in ahead[:8]
+            if isinstance(e, dict)
+        )
+        if limits_sig != self._last_limits_sig:
+            self._last_limits_sig = limits_sig
+            for item in self.tree_limits.get_children():
+                self.tree_limits.delete(item)
+            for entry in ahead[:8]:
+                if isinstance(entry, dict):
+                    mph = entry.get("limit_mph", entry.get("mph", "?"))
+                    dist = entry.get("distance_m", entry.get("dist_m"))
+                    brake = entry.get("brake_marker_m", entry.get("brake_m"))
+                else:
+                    mph, dist, brake = entry[0], entry[1] if len(entry) > 1 else None, None
+                self.tree_limits.insert("", tk.END, values=(
+                    f"{mph:.0f}" if isinstance(mph, (int, float)) else str(mph),
+                    f"{dist:.1f}" if isinstance(dist, (int, float)) else "—",
+                    f"{brake:.0f}" if isinstance(brake, (int, float)) else "—",
+                ))
+
+        stations_sig = tuple(
+            (st.get("name"), round(float(st.get("distance_m", 0)), 0))
+            for st in s.stations[:8]
+        )
+        if stations_sig != self._last_stations_sig:
+            self._last_stations_sig = stations_sig
+            for item in self.tree_stations.get_children():
+                self.tree_stations.delete(item)
+            for st in s.stations[:8]:
+                self.tree_stations.insert("", tk.END, values=(
+                    st.get("name", "?"),
+                    f"{st.get('distance_m', 0):.0f}",
+                    f"{st.get('platform_length_m', st.get('platform_m', 0)):.0f}"
+                    if st.get("platform_length_m") or st.get("platform_m") else "—",
+                ))
 
         if s.next_limit_mph is not None and s.distance_next_m is not None:
             self.lbl_next_brake.configure(
@@ -399,14 +439,6 @@ class AutopilotApp:
         else:
             self.lbl_next_brake_2.configure(text="")
 
-        for st in s.stations[:8]:
-            self.tree_stations.insert("", tk.END, values=(
-                st.get("name", "?"),
-                f"{st.get('distance_m', 0):.0f}",
-                f"{st.get('platform_length_m', st.get('platform_m', 0)):.0f}"
-                if st.get("platform_length_m") or st.get("platform_m") else "—",
-            ))
-
     def _format_limit_ahead(
             self, mph: Optional[float], dist_m: Optional[float],
             speed_mph: Optional[float]) -> str:
@@ -415,7 +447,7 @@ class AutopilotApp:
         extra = ""
         if speed_mph is not None and mph < speed_mph - 0.5:
             extra = "  ↓"
-        return f"{mph:.0f} mph @ {dist_m:.0f} m{extra}"
+        return f"{mph:.0f} mph @ {dist_m:.1f} m{extra}"
 
     def _p1_brake_style(
             self, s: AutopilotSnapshot, limit_mph: float, dist_m: float,
@@ -488,12 +520,12 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
         warn = tk.Tk()
         warn.withdraw()
         messagebox.showwarning(
-            "HTTPAPI necesaria para mandos",
-            "No se detectó la API HTTP de TSW6 (-HTTPAPI).\n\n"
-            "Sin ella el autopilot NO puede mover el mando mientras "
-            "esta ventana está abierta.\n\n"
-            "Cierra el juego, añade -HTTPAPI a las opciones de lanzamiento "
-            "y vuelve a cargar el escenario.",
+            "Sin canal de mandos",
+            "No se detectó escritura de mandos.\n\n"
+            "Opciones:\n"
+            "  • TelemetryProbeMod activo (SendCommand.txt / UE4SS)\n"
+            "  • TSW6 con -HTTPAPI y CommAPIKey.txt\n\n"
+            "Sin uno de ellos el autopilot no puede mover el freno.",
             parent=warn)
         warn.destroy()
 

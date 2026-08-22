@@ -2,8 +2,7 @@
 
 **Objetivo:** telemetría **in-process** (~17–20 Hz) vía UE4SS y puente a Python (`GetData.txt`).
 
-**Estado:** ✅ MVP Class 323 (2026-08-18) — lectura UE4SS integrada · escritura aún HTTPAPI · SD40-2
-pendiente
+**Estado:** ✅ MVP Class 323 (2026-08-19) — lectura UE4SS · mandos SendCommand · planning HTTP opcional · SD40-2 pendiente
 **Paquete UE4SS:** `C:\Users\doski\Desktop\investigacion tsw 6\DynamicHUD v1.0.0`
 **Relacionado:** [ARQUITECTURA.md](ARQUITECTURA.md) · [FREIGHT_NA.md](FREIGHT_NA.md) ·
 [GUIA.md](GUIA.md)
@@ -15,14 +14,13 @@ pendiente
 | Capa | Fuente actual | ¿Requiere `-HTTPAPI`? |
 | --- | --- | --- |
 | **Lectura** (velocidad, mandos, acel) | `TelemetryProbeMod` → `GetData.txt` | **No** |
-| **Escritura** (autopiloto mueve mandos) | `tsw_command_bus` → PATCH `localhost:31270` | **Sí** |
+| **Escritura** (autopiloto mueve mandos) | `SendCommand.txt` (probe Lua) o HTTP PATCH fallback | **No** (IPC) / opcional HTTP |
 | **Calibración** (`aprender.bat`) | Solo lectura | **No** (con probe activo) |
-| **Autopiloto** (`iniciar_autopilot.bat`) | Lectura UE4SS + escritura HTTP | **Sí** (hoy) |
+| **Autopiloto** (`iniciar_autopilot.bat`) | Lectura UE4SS + mandos IPC; planning HTTP opcional | **No** (mandos); sí para 2 límites |
+| **Planning distancias** | HTTP `DriverAid` + odometría 10 Hz entre polls | Parcial (sin HTTP solo para dist) |
 
-**Conclusión:** el objetivo final es **no depender de HTTPAPI** (patrón Dastsc: `GetData.txt` +
-`SendCommand.txt` en Lua).
-Hoy solo hemos migrado la **lectura**. La **escritura in-process** es la fase **B4** — sin ella el
-autopiloto sigue necesitando `-HTTPAPI` aunque la telemetría venga del probe.
+**Conclusión:** patrón Dastsc completo para mandos (`GetData.txt` + `SendCommand.txt`).
+`-HTTPAPI` queda **opcional** (planning anticipatorio con 2 límites; gradiente ya en probe).
 
 ```text
 ```
@@ -82,7 +80,7 @@ En log: `Mod 'DynamicHUDMod' disabled in mods.txt` → `has enabled.txt, startin
 | `speed_limit` | `GetDriverAidData.SpeedLimit` | parcial HUD | ✅ |
 | `vehicle` | `GetClass():GetFName()` | `ObjectClass` | ✅ |
 | `gradient_pct` | `GetDriverAidData` → `gradient` | `DriverAid.Data.gradient` | ✅ 323 (+ subida confirmado) |
-| planning (estaciones, next limit) | — | limitado | no en probe |
+| planning (estaciones, next limit) | `GetDriverAidData` dist/límites | limitado HTTP | ✅ 2 límites @ ~20 Hz |
 
 Sesión ref.: `logs/ue4ss_probe_20260818_022527.txt` — **~17 Hz** medio.
 
@@ -139,8 +137,21 @@ Alternativa por eje (simulación):
 ### Planning (estaciones, next limit)
 
 Solo existía en RailBridge (`companion_dmi_planning_delta`). HTTPAPI tiene señales/distancias en
-`DriverAid.Data` pero no el route monitor completo. **No bloquea** calibración ni autopiloto básico
-por límite actual.
+`DriverAid.Data` pero no el route monitor completo.
+
+**Integrado en autopilot (2026-08-19):**
+
+- `driver_aid_parser.build_speed_limits_queue()` — cola unificada (próx. 2 límites)
+- `tsw_telemetry_source` — poll HTTP async (~2 s) + **odometría** (`dist -= v×Δt`) a 10 Hz entre
+  lecturas (evita distancia congelada al cartel)
+- `brake_planner.py` — plan por pasos B1–B3 (puerto Dastsc `planBrake.ts`)
+- `braking_advisor.py` — plan Dastsc + emergencias P1; decel por muesca vía `OnlineLearner`
+- Autopilot **solo frenado** (conductor acelera); sin tracción automática
+
+**Integrado en probe (2026-08-19):** `dist_limit_cm`, `next_limit_ms`, `dist_limit2_*` en
+`GetData.txt` (~20 Hz). Estaciones siguen vía HTTP si está disponible.
+
+**Pendiente:** estaciones en probe (baja prioridad).
 
 ---
 
@@ -189,8 +200,8 @@ implementa un subconjunto).
 
 | Dato | API | Para qué |
 | --- | --- | --- |
-| `distanceToNextSpeedLimit` | idem | Frenado anticipatorio |
-| `nextSpeedLimits[]` | idem | Cambios de límite adelante |
+| `distanceToNextSpeedLimit` | `GetDriverAidData` → probe | ✅ ~20 Hz |
+| `nextSpeedLimits[]` | idem (2 primeros) | ✅ |
 | `distanceToSignal` / `nextSignals[]` | idem | Señales (menos crítico offline) |
 | `formationMaxSpeed` / `trackMaxSpeed` | idem | Techo real del consist |
 | Perfil altura vía | `DriverAid.TrackData` | Curvas / túneles (futuro) |
@@ -256,22 +267,31 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 - [x] Tests unitarios (`test_tsw_ue4ss_reader.py`)
 - [ ] Benchmark formal vs `tsw_fast_telemetry` en misma sesión
 
-### B3. Integración — ✅ parcial
+### B3. Integración — ✅ (autopilot operativo; planning híbrido)
 
 - [x] `tsw_telemetry_source.py` — preferencia `ue4ss`, fallback `tsw_api`
 - [x] `learn_monitor.py` / `tsw_autopilot.py` / `handle_controller.py`
 - [x] `aprender.bat` conecta en modo UE4SS
 - [x] `gradient_pct` en probe (`GetDriverAidData.Gradient`) + fallback HTTP `DriverAid.Data`
 - [x] Documentar en [GUIA.md](GUIA.md)
+- [x] `autopilot_core.py` + `autopilot_gui.py` — bucle 10 Hz, GUI en hilo aparte
+- [x] Planning HTTP: `next_limit` + cola 2 límites + odometría entre polls
+- [x] Frenado: `brake_planner.py` + perfil decel por muesca (`OnlineLearner`)
+- [x] Modo **solo frenado** (sin acelerador automático)
+- [x] Planning en probe Lua (`distanceToNextSpeedLimit` / 2 límites @ ~20 Hz)
 
-### B4. Escritura sin HTTPAPI — ⬜ siguiente hito técnico
+### B4. Escritura sin HTTPAPI — ✅ (mandos vía SendCommand.txt)
 
-- [ ] Mod Lua lee `%TEMP%\TSW6Bridge\SendCommand.txt` (allowlist como `tsw_command_bus`)
-- [ ] Python escribe líneas `PowerBrakeHandle:0.62` en lugar de PATCH
-- [ ] Purga al cerrar autopiloto (mandos neutros)
-- [ ] Entonces **solo UE4SS** — sin `-HTTPAPI`
+- [x] Mod Lua lee `%TEMP%\TSW6Bridge\SendCommand.txt` (allowlist como `tsw_command_bus`)
+- [x] Python escribe líneas `PowerBrakeHandle:0.62` en lugar de PATCH (preferido si probe activo)
+- [x] Purga al cerrar autopilot (mandos neutros + flag)
+- [x] Autopiloto **sin `-HTTPAPI`** si probe UE4SS activo (planning sigue opcional vía HTTP)
 
-Hasta B4: arrancar TSW con **`-HTTPAPI`** para `iniciar_autopilot.bat`.
+**Planning:** sin `-HTTPAPI` no hay cola de 2 límites HTTP; opcional probe v2 con distancias.
+
+
+**Opcional antes de B4 (mejora planning, no sustituye mandos):** probe v2 con
+`distanceToNextSpeedLimit` en `GetData.txt`.
 
 ---
 
@@ -282,8 +302,9 @@ Hasta B4: arrancar TSW con **`-HTTPAPI`** para `iniciar_autopilot.bat`.
 | 1 | ≥15 Hz `speed_ms` + mando en Python | ✅ |
 | 2 | Valores Lua ≈ HTTPAPI misma sesión | ✅ 323 |
 | 3 | `aprender.bat` sin RailBridge | ✅ |
-| 4 | Sin mandos colgados al cerrar Python | ⬜ (depende HTTPAPI hoy) |
-| 5 | Autopiloto sin `-HTTPAPI` | ⬜ B4 |
+| 3b | Autopiloto frenado con planning 2 límites | ✅ |
+| 4 | Sin mandos colgados al cerrar Python | ✅ (neutro + purga IPC) |
+| 5 | Autopiloto sin `-HTTPAPI` | ✅ (mandos; planning HTTP opcional) |
 
 ---
 
@@ -293,7 +314,7 @@ Hasta B4: arrancar TSW con **`-HTTPAPI`** para `iniciar_autopilot.bat`.
 | --- | --- |
 | Mod probe (repo) | `mods/TelemetryProbeMod/Scripts/main.lua` |
 | IPC lectura | `%TEMP%\TSW6Bridge\GetData.txt` |
-| IPC escritura (futuro) | `%TEMP%\TSW6Bridge\SendCommand.txt` |
+| IPC escritura | `%TEMP%\TSW6Bridge\SendCommand.txt` + `TSW6ApplyCommands.flag` |
 | `mods.txt` juego | `...\Binaries\Win64\Mods\mods.txt` |
 | Log UE4SS | `...\Binaries\Win64\UE4SS.log` |
 | Endpoints HTTP gradiente | `...\tsw_api_reader\endpoints\DriverAid_endpoints.json` |
@@ -312,11 +333,18 @@ Hasta B4: arrancar TSW con **`-HTTPAPI`** para `iniciar_autopilot.bat`.
 | 2026-08-18 | HUD | `enabled.txt` anulaba `mods.txt : 0`; borrado; HUD normal |
 | 2026-08-18 | Gradiente | `gradient_pct` en probe vía `driverAid.gradient`; 323 validado in-game |
 | 2026-08-18 | probe bat | Restaurado `--benchmark` en `tsw_ue4ss_reader.py` |
+| 2026-08-19 | Autopilot | Solo frenado; `brake_planner` (Dastsc); GUI 10 Hz |
+| 2026-08-19 | Planning | Cola 2 límites; odometría dist HTTP; decel/muesca en perfil JSON |
+| 2026-08-19 | Learner | Freno muescas 0–3 siempre; tracción con `--learn` |
+
+| 2026-08-19 | B4 IPC | SendCommand.txt + flag; mandos sin -HTTPAPI |
+
+| 2026-08-19 | Probe v2 | 2 límites en GetData.txt; planning sin HTTP |
 
 ---
 
 ## Próximo paso
 
-1. **Usuario:** sesión estabilidad 10+ min (A4) cuando puedas.
-2. **Código:** B4 `SendCommand.txt` para quitar `-HTTPAPI` del autopiloto.
+1. **Usuario:** validar mandos IPC + planning probe in-game (Class 323, sin `-HTTPAPI`).
+2. **Usuario:** sesión estabilidad 10+ min (A4) cuando puedas.
 3. **Después:** SD40-2 en probe (A3 freight) + fases FREIGHT_NA 4–6.

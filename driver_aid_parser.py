@@ -35,16 +35,27 @@ def _scalar_ms(node: Any) -> Optional[float]:
     return None
 
 
-def _cm_to_m(raw: Any) -> Optional[float]:
+def _cm_to_m(raw: Any, *, reject_zero: bool = True) -> Optional[float]:
     if raw is None:
         return None
     try:
         v = float(raw) * CM_TO_M
     except (TypeError, ValueError):
         return None
-    if v <= 0 or _is_sentinel(v):
+    if v < 0 or _is_sentinel(v):
+        return None
+    if reject_zero and v <= 0:
         return None
     return v
+
+
+def _prune_zero_distance_limits(
+    limits: list[dict[str, float]],
+) -> list[dict[str, float]]:
+    """Quita límites ya alcanzados (distancia 0 en cartel)."""
+    while limits and limits[0].get("distance_m", 0) <= 1.0:
+        limits.pop(0)
+    return limits
 
 
 def parse_gradient_pct(node: Any) -> Optional[float]:
@@ -112,7 +123,7 @@ def build_speed_limits_queue(data: dict[str, Any]) -> list[dict[str, float]]:
         _merge_limit_entry(limits, d_m, float(lim_ms) * MS_TO_MPH)
 
     limits.sort(key=lambda x: x["distance_m"])
-    return limits
+    return _prune_zero_distance_limits(limits)
 
 
 def parse_driver_aid_planning(data: Any) -> dict[str, Any]:

@@ -48,22 +48,22 @@ Telemetría rápida (~17 Hz) sin polling HTTP. Patrón Dastsc: archivo en
 ### Comprobar desde Python
 
 ```bat
+probe_ue4ss.bat
 ```
 
 Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás modo **UE4SS** al conectar.
 
-### Autopiloto híbrido (estado actual)
+### Autopiloto (estado actual)
 
-- **Lee** mandos y velocidad del probe (rápido).
-- **Escribe** frenos/handle vía API HTTP (`-HTTPAPI` + `CommAPIKey.txt`).
+- **Lee** mandos y velocidad del probe (~20 Hz).
+- **Escribe** frenos vía `SendCommand.txt` (IPC Lua, sin `-HTTPAPI`).
+- **Planning** (2 límites): probe UE4SS ~20 Hz; estaciones opcional vía HTTP `DriverAid`.
 
-Opciones de lanzamiento Steam: `-HTTPAPI` (puede ir junto al juego normal con UE4SS).
+`-HTTPAPI` ya no es necesario para mandos ni para distancias a límites. Solo hace falta si quieres estaciones/paradas desde HTTP.
 
-Clave API: `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt` (se genera al arrancar
-con `-HTTPAPI`).
+Clave API (solo planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
 
-**Futuro:** escritura vía `SendCommand.txt` en Lua (sin `-HTTPAPI`) — ver B4 en
-[PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
+Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) fase B4 · `tsw_ipc_bus.py`.
 
 ---
 
@@ -122,7 +122,7 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 | **4** | Telemetría manual por teclado |
 | **5** | Monitor API |
 
-**Requisitos:** perfil calibrado + **`-HTTPAPI`** para mover mandos (aunque la lectura sea UE4SS).
+**Requisitos:** perfil calibrado + **TelemetryProbeMod** activo. `-HTTPAPI` opcional (solo estaciones).
 
 Opción **3** (`--no-control`) sirve para probar telemetría sin escribir mandos.
 

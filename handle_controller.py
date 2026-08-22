@@ -87,7 +87,7 @@ class HandleController:
     # ── RPC helpers ───────────────────────────────────────────────────────
 
     def _use_rpc(self, conn: Optional[object]) -> bool:
-        """True si HTTPAPI disponible y no penalizado."""
+        """True si IPC Lua o HTTPAPI disponible y no penalizado."""
         if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
             return False
         if self._rpc_disabled_until > time.time():

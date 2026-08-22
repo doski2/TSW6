@@ -93,7 +93,10 @@ class AutopilotSnapshot:
     rain_intensity: float = 0.0
     supervision: str = ""
     control_api_ok: bool = False
+    control_channel: str = "none"
     last_cmd_sent: bool = False
+    probe_seq: Optional[int] = None
+    probe_age_ms: Optional[float] = None
 
 
 class _GuiLogHandler(logging.Handler):
@@ -147,7 +150,13 @@ class AutopilotEngine:
         self._manual_prompt: Optional[Callable[[], dict]] = None
         self._control_api_ok = False
         self._control_api_check_t = 0.0
+        self._ipc_armed = False
         self._log_cycle_n = 0
+        self._telem_ready_logged = False
+        self._searching_warn_t = 0.0
+
+        if not config.no_control:
+            self.conn.purge_ipc_on_start()
 
         self._log_buffer: Deque[str] = deque(maxlen=80)
         self._log = logging.getLogger("tsw.autopilot")
@@ -162,8 +171,15 @@ class AutopilotEngine:
         gh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s",
                                           datefmt="%H:%M:%S"))
         self._log.addHandler(gh)
+        telem_log = logging.getLogger("tsw.telemetry")
+        telem_log.setLevel(logging.INFO)
+        telem_log.addHandler(gh)
+        if log_path:
+            telem_log.addHandler(fh)
 
         self._probe_lock = threading.Lock()
+        with self._probe_lock:
+            self.conn.probe()
         threading.Thread(target=self._bg_probe, daemon=True).start()
 
     @property
@@ -174,7 +190,6 @@ class AutopilotEngine:
         self._manual_prompt = fn
 
     def _bg_probe(self) -> None:
-        self.conn.probe()
         while self._running:
             time.sleep(self.PROBE_INTERVAL)
             with self._probe_lock:
@@ -222,13 +237,22 @@ class AutopilotEngine:
     def stop(self) -> None:
         self._running = False
         self.ocr.stop()
+        if not self.config.no_control:
+            self.conn.release_controls()
 
     def tick(self) -> AutopilotSnapshot:
         """Un ciclo de control. Devuelve instantánea actualizada."""
         t0 = time.perf_counter()
 
         if self.conn.mode in ("manual", "searching"):
-            if self.conn.mode == "manual" and self._manual_prompt:
+            if self.conn.mode == "searching":
+                with self._probe_lock:
+                    self.conn.try_connect_ue4ss()
+                if self.conn.mode == "ue4ss":
+                    new = self.conn.get_telemetry()
+                    if new:
+                        self.telem = new
+            elif self._manual_prompt:
                 new = self._manual_prompt()
                 if new:
                     self.telem = new
@@ -236,6 +260,9 @@ class AutopilotEngine:
             new = self.conn.get_telemetry()
             if new:
                 self.telem = new
+
+        self._log_searching_hint()
+        self._log_telemetry_ready()
 
         if not self.hwnd:
             self.hwnd = find_tsw_window()
@@ -310,6 +337,13 @@ class AutopilotEngine:
             self._control_api_ok = self.conn.has_control_api()
             self._control_api_check_t = now
 
+        if (not self.config.no_control
+                and not self._ipc_armed
+                and self.conn.has_ipc_control()):
+            self.conn.arm_ipc_controls()
+            self._ipc_armed = True
+            self._log.info("Mandos vía SendCommand.txt (UE4SS IPC)")
+
         self.snapshot = AutopilotSnapshot(
             speed_mph=speed,
             limit_mph=limit,
@@ -342,7 +376,10 @@ class AutopilotEngine:
             rain_intensity=rain,
             supervision=str(self.telem.get("supervision") or ""),
             control_api_ok=self._control_api_ok,
+            control_channel=self.conn.control_channel(),
             last_cmd_sent=cmd_sent,
+            probe_seq=self.telem.get("probe_seq"),
+            probe_age_ms=self.telem.get("telemetry_age_ms"),
         )
         return self.snapshot
 
@@ -386,37 +423,74 @@ class AutopilotEngine:
             self._log.info("Perfil de tren cargado: %s", veh)
             self._vehicle_profiled = True
 
+    def _log_searching_hint(self) -> None:
+        if self.conn.mode != "searching":
+            return
+        now = time.monotonic()
+        if now - self._searching_warn_t < 15.0:
+            return
+        self._searching_warn_t = now
+        self._log.warning(
+            "Sin probe UE4SS (%s) — carga escenario, F7 activo, install_ue4ss_probe.bat",
+            self.conn.last_probe_info)
+
+    def _log_telemetry_ready(self) -> None:
+        if self._telem_ready_logged or self.conn.mode not in ("ue4ss", "tsw_api"):
+            return
+        speed = self.telem.get("speed_mph")
+        limit = self.telem.get("limit_mph")
+        if speed is None or limit is None:
+            return
+        self._telem_ready_logged = True
+        self._log.info(
+            "Telemetría lista: modo=%s  spd=%.1f  lim=%.0f  notch=%s  mandos=%s",
+            self.conn.mode,
+            float(speed),
+            float(limit),
+            self.telem.get("handle_notch", "?"),
+            self.conn.control_channel())
+
     def _sync_handle(self) -> None:
         handle_notch = self.telem.get("handle_notch")
         if handle_notch is not None:
             self._last_state_handle = int(handle_notch)
             self._handle_synced = True
-        elif not self._handle_synced:
-            if self.telem.get("ack_required"):
-                self._log.warning(
-                    "handle_notch no disponible con ACK activo — omitiendo force_neutral")
-                self._last_state_handle = 4
-            elif not self.config.no_control:
-                self._log.warning(
-                    "handle_notch no disponible — sincronizando handle (~5s)")
-                self.controller.force_neutral(self.hwnd, self.conn)
-            else:
-                self._log.warning(
-                    "handle_notch no disponible — asumiendo neutro (no_control)")
+            return
+        if self._handle_synced:
+            return
+        # No bloquear ~5s con teclado hasta que el probe/API esté conectado.
+        if self.conn.mode not in ("ue4ss", "tsw_api") or not self.telem:
+            return
+        if self.telem.get("ack_required"):
+            self._log.warning(
+                "handle_notch no disponible con ACK activo — omitiendo force_neutral")
+            self._last_state_handle = 4
             self._handle_synced = True
+            return
+        if self.config.no_control:
+            self._log.warning(
+                "handle_notch no disponible — asumiendo neutro (no_control)")
+            self._handle_synced = True
+            return
+        self._log.warning(
+            "handle_notch no disponible — sincronizando handle (~5s)")
+        self.controller.force_neutral(self.hwnd, self.conn)
+        self._handle_synced = True
 
     def _log_cycle(self, speed: float, limit: float,
                    action: str, final: str) -> None:
         self._log_cycle_n += 1
-        if self._log_cycle_n % 20 != 0:
+        if self._log_cycle_n > 5 and self._log_cycle_n % 20 != 0:
             return
         telem = self.telem
         dmi_d = telem.get("doors_dmi")
         dmi_d_str = "O" if dmi_d is True else ("C" if dmi_d is False else "?")
-        self._log.debug(
+        line = (
             "spd=%5.1f  lim=%4.1f  elim=%5.1f  notch=%-2s  action=%-11s  "
             "final=%-11s  fsm=%-10s  stop=%-30s  next=%s@%sm  ack=%s  "
-            "doors=%s  dmi_d=%s  grad=%s  rain=%.2f",
+            "doors=%s  dmi_d=%s  grad=%s  rain=%.2f"
+        )
+        args = (
             speed, limit,
             self.decider.effective_limit,
             telem.get("handle_notch", "?"),
@@ -431,3 +505,7 @@ class AutopilotEngine:
             f"{telem.get('gradient_pct') or 0.0:+.1f}%",
             telem.get("rain_intensity", 0.0) or 0.0,
         )
+        if self._log_cycle_n <= 5:
+            self._log.info(line, *args)
+        else:
+            self._log.debug(line, *args)

@@ -68,7 +68,7 @@ goto menu
 
 :op1
 echo.
-echo  CONSEJO: TSW6 con UE4SS probe + -HTTPAPI (mandos y planning DriverAid).
+echo  CONSEJO: TSW6 con UE4SS probe. -HTTPAPI opcional (planning DriverAid).
 echo  Modo: SOLO FRENADO (tu aceleras manualmente).
 echo  Se abrira la interfaz grafica del autopilot.
 echo.

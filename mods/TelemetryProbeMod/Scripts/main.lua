@@ -1,5 +1,6 @@
--- TelemetryProbeMod — A3: escribe telemetría HUD a %TEMP%\TSW6Bridge\GetData.txt
--- Solo lectura; no toca el HUD. F7 on/off · F8 volcar línea al log.
+-- TelemetryProbeMod — telemetría + mandos IPC (B4 SendCommand.txt)
+-- Lectura: GetData.txt (~20 Hz) · Escritura: SendCommand.txt (allowlist frenos)
+-- F7 on/off probe · F8 volcar línea al log
 
 local UEHelpers = require("UEHelpers")
 
@@ -17,6 +18,26 @@ local lastLogClock = 0
 local hooked = false
 local hookPre, hookPost
 local debugDumped = false
+local SEND_COMMAND_FILE = "SendCommand.txt"
+local APPLY_FLAG_FILE = "TSW6ApplyCommands.flag"
+local control_cache = {}
+local last_applied = {}
+
+local ALLOWED_CONTROLS = {
+    PowerBrakeHandle = true,
+    AutomaticBrake = true,
+    IndependentBrake = true,
+    DynamicBrake = true,
+    TrainBrake = true,
+    LocomotiveBrake = true,
+}
+
+local LEVER_TYPES = {
+    "IrregularLeverComponent",
+    "AnalogLeverComponent",
+    "DigitalLeverComponent",
+    "BaseLeverComponent",
+}
 
 local function bridge_dir()
     local temp = os.getenv("TEMP") or os.getenv("TMP") or "."
@@ -25,6 +46,139 @@ end
 
 local function bridge_path()
     return bridge_dir() .. "\\GetData.txt"
+end
+
+local function send_command_path()
+    return bridge_dir() .. "\\" .. SEND_COMMAND_FILE
+end
+
+local function apply_flag_path()
+    return bridge_dir() .. "\\" .. APPLY_FLAG_FILE
+end
+
+local function commands_armed()
+    local f = io.open(apply_flag_path(), "r")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
+local function purge_ipc_files()
+    pcall(os.remove, send_command_path())
+    pcall(os.remove, apply_flag_path())
+    for k in pairs(control_cache) do
+        control_cache[k] = nil
+    end
+    for k in pairs(last_applied) do
+        last_applied[k] = nil
+    end
+end
+
+local function clamp_num(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function api_value_to_input(control_name, value)
+    if control_name == "IndependentBrake" then
+        return clamp_num(value, -1.0, 1.0)
+    end
+    local v = clamp_num(value, 0.0, 1.0)
+    return (v - 0.5) * 2.0
+end
+
+local function find_control(name)
+    local cached = control_cache[name]
+    if cached and cached:IsValid() then
+        return cached
+    end
+    -- DriverInput/PowerBrakeHandle (ruta HTTPAPI) antes que FindAllOf global.
+    local ok_di, driverInput = pcall(function() return FindFirstOf("DriverInput") end)
+    if ok_di and driverInput and driverInput.IsValid and driverInput:IsValid() then
+        local ok_child, child = pcall(function() return driverInput[name] end)
+        if ok_child and child and child.IsValid and child:IsValid() then
+            control_cache[name] = child
+            return child
+        end
+    end
+    for _, typename in ipairs(LEVER_TYPES) do
+        local objs = FindAllOf(typename)
+        if objs then
+            for _, obj in pairs(objs) do
+                if obj and obj.IsValid and obj:IsValid() then
+                    local ok, obj_name = pcall(function()
+                        return obj:GetName():ToString()
+                    end)
+                    if ok and obj_name and string.find(obj_name, name, 1, true) then
+                        control_cache[name] = obj
+                        return obj
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function apply_control_value(name, value)
+    if not ALLOWED_CONTROLS[name] then
+        return false
+    end
+    local num = tonumber(value)
+    if num == nil then
+        return false
+    end
+    local prev = last_applied[name]
+    if prev ~= nil and math.abs(prev - num) < 0.0001 then
+        return true
+    end
+    local ctrl = find_control(name)
+    if not ctrl then
+        print("[TelemetryProbe] WARN control not found: " .. name .. "\n")
+        return false
+    end
+    local input_val = api_value_to_input(name, num)
+    local ok = pcall(function()
+        -- API HTTP escribe .Value (0–1); el lever in-game usa InputValue (−1..1).
+        if ctrl.InputValue ~= nil then
+            ctrl.InputValue = input_val
+        elseif ctrl.Value ~= nil then
+            ctrl.Value = num
+        else
+            error("no writable property")
+        end
+    end)
+    if ok then
+        last_applied[name] = num
+        return true
+    end
+    print(string.format(
+        "[TelemetryProbe] WARN set %s=%.4f failed\n", name, num))
+    return false
+end
+
+local function process_send_commands()
+    if not commands_armed() then
+        return
+    end
+    local path = send_command_path()
+    local f = io.open(path, "r")
+    if not f then
+        return
+    end
+    f:close()
+    for line in io.lines(path) do
+        if line ~= "" then
+            local name, val = string.match(line, "^%s*([^:]+)%s*:%s*(.+)%s*$")
+            if name and val then
+                apply_control_value(name, val)
+            end
+        end
+    end
+    pcall(os.remove, path)
 end
 
 local function ensure_bridge_dir()
@@ -161,6 +315,105 @@ local function dump_driver_aid(driverAid)
     print("[TelemetryProbe] DriverAid dump: " .. table.concat(parts, " | ") .. "\n")
 end
 
+local SENTINEL = 3.4028235e38
+
+local function is_valid_num(v)
+    if v == nil or type(v) ~= "number" then
+        return false
+    end
+    if v ~= v or v >= SENTINEL * 0.99 or v <= 0 then
+        return false
+    end
+    return true
+end
+
+local function scalar_ms(node)
+    if type(node) == "number" then
+        return is_valid_num(node) and node or nil
+    end
+    if type(node) == "table" then
+        local v = out_val(node, "value", "Value")
+        if v and is_valid_num(v) then
+            return v
+        end
+    end
+    return nil
+end
+
+local function extract_speed_limits(driverAid)
+    if type(driverAid) ~= "table" then
+        return {}
+    end
+    local entries = {}
+
+    local dist_cm = driverAid.distanceToNextSpeedLimit
+        or driverAid.DistanceToNextSpeedLimit
+    local next_ms = scalar_ms(driverAid.nextSpeedLimit or driverAid.NextSpeedLimit)
+    if is_valid_num(dist_cm) and next_ms then
+        table.insert(entries, {dist_cm = dist_cm, limit_ms = next_ms})
+    end
+
+    local arr = driverAid.nextSpeedLimits or driverAid.NextSpeedLimits
+    if type(arr) == "table" then
+        local items = {}
+        for _, item in ipairs(arr) do
+            table.insert(items, item)
+        end
+        if #items == 0 then
+            for _, item in pairs(arr) do
+                if type(item) == "table" then
+                    table.insert(items, item)
+                end
+            end
+        end
+        for _, item in ipairs(items) do
+            local d = item.distanceToNextSpeedLimit or item.DistanceToNextSpeedLimit
+            local ms = scalar_ms(item.value or item.Value)
+            if is_valid_num(d) and ms then
+                table.insert(entries, {dist_cm = d, limit_ms = ms})
+            end
+        end
+    end
+
+    table.sort(entries, function(a, b) return a.dist_cm < b.dist_cm end)
+
+    local out = {}
+    for _, e in ipairs(entries) do
+        local dup = false
+        for _, prev in ipairs(out) do
+            if math.abs(prev.dist_cm - e.dist_cm) <= 800 then
+                dup = true
+                break
+            end
+        end
+        if not dup then
+            table.insert(out, e)
+        end
+    end
+
+    local planning = {}
+    if out[1] then
+        planning.dist_limit_cm = out[1].dist_cm
+        planning.next_limit_ms = out[1].limit_ms
+    end
+    if out[2] then
+        planning.dist_limit2_cm = out[2].dist_cm
+        planning.next_limit2_ms = out[2].limit_ms
+    end
+    -- Descartar distancia 0 (en cartel): usar siguiente de la cola.
+    if planning.dist_limit_cm and planning.dist_limit_cm <= 0 then
+        planning.dist_limit_cm = nil
+        planning.next_limit_ms = nil
+        if out[2] then
+            planning.dist_limit_cm = out[2].dist_cm
+            planning.next_limit_ms = out[2].limit_ms
+            planning.dist_limit2_cm = out[3] and out[3].dist_cm or nil
+            planning.next_limit2_ms = out[3] and out[3].limit_ms or nil
+        end
+    end
+    return planning
+end
+
 local function extract_gradient(driverAid)
     if type(driverAid) ~= "table" then
         return nil
@@ -194,6 +447,9 @@ local function read_driver_aid(controller, debug_dump)
     local driverAid = {
         SpeedLimit = { Value = 0.0 },
         speedLimit = { value = 0.0 },
+        distanceToNextSpeedLimit = 0.0,
+        nextSpeedLimit = { value = 0.0 },
+        nextSpeedLimits = {},
     }
     controller:GetDriverAidData(driverAid)
     if debug_dump then
@@ -206,7 +462,8 @@ local function read_driver_aid(controller, debug_dump)
     if speedLimit == nil and driverAid.speedLimit then
         speedLimit = out_val(driverAid.speedLimit, "value", "Value")
     end
-    return speedLimit, extract_gradient(driverAid)
+    local planning = extract_speed_limits(driverAid)
+    return speedLimit, extract_gradient(driverAid), planning
 end
 
 local function read_vehicle_class(actor)
@@ -240,6 +497,18 @@ local function build_line(sample)
         "gradient_pct=" .. fmt_num(sample.gradient_pct),
         "vehicle=" .. (sample.vehicle or "?"),
     }
+    if sample.dist_limit_cm then
+        table.insert(parts, "dist_limit_cm=" .. fmt_num(sample.dist_limit_cm))
+    end
+    if sample.next_limit_ms then
+        table.insert(parts, "next_limit_ms=" .. fmt_num(sample.next_limit_ms))
+    end
+    if sample.dist_limit2_cm then
+        table.insert(parts, "dist_limit2_cm=" .. fmt_num(sample.dist_limit2_cm))
+    end
+    if sample.next_limit2_ms then
+        table.insert(parts, "next_limit2_ms=" .. fmt_num(sample.next_limit2_ms))
+    end
     return table.concat(parts, " ")
 end
 
@@ -315,12 +584,20 @@ local function collect_sample(controller, debug_driver_aid)
 
     sample.handle_notch = power_to_notch(sample.power, sample.power_neg)
 
-    ok, sample.speed_limit_ms, sample.gradient_pct = pcall(function()
+    ok, sample.speed_limit_ms, sample.gradient_pct, sample.planning = pcall(function()
         return read_driver_aid(controller, debug_driver_aid)
     end)
     if not ok then
         log_hud_error("driver_aid", sample.speed_limit_ms)
         sample.gradient_pct = nil
+        sample.planning = nil
+    elseif type(sample.planning) == "table" then
+        local p = sample.planning
+        sample.dist_limit_cm = p.dist_limit_cm
+        sample.next_limit_ms = p.next_limit_ms
+        sample.dist_limit2_cm = p.dist_limit2_cm
+        sample.next_limit2_ms = p.next_limit2_ms
+        sample.planning = nil
     end
 
     ok, sample.vehicle = pcall(function() return read_vehicle_class(actor) end)
@@ -378,6 +655,7 @@ local function register_hook()
         if not controller or not controller:IsValid() then
             return
         end
+        process_send_commands()
         maybe_write(controller, false)
     end)
     hooked = true
@@ -396,6 +674,7 @@ end
 
 RegisterInitGameStatePreHook(function()
     unregister_hook()
+    purge_ipc_files()
     seq = 0
     lastWriteClock = 0
     lastLogClock = 0

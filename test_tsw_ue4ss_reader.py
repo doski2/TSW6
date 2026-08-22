@@ -44,6 +44,20 @@ class TestUe4ssReader(unittest.TestCase):
         data = parse_probe_line(line)
         self.assertAlmostEqual(data["gradient_pct"], 1.25)
 
+    def test_parse_probe_planning_fields(self) -> None:
+        line = (
+            "seq=5 speed_ms=10 dist_limit_cm=19993.8 next_limit_ms=8.94 "
+            "dist_limit2_cm=24668.3 next_limit2_ms=13.41 vehicle=Class323"
+        )
+        data = parse_probe_line(line)
+        self.assertAlmostEqual(data["dist_limit_cm"], 19993.8)
+        self.assertAlmostEqual(data["next_limit_ms"], 8.94)
+        snap = ProbeSnapshot.from_dict(data)
+        planning = snap.planning_dict()
+        self.assertAlmostEqual(planning["distance_next_m"], 199.9, places=1)
+        self.assertAlmostEqual(planning["next_limit_mph"], 20.0, places=1)
+        self.assertAlmostEqual(planning["distance_next_2_m"], 246.7, places=1)
+
     def test_to_telemetry_dict(self) -> None:
         snap = ProbeSnapshot.from_dict(
             {"speed_ms": 10.0, "gradient_pct": -0.5, "vehicle": "Class323"}

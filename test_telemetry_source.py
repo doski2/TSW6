@@ -148,3 +148,184 @@ def test_ue4ss_planning_on_slow_tick_with_probe_gradient(tmp_path: Path):
     assert telem["gradient_pct"] == 1.2  # probe wins
     assert telem["next_limit_mph"] == 25.0
     assert telem["stations"][0]["name"] == "Test"
+
+
+def test_ue4ss_probe_planning_overrides_http_cache(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=30 speed_ms=10.0 power=0 handle_notch=4 gradient_pct=1.2 "
+        "dist_limit_cm=15000 next_limit_ms=13.41 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    conn._planning_cache = {
+        "next_limit_mph": 50.0,
+        "distance_next_m": 999.0,
+        "stations": [{"name": "Test", "distance_m": 500.0}],
+    }
+    with patch.object(conn, "_kick_planning_refresh"):
+        telem = conn.get_telemetry()
+    assert telem["next_limit_mph"] == 30.0
+    assert telem["distance_next_m"] == 150.0
+    assert telem["stations"][0]["name"] == "Test"
+
+
+def test_planning_distance_dead_reckoning():
+    """Distancia al límite baja entre lecturas según velocidad (probe fresco)."""
+    conn = TswTelemetrySource()
+    conn._sync_planning_snapshot({
+        "distance_next_m": 1000.0,
+        "speed_limits_ahead": [{"limit_mph": 30.0, "distance_m": 1000.0}],
+    })
+    conn._planning_dist_last_t = time.monotonic() - 1.0
+    parsed = {"speed_mph": 45.0}
+    conn._apply_planning_distances(parsed, probe_fresh=True, interpolate=True)
+    assert parsed["distance_next_m"] < 980.0
+    assert parsed["distance_next_m"] > 960.0
+
+
+def test_stale_probe_holds_distance():
+    """Con probe congelado (pausa), no restar distancia artificialmente."""
+    conn = TswTelemetrySource()
+    conn._sync_planning_snapshot({
+        "distance_next_m": 500.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 500.0}],
+    })
+    conn._planning_dist_last_t = time.monotonic() - 1.0
+    parsed = {"speed_mph": 60.0}
+    conn._apply_planning_distances(parsed, probe_fresh=False)
+    assert parsed["distance_next_m"] == 500.0
+
+
+def test_probe_seq_resync_updates_distance():
+    """Nuevo seq del probe resincroniza la distancia."""
+    conn = TswTelemetrySource()
+    planning_a = {
+        "distance_next_m": 800.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 800.0}],
+    }
+    conn._apply_planning_distances(
+        {"speed_mph": 40.0}, source=planning_a, probe_seq=10, probe_fresh=True)
+    planning_b = {
+        "distance_next_m": 750.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 750.0}],
+    }
+    parsed = {"speed_mph": 40.0}
+    conn._apply_planning_distances(
+        parsed, source=planning_b, probe_seq=11, probe_fresh=True)
+    assert parsed["distance_next_m"] == 750.0
+
+
+def test_frozen_probe_seq_holds_distance():
+    """Mismo seq + velocidad congelada: no odometría (pausa con probe activo)."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 108.0,
+        "speed_limits_ahead": [{"limit_mph": 60.0, "distance_m": 108.0}],
+    }
+    conn._apply_planning_distances(
+        {"speed_mph": 16.7},
+        source=planning,
+        probe_seq=42,
+        probe_fresh=True,
+        interpolate=True,
+    )
+    conn._planning_dist_last_t = time.monotonic() - 2.0
+    parsed = {"speed_mph": 16.7}
+    conn._apply_planning_distances(
+        parsed,
+        source=planning,
+        probe_seq=42,
+        probe_fresh=True,
+        interpolate=True,
+    )
+    assert parsed["distance_next_m"] == 108.0
+
+
+def test_probe_planning_interpolates_between_game_updates():
+    """Entre lecturas del juego (misma dist), odometría con seq nuevo."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 108.0,
+        "speed_limits_ahead": [{"limit_mph": 60.0, "distance_m": 108.0}],
+    }
+    conn._apply_planning_distances(
+        {"speed_mph": 30.0},
+        source=planning,
+        probe_seq=10,
+        probe_fresh=True,
+        interpolate=True,
+    )
+    conn._planning_dist_last_t = time.monotonic() - 1.0
+    parsed = {"speed_mph": 30.0}
+    conn._apply_planning_distances(
+        parsed,
+        source=planning,
+        probe_seq=11,
+        probe_fresh=True,
+        interpolate=True,
+    )
+    assert parsed["distance_next_m"] < 108.0
+    assert parsed["distance_next_m"] > 90.0
+    held = {"speed_mph": 30.0}
+    conn._apply_planning_distances(
+        held,
+        source=planning,
+        probe_seq=11,
+        probe_fresh=True,
+        interpolate=True,
+    )
+    assert held["distance_next_m"] == parsed["distance_next_m"]
+
+
+def test_probe_planning_updates_small_distance_changes(tmp_path: Path):
+    """Probe resync cada lectura: cambios <0.5 m deben verse en GUI."""
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=10 speed_ms=21.5 power=0 handle_notch=4 "
+        "dist_limit_cm=28800 next_limit_ms=15.65 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    with patch.object(conn, "_kick_planning_refresh"):
+        telem_a = conn.get_telemetry()
+    assert abs(telem_a["distance_next_m"] - 288.0) < 1.0
+
+    getdata.write_text(
+        "seq=11 speed_ms=21.5 power=0 handle_notch=4 "
+        "dist_limit_cm=28720 next_limit_ms=15.65 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    with patch.object(conn, "_kick_planning_refresh"):
+        telem_b = conn.get_telemetry()
+    assert telem_b["distance_next_m"] < telem_a["distance_next_m"]
+    assert telem_a["distance_next_m"] - telem_b["distance_next_m"] < 1.5
+
+
+def test_probe_extrapolates_between_polls():
+    """Entre polls Python (mismo seq) la distancia baja suavemente."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 200.0,
+        "speed_limits_ahead": [{"limit_mph": 35.0, "distance_m": 200.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 45.0},
+        planning,
+        probe_seq=5,
+        probe_fresh=True,
+    )
+    conn._probe_extrap_last_t = time.monotonic() - 0.1
+    parsed = {"speed_mph": 45.0}
+    conn._apply_probe_planning(
+        parsed,
+        planning,
+        probe_seq=5,
+        probe_fresh=True,
+    )
+    assert parsed["distance_next_m"] < 200.0
+    assert parsed["distance_next_m"] > 197.5

@@ -56,7 +56,7 @@ echo.
 echo  DynamicHUDMod : 0 en mods.txt y SIN Mods\DynamicHUDMod\enabled.txt
 echo  ^(enabled.txt carga el mod aunque mods.txt diga : 0^).
 echo.
-echo  Autopiloto: ademas arranca TSW con -HTTPAPI para escribir mandos.
+echo  Autopiloto: UE4SS probe (mandos SendCommand.txt). -HTTPAPI solo para planning 2 limites.
 echo  Calibracion ^(aprender.bat^): solo probe, no hace falta HTTPAPI.
 echo.
 echo  Python (otra ventana):

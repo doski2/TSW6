@@ -10,7 +10,7 @@
 | [ARQUITECTURA.md](ARQUITECTURA.md)                 | Desarrollo                | API TSW, módulos, UE4SS, latencia     |
 | [FREIGHT_NA.md](FREIGHT_NA.md)                     | SD40-2 / diesel NA        | Layout multi-mando, fases 4–6         |
 | [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / telemetría rápida | Investigar + ejecutar TelemetryBridge |
-| [NOTAS.md](NOTAS.md)                               | Personal                  | Recordatorios de pruebas              |
+| [NOTAS.txt](NOTAS.txt)                             | Personal                  | Recordatorios de pruebas              |
 
 ## Código activo (mapa rápido)
 
@@ -18,11 +18,14 @@
 | ------------------------- | ------------------------------------- |
 | `tsw_telemetry_source.py` | Telemetría (UE4SS + HTTPAPI fallback) |
 | `tsw_ue4ss_reader.py`     | Parser `GetData.txt` probe            |
-| `tsw_command_bus.py`      | Escritura frenos / handle             |
+| `tsw_ipc_bus.py`          | Mandos vía SendCommand.txt (UE4SS)    |
+| `tsw_command_bus.py`      | Mandos HTTPAPI (fallback)             |
+| `autopilot_core.py`       | Bucle de control 10 Hz                |
+| `autopilot_gui.py`        | Interfaz gráfica del autopilot        |
 | `tsw_api_client.py`       | Cliente HTTP bajo nivel               |
 | `tsw_monitor.py`          | Monitor consola                       |
 | `learn_monitor.py`        | Calibración guiada                    |
-| `tsw_autopilot.py`        | Bucle autopiloto                      |
+| `tsw_autopilot.py`        | Entrada CLI/GUI (`--console`)         |
 | `speed_decider.py`        | Decisiones velocidad/freno            |
 | `handle_controller.py`    | Ejecución mandos                      |
 | `freight_learner.py`      | Perfiles multi-eje NA                 |
