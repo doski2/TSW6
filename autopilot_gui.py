@@ -516,7 +516,7 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
     engine = AutopilotEngine(config, log_path=log_path)
     logging.getLogger("tsw.autopilot").info("Autopilot GUI — log: %s", log_path)
 
-    if not config.no_control and not engine.conn.has_control_api():
+    if not config.no_control and engine.conn.mode == "searching":
         warn = tk.Tk()
         warn.withdraw()
         messagebox.showwarning(
