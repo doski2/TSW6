@@ -701,8 +701,8 @@ class TswTelemetrySource:
         return out
 
     def has_ipc_control(self) -> bool:
-        """True si el probe UE4SS está activo (SendCommand.txt disponible)."""
-        return self.mode == "ue4ss" and _ue4ss_is_fresh(self._ue4ss_path)
+        """True si el probe UE4SS está conectado (SendCommand.txt disponible)."""
+        return self.mode == "ue4ss"
 
     def has_control_api(self) -> bool:
         """True si hay canal de escritura (IPC Lua o HTTPAPI)."""
