@@ -1,21 +1,22 @@
 # Paridad Dastsc — TSW6 ↔ Dastsc
 
-**Objetivo:** mismo comportamiento de frenado que `C:\Users\doski\Dastsc` (nexus-agent + commandBus
+**Objetivo:** mismo comportamiento de frenado que `C:\Users\doski\Dastsc` (nexus-agent + commandBus + IPC).
 
-+ IPC).
-
-Trabajo en paralelo: cambios de algoritmo en Dastsc se portan aquí; cambios de probe/TSW API solo en
-TSW6.
+Trabajo en paralelo: cambios de algoritmo en Dastsc se portan aquí; cambios de probe/TSW API solo en TSW6.
 
 ---
 
 ## Arquitectura Dastsc (referencia)
 
 ```text
+TelemetrySnapshot
+  → planBrake (límite / estación / señal)
+  → selectUrgentBrakePlan
+  → resolveSuggestedAction (commandBus)
+  → buildBrakeCommand(B2) → SendCommand ThrottleAndBrake:-0.5
 ```
 
-**Sin** COAST/BRAKE genéricos en P1: el plan devuelve **B1/B2/B3** y el bus escribe el **notch
-absoluto**.
+**Sin** COAST/BRAKE genéricos en P1: el plan devuelve **B1/B2/B3** y el bus escribe el **notch absoluto**.
 
 ---
 
@@ -62,6 +63,11 @@ absoluto**.
 ## Pipeline P1 actual (post-paridad ejecución)
 
 ```text
+DriverAid dist/límite (probe)
+  → brake_planner.plan_for_speed_limits
+  → brake_command.plan_to_brake_command  →  B2, notch=2
+  → HandleController._apply_combined_notch  →  IPC PowerBrakeHandle 0.25
+  → SendCommand.txt
 ```
 
 P2 / emergencia / sin plan activo: sigue COAST/BRAKE/HARDBRAKE escalonado (teclado fallback).
@@ -81,6 +87,7 @@ P2 / emergencia / sin plan activo: sigue COAST/BRAKE/HARDBRAKE escalonado (tecla
 ## Tests regresión
 
 ```bat
+python -m pytest test_brake_command.py test_brake_planner.py test_handle_controller.py test_speed_decider.py test_hud_timetable.py -q
 ```
 
 ---

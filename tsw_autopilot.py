@@ -11,7 +11,7 @@ import argparse
 import logging
 import sys
 import time
-from pathlib import Path
+from tsw6.paths import LOGS_DIR
 
 try:
     from colorama import init, Fore, Style  # type: ignore[import-untyped]
@@ -20,8 +20,8 @@ except ImportError:
     print("Faltan dependencias. Ejecuta: pip install requests colorama")
     sys.exit(1)
 
-from autopilot_core import AutopilotConfig, AutopilotEngine  # noqa: E402
-from dashboard import KeyListener, render_dashboard  # noqa: E402
+from tsw6.autopilot.autopilot_core import AutopilotConfig, AutopilotEngine  # noqa: E402
+from tsw6.ui.dashboard import KeyListener, render_dashboard  # noqa: E402
 
 
 def read_manual_telemetry() -> dict:
@@ -49,9 +49,8 @@ def read_manual_telemetry() -> dict:
 def run_console(args: argparse.Namespace) -> None:
     print(Fore.CYAN + Style.BRIGHT + "\n  TSW6 Autopilot  –  consola\n" + Style.RESET_ALL)
 
-    log_dir = Path(__file__).parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    log_path = log_dir / f"autopilot_{time.strftime('%Y%m%d_%H%M%S')}.log"
+    LOGS_DIR.mkdir(exist_ok=True)
+    log_path = LOGS_DIR / f"autopilot_{time.strftime('%Y%m%d_%H%M%S')}.log"
     print(Fore.CYAN + f"  Log: {log_path}" + Style.RESET_ALL)
 
     config = AutopilotConfig(
@@ -140,8 +139,8 @@ def main() -> None:
     if args.console:
         run_console(args)
     else:
-        from autopilot_gui import launch
-        from autopilot_core import AutopilotConfig
+        from tsw6.autopilot.autopilot_gui import launch
+        from tsw6.autopilot.autopilot_core import AutopilotConfig
         launch(AutopilotConfig(
             target_mph=args.target,
             no_control=args.no_control,

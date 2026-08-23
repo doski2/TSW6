@@ -3,6 +3,12 @@
   "venvPath": ".",
   "venv": ".venv",
   "typeCheckingMode": "basic",
-  "include": ["."],
-  "exclude": [".venv", "__pycache__", "*.pyc", "**/node_modules", "**/.*"]
+  "include": [
+    "tsw6",
+    "tests",
+    "tsw_autopilot.py",
+    "learn_monitor.py",
+    "tsw_monitor.py"
+  ],
+  "exclude": [".venv", "__pycache__", "*.pyc", "**/node_modules", "**/.*", "archive"]
 }

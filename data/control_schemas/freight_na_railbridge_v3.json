@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "control_schema": "freight_na_railbridge_v3",
+  "layout": "freight_na",
+  "phase0": {
+    "validated_vehicles": [
+      "BNSF SD40-2 C"
+    ]
+  }
+}

@@ -92,7 +92,7 @@ goto fin
 goto fin
 
 :op5
-%PY% tsw_monitor.py
+call "%~dp0iniciar_monitor.bat"
 goto fin
 
 :fin

@@ -13,15 +13,15 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de 
 | Módulo | Rol |
 | --- | --- |
 | `mods/TelemetryProbeMod/` | Mod Lua — lectura HUD, IPC |
-| `tsw_ue4ss_reader.py` | Parser + monitor + benchmark probe |
-| `tsw_telemetry_source.py` | Fuente unificada `ue4ss` / `tsw_api`; filtro HUD |
-| `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
-| `driver_aid_parser.py` | DriverAid → planning, estaciones |
-| `tsw_ipc_bus.py` | Mandos `SendCommand.txt` |
-| `tsw_command_bus.py` | Mandos HTTP PATCH (fallback) |
-| `brake_planner.py` / `brake_command.py` | Plan P1 B1–B3 (Dastsc) |
-| `governor_station.py` | FSM paradas |
-| `autopilot_core.py` / `autopilot_gui.py` | Bucle ~20 Hz + GUI |
+| `tsw6/telemetry/tsw_ue4ss_reader.py` | Parser + monitor + benchmark probe |
+| `tsw6/telemetry/tsw_telemetry_source.py` | Fuente unificada `ue4ss` / `tsw_api`; filtro HUD |
+| `tsw6/hud/hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
+| `tsw6/telemetry/driver_aid_parser.py` | DriverAid → planning, estaciones |
+| `tsw6/telemetry/tsw_ipc_bus.py` | Mandos `SendCommand.txt` |
+| `tsw6/telemetry/tsw_command_bus.py` | Mandos HTTP PATCH (fallback) |
+| `tsw6/braking/brake_planner.py` | Plan P1 B1–B3 (Dastsc) |
+| `tsw6/governor/governor_station.py` | FSM paradas |
+| `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz + GUI |
 | `archive/railbridge/` | Companion SSE — **no usar** |
 
 ---

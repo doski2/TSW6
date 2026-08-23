@@ -62,9 +62,30 @@ Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás mod
 - **Planning estaciones:** HTTP `DriverAid` + **`tsw_hud.db`** (horario comercial,
 
   `car_stop_signs`).
+- **Puertas:** telemetría física `PassengerDoor_*` (~20 Hz vía probe; HTTP como fallback).
+  Mensajes DMI (`dmi-doors-open/closed`) son secundarios.
 
 `-HTTPAPI` **no** es necesario para mandos ni distancias a límites. **Sí** hace falta para
 paradas programadas con horario HUD (`currentServiceName` + `geoLocation`).
+
+### Puertas de pasajeros
+
+| Campo | Fuente | Uso |
+| --- | --- | --- |
+| `doors_telem` | Probe UE4SS o HTTPAPI `PassengerDoor_*` | Estado real (abierta/cerrada) |
+| `doors_dmi` | Mensajes DMI en `GetDriverAidData` | Fallback / cruce con RailBridge |
+| `doors_open` | Derivado en Python | GUI y FSM (prioriza `doors_telem`) |
+
+**Probe** (`GetData.txt`): `doors_telem=1/0` lee `GetCurrentInputValue` en
+`PassengerDoor_FL/FR` (y variantes por carro). Tras actualizar el mod, ejecutar
+`install_ue4ss_probe.bat` y reiniciar TSW6.
+
+**HTTPAPI** (si no hay probe): mismas rutas que el HUD oficial — p. ej.
+`CurrentDrivableActor/PassengerDoor_FL.Function.GetCurrentInputValue`
+(`ReturnValue > 0` → abierta).
+
+La FSM de estación (`governor_station.py`) usa primero `doors_telem`; solo si falta
+recurre a DMI u OCR.
 
 Clave API (planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
 
@@ -94,10 +115,9 @@ Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refresc
 | `install_ue4ss_probe.bat` | Copia mod UE4SS al juego |
 | `probe_ue4ss.bat` | Monitor telemetría probe |
 | `probe_ue4ss_log.bat` | Igual + guarda `logs/ue4ss_probe_*.txt` |
-| `diag_controles.bat` | Monitor API HTTP (alternativa) |
 | `aprender.bat` | Calibración guiada |
-| `iniciar_autopilot.bat` | Autopiloto con perfil calibrado |
-| `iniciar_monitor.bat` | Monitor API (depuración) |
+| `iniciar_autopilot.bat` | Autopiloto con perfil calibrado (menú; opción 5 = monitor API) |
+| `iniciar_monitor.bat` | Monitor API HTTP (`-HTTPAPI`) |
 | `preparar_db_hud.bat` | BD semilla HUD + copia a TSW6 |
 | `abrir_hud_extraccion.bat` | Abre `hud.exe` para extraer DLCs |
 | `extraer_horario_hud.bat` | Setup completo extractor HUD (Rust) |
@@ -149,6 +169,7 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 
 - **Mandos:** IPC (sin `-HTTPAPI`).
 - **Paradas HUD:** `-HTTPAPI` recomendado.
+- **Puertas:** probe UE4SS (reinstalar con `install_ue4ss_probe.bat` si no ves `doors_telem` en `GetData.txt`).
 - Opción **3** (`--no-control`): solo telemetría, sin escribir mandos.
 
 ---
@@ -167,7 +188,7 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 | `probe_ue4ss` | ¿El probe lee bien a ~20 Hz? |
 | `aprender` | ¿Cuánto acelera/frena cada muesca? |
 | `preparar_db_hud` | ¿Tengo horarios comerciales en `tsw_hud.db`? |
-| `iniciar_autopilot` | Conduce con ese conocimiento (IPC mandos; HTTP para paradas HUD) |
+| `iniciar_autopilot` | Conduce con ese conocimiento (IPC mandos; HTTP para paradas HUD; probe para puertas) |
 
 Más detalle técnico: [ARQUITECTURA.md](ARQUITECTURA.md) ·
 [HUD_TIMETABLE.md](HUD_TIMETABLE.md) ·

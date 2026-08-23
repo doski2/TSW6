@@ -315,6 +315,113 @@ local function power_to_notch(power, power_neg)
     return math.max(0, math.min(8, 4 + math.floor(p + 0.5)))
 end
 
+local function door_state_from_id(id)
+    if not id then return nil end
+    local mid = string.lower(tostring(id))
+    if mid == "dmi-doors-open" or mid == "doors-open" or mid == "door-open" then
+        return true
+    end
+    if mid == "dmi-doors-closed" or mid == "doors-closed" or mid == "door-closed" then
+        return false
+    end
+    if string.find(mid, "door", 1, true) and string.find(mid, "open", 1, true)
+        and not string.find(mid, "clos", 1, true) then
+        return true
+    end
+    if string.find(mid, "door", 1, true) and string.find(mid, "clos", 1, true) then
+        return false
+    end
+    return nil
+end
+
+local function scan_door_messages(msgs)
+    if type(msgs) ~= "table" then return nil end
+    local function check_one(m)
+        if type(m) ~= "table" then return nil end
+        return door_state_from_id(m.id or m.Id or m.messageId or m.MessageId)
+    end
+    for _, m in ipairs(msgs) do
+        local st = check_one(m)
+        if st ~= nil then return st end
+    end
+    for _, m in pairs(msgs) do
+        local st = check_one(m)
+        if st ~= nil then return st end
+    end
+    return nil
+end
+
+local function read_door_component_value(door_comp)
+    if not door_comp or not door_comp.IsValid or not door_comp:IsValid() then
+        return nil
+    end
+    local result = {}
+    local ok = pcall(function()
+        door_comp:GetCurrentInputValue(result)
+    end)
+    if ok then
+        local v = out_val(result, "ReturnValue")
+        if type(v) == "number" then return v end
+    end
+    result = {}
+    ok = pcall(function()
+        door_comp:GetCurrentOutputValue(result)
+    end)
+    if ok then
+        local v = out_val(result, "ReturnValue")
+        if type(v) == "number" then return v end
+    end
+    return nil
+end
+
+local DOOR_COMPONENT_NAMES = {
+    "PassengerDoor_FL", "PassengerDoor_FR",
+    "PassengerDoor_BL", "PassengerDoor_BR",
+    "Door_PassengerDoor_BL", "Door_PassengerDoor_BR",
+}
+
+local function read_passenger_doors(actor)
+    local any_read = false
+    for _, name in ipairs(DOOR_COMPONENT_NAMES) do
+        local ok, door = pcall(function() return actor[name] end)
+        if ok and door and door.IsValid and door:IsValid() then
+            local v = read_door_component_value(door)
+            if v ~= nil then
+                any_read = true
+                if v > 0.0 then
+                    return true
+                end
+            end
+        end
+    end
+    if any_read then
+        return false
+    end
+    return nil
+end
+
+local function extract_doors_dmi(driverAid)
+    if type(driverAid) ~= "table" then return nil end
+    for _, key in ipairs({"Messages", "messages", "AppMessages", "app_messages"}) do
+        local st = scan_door_messages(driverAid[key])
+        if st ~= nil then return st end
+    end
+    local facts = driverAid.Facts or driverAid.facts
+    if type(facts) == "table" then
+        local raw = facts.doors_open or facts.doorsOpen or facts.DoorsOpen
+        if type(raw) == "table" then raw = raw.value or raw.Value end
+        if type(raw) == "boolean" then return raw end
+        if type(raw) == "number" then return raw ~= 0 end
+    end
+    local direct = driverAid.bDoorsOpen or driverAid.DoorsOpen or driverAid.doors_open
+    if type(direct) == "boolean" then return direct end
+    if type(direct) == "table" then
+        local v = direct.value or direct.Value
+        if type(v) == "boolean" then return v end
+    end
+    return nil
+end
+
 local function dump_driver_aid(driverAid)
     local parts = {}
     for k, v in pairs(driverAid) do
@@ -433,7 +540,8 @@ local function read_driver_aid(controller, debug_dump)
     end
     local speedLimit = scalar_ms(driverAid.SpeedLimit or driverAid.speedLimit)
     local planning = extract_speed_limits(driverAid)
-    return speedLimit, extract_gradient(driverAid), planning
+    local doors_dmi = extract_doors_dmi(driverAid)
+    return speedLimit, extract_gradient(driverAid), planning, doors_dmi
 end
 
 local function read_odometer_m(actor)
@@ -535,6 +643,15 @@ local function build_line(sample)
             table.insert(parts, key .. "=" .. fmt_num(sample[key]))
         end
     end
+    if sample.doors_open ~= nil then
+        table.insert(parts, "doors_open=" .. (sample.doors_open and "1" or "0"))
+    end
+    if sample.doors_telem ~= nil then
+        table.insert(parts, "doors_telem=" .. (sample.doors_telem and "1" or "0"))
+    end
+    if sample.doors_dmi ~= nil then
+        table.insert(parts, "doors_dmi=" .. (sample.doors_dmi and "1" or "0"))
+    end
     return table.concat(parts, " ")
 end
 
@@ -560,7 +677,7 @@ local function safe_read(label, fn)
 end
 
 local function apply_driver_aid(sample, controller, debug_driver_aid, actor)
-    local ok, speed_limit, gradient, planning = pcall(function()
+    local ok, speed_limit, gradient, planning, doors_dmi = pcall(function()
         return read_driver_aid(controller, debug_driver_aid)
     end)
     if not ok then
@@ -569,6 +686,9 @@ local function apply_driver_aid(sample, controller, debug_driver_aid, actor)
     end
     sample.speed_limit_ms = speed_limit
     sample.gradient_pct = gradient
+    if doors_dmi ~= nil then
+        sample.doors_dmi = doors_dmi
+    end
     if type(planning) == "table" then
         sample.dist_limit_cm = planning.dist_limit_cm
         sample.next_limit_ms = planning.next_limit_ms
@@ -609,6 +729,11 @@ local function collect_sample(controller, debug_driver_aid)
     sample.odo_m = safe_read("odo", function() return read_odometer_m(actor) end)
     sample.max_speed_ms = safe_read("max_speed", function() return read_max_speed(actor) end)
     sample.handle_notch = power_to_notch(sample.power, sample.power_neg)
+    local doors_telem = safe_read("doors_telem", function() return read_passenger_doors(actor) end)
+    if doors_telem ~= nil then
+        sample.doors_telem = doors_telem
+        sample.doors_open = doors_telem
+    end
     apply_driver_aid(sample, controller, debug_driver_aid, actor)
     sample.vehicle = safe_read("vehicle", function() return read_vehicle_class(actor) end) or "?"
 

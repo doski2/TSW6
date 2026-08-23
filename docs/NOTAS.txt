@@ -1,4 +1,4 @@
 # Notas personales
-- Probar distancia límite velocidad (probe vs HTTP)
-- Validar paradas HUD: 2R17 Cross-City → Four Oaks primero, sin Shenstone en Planning
-- Tras extraer en hud.exe: ejecutar preparar_db_hud.bat
+- preguntar si al aplicar los frenos aprende o calibra los frenos
+- 
+- 
