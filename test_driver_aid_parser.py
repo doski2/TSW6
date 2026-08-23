@@ -2,9 +2,12 @@
 
 from driver_aid_parser import (
     build_speed_limits_queue,
+    filter_stations_by_service,
     parse_driver_aid_planning,
     parse_gradient_pct,
     parse_track_data_stations,
+    select_next_scheduled_stop,
+    station_base_name,
 )
 
 
@@ -82,3 +85,75 @@ def test_parse_track_data_stations_dedup():
     assert st[0]["name"].startswith("Lichfield")
     assert st[0]["distance_m"] == 47.0
     assert st[0]["platform_length_m"] == 200.0
+    assert st[0]["scheduled"] is True
+
+
+def test_parse_track_data_ignores_unnamed_platforms():
+    """``stations[]`` sin markerName no son paradas del horario."""
+    track = {
+        "markers": [
+            {
+                "markerType": "Platform",
+                "markerName": "Lichfield City, andén 2",
+                "distanceToStationCM": 65125.0,
+                "platformLength": 22735.0,
+            },
+        ],
+        "stations": [
+            {
+                "markerType": "Platform",
+                "markerName": "",
+                "stationName": "Shenstone",
+                "distanceToStationCM": 42389.0,
+                "platformLength": 22735.0,
+            },
+            {
+                "markerType": "Platform",
+                "markerName": "",
+                "stationName": "",
+                "distanceToStationCM": 62056.0,
+                "platformLength": 22735.0,
+            },
+        ],
+    }
+    st = parse_track_data_stations(track)
+    assert len(st) == 1
+    assert "Lichfield" in st[0]["name"]
+
+
+def test_filter_stations_by_service_headcode():
+    timetable = {
+        "2R17": ["Lichfield City", "Birmingham New Street"],
+    }
+    stations = [
+        {"name": "Lichfield City, andén 2", "distance_m": 500.0, "scheduled": True},
+        {"name": "Shenstone", "distance_m": 1200.0, "scheduled": True},
+        {"name": "Birmingham New Street", "distance_m": 8000.0, "scheduled": True},
+    ]
+    out = filter_stations_by_service(stations, timetable, "2R17")
+    assert len(out) == 2
+    assert {station_base_name(s["name"]) for s in out} == {
+        "lichfield city", "birmingham new street"
+    }
+
+
+def test_select_next_scheduled_stop_skips_passed():
+    stops = [
+        {"name": "A", "distance_m": 30.0, "scheduled": True},
+        {"name": "B", "distance_m": 800.0, "scheduled": True},
+    ]
+    nxt = select_next_scheduled_stop(stops, min_distance_m=100.0)
+    assert nxt is not None
+    assert nxt["name"] == "B"
+
+
+def test_select_next_scheduled_stop_exclude_served():
+    stops = [
+        {"name": "Four Oaks", "distance_m": 0.0, "scheduled": True},
+        {"name": "Sutton Coldfield", "distance_m": 11000.0, "scheduled": True},
+    ]
+    nxt = select_next_scheduled_stop(
+        stops, min_distance_m=100.0, exclude_bases={"four oaks"},
+    )
+    assert nxt is not None
+    assert nxt["name"] == "Sutton Coldfield"

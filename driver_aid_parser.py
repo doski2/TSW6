@@ -8,6 +8,8 @@ Convierte ``DriverAid.Data`` y ``DriverAid.TrackData`` al formato que esperan
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Optional
 
 MS_TO_MPH = 2.236936
@@ -152,44 +154,161 @@ def parse_driver_aid_planning(data: Any) -> dict[str, Any]:
     return out
 
 
+_TIMETABLE_PATH = Path(__file__).resolve().parent / "timetable.json"
+
+
+def station_base_name(name: str) -> str:
+    """Nombre corto para comparar con timetable (antes de la coma)."""
+    return str(name or "").split(",")[0].strip().lower()
+
+
+def load_service_timetable(path: Optional[Path] = None) -> dict[str, list[str]]:
+    """Carga ``timetable.json`` — paradas programadas por headcode."""
+    path = path or _TIMETABLE_PATH
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        str(k): list(v)
+        for k, v in raw.items()
+        if not str(k).startswith("_") and isinstance(v, list)
+    }
+
+
+def filter_stations_by_stop_names(
+    stations: list[dict[str, Any]],
+    stop_names: list[str],
+) -> list[dict[str, Any]]:
+    """Filtra andenes por nombres de parada (p. ej. desde ``tsw_hud.db``)."""
+    if not stations:
+        return []
+    if not stop_names:
+        return stations
+    allowed = {station_base_name(n) for n in stop_names}
+    return [
+        st for st in stations
+        if station_base_name(str(st.get("name", ""))) in allowed
+    ]
+
+
+def filter_stations_by_service(
+    stations: list[dict[str, Any]],
+    timetable: dict[str, list[str]],
+    service_name: Optional[str],
+) -> list[dict[str, Any]]:
+    """
+    Quita paradas de paso: solo las del horario del servicio activo.
+
+    Si no hay servicio conocido, usa la unión de todos los servicios del
+  timetable (excluye plataformas que no están en ningún horario cargado).
+    """
+    if not stations or not timetable:
+        return stations
+
+    if service_name and service_name in timetable:
+        allowed = {station_base_name(s) for s in timetable[service_name]}
+    else:
+        allowed = {
+            station_base_name(s)
+            for stops in timetable.values()
+            for s in stops
+        }
+
+    filtered = [
+        st for st in stations
+        if station_base_name(str(st.get("name", ""))) in allowed
+    ]
+    return filtered if filtered else stations
+
+
+def _station_marker_label(item: dict[str, Any]) -> str:
+    """Parada programada: solo ``markerName`` (no ``stationName`` suelto)."""
+    return str(item.get("markerName") or "").strip()
+
+
+def _is_platform_marker(item: dict[str, Any]) -> bool:
+    mtype = str(item.get("markerType") or "Platform").strip().lower()
+    return mtype in ("", "platform")
+
+
+def _track_marker_entry(
+    item: dict[str, Any],
+    *,
+    scheduled: bool,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(item, dict) or not _is_platform_marker(item):
+        return None
+    dist_m = _cm_to_m(item.get("distanceToStationCM"))
+    if dist_m is None:
+        return None
+    name = _station_marker_label(item)
+    if not name:
+        return None
+    plat_m = _cm_to_m(item.get("platformLength"), reject_zero=False)
+    entry: dict[str, Any] = {
+        "name": name,
+        "distance_m": round(dist_m, 1),
+        "scheduled": scheduled,
+    }
+    if plat_m is not None and plat_m > 0:
+        entry["platform_length_m"] = round(plat_m, 1)
+    return entry
+
+
 def parse_track_data_stations(track: Any) -> list[dict[str, Any]]:
-    """Paradas programadas desde ``DriverAid.TrackData`` (markers / stations)."""
+    """
+    Paradas programadas desde ``DriverAid.TrackData.markers``.
+
+    Solo entradas con ``markerName`` no vacío (``markerType: Platform``).
+    ``stations[]`` es geometría de andén — se ignora.
+    Filtrar con ``filter_stations_by_service`` + ``timetable.json``.
+    """
     if not isinstance(track, dict):
         return []
 
     seen: dict[str, dict[str, Any]] = {}
 
-    def _add(name: str, dist_m: float, plat_m: Optional[float]) -> None:
-        label = name.strip() or f"Parada@{dist_m:.0f}m"
-        base = label.split(",")[0].strip().lower() or str(round(dist_m))
-        entry: dict[str, Any] = {"name": label, "distance_m": round(dist_m, 1)}
-        if plat_m is not None and plat_m > 0:
-            entry["platform_length_m"] = round(plat_m, 1)
+    def _merge(entry: dict[str, Any]) -> None:
+        base = station_base_name(entry["name"])
+        if not base:
+            return
         prev = seen.get(base)
-        if prev is None or dist_m < prev["distance_m"]:
+        if prev is None or entry["distance_m"] < prev["distance_m"]:
             seen[base] = entry
 
     for item in track.get("markers") or []:
-        if not isinstance(item, dict):
-            continue
-        mtype = str(item.get("markerType") or "").strip().lower()
-        if mtype and mtype != "platform":
-            continue
-        dist_m = _cm_to_m(item.get("distanceToStationCM"))
-        if dist_m is None:
-            continue
-        name = str(item.get("markerName") or item.get("stationName") or "")
-        plat_m = _cm_to_m(item.get("platformLength"))
-        _add(name, dist_m, plat_m)
-
-    for item in track.get("stations") or []:
-        if not isinstance(item, dict):
-            continue
-        dist_m = _cm_to_m(item.get("distanceToStationCM"))
-        if dist_m is None:
-            continue
-        name = str(item.get("markerName") or item.get("stationName") or "")
-        plat_m = _cm_to_m(item.get("platformLength"))
-        _add(name, dist_m, plat_m)
+        entry = _track_marker_entry(item, scheduled=True)
+        if entry is not None:
+            _merge(entry)
 
     return sorted(seen.values(), key=lambda x: x["distance_m"])
+
+
+def select_next_scheduled_stop(
+    stations: Optional[list],
+    *,
+    min_distance_m: float = 100.0,
+    exclude_bases: Optional[set[str]] = None,
+) -> Optional[dict[str, Any]]:
+    """
+    Próxima parada del servicio (más cercana adelante con nombre).
+
+    Ignora andenes ya pasados (< ``min_distance_m``) salvo que no quede otra.
+    ``exclude_bases`` excluye paradas ya servidas (nombres base en minúsculas).
+    """
+    if not stations:
+        return None
+    exclude = exclude_bases or set()
+    scheduled = [s for s in stations if s.get("scheduled", True)]
+    pool = scheduled or list(stations)
+    pool = [
+        s for s in pool
+        if station_base_name(str(s.get("name", ""))) not in exclude
+    ]
+    if not pool:
+        return None
+    ahead = [s for s in pool if float(s.get("distance_m") or 0) > min_distance_m]
+    if ahead:
+        return min(ahead, key=lambda s: float(s["distance_m"]))
+    return min(pool, key=lambda s: float(s.get("distance_m") or 0))

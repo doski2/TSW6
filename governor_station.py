@@ -11,6 +11,7 @@ import time
 import math
 from typing import Optional, Tuple
 
+from driver_aid_parser import select_next_scheduled_stop, station_base_name
 from governor_constants import (
     STATION_APPROACH_M, STATION_STOPPED_MPH, STATION_DWELL_TIMEOUT_S,
 )
@@ -47,6 +48,18 @@ class StationFSM:
         self._last_departed_at:   float         = 0.0
         self._DEPARTURE_COOLDOWN_S              = 60.0
 
+        # Paradas ya completadas en este servicio (no volver a seleccionarlas)
+        self._served_bases: set[str] = set()
+
+    def _stop_exclude_bases(self) -> set[str]:
+        """Nombres base de paradas que no deben ser objetivo."""
+        ex = set(self._served_bases)
+        if self.state in ("STOPPED", "DEPARTING") and self.name:
+            ex.add(station_base_name(self.name))
+        if self._last_departed_name:
+            ex.add(station_base_name(self._last_departed_name))
+        return ex
+
     def select_next_stop(self, stations: Optional[list]) -> Optional[dict]:
         """Selecciona la siguiente parada válida según modo manual o automático."""
         if self.target_stop_min_m is not None and self.target_stop_min_m <= 0:
@@ -65,7 +78,8 @@ class StationFSM:
                 return next((s for s in (stations or []) if s["name"] == self._locked_stop_name), None)
             return None
         else:
-            return stations[0] if stations else None
+            return select_next_scheduled_stop(
+                stations, exclude_bases=self._stop_exclude_bases())
 
     def update_state_transitions(self, speed_mph: float, limit_mph: float,
                                  stations: Optional[list],
@@ -83,7 +97,18 @@ class StationFSM:
 
         # ── Transición DEPARTING → None ──────────────────────────────────────
         if self.state == "DEPARTING":
-            if next_stop is None or next_stop["distance_m"] > 200:
+            _dep_base = station_base_name(self.name or "")
+            _nxt_base = (
+                station_base_name(next_stop["name"]) if next_stop else ""
+            )
+            _cleared = (
+                next_stop is None
+                or float(next_stop.get("distance_m") or 0) > 200
+                or (_dep_base and _nxt_base and _nxt_base != _dep_base)
+            )
+            if _cleared:
+                if _dep_base:
+                    self._served_bases.add(_dep_base)
                 _log.info("FSM: DEPARTING → None")
                 self._last_departed_name = self.name
                 self._last_departed_at   = time.time()
@@ -172,8 +197,8 @@ class StationFSM:
             effective_doors = False
             _ocr_door_src   = f"ocr_dist={ocr_stop_dist_m:.0f}m>300m"
         elif ocr_stop_dist_m is None and ocr_task is None:
-            effective_doors = True
-            _ocr_door_src   = "ocr_sin_dist(embarcando)"
+            effective_doors = doors_open
+            _ocr_door_src   = "doors_open_event"
         else:
             effective_doors = doors_open
             _ocr_door_src   = "event"

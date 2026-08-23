@@ -89,6 +89,42 @@ class TestFSMTransitions(unittest.TestCase):
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertIsNone(self.fsm.state)
 
+    def test_departing_to_none_next_station_immediate(self):
+        """Al cerrar puertas, la siguiente parada distinta libera DEPARTING."""
+        self.fsm.state = "DEPARTING"
+        self.fsm.name = "Station A"
+        stations = [
+            {"name": "Station A", "distance_m": 0.0, "platform_length_m": 100.0},
+            {"name": "Station B", "distance_m": 50.0, "platform_length_m": 100.0},
+        ]
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=60.0, stations=stations,
+            doors_open=False, doors_dmi=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertIn("station a", self.fsm._served_bases)
+        nxt = self.fsm.select_next_stop(stations)
+        self.assertIsNotNone(nxt)
+        if nxt is not None:
+            self.assertEqual(nxt["name"], "Station B")
+        if self.fsm.state == "APPROACHING":
+            self.assertEqual(self.fsm.name, "Station B")
+
+    def test_stopped_to_departing_advances_next_stop(self):
+        """Tras servir la primera parada, select_next_stop devuelve la segunda."""
+        self.fsm.state = "STOPPED"
+        self.fsm.name = "Station A"
+        self.fsm._served_bases.add("station a")
+        stations = [
+            {"name": "Station A", "distance_m": 0.0, "scheduled": True},
+            {"name": "Station B", "distance_m": 5000.0, "scheduled": True},
+        ]
+        nxt = self.fsm.select_next_stop(stations)
+        self.assertIsNotNone(nxt)
+        if nxt is not None:
+            self.assertEqual(nxt["name"], "Station B")
+
     def test_stopped_hold_returns_hold(self):
         """En STOPPED siempre devuelve HOLD."""
         self.fsm.state = "STOPPED"

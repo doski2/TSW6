@@ -20,3 +20,11 @@ logs/
 # OS
 Thumbs.db
 Desktop.ini
+
+# HUD timetable DB (local copy from hud.exe — use preparar_db_hud.bat)
+tsw_hud.db
+tsw_hud.db-shm
+tsw_hud.db-wal
+
+# pytest
+.pytest_cache/

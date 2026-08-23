@@ -23,6 +23,7 @@ from speed_decider import SpeedDecider
 from train_state import build_train_state
 from tsw_keys import user32
 from tsw_ocr import TswOcr
+from distance_format import format_distance, format_distance_pair
 from tsw_telemetry_source import TswTelemetrySource
 
 EnumWindowsProc = ctypes.WINFUNCTYPE(
@@ -86,6 +87,8 @@ class AutopilotSnapshot:
     ack_required: bool = False
     doors_open: bool = False
     stations: list = field(default_factory=list)
+    next_stop_name: Optional[str] = None
+    next_stop_distance_m: Optional[float] = None
     speed_limits_ahead: list = field(default_factory=list)
     hwnd: Optional[int] = None
     ocr_stop_dist_m: Optional[float] = None
@@ -97,6 +100,12 @@ class AutopilotSnapshot:
     last_cmd_sent: bool = False
     probe_seq: Optional[int] = None
     probe_age_ms: Optional[float] = None
+    probe_dist_limit_m: Optional[float] = None
+    distance_units: str = "uk_imperial"
+    brake_phase: Optional[str] = None
+    brake_target_notch: Optional[int] = None
+    schedule_source: Optional[str] = None
+    hud_timetable_id: Optional[int] = None
 
 
 class _GuiLogHandler(logging.Handler):
@@ -156,6 +165,7 @@ class AutopilotEngine:
         self._telem_partial_logged = False
         self._searching_warn_t = 0.0
         self._heartbeat_t = 0.0
+        self._pause_diag_t = 0.0
 
         if not config.no_control:
             self.conn.purge_ipc_on_start()
@@ -202,13 +212,24 @@ class AutopilotEngine:
                     self.conn.probe()
 
     def pause(self) -> None:
-        self.decider.paused = True
+        if not self.decider.paused:
+            self.decider.paused = True
+            self.conn.set_planning_hold(True)
+            self._pause_diag_t = 0.0
+            self._log_pause_state("Autopilot PAUSADO")
 
     def resume(self) -> None:
-        self.decider.paused = False
+        if self.decider.paused:
+            self.decider.paused = False
+            self.conn.set_planning_hold(False)
+            self._log_pause_state("Autopilot REANUDADO")
 
     def toggle_pause(self) -> bool:
         self.decider.paused = not self.decider.paused
+        self.conn.set_planning_hold(self.decider.paused)
+        self._pause_diag_t = 0.0
+        self._log_pause_state(
+            "Autopilot PAUSADO" if self.decider.paused else "Autopilot REANUDADO")
         return self.decider.paused
 
     def set_target_mph(self, mph: float) -> None:
@@ -269,6 +290,7 @@ class AutopilotEngine:
         self._log_searching_hint()
         self._log_telemetry_ready()
         self._log_heartbeat()
+        self._log_pause_diag()
 
         if not self.hwnd:
             self.hwnd = find_tsw_window()
@@ -326,9 +348,13 @@ class AutopilotEngine:
             final = override or action
 
             if not self.config.no_control:
-                cmd_sent = self.controller.execute(final, state, self.conn, self.hwnd)
+                cmd = self.decider.brake_command
+                cmd_sent = self.controller.execute(
+                    final, state, self.conn, self.hwnd,
+                    brake_command=cmd,
+                )
 
-            self._log_cycle(speed, limit, action, final)
+            self._log_cycle(speed, limit, action, final, cmd_sent=cmd_sent)
         else:
             self.decider.last_action = "HOLD"
 
@@ -349,6 +375,9 @@ class AutopilotEngine:
             self.conn.arm_ipc_controls()
             self._ipc_armed = True
             self._log.info("Mandos vía SendCommand.txt (UE4SS IPC)")
+
+        _stations = list(self.telem.get("stations") or [])
+        _nxt_stop = self.decider.scheduled_next_stop(_stations)
 
         self.snapshot = AutopilotSnapshot(
             speed_mph=speed,
@@ -374,7 +403,15 @@ class AutopilotEngine:
             vehicle_name=self._veh_detected.get("v"),
             ack_required=bool(self.telem.get("ack_required")),
             doors_open=bool(self.telem.get("doors_open")),
-            stations=list(self.telem.get("stations") or []),
+            stations=_stations,
+            next_stop_name=(
+                _nxt_stop.get("name") if _nxt_stop
+                else self.telem.get("next_stop_name")
+            ),
+            next_stop_distance_m=(
+                _nxt_stop.get("distance_m") if _nxt_stop
+                else self.telem.get("next_stop_distance_m")
+            ),
             speed_limits_ahead=list(self.telem.get("speed_limits_ahead") or []),
             hwnd=self.hwnd,
             ocr_stop_dist_m=ocr_dist,
@@ -386,6 +423,18 @@ class AutopilotEngine:
             last_cmd_sent=cmd_sent,
             probe_seq=self.telem.get("probe_seq"),
             probe_age_ms=self.telem.get("telemetry_age_ms"),
+            probe_dist_limit_m=self.telem.get("probe_dist_limit_m"),
+            distance_units=str(self.telem.get("distance_units") or "uk_imperial"),
+            brake_phase=(
+                self.decider.brake_command.phase
+                if self.decider.brake_command else None
+            ),
+            brake_target_notch=(
+                self.decider.brake_command.target_notch
+                if self.decider.brake_command else None
+            ),
+            schedule_source=self.telem.get("schedule_source"),
+            hud_timetable_id=self.telem.get("hud_timetable_id"),
         )
         return self.snapshot
 
@@ -481,14 +530,79 @@ class AutopilotEngine:
         spd = t.get("speed_mph")
         lim = t.get("limit_mph")
         dist = t.get("distance_next_m")
+        probe_dist = t.get("probe_dist_limit_m")
+        frozen = t.get("probe_motion_frozen")
+        units = str(t.get("distance_units") or "uk_imperial")
         self._log.info(
-            "heartbeat modo=%s  spd=%s  lim=%s  seq=%s  dist=%s  mandos=%s",
+            "heartbeat modo=%s  spd=%s  lim=%s  elim=%.1f  seq=%s  "
+            "dist=%s  probe=%s  frozen=%s  mandos=%s",
             self.conn.mode,
             f"{spd:.1f}" if spd is not None else "—",
             f"{lim:.0f}" if lim is not None else "—",
+            self.decider.effective_limit,
             t.get("probe_seq", "?"),
-            f"{dist:.1f}m" if dist is not None else "—",
+            format_distance(dist, units) if dist is not None else "—",
+            format_distance(probe_dist, units) if probe_dist is not None else "—",
+            "Y" if frozen else "N",
             self.conn.control_channel())
+
+    def _log_pause_state(self, label: str) -> None:
+        """Línea inmediata al pulsar Pausar/Reanudar (visible en panel Depuración)."""
+        t = self.telem
+        dist = t.get("distance_next_m")
+        probe_dist = t.get("probe_dist_limit_m")
+        units = str(t.get("distance_units") or "uk_imperial")
+        dist_txt = format_distance(dist, units) if dist is not None else "—"
+        self._log.info(
+            "%s  elim=%.1f  lim=%s  dist=%s  probe=%s  next=%s  seq=%s  spd=%s",
+            label,
+            self.decider.effective_limit,
+            f"{t.get('limit_mph'):.0f}" if t.get("limit_mph") is not None else "—",
+            dist_txt,
+            format_distance(probe_dist, units) if probe_dist is not None else "—",
+            f"{t.get('next_limit_mph', '?')}@{dist_txt}"
+            if dist is not None and t.get("next_limit_mph") is not None
+            else "?",
+            t.get("probe_seq", "?"),
+            f"{t.get('speed_mph'):.1f}" if t.get("speed_mph") is not None else "—",
+        )
+
+    def _log_pause_diag(self) -> None:
+        """Planning en pausa (autopilot o juego congelado) — comparar dist vs probe."""
+        ap_pause = self.decider.paused
+        game_frozen = bool(self.telem.get("probe_motion_frozen"))
+        if not ap_pause and not game_frozen:
+            return
+        now = time.monotonic()
+        if now - self._pause_diag_t < 1.0:
+            return
+        self._pause_diag_t = now
+        t = self.telem
+        dist = t.get("distance_next_m")
+        probe_dist = t.get("probe_dist_limit_m")
+        units = str(t.get("distance_units") or "uk_imperial")
+        drift = (
+            float(dist) - float(probe_dist)
+            if dist is not None and probe_dist is not None
+            else None
+        )
+        dist_txt = format_distance(dist, units) if dist is not None else "—"
+        self._log.info(
+            "PAUSA ap=%s game_frozen=%s  elim=%.1f  lim=%s  "
+            "dist=%s  probe=%s  drift=%s  next=%s  seq=%s  spd=%s",
+            "Y" if ap_pause else "N",
+            "Y" if game_frozen else "N",
+            self.decider.effective_limit,
+            f"{t.get('limit_mph'):.0f}" if t.get("limit_mph") is not None else "—",
+            dist_txt,
+            format_distance(probe_dist, units) if probe_dist is not None else "—",
+            f"{drift:+.1f}m" if drift is not None else "—",
+            f"{t.get('next_limit_mph', '?')}@{dist_txt}"
+            if dist is not None and t.get("next_limit_mph") is not None
+            else "?",
+            t.get("probe_seq", "?"),
+            f"{t.get('speed_mph'):.1f}" if t.get("speed_mph") is not None else "—",
+        )
 
     def _sync_handle(self) -> None:
         handle_notch = self.telem.get("handle_notch")
@@ -518,32 +632,44 @@ class AutopilotEngine:
         self._handle_synced = True
 
     def _log_cycle(self, speed: float, limit: float,
-                   action: str, final: str) -> None:
+                   action: str, final: str, *, cmd_sent: bool = False) -> None:
+        if self.decider.paused or self.telem.get("probe_motion_frozen"):
+            return
         self._log_cycle_n += 1
         if self._log_cycle_n > 5 and self._log_cycle_n % 20 != 0:
             return
         telem = self.telem
-        dmi_d = telem.get("doors_dmi")
-        dmi_d_str = "O" if dmi_d is True else ("C" if dmi_d is False else "?")
+        cmd = self.decider.brake_command
+        p1_txt = "—"
+        if cmd is not None:
+            p1_txt = cmd.display_action()
+            if cmd.target_notch is not None:
+                p1_txt += f"→N{cmd.target_notch}"
         line = (
             "spd=%5.1f  lim=%4.1f  elim=%5.1f  notch=%-2s  action=%-11s  "
-            "final=%-11s  fsm=%-10s  stop=%-30s  next=%s@%sm  ack=%s  "
-            "doors=%s  dmi_d=%s  grad=%s  rain=%.2f"
+            "final=%-11s  p1=%-10s  ipc=%s  fsm=%-10s  stop=%-24s  "
+            "next_lim=%s@%sm  parada=%s  ack=%s  grad=%s"
+        )
+        nxt_stop = telem.get("next_stop_name")
+        nxt_stop_d = telem.get("next_stop_distance_m")
+        parada = (
+            f"{nxt_stop}@{nxt_stop_d:.0f}m"
+            if nxt_stop and nxt_stop_d is not None else "—"
         )
         args = (
             speed, limit,
             self.decider.effective_limit,
             telem.get("handle_notch", "?"),
             action, final,
+            p1_txt,
+            "OK" if cmd_sent else "—",
             self.decider.station_state or "-",
             self.decider.station_name or "-",
             f"{telem.get('next_limit_mph', '?')}",
             f"{telem.get('distance_next_m', '?')}",
+            parada,
             "Y" if telem.get("ack_required") else "N",
-            "Y" if telem.get("doors_open") else "N",
-            dmi_d_str,
             f"{telem.get('gradient_pct') or 0.0:+.1f}%",
-            telem.get("rain_intensity", 0.0) or 0.0,
         )
         if self._log_cycle_n <= 5:
             self._log.info(line, *args)

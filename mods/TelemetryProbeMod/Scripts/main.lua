@@ -1,4 +1,4 @@
--- TelemetryProbeMod — telemetría + mandos IPC (B4 SendCommand.txt)
+-- TelemetryProbeMod — telemetría + mandos IPC (SendCommand.txt)
 -- Lectura: GetData.txt (~20 Hz) · Escritura: SendCommand.txt (allowlist frenos)
 -- F7 on/off probe · F8 volcar línea al log
 
@@ -18,8 +18,20 @@ local lastLogClock = 0
 local hooked = false
 local hookPre, hookPost
 local debugDumped = false
+
+-- Planning: no bajar distancias si el tren no avanzó (odómetro / pausa ESC).
+local last_odo_m = nil
+local last_actor_pos = nil
+local held_dist_limit_cm = nil
+local held_next_limit_ms = nil
+local held_dist_limit2_cm = nil
+local held_next_limit2_ms = nil
+local MOVE_THRESH_CM2 = 2500
+local ODO_MOVE_THRESH_M = 0.05
+
 local SEND_COMMAND_FILE = "SendCommand.txt"
 local APPLY_FLAG_FILE = "TSW6ApplyCommands.flag"
+local SEND_ACK_FILE = "SendCommandAck.txt"
 local control_cache = {}
 local last_applied = {}
 
@@ -39,6 +51,10 @@ local LEVER_TYPES = {
     "BaseLeverComponent",
 }
 
+local SENTINEL = 3.4028235e38
+
+-- ── Bridge paths ─────────────────────────────────────────────────────────────
+
 local function bridge_dir()
     local temp = os.getenv("TEMP") or os.getenv("TMP") or "."
     return temp .. "\\TSW6Bridge"
@@ -56,129 +72,8 @@ local function apply_flag_path()
     return bridge_dir() .. "\\" .. APPLY_FLAG_FILE
 end
 
-local function commands_armed()
-    local f = io.open(apply_flag_path(), "r")
-    if f then
-        f:close()
-        return true
-    end
-    return false
-end
-
-local function purge_ipc_files()
-    pcall(os.remove, send_command_path())
-    pcall(os.remove, apply_flag_path())
-    for k in pairs(control_cache) do
-        control_cache[k] = nil
-    end
-    for k in pairs(last_applied) do
-        last_applied[k] = nil
-    end
-end
-
-local function clamp_num(v, lo, hi)
-    if v < lo then return lo end
-    if v > hi then return hi end
-    return v
-end
-
-local function api_value_to_input(control_name, value)
-    if control_name == "IndependentBrake" then
-        return clamp_num(value, -1.0, 1.0)
-    end
-    local v = clamp_num(value, 0.0, 1.0)
-    return (v - 0.5) * 2.0
-end
-
-local function find_control(name)
-    local cached = control_cache[name]
-    if cached and cached:IsValid() then
-        return cached
-    end
-    -- DriverInput/PowerBrakeHandle (ruta HTTPAPI) antes que FindAllOf global.
-    local ok_di, driverInput = pcall(function() return FindFirstOf("DriverInput") end)
-    if ok_di and driverInput and driverInput.IsValid and driverInput:IsValid() then
-        local ok_child, child = pcall(function() return driverInput[name] end)
-        if ok_child and child and child.IsValid and child:IsValid() then
-            control_cache[name] = child
-            return child
-        end
-    end
-    for _, typename in ipairs(LEVER_TYPES) do
-        local objs = FindAllOf(typename)
-        if objs then
-            for _, obj in pairs(objs) do
-                if obj and obj.IsValid and obj:IsValid() then
-                    local ok, obj_name = pcall(function()
-                        return obj:GetName():ToString()
-                    end)
-                    if ok and obj_name and string.find(obj_name, name, 1, true) then
-                        control_cache[name] = obj
-                        return obj
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function apply_control_value(name, value)
-    if not ALLOWED_CONTROLS[name] then
-        return false
-    end
-    local num = tonumber(value)
-    if num == nil then
-        return false
-    end
-    local prev = last_applied[name]
-    if prev ~= nil and math.abs(prev - num) < 0.0001 then
-        return true
-    end
-    local ctrl = find_control(name)
-    if not ctrl then
-        print("[TelemetryProbe] WARN control not found: " .. name .. "\n")
-        return false
-    end
-    local input_val = api_value_to_input(name, num)
-    local ok = pcall(function()
-        -- API HTTP escribe .Value (0–1); el lever in-game usa InputValue (−1..1).
-        if ctrl.InputValue ~= nil then
-            ctrl.InputValue = input_val
-        elseif ctrl.Value ~= nil then
-            ctrl.Value = num
-        else
-            error("no writable property")
-        end
-    end)
-    if ok then
-        last_applied[name] = num
-        return true
-    end
-    print(string.format(
-        "[TelemetryProbe] WARN set %s=%.4f failed\n", name, num))
-    return false
-end
-
-local function process_send_commands()
-    if not commands_armed() then
-        return
-    end
-    local path = send_command_path()
-    local f = io.open(path, "r")
-    if not f then
-        return
-    end
-    f:close()
-    for line in io.lines(path) do
-        if line ~= "" then
-            local name, val = string.match(line, "^%s*([^:]+)%s*:%s*(.+)%s*$")
-            if name and val then
-                apply_control_value(name, val)
-            end
-        end
-    end
-    pcall(os.remove, path)
+local function send_ack_path()
+    return bridge_dir() .. "\\" .. SEND_ACK_FILE
 end
 
 local function ensure_bridge_dir()
@@ -192,32 +87,190 @@ local function ensure_bridge_dir()
         bridgeReady = true
         return true
     end
-    -- Un solo mkdir al arranque (nunca en cada tick).
     os.execute('mkdir "' .. dir .. '" 2>nul')
     bridgeReady = true
     return io.open(dir .. "\\GetData.txt", "a") ~= nil
 end
+
+-- ── IPC mandos ───────────────────────────────────────────────────────────────
+
+local function commands_armed()
+    local f = io.open(apply_flag_path(), "r")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
+local function purge_ipc_files()
+    pcall(os.remove, send_command_path())
+    pcall(os.remove, apply_flag_path())
+    for k in pairs(control_cache) do control_cache[k] = nil end
+    for k in pairs(last_applied) do last_applied[k] = nil end
+end
+
+local function clamp_num(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function api_value_to_input(control_name, value)
+    if control_name == "IndependentBrake" then
+        return clamp_num(value, -1.0, 1.0)
+    end
+    return (clamp_num(value, 0.0, 1.0) - 0.5) * 2.0
+end
+
+local function write_send_ack(name, value, ok)
+    ensure_bridge_dir()
+    local f = io.open(send_ack_path(), "w")
+    if not f then return end
+    f:write(string.format("%s:%.4f:%s\n", name, value, ok and "ok" or "fail"))
+    f:close()
+end
+
+local function try_child(parent, name)
+    if not parent then return nil end
+    local ok, child = pcall(function() return parent[name] end)
+    if ok and child and child.IsValid and child:IsValid() then
+        return child
+    end
+    return nil
+end
+
+local function find_control(name, controller)
+    local cached = control_cache[name]
+    if cached and cached:IsValid() then
+        return cached
+    end
+    local function cache_and_return(lever)
+        control_cache[name] = lever
+        return lever
+    end
+    if controller and controller.IsValid and controller:IsValid() then
+        local di = try_child(controller, "DriverInput")
+        if di then
+            local lever = try_child(di, name)
+            if lever then return cache_and_return(lever) end
+        end
+        local ok_actor, actor = pcall(function() return controller:GetDrivableActor() end)
+        if ok_actor and actor and actor.IsValid and actor:IsValid() then
+            di = try_child(actor, "DriverInput")
+            if di then
+                local lever = try_child(di, name)
+                if lever then return cache_and_return(lever) end
+            end
+        end
+    end
+    local ok_di, driverInput = pcall(function() return FindFirstOf("DriverInput") end)
+    if ok_di and driverInput and driverInput.IsValid and driverInput:IsValid() then
+        local lever = try_child(driverInput, name)
+        if lever then return cache_and_return(lever) end
+    end
+    for _, typename in ipairs(LEVER_TYPES) do
+        local objs = FindAllOf(typename)
+        if objs then
+            for _, obj in pairs(objs) do
+                if obj and obj.IsValid and obj:IsValid() then
+                    local ok, obj_name = pcall(function()
+                        return obj:GetName():ToString()
+                    end)
+                    if ok and obj_name and string.find(obj_name, name, 1, true) then
+                        return cache_and_return(obj)
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function apply_control_value(name, value, controller)
+    if not ALLOWED_CONTROLS[name] then return false end
+    local num = tonumber(value)
+    if num == nil then return false end
+    local prev = last_applied[name]
+    if prev ~= nil and math.abs(prev - num) < 0.0001 then
+        write_send_ack(name, num, true)
+        return true
+    end
+    local ctrl = find_control(name, controller)
+    if not ctrl then
+        print("[TelemetryProbe] WARN control not found: " .. name .. "\n")
+        write_send_ack(name, num, false)
+        return false
+    end
+    local ok = pcall(function()
+        if ctrl.Value ~= nil then
+            ctrl.Value = num
+        elseif ctrl.InputValue ~= nil then
+            ctrl.InputValue = api_value_to_input(name, num)
+        else
+            error("no writable property")
+        end
+    end)
+    if ok then
+        last_applied[name] = num
+        write_send_ack(name, num, true)
+        return true
+    end
+    print(string.format("[TelemetryProbe] WARN set %s=%.4f failed\n", name, num))
+    write_send_ack(name, num, false)
+    return false
+end
+
+local function process_send_commands(controller)
+    if not commands_armed() then return end
+    local path = send_command_path()
+    local opened = false
+    for line in io.lines(path) do
+        opened = true
+        if line ~= "" then
+            local name, val = string.match(line, "^%s*([^:]+)%s*:%s*(.+)%s*$")
+            if name and val then
+                apply_control_value(name, val, controller)
+            end
+        end
+    end
+    if opened then
+        pcall(os.remove, path)
+    end
+end
+
+-- ── HUD / DriverAid helpers ───────────────────────────────────────────────────
 
 local function log_hud_error(label, err)
     print(string.format("[TelemetryProbe] WARN %s: %s\n", label, tostring(err)))
 end
 
 -- UE4SS: cada parámetro CPF_OutParm necesita su propia tabla {}.
--- Struct único (Speed, Acceleration) → una tabla con campos nombrados.
 local function out_val(t, ...)
-    if type(t) ~= "table" then
-        return nil
-    end
+    if type(t) ~= "table" then return nil end
     for i = 1, select("#", ...) do
         local key = select(i, ...)
-        if t[key] ~= nil then
-            return t[key]
-        end
+        if t[key] ~= nil then return t[key] end
     end
     for _, v in pairs(t) do
         if type(v) == "number" or type(v) == "boolean" then
             return v
         end
+    end
+    return nil
+end
+
+local function is_valid_num(v)
+    return type(v) == "number" and v == v and v > 0 and v < SENTINEL * 0.99
+end
+
+local function scalar_ms(node)
+    if type(node) == "number" then
+        return is_valid_num(node) and node or nil
+    end
+    if type(node) == "table" then
+        local v = out_val(node, "value", "Value")
+        return v and is_valid_num(v) and v or nil
     end
     return nil
 end
@@ -229,34 +282,15 @@ local function read_speed(actor)
 end
 
 local function read_power(actor)
-    local power = {}
-    local isActive = {}
-    local isNegative = {}
-    actor:HUD_GetPowerHandle(power, isActive, isNegative)
-    return out_val(power, "Power"),
-           out_val(isNegative, "IsNegative"),
-           out_val(isActive, "IsActive")
+    local power, isNegative = {}, {}
+    actor:HUD_GetPowerHandle(power, {}, isNegative)
+    return out_val(power, "Power"), out_val(isNegative, "IsNegative") == true
 end
 
-local function read_train_brake(actor)
+local function read_brake_handle(actor, method)
     local handle = {}
-    local isActive = {}
-    actor:HUD_GetTrainBrakeHandle(handle, isActive)
-    return out_val(handle, "HandlePosition"), out_val(isActive, "IsActive")
-end
-
-local function read_loco_brake(actor)
-    local handle = {}
-    local isActive = {}
-    actor:HUD_GetLocomotiveBrakeHandle(handle, isActive)
-    return out_val(handle, "HandlePosition"), out_val(isActive, "IsActive")
-end
-
-local function read_dyn_brake(actor)
-    local handle = {}
-    local isActive = {}
-    actor:HUD_GetElectricBrakeHandle(handle, isActive)
-    return out_val(handle, "HandlePosition"), out_val(isActive, "IsActive")
+    actor[method](actor, handle, {})
+    return out_val(handle, "HandlePosition")
 end
 
 local function read_accel(actor)
@@ -266,48 +300,30 @@ local function read_accel(actor)
 end
 
 local function read_max_speed(actor)
-    local maxSpeed = {}
-    local warningSpeed = {}
-    local isActive = {}
-    actor:HUD_GetMaxPermittedSpeed(maxSpeed, warningSpeed, isActive)
-    local active = out_val(isActive, "IsActive")
-    if active then
-        return out_val(maxSpeed, "MaxSpeed (ms)"), true
+    local maxSpeed, isActive = {}, {}
+    actor:HUD_GetMaxPermittedSpeed(maxSpeed, {}, isActive)
+    if out_val(isActive, "IsActive") then
+        return out_val(maxSpeed, "MaxSpeed (ms)")
     end
-    return nil, false
+    return nil
 end
 
--- HUD Power: negativo = freno, 0 = neutro, positivo = tracción → muesca 0–8.
 local function power_to_notch(power, power_neg)
-    if power == nil then
-        return nil
-    end
+    if power == nil then return nil end
     local p = tonumber(power) or 0
-    if power_neg then
-        p = -math.abs(p)
-    end
-    local notch = 4 + math.floor(p + 0.5)
-    if notch < 0 then notch = 0 end
-    if notch > 8 then notch = 8 end
-    return notch
-end
-
-local function dump_table_shallow(t)
-    if type(t) ~= "table" then
-        return tostring(t)
-    end
-    local parts = {}
-    for k, v in pairs(t) do
-        table.insert(parts, tostring(k) .. "=" .. tostring(v))
-    end
-    return table.concat(parts, ",")
+    if power_neg then p = -math.abs(p) end
+    return math.max(0, math.min(8, 4 + math.floor(p + 0.5)))
 end
 
 local function dump_driver_aid(driverAid)
     local parts = {}
     for k, v in pairs(driverAid) do
         if type(v) == "table" then
-            table.insert(parts, string.format("%s={%s}", tostring(k), dump_table_shallow(v)))
+            local inner = {}
+            for ik, iv in pairs(v) do
+                table.insert(inner, tostring(ik) .. "=" .. tostring(iv))
+            end
+            table.insert(parts, string.format("%s={%s}", tostring(k), table.concat(inner, ",")))
         else
             table.insert(parts, string.format("%s=%s", tostring(k), tostring(v)))
         end
@@ -315,68 +331,40 @@ local function dump_driver_aid(driverAid)
     print("[TelemetryProbe] DriverAid dump: " .. table.concat(parts, " | ") .. "\n")
 end
 
-local SENTINEL = 3.4028235e38
-
-local function is_valid_num(v)
-    if v == nil or type(v) ~= "number" then
-        return false
-    end
-    if v ~= v or v >= SENTINEL * 0.99 or v <= 0 then
-        return false
-    end
-    return true
-end
-
-local function scalar_ms(node)
-    if type(node) == "number" then
-        return is_valid_num(node) and node or nil
-    end
-    if type(node) == "table" then
-        local v = out_val(node, "value", "Value")
-        if v and is_valid_num(v) then
-            return v
-        end
-    end
-    return nil
-end
-
-local function extract_speed_limits(driverAid)
-    if type(driverAid) ~= "table" then
-        return {}
-    end
+local function collect_limit_entries(driverAid)
     local entries = {}
-
-    local dist_cm = driverAid.distanceToNextSpeedLimit
-        or driverAid.DistanceToNextSpeedLimit
+    local dist_cm = driverAid.distanceToNextSpeedLimit or driverAid.DistanceToNextSpeedLimit
     local next_ms = scalar_ms(driverAid.nextSpeedLimit or driverAid.NextSpeedLimit)
     if is_valid_num(dist_cm) and next_ms then
-        table.insert(entries, {dist_cm = dist_cm, limit_ms = next_ms})
+        table.insert(entries, { dist_cm = dist_cm, limit_ms = next_ms })
     end
-
     local arr = driverAid.nextSpeedLimits or driverAid.NextSpeedLimits
-    if type(arr) == "table" then
-        local items = {}
-        for _, item in ipairs(arr) do
-            table.insert(items, item)
-        end
-        if #items == 0 then
-            for _, item in pairs(arr) do
-                if type(item) == "table" then
-                    table.insert(items, item)
-                end
-            end
-        end
-        for _, item in ipairs(items) do
-            local d = item.distanceToNextSpeedLimit or item.DistanceToNextSpeedLimit
-            local ms = scalar_ms(item.value or item.Value)
-            if is_valid_num(d) and ms then
-                table.insert(entries, {dist_cm = d, limit_ms = ms})
+    if type(arr) ~= "table" then
+        return entries
+    end
+    local items = {}
+    for _, item in ipairs(arr) do
+        table.insert(items, item)
+    end
+    if #items == 0 then
+        for _, item in pairs(arr) do
+            if type(item) == "table" then
+                table.insert(items, item)
             end
         end
     end
+    for _, item in ipairs(items) do
+        local d = item.distanceToNextSpeedLimit or item.DistanceToNextSpeedLimit
+        local ms = scalar_ms(item.value or item.Value)
+        if is_valid_num(d) and ms then
+            table.insert(entries, { dist_cm = d, limit_ms = ms })
+        end
+    end
+    return entries
+end
 
+local function dedupe_limits(entries)
     table.sort(entries, function(a, b) return a.dist_cm < b.dist_cm end)
-
     local out = {}
     for _, e in ipairs(entries) do
         local dup = false
@@ -390,7 +378,11 @@ local function extract_speed_limits(driverAid)
             table.insert(out, e)
         end
     end
+    return out
+end
 
+local function extract_speed_limits(driverAid)
+    local out = dedupe_limits(collect_limit_entries(driverAid))
     local planning = {}
     if out[1] then
         planning.dist_limit_cm = out[1].dist_cm
@@ -400,7 +392,7 @@ local function extract_speed_limits(driverAid)
         planning.dist_limit2_cm = out[2].dist_cm
         planning.next_limit2_ms = out[2].limit_ms
     end
-    -- Descartar distancia 0 (en cartel): usar siguiente de la cola.
+    -- En cartel (dist=0): usar el siguiente de la cola.
     if planning.dist_limit_cm and planning.dist_limit_cm <= 0 then
         planning.dist_limit_cm = nil
         planning.next_limit_ms = nil
@@ -415,27 +407,18 @@ local function extract_speed_limits(driverAid)
 end
 
 local function extract_gradient(driverAid)
-    if type(driverAid) ~= "table" then
-        return nil
-    end
-    if type(driverAid.gradient) == "number" then
-        return driverAid.gradient
-    end
-    if type(driverAid.Gradient) == "number" then
-        return driverAid.Gradient
-    end
-    if type(driverAid.Gradient) == "table" then
-        local g = out_val(driverAid.Gradient, "Value", "value")
-        if g ~= nil then return g end
+    if type(driverAid) ~= "table" then return nil end
+    local g = driverAid.gradient or driverAid.Gradient
+    if type(g) == "number" then return g end
+    if type(g) == "table" then
+        return out_val(g, "Value", "value")
     end
     for k, v in pairs(driverAid) do
         if type(k) == "string" and string.find(string.lower(k), "grad", 1, true) then
-            if type(v) == "number" then
-                return v
-            end
+            if type(v) == "number" then return v end
             if type(v) == "table" then
-                local g = out_val(v, "Value", "value")
-                if g ~= nil then return g end
+                local nested = out_val(v, "Value", "value")
+                if nested ~= nil then return nested end
             end
         end
     end
@@ -443,27 +426,73 @@ local function extract_gradient(driverAid)
 end
 
 local function read_driver_aid(controller, debug_dump)
-    -- No inicializar gradient=0.0: enmascaraba el valor real con el default.
-    local driverAid = {
-        SpeedLimit = { Value = 0.0 },
-        speedLimit = { value = 0.0 },
-        distanceToNextSpeedLimit = 0.0,
-        nextSpeedLimit = { value = 0.0 },
-        nextSpeedLimits = {},
-    }
+    local driverAid = {}
     controller:GetDriverAidData(driverAid)
     if debug_dump then
         dump_driver_aid(driverAid)
     end
-    local speedLimit = nil
-    if driverAid.SpeedLimit then
-        speedLimit = out_val(driverAid.SpeedLimit, "Value")
-    end
-    if speedLimit == nil and driverAid.speedLimit then
-        speedLimit = out_val(driverAid.speedLimit, "value", "Value")
-    end
+    local speedLimit = scalar_ms(driverAid.SpeedLimit or driverAid.speedLimit)
     local planning = extract_speed_limits(driverAid)
     return speedLimit, extract_gradient(driverAid), planning
+end
+
+local function read_odometer_m(actor)
+    local ok, v = pcall(function()
+        local sim = actor.Simulation
+        if sim and sim.Axle_1_1 then
+            return sim.Axle_1_1.TotalDistanceTravelled_M
+        end
+        return nil
+    end)
+    if ok and type(v) == "number" and v == v and v >= 0 then
+        return v
+    end
+    return nil
+end
+
+local function actor_moved_since_last(actor)
+    local ok, loc = pcall(function() return actor:K2_GetActorLocation() end)
+    if not ok or not loc then return true end
+    if not last_actor_pos then
+        last_actor_pos = { x = loc.X, y = loc.Y, z = loc.Z }
+        return true
+    end
+    local dx = loc.X - last_actor_pos.x
+    local dy = loc.Y - last_actor_pos.y
+    local dz = loc.Z - last_actor_pos.z
+    last_actor_pos = { x = loc.X, y = loc.Y, z = loc.Z }
+    return (dx * dx + dy * dy + dz * dz) > MOVE_THRESH_CM2
+end
+
+local function train_moved_since_last(actor)
+    local odo = read_odometer_m(actor)
+    if odo ~= nil then
+        if last_odo_m == nil then
+            last_odo_m = odo
+            return true
+        end
+        local moved = math.abs(odo - last_odo_m) > ODO_MOVE_THRESH_M
+        last_odo_m = odo
+        return moved
+    end
+    return actor_moved_since_last(actor)
+end
+
+local function hold_planning_if_stationary(sample, actor)
+    if not sample.dist_limit_cm then return end
+    if train_moved_since_last(actor) then
+        held_dist_limit_cm = sample.dist_limit_cm
+        held_next_limit_ms = sample.next_limit_ms
+        held_dist_limit2_cm = sample.dist_limit2_cm
+        held_next_limit2_ms = sample.next_limit2_ms
+        return
+    end
+    if held_dist_limit_cm then
+        sample.dist_limit_cm = held_dist_limit_cm
+        sample.next_limit_ms = held_next_limit_ms
+        sample.dist_limit2_cm = held_dist_limit2_cm
+        sample.next_limit2_ms = held_next_limit2_ms
+    end
 end
 
 local function read_vehicle_class(actor)
@@ -474,12 +503,16 @@ local function read_vehicle_class(actor)
     return "?"
 end
 
+-- ── Muestra / escritura ───────────────────────────────────────────────────────
+
 local function fmt_num(v)
-    if v == nil then
-        return "?"
-    end
+    if v == nil then return "?" end
     return string.format("%.6g", v)
 end
+
+local PLANNING_FIELDS = {
+    "dist_limit_cm", "next_limit_ms", "dist_limit2_cm", "next_limit2_ms", "odo_m",
+}
 
 local function build_line(sample)
     local parts = {
@@ -497,27 +530,19 @@ local function build_line(sample)
         "gradient_pct=" .. fmt_num(sample.gradient_pct),
         "vehicle=" .. (sample.vehicle or "?"),
     }
-    if sample.dist_limit_cm then
-        table.insert(parts, "dist_limit_cm=" .. fmt_num(sample.dist_limit_cm))
-    end
-    if sample.next_limit_ms then
-        table.insert(parts, "next_limit_ms=" .. fmt_num(sample.next_limit_ms))
-    end
-    if sample.dist_limit2_cm then
-        table.insert(parts, "dist_limit2_cm=" .. fmt_num(sample.dist_limit2_cm))
-    end
-    if sample.next_limit2_ms then
-        table.insert(parts, "next_limit2_ms=" .. fmt_num(sample.next_limit2_ms))
+    for _, key in ipairs(PLANNING_FIELDS) do
+        if sample[key] then
+            table.insert(parts, key .. "=" .. fmt_num(sample[key]))
+        end
     end
     return table.concat(parts, " ")
 end
 
 local function write_line(line)
     ensure_bridge_dir()
-    local path = bridge_path()
-    local f = io.open(path, "w")
+    local f = io.open(bridge_path(), "w")
     if not f then
-        print("[TelemetryProbe] ERROR: cannot open " .. path .. "\n")
+        print("[TelemetryProbe] ERROR: cannot open " .. bridge_path() .. "\n")
         return false
     end
     f:write(line .. "\n")
@@ -525,83 +550,67 @@ local function write_line(line)
     return true
 end
 
+local function safe_read(label, fn)
+    local ok, result = pcall(fn)
+    if not ok then
+        log_hud_error(label, result)
+        return nil
+    end
+    return result
+end
+
+local function apply_driver_aid(sample, controller, debug_driver_aid, actor)
+    local ok, speed_limit, gradient, planning = pcall(function()
+        return read_driver_aid(controller, debug_driver_aid)
+    end)
+    if not ok then
+        log_hud_error("driver_aid", speed_limit)
+        return
+    end
+    sample.speed_limit_ms = speed_limit
+    sample.gradient_pct = gradient
+    if type(planning) == "table" then
+        sample.dist_limit_cm = planning.dist_limit_cm
+        sample.next_limit_ms = planning.next_limit_ms
+        sample.dist_limit2_cm = planning.dist_limit2_cm
+        sample.next_limit2_ms = planning.next_limit2_ms
+        hold_planning_if_stationary(sample, actor)
+    end
+end
+
 local function collect_sample(controller, debug_driver_aid)
-    local sample = {
-        seq = seq,
-        vehicle = "?",
-        power_neg = false,
-    }
+    local sample = { seq = seq, vehicle = "?", power_neg = false }
 
     local actor = controller:GetDrivableActor()
     if not actor or not actor:IsValid() then
         return sample, "no_drivable"
     end
 
-    local ok, err
-
-    ok, sample.speed_ms = pcall(function() return read_speed(actor) end)
-    if not ok then log_hud_error("speed", sample.speed_ms) end
-
-    ok, sample.power, sample.power_neg = pcall(function()
-        local p, neg, _active = read_power(actor)
-        return p, neg
-    end)
-    if not ok then log_hud_error("power", sample.power) end
-
-    ok, sample.train_brake = pcall(function()
-        local pos, _active = read_train_brake(actor)
-        return pos
-    end)
-    if not ok then log_hud_error("train_brake", sample.train_brake) end
-
-    ok, sample.loco_brake = pcall(function()
-        local pos, _active = read_loco_brake(actor)
-        return pos
-    end)
-    if not ok then log_hud_error("loco_brake", sample.loco_brake) end
-
-    ok, sample.dyn_brake = pcall(function()
-        local pos, _active = read_dyn_brake(actor)
-        return pos
-    end)
-    if not ok then log_hud_error("dyn_brake", sample.dyn_brake) end
-
-    ok, sample.accel_ms2 = pcall(function() return read_accel(actor) end)
-    if not ok then log_hud_error("accel", sample.accel_ms2) end
-
-    ok, sample.max_speed_ms, sample.max_speed_active = pcall(function()
-        local maxMs, active = read_max_speed(actor)
-        return maxMs, active
-    end)
-    if not ok then
-        log_hud_error("max_speed", sample.max_speed_ms)
-        sample.max_speed_active = false
+    sample.speed_ms = safe_read("speed", function() return read_speed(actor) end)
+    do
+        local ok, power, power_neg = pcall(function() return read_power(actor) end)
+        if ok then
+            sample.power = power
+            sample.power_neg = power_neg == true
+        else
+            log_hud_error("power", power)
+        end
     end
-
-    if not sample.max_speed_active then
-        sample.max_speed_ms = nil
-    end
-
+    sample.train_brake = safe_read("train_brake", function()
+        return read_brake_handle(actor, "HUD_GetTrainBrakeHandle")
+    end)
+    sample.loco_brake = safe_read("loco_brake", function()
+        return read_brake_handle(actor, "HUD_GetLocomotiveBrakeHandle")
+    end)
+    sample.dyn_brake = safe_read("dyn_brake", function()
+        return read_brake_handle(actor, "HUD_GetElectricBrakeHandle")
+    end)
+    sample.accel_ms2 = safe_read("accel", function() return read_accel(actor) end)
+    sample.odo_m = safe_read("odo", function() return read_odometer_m(actor) end)
+    sample.max_speed_ms = safe_read("max_speed", function() return read_max_speed(actor) end)
     sample.handle_notch = power_to_notch(sample.power, sample.power_neg)
-
-    ok, sample.speed_limit_ms, sample.gradient_pct, sample.planning = pcall(function()
-        return read_driver_aid(controller, debug_driver_aid)
-    end)
-    if not ok then
-        log_hud_error("driver_aid", sample.speed_limit_ms)
-        sample.gradient_pct = nil
-        sample.planning = nil
-    elseif type(sample.planning) == "table" then
-        local p = sample.planning
-        sample.dist_limit_cm = p.dist_limit_cm
-        sample.next_limit_ms = p.next_limit_ms
-        sample.dist_limit2_cm = p.dist_limit2_cm
-        sample.next_limit2_ms = p.next_limit2_ms
-        sample.planning = nil
-    end
-
-    ok, sample.vehicle = pcall(function() return read_vehicle_class(actor) end)
-    if not ok then log_hud_error("vehicle", sample.vehicle) end
+    apply_driver_aid(sample, controller, debug_driver_aid, actor)
+    sample.vehicle = safe_read("vehicle", function() return read_vehicle_class(actor) end) or "?"
 
     if not debugDumped and sample.power ~= nil then
         debugDumped = true
@@ -618,20 +627,13 @@ local function collect_sample(controller, debug_driver_aid)
 end
 
 local function maybe_write(controller, force)
-    if not probeEnabled and not force then
-        return
-    end
-
+    if not probeEnabled and not force then return end
     local now = os.clock()
-    if not force and (now - lastWriteClock) < WRITE_INTERVAL_S then
-        return
-    end
+    if not force and (now - lastWriteClock) < WRITE_INTERVAL_S then return end
 
     seq = seq + 1
     local sample, err = collect_sample(controller, force)
-    if err == "no_drivable" then
-        return
-    end
+    if err == "no_drivable" then return end
 
     local line = build_line(sample)
     write_line(line)
@@ -643,19 +645,15 @@ local function maybe_write(controller, force)
     end
 end
 
+-- ── Hooks / teclas ────────────────────────────────────────────────────────────
+
 local function register_hook()
-    if hooked then
-        return
-    end
+    if hooked then return end
     hookPre, hookPost = RegisterHook(HOOK_PATH, function(self)
-        if not probeEnabled then
-            return
-        end
+        if not probeEnabled then return end
         local controller = self:get()
-        if not controller or not controller:IsValid() then
-            return
-        end
-        process_send_commands()
+        if not controller or not controller:IsValid() then return end
+        process_send_commands(controller)
         maybe_write(controller, false)
     end)
     hooked = true
@@ -663,22 +661,30 @@ local function register_hook()
 end
 
 local function unregister_hook()
-    if not hooked then
-        return
-    end
+    if not hooked then return end
     UnregisterHook(HOOK_PATH, hookPre, hookPost)
     hooked = false
     hookPre, hookPost = nil, nil
     print("[TelemetryProbe] Hook unregistered\n")
 end
 
-RegisterInitGameStatePreHook(function()
-    unregister_hook()
-    purge_ipc_files()
+local function reset_session_state()
     seq = 0
     lastWriteClock = 0
     lastLogClock = 0
+    last_odo_m = nil
+    last_actor_pos = nil
+    held_dist_limit_cm = nil
+    held_next_limit_ms = nil
+    held_dist_limit2_cm = nil
+    held_next_limit2_ms = nil
     debugDumped = false
+end
+
+RegisterInitGameStatePreHook(function()
+    unregister_hook()
+    purge_ipc_files()
+    reset_session_state()
 end)
 
 RegisterInitGameStatePostHook(function()
@@ -691,9 +697,7 @@ RegisterKeyBind(Key.F7, {}, function()
     ExecuteInGameThread(function()
         probeEnabled = not probeEnabled
         print("[TelemetryProbe] " .. (probeEnabled and "ENABLED" or "DISABLED") .. "\n")
-        if probeEnabled then
-            register_hook()
-        end
+        if probeEnabled then register_hook() end
     end)
 end)
 

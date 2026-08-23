@@ -114,6 +114,7 @@ class ProbeSnapshot:
     next_limit_ms: Optional[float] = None
     dist_limit2_cm: Optional[float] = None
     next_limit2_ms: Optional[float] = None
+    odo_m: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -135,6 +136,7 @@ class ProbeSnapshot:
             next_limit_ms=data.get("next_limit_ms"),
             dist_limit2_cm=data.get("dist_limit2_cm"),
             next_limit2_ms=data.get("next_limit2_ms"),
+            odo_m=data.get("odo_m"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 

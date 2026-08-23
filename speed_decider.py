@@ -127,6 +127,12 @@ class SpeedDecider:
     def station_name(self) -> Optional[str]:
         return self._fsm.name
 
+    def scheduled_next_stop(
+        self, stations: Optional[list],
+    ) -> Optional[dict]:
+        """Próxima parada comercial respetando paradas ya servidas."""
+        return self._fsm.select_next_stop(stations)
+
     @property
     def target_stop_min_m(self) -> Optional[float]:
         return self._fsm.target_stop_min_m
@@ -167,6 +173,11 @@ class SpeedDecider:
         if self._last_state is not None:
             return self._last_state.handle_notch
         return 4
+
+    @property
+    def brake_command(self):
+        """Último comando Dastsc (B1/B2/B3 notch directo) del plan P1."""
+        return self._braking.last_brake_command
 
     # ── Delegados de physics para el dashboard ─────────────────────────────
 
@@ -360,6 +371,7 @@ class SpeedDecider:
                 speed_limits_ahead = speed_lims_list,
                 base_decel_ms2     = self._physics.eff_max_decel,
                 predict_decel      = self._physics.predict_brake_decel_ms2,
+                handle_notch       = state.handle_notch,
             )
             if p1_action is not None:
                 self.effective_limit = effective_limit

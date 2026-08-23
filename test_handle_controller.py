@@ -260,3 +260,52 @@ class TestSafetyWatchdog:
         w = SafetyWatchdog()
         s = _state(speed_mph=60.0, limit_mph=0.0)
         assert w.check(s) is None
+
+
+class TestDastscDirectNotch:
+    def test_ipc_applies_absolute_notch_from_brake_command(self):
+        from brake_command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock()
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = True
+
+        cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
+        s = _state(handle_notch=4)
+
+        assert c.execute("BRAKE", s, conn, None, brake_command=cmd) is True
+        conn.set_control_value.assert_called_once()
+        args = conn.set_control_value.call_args[0]
+        assert args[0] == "PowerBrakeHandle"
+        assert abs(args[1] - 0.25) < 0.01
+
+    def test_hwnd_prefers_keyboard_over_ipc(self):
+        from brake_command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock()
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+
+        cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
+        s = _state(handle_notch=4)
+        hwnd = MagicMock()
+
+        with patch("handle_controller.send_key") as mock_key:
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
+            mock_key.assert_called_once()
+            conn.set_control_value.assert_not_called()
+
+    def test_hold_still_executes_brake_command(self):
+        from brake_command import BrakeCommand
+
+        c = _fresh()
+        cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
+        s = _state(handle_notch=5)
+        hwnd = MagicMock()
+
+        with patch("handle_controller.send_key") as mock_key:
+            assert c.execute("HOLD", s, None, hwnd, brake_command=cmd) is True
+            mock_key.assert_called_once()

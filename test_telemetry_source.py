@@ -306,26 +306,185 @@ def test_probe_planning_updates_small_distance_changes(tmp_path: Path):
     assert telem_a["distance_next_m"] - telem_b["distance_next_m"] < 1.5
 
 
-def test_probe_extrapolates_between_polls():
-    """Entre polls Python (mismo seq) la distancia baja suavemente."""
+def test_planning_hold_freezes_distance():
+    """Autopilot en pausa: distancias congeladas en caché."""
+    conn = TswTelemetrySource()
+    conn.set_planning_hold(True)
+    planning_a = {
+        "distance_next_m": 800.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 800.0}],
+    }
+    planning_b = {
+        "distance_next_m": 750.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 750.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 60.0}, planning_a, probe_seq=1, probe_fresh=True,
+    )
+    parsed = {"speed_mph": 60.0}
+    conn._apply_probe_planning(
+        parsed, planning_b, probe_seq=2, probe_fresh=True,
+    )
+    assert parsed["distance_next_m"] == 800.0
+    assert parsed.get("planning_hold") is True
+
+
+def test_probe_no_double_count_when_seq_advances():
+    """Cada seq nuevo trae dist del juego: no restar otra vez por extrapolación."""
+    conn = TswTelemetrySource()
+    planning_a = {
+        "distance_next_m": 1000.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 1000.0}],
+    }
+    planning_b = {
+        "distance_next_m": 975.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 975.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 56.0}, planning_a, probe_seq=1, probe_fresh=True,
+    )
+    parsed = {"speed_mph": 56.0}
+    conn._apply_probe_planning(
+        parsed, planning_b, probe_seq=2, probe_fresh=True,
+    )
+    assert abs(parsed["distance_next_m"] - 975.0) < 0.1
+
+
+def test_probe_holds_distance_when_stopped_and_probe_decreases():
+    """Parado: ignorar bajadas espurias del probe (pausa / velocidad residual)."""
+    conn = TswTelemetrySource()
+    planning_a = {
+        "distance_next_m": 500.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 500.0}],
+    }
+    planning_b = {
+        "distance_next_m": 480.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 480.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 0.0}, planning_a, probe_seq=10, probe_fresh=True,
+    )
+    parsed = {"speed_mph": 0.0}
+    conn._apply_probe_planning(
+        parsed, planning_b, probe_seq=11, probe_fresh=True,
+    )
+    assert parsed["distance_next_m"] == 500.0
+
+
+def test_probe_same_seq_holds_distance_no_python_odom():
+    """API DriverAid @ ~20 Hz: mismo seq → sin restar en Python."""
     conn = TswTelemetrySource()
     planning = {
         "distance_next_m": 200.0,
         "speed_limits_ahead": [{"limit_mph": 35.0, "distance_m": 200.0}],
     }
     conn._apply_probe_planning(
-        {"speed_mph": 45.0},
+        {"speed_mph": 45.0, "odo_m": 1000.0},
         planning,
         probe_seq=5,
         probe_fresh=True,
     )
-    conn._probe_extrap_last_t = time.monotonic() - 0.1
-    parsed = {"speed_mph": 45.0}
+    parsed = {"speed_mph": 45.0, "odo_m": 1000.0}
     conn._apply_probe_planning(
         parsed,
         planning,
         probe_seq=5,
         probe_fresh=True,
     )
-    assert parsed["distance_next_m"] < 200.0
-    assert parsed["distance_next_m"] > 197.5
+    assert parsed["distance_next_m"] == 200.0
+
+
+def test_probe_holds_distance_when_odo_frozen():
+    """Odómetro API sin avance: ignorar bajadas de distanceToNextSpeedLimit."""
+    conn = TswTelemetrySource()
+    planning_a = {
+        "distance_next_m": 500.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 500.0}],
+    }
+    planning_b = {
+        "distance_next_m": 480.0,
+        "speed_limits_ahead": [{"limit_mph": 50.0, "distance_m": 480.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 56.0, "odo_m": 1000.0},
+        planning_a,
+        probe_seq=10,
+        probe_fresh=True,
+    )
+    conn._motion_odo_since = time.monotonic() - 1.0
+    conn._motion_last_odo_m = 1000.0
+    parsed = {"speed_mph": 56.0, "odo_m": 1000.0}
+    conn._apply_probe_planning(
+        parsed, planning_b, probe_seq=11, probe_fresh=True,
+    )
+    assert parsed["distance_next_m"] == 500.0
+
+
+def test_probe_extrap_skipped_when_motion_frozen():
+    """Odómetro congelado: ignorar bajada espuria de distanceToNextSpeedLimit."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 200.0,
+        "speed_limits_ahead": [{"limit_mph": 35.0, "distance_m": 200.0}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 45.0, "odo_m": 500.0},
+        planning,
+        probe_seq=5,
+        probe_fresh=True,
+    )
+    conn._motion_odo_since = time.monotonic() - 1.0
+    conn._motion_last_odo_m = 500.0
+    parsed = {"speed_mph": 45.0, "odo_m": 500.0}
+    planning_lower = {
+        "distance_next_m": 180.0,
+        "speed_limits_ahead": [{"limit_mph": 35.0, "distance_m": 180.0}],
+    }
+    conn._apply_probe_planning(
+        parsed,
+        planning_lower,
+        probe_seq=6,
+        probe_fresh=True,
+    )
+    assert parsed.get("probe_motion_frozen") is True
+    assert parsed["distance_next_m"] == 200.0
+
+
+def test_speed_direct_from_probe_no_planning_touch(tmp_path: Path):
+    """Velocidad: lectura directa del probe; planning no la altera."""
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=5 speed_ms=22.35 power=0 handle_notch=4 "
+        "dist_limit_cm=50000 next_limit_ms=13.41 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    conn._planning_dist = {"distance_next_m": 1.0}
+    with patch.object(conn, "_kick_planning_refresh"):
+        telem = conn.get_telemetry()
+    assert abs(telem["speed_mph"] - 50.0) < 0.5
+    assert telem.get("probe_seq") == 5
+
+
+def test_speed_updates_each_probe_read(tmp_path: Path):
+    """Cada lectura GetData.txt refresca speed_mph (sin caché intermedio)."""
+    getdata = tmp_path / "GetData.txt"
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    with patch.object(conn, "_kick_planning_refresh"):
+        getdata.write_text(
+            "seq=1 speed_ms=10.0 power=0 handle_notch=4 vehicle=Class323\n",
+            encoding="utf-8",
+        )
+        telem_a = conn.get_telemetry()
+        getdata.write_text(
+            "seq=2 speed_ms=15.0 power=0 handle_notch=4 vehicle=Class323\n",
+            encoding="utf-8",
+        )
+        telem_b = conn.get_telemetry()
+    assert telem_a["speed_mph"] < telem_b["speed_mph"]
+    assert abs(telem_a["speed_mph"] - 22.37) < 0.5
+    assert abs(telem_b["speed_mph"] - 33.55) < 0.5

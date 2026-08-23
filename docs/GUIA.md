@@ -6,10 +6,12 @@
 | --- | --- | --- | --- |
 | Calibrar (`aprender.bat`) | ✅ | ✅ recomendado | No |
 | Monitor (`probe_ue4ss.bat`) | ✅ | ✅ | No |
-| Autopiloto (`iniciar_autopilot.bat`) | ✅ | ✅ recomendado | **Sí** (escritura mandos) |
+| Autopiloto (`iniciar_autopilot.bat`) | ✅ | ✅ recomendado | **Sí** (mandos HTTP fallback + **estaciones/horario HUD**) |
+| Horarios HUD (`preparar_db_hud.bat`) | ✅ | — | Recomendado (`PlayerInfo.geoLocation`) |
 | Monitor API (`tsw_monitor.py`) | ✅ | — | Sí |
 
-- **Python 3.9+** (los `.bat` lo detectan).
+- **Python 3.9+** (3.11 recomendado; los `.bat` lo detectan).
+- Desarrollo/tests: `requirements-dev.txt` + `.venv` (ver [docs/README.md](README.md)).
 - Escenario cargado, **en cabina**, tren encendido.
 - No se usa RailBridge. Código legacy: `archive/railbridge/`.
 
@@ -48,7 +50,6 @@ Telemetría rápida (~17 Hz) sin polling HTTP. Patrón Dastsc: archivo en
 ### Comprobar desde Python
 
 ```bat
-probe_ue4ss.bat
 ```
 
 Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás modo **UE4SS** al conectar.
@@ -56,14 +57,33 @@ Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás mod
 ### Autopiloto (estado actual)
 
 - **Lee** mandos y velocidad del probe (~20 Hz).
-- **Escribe** frenos vía `SendCommand.txt` (IPC Lua, sin `-HTTPAPI`).
-- **Planning** (2 límites): probe UE4SS ~20 Hz; estaciones opcional vía HTTP `DriverAid`.
+- **Escribe** frenos vía `SendCommand.txt` (IPC Lua; HTTP PATCH como fallback).
+- **Planning límites:** probe UE4SS ~20 Hz (2 límites adelante).
+- **Planning estaciones:** HTTP `DriverAid` + **`tsw_hud.db`** (horario comercial,
 
-`-HTTPAPI` ya no es necesario para mandos ni para distancias a límites. Solo hace falta si quieres estaciones/paradas desde HTTP.
+  `car_stop_signs`).
 
-Clave API (solo planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
+`-HTTPAPI` **no** es necesario para mandos ni distancias a límites. **Sí** hace falta para
+paradas programadas con horario HUD (`currentServiceName` + `geoLocation`).
 
-Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) fase B4 · `tsw_ipc_bus.py`.
+Clave API (planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
+
+Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) · `tsw_ipc_bus.py`.
+Horarios: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
+
+---
+
+## Horarios HUD (`tsw_hud.db`) — opcional
+
+Para filtrar paradas del servicio activo (sin paso, dirección correcta, tablón `car_stop`):
+
+1. `preparar_db_hud.bat` — BD semilla del mod oficial + sincronizar a `TSW6\tsw_hud.db`
+2. `abrir_hud_extraccion.bat` — extraer DLCs en `hud.exe` → **Load my DLCs**
+3. Tras cada extracción: volver a ejecutar `preparar_db_hud.bat`
+4. `python verificar_hud_db.py` — comprobar BD y horario 2R17 / Cross-City
+5. En juego: TSW con **`-HTTPAPI`**, servicio comercial → GUI **Planning** muestra `[horario HUD#…]`
+
+Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refrescar_path_rust.bat`.
 
 ---
 
@@ -78,6 +98,9 @@ Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) fase B4 · `tsw_
 | `aprender.bat` | Calibración guiada |
 | `iniciar_autopilot.bat` | Autopiloto con perfil calibrado |
 | `iniciar_monitor.bat` | Monitor API (depuración) |
+| `preparar_db_hud.bat` | BD semilla HUD + copia a TSW6 |
+| `abrir_hud_extraccion.bat` | Abre `hud.exe` para extraer DLCs |
+| `extraer_horario_hud.bat` | Setup completo extractor HUD (Rust) |
 
 ### Flujo recomendado (Class 323)
 
@@ -122,9 +145,11 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 | **4** | Telemetría manual por teclado |
 | **5** | Monitor API |
 
-**Requisitos:** perfil calibrado + **TelemetryProbeMod** activo. `-HTTPAPI` opcional (solo estaciones).
+**Requisitos:** perfil calibrado + **TelemetryProbeMod** activo.
 
-Opción **3** (`--no-control`) sirve para probar telemetría sin escribir mandos.
+- **Mandos:** IPC (sin `-HTTPAPI`).
+- **Paradas HUD:** `-HTTPAPI` recomendado.
+- Opción **3** (`--no-control`): solo telemetría, sin escribir mandos.
 
 ---
 
@@ -139,9 +164,11 @@ Opción **3** (`--no-control`) sirve para probar telemetría sin escribir mandos
 
 | Herramienta | Pregunta |
 | --- | --- |
-| `probe_ue4ss` | ¿El probe lee bien a ~17 Hz? |
+| `probe_ue4ss` | ¿El probe lee bien a ~20 Hz? |
 | `aprender` | ¿Cuánto acelera/frena cada muesca? |
-| `iniciar_autopilot` | Conduce con ese conocimiento (necesita HTTPAPI para mandos) |
+| `preparar_db_hud` | ¿Tengo horarios comerciales en `tsw_hud.db`? |
+| `iniciar_autopilot` | Conduce con ese conocimiento (IPC mandos; HTTP para paradas HUD) |
 
 Más detalle técnico: [ARQUITECTURA.md](ARQUITECTURA.md) ·
+[HUD_TIMETABLE.md](HUD_TIMETABLE.md) ·
 [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).

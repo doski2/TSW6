@@ -1,7 +1,7 @@
 # Arquitectura y roadmap
 
-Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~17 Hz); escritura de mandos vía
-**HTTPAPI** (hasta implementar `SendCommand.txt` en Lua).
+Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de mandos vía
+**IPC** (`SendCommand.txt`); planning estaciones vía **HTTPAPI** + **`tsw_hud.db`**.
 
 ---
 
@@ -12,14 +12,16 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~17 Hz); escritura de 
 
 | Módulo | Rol |
 | --- | --- |
-| `mods/TelemetryProbeMod/` | Mod Lua — lectura HUD, IPC `GetData.txt` |
+| `mods/TelemetryProbeMod/` | Mod Lua — lectura HUD, IPC |
 | `tsw_ue4ss_reader.py` | Parser + monitor + benchmark probe |
-| `tsw_telemetry_source.py` | Fuente unificada `ue4ss` / `tsw_api` |
-| `tsw_fast_telemetry.py` | Lectura HUD HTTP (~12 Hz máx) |
-| `tsw_api_client.py` | Cliente HTTP (auth, GET/PATCH) |
-| `tsw_command_bus.py` | Allowlist + dispatch frenos/handle |
-| `handle_controller.py` | Un paso de mando por ciclo |
-| `tsw_monitor.py` | Dashboard HTTP (depuración) |
+| `tsw_telemetry_source.py` | Fuente unificada `ue4ss` / `tsw_api`; filtro HUD |
+| `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
+| `driver_aid_parser.py` | DriverAid → planning, estaciones |
+| `tsw_ipc_bus.py` | Mandos `SendCommand.txt` |
+| `tsw_command_bus.py` | Mandos HTTP PATCH (fallback) |
+| `brake_planner.py` / `brake_command.py` | Plan P1 B1–B3 (Dastsc) |
+| `governor_station.py` | FSM paradas |
+| `autopilot_core.py` / `autopilot_gui.py` | Bucle ~20 Hz + GUI |
 | `archive/railbridge/` | Companion SSE — **no usar** |
 
 ---
@@ -28,13 +30,27 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~17 Hz); escritura de 
 
 | | UE4SS probe | HTTPAPI |
 | --- | --- | --- |
-| Velocidad, mandos, acel | ✅ ~17 Hz | ✅ ~12 Hz |
+| Velocidad, mandos, acel | ✅ ~20 Hz | ✅ ~12 Hz |
 | Gradiente vía | `GetDriverAidData` probe | `DriverAid.Data.gradient` |
-| Planning / estaciones | No | Parcial `DriverAid` |
-| Escribir mandos | ⬜ futuro `SendCommand.txt` | ✅ PATCH hoy |
+| 2 límites adelante | ✅ `GetData.txt` | ✅ `DriverAid.Data` |
+| Estaciones / horario | No | ✅ `TrackData` + `tsw_hud.db` |
+| `PlayerInfo.geoLocation` | No | ✅ match horario HUD |
+| Escribir mandos | ✅ `SendCommand.txt` | ✅ PATCH (fallback) |
 
 **Calibración** (`aprender.bat`): solo lectura → UE4SS basta.
-**Autopiloto**: lectura UE4SS + escritura HTTP → necesita `-HTTPAPI` hasta fase B4.
+**Autopiloto mandos:** IPC (sin `-HTTPAPI`).
+**Autopiloto paradas HUD:** `-HTTPAPI` + `tsw_hud.db`.
+
+---
+
+## Planning estaciones (HUD)
+
+```text
+```
+
+Hilo `tsw-planning`: poll HTTP async; SQLite thread-local en `HudTimetableStore`.
+
+Detalle: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
 
 ---
 
@@ -50,43 +66,33 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~17 Hz); escritura de 
 | Método | Uso |
 | --- | --- |
 | `GET /info` | Meta, versión |
-| `GET /get/{ruta}` | Nodo (ej. `DriverAid.Data`, `CurrentDrivableActor.Function.HUD_GetSpeed`) |
+| `GET /get/{ruta}` | Nodo (ej. `DriverAid.Data`, `DriverAid.PlayerInfo`) |
 | `PATCH /set/{ruta}.Value?Value={n}` | Escribir mando |
 | `GET /list/{nodo}` | Descubrir rutas |
 
-### Gradiente (HTTPAPI)
-
-```http
-```
-
-Alternativa: `CurrentDrivableActor/Simulation/Axle_1_1.TrackGradient_DEG`.
-
-Referencia endpoints: `Desktop\investigacion tsw
-6\tsw_projects-main\...\endpoints\DriverAid_endpoints.json`.
+Catálogo DriverAid: [DRIVERAID_API.md](DRIVERAID_API.md).
 
 ### Latencia HTTP (Class 323)
 
 | Operación | ~Tiempo |
 | --- | --- |
 | GET en ráfaga (sesión caliente) | 15 ms |
-| 4 lecturas HUD | 80 ms → ~12 Hz |
+| Poll planning (Data + TrackData + PlayerInfo) | ~2 s intervalo |
 | PATCH freno | 50–150 ms |
-| Ciclo leer → decidir → mandar | 180–300 ms (3–5 Hz) |
 
-Por eso la **lectura** migró a UE4SS; la **escritura** sigue en HTTP por ahora.
+Lectura crítica (velocidad) en UE4SS; HTTP para planning lento.
 
 ---
 
 ## Command bus (patrón Dastsc)
 
-| Dastsc (TSC) | TSW6 hoy | TSW6 objetivo |
-| --- | --- | --- |
-| `GetData.txt` | ✅ TelemetryProbeMod | ✅ |
-| `SendCommand.txt` | ⬜ | Mod Lua + allowlist |
-| `command_bus.py` | `tsw_command_bus.py` → PATCH | mismo allowlist, distinto transporte |
+| Dastsc (TSC) | TSW6 |
+| --- | --- |
+| `GetData.txt` | ✅ TelemetryProbeMod |
+| `SendCommand.txt` | ✅ `tsw_ipc_bus.py` |
+| `command_bus.py` | `brake_command.py` + allowlist IPC/HTTP |
 
 Mandos permitidos: `PowerBrakeHandle`, `AutomaticBrake`, `IndependentBrake`, `DynamicBrake`.
-Bloqueados: emergencia, reverser, master key, throttle libre.
 
 ---
 
@@ -97,31 +103,24 @@ Bloqueados: emergencia, reverser, master key, throttle libre.
 | Probe lectura (A3/B1/B2) | ✅ | `TelemetryProbeMod`, `tsw_ue4ss_reader` |
 | Integración Python (B3) | ✅ | `tsw_telemetry_source`, aprender/autopilot |
 | Gradiente (Lua probe) | ✅ | `gradient_pct` en GetData.txt |
-| Escritura Lua (B4) | ⬜ | `SendCommand.txt`, sin `-HTTPAPI` |
+| Escritura Lua (B4) | ✅ | `SendCommand.txt` |
+| Planning 2 límites probe | ✅ | `dist_limit_*` en GetData.txt |
+| Horario HUD (`tsw_hud.db`) | ✅ planning | `hud_timetable.py` |
+| Parada exacta tablón (frenado) | 🔄 | `planBrakeForStation` |
 | Freight SD40-2 probe | ⬜ | 4 mandos en `GetData.txt` |
-| Freight F4–6 | ⬜ | [FREIGHT_NA.md](FREIGHT_NA.md) |
 
-Checklist detallado: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
-
----
-
-## V2 API — seguimiento código
-
-| Fase | Descripción | Estado |
-| --- | --- | --- |
-| V2.0 | `tsw_api_client.py` | ✅ |
-| V2.1 | `tsw_command_bus.py` | ✅ |
-| V2.4 | Autopiloto + `handle_controller` | ✅ (escritura HTTP) |
-| V2.5–6 | Freight multi-mando | ⬜ |
+Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 
 ---
 
 ## Preguntas abiertas
 
 1. ~~Formato IPC lectura~~ → TSV en `GetData.txt` ✅
-2. Gradiente: ¿`GetDriverAidData.Gradient` en Lua o poll `DriverAid.Data`?
-3. ¿Planning imprescindible en v1 autopiloto? (probablemente no para 323 por límite actual)
-4. B4 `SendCommand.txt` — prioridad para quitar `-HTTPAPI`
+2. ~~Gradiente en probe~~ ✅
+3. ~~Planning estaciones sin RailBridge~~ → HUD DB + HTTP ✅
+4. ~~B4 SendCommand~~ ✅
+5. Distancia tablón en tiempo real (GPS cada tick) vs odometría — pendiente
+6. `planBrakeForStation` — prioridad para parada exacta
 
 ---
 
@@ -130,4 +129,6 @@ Checklist detallado: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 | Fecha | Nota |
 | --- | --- |
 | 2026-08-18 | Probe 323 ~17 Hz; DynamicHUD `enabled.txt` anulaba `mods.txt` |
-| 2026-08-18 | Arquitectura híbrida: UE4SS lee, HTTP escribe |
+| 2026-08-19 | IPC mandos; planning 2 límites |
+| 2026-08-22 | Velocidad congelada ~20 Hz GUI |
+| 2026-08-23 | HUD timetable: filtro paradas, `car_stop_signs`, merge `hud_geo` |

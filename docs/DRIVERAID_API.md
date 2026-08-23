@@ -147,16 +147,21 @@ No sustituye a `gradient` para física de frenado (el gradiente ya viene en `Dat
 
 | Campo | Tipo | Estado | Qué es | Uso |
 | --- | --- | --- | --- | --- |
-| `markers[]` | array | 🟡 | Puntos de interés con nombre | Paradas programadas |
-| `markers[].markerType` | string | 🟡 | Ej. `Platform` | — |
-| `markers[].markerName` | string | 🟡 | Ej. `Lichfield City, andén 2` | UI / planning |
+| `markers[]` | array | ✅ | Paradas **programadas** del servicio | `markerName` + distancia |
+| `markers[].markerType` | string | ✅ | Siempre `Platform` en UK (no «market») | Filtro de tipo |
+| `markers[].markerName` | string | ✅ | Ej. `Lichfield City, andén 2` | Próxima parada |
 | `markers[].stationName` | string | 🟡 | Nombre corto estación | — |
-| `markers[].distanceToStationCM` | number (cm) | 🟡 | Distancia al marcador | Parada en andén (futuro) |
-| `markers[].platformLength` | number (cm) | 🟡 | Longitud andén | — |
+| `markers[].distanceToStationCM` | number (cm) | 🟡 | Distancia al marcador | Fin de andén; **no** es el tablón `car_stop` |
+| `markers[].platformLength` | number (cm) | 🟡 | Longitud andén | Ventana FSM STOPPED |
 | `markers[].distanceToStation` | `{ x, y }` | 🟡 | Coordenadas internas | — |
-| `stations[]` | array | 🟡 | Similar a `markers` sin nombre visible | Lista más cruda de plataformas |
+| `stations[]` | array | 🟡 | Geometría de andén (sin nombre) | **No** usar como parada |
 
-**Estado:** 🟡 planning comercial; **no necesario** para calibrar frenos ni autopiloto por límite.
+**Integración HUD (2026-08-23):** `parse_track_data_stations` lee solo `markers[]` con
+`markerType=Platform`. El autopilot filtra con `tsw_hud.db` (`hud_timetable.py`); si TrackData
+muestra andenes de dirección incorrecta, usa distancias desde `car_stop_signs` (`source: hud_geo`).
+Ver [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
+
+**Estado:** ✅ planning comercial con HUD DB; 🟡 distancia along-track solo cuando el nombre coincide.
 
 ---
 
@@ -167,12 +172,12 @@ No sustituye a `gradient` para física de frenado (el gradiente ya viene en `Dat
 | Campo | Tipo | Estado | Qué es | Uso |
 | --- | --- | --- | --- | --- |
 | `playerProfileName` | string | ❌ | Perfil guardado TSW | Logs |
-| `currentServiceName` | string | ❌ | Código servicio | Ej. `2R17` |
+| `currentServiceName` | string | ✅ | Código servicio | Ej. `2R17` — match en `tsw_hud.db` |
 | `cameraMode` | string | ❌ | Ej. `FirstPerson_Driving` | — |
 | `currentTile` | `{ x, y }` | ❌ | Tile mundo | Debug |
-| `geoLocation` | `{ latitude, longitude }` | ❌ | WGS84 aproximado | Mapa real |
+| `geoLocation` | `{ latitude, longitude }` | ✅ | WGS84 aproximado | Desambiguar horario HUD por posición |
 
-**Estado:** ❌ para frenado; útil para identificar sesión en logs.
+**Estado:** `geoLocation` + `currentServiceName` necesarios para `schedule_source=hud_db`.
 
 ---
 
@@ -202,8 +207,9 @@ DriverAid:
 | Aceleración por muesca de freno | Probe `train_brake` / `handle_notch` + `accel_ms2` | No |
 | Banda de gradiente en learner | Probe `gradient_pct` (o `DriverAid.Data.gradient` fallback) | **Sí** |
 | Distancia de frenado | Velocidad + perfil + `gradient_pct` | **Sí** (gradiente) |
-| Saber cuándo bajar límite | `speed_limit_ms` + (futuro) `nextSpeedLimits` | Parcial |
-| Parar en andén | `TrackData.markers` | Futuro |
+| Saber cuándo bajar límite | `speed_limit_ms` + probe / `nextSpeedLimits` | Parcial |
+| Parar en andén (qué parada) | `tsw_hud.db` + `TrackData.markers` | ✅ con HUD DB |
+| Distancia al tablón | `car_stop_signs` en HUD DB | ✅ planning · 🔄 frenado FSM |
 
 ---
 
@@ -228,9 +234,12 @@ DriverAid:
 | Archivo | Relación |
 | --- | --- |
 | `mods/TelemetryProbeMod/Scripts/main.lua` | `GetDriverAidData` → `gradient`, `SpeedLimit` |
-| `tsw_telemetry_source.py` | Poll `DriverAid.Data`, parser `gradient` |
+| `tsw_telemetry_source.py` | Poll `DriverAid` + filtro estaciones HUD |
+| `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
+| `driver_aid_parser.py` | `parse_track_data_stations`, filtros parada |
 | `tsw_ue4ss_reader.py` | `--api` compara probe vs HTTP |
-| `docs/PENDIENTE_DYNAMICHUD.md` | Roadmap probe / B4 |
+| `docs/HUD_TIMETABLE.md` | Setup BD, validación in-game |
+| `docs/PENDIENTE_DYNAMICHUD.md` | Roadmap probe / IPC |
 | `docs/ARQUITECTURA.md` | Lectura UE4SS vs HTTPAPI |
 
 ---
@@ -242,5 +251,6 @@ DriverAid:
 | 2026-08-18 | `gradient` HTTP + Lua | Class 323, correlación HUD OK |
 | 2026-08-18 | `speedLimit` | Coherente con límite HUD (~45 mph) |
 | 2026-08-18 | Dump completo | 3 endpoints, Cross-City / Lichfield |
+| 2026-08-23 | `PlayerInfo` + HUD DB | `2R17` Cross-City, paradas `car_stop_signs` en planning |
 
 *Pendiente:* validar mismos campos en **BNSF SD40-2** y tras próximo parche TSW.

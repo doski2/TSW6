@@ -2,7 +2,8 @@
 
 **Objetivo:** telemetría **in-process** (~17–20 Hz) vía UE4SS y puente a Python (`GetData.txt`).
 
-**Estado:** ✅ MVP Class 323 (2026-08-19) — lectura UE4SS · mandos SendCommand · planning HTTP opcional · SD40-2 pendiente
+**Estado:** ✅ MVP Class 323 (2026-08-23) — velocidad congelada · mandos IPC · planning límites probe
+· **horario HUD estaciones** · SD40-2 pendiente
 **Paquete UE4SS:** `C:\Users\doski\Desktop\investigacion tsw 6\DynamicHUD v1.0.0`
 **Relacionado:** [ARQUITECTURA.md](ARQUITECTURA.md) · [FREIGHT_NA.md](FREIGHT_NA.md) ·
 [GUIA.md](GUIA.md)
@@ -16,8 +17,8 @@
 | **Lectura** (velocidad, mandos, acel) | `TelemetryProbeMod` → `GetData.txt` | **No** |
 | **Escritura** (autopiloto mueve mandos) | `SendCommand.txt` (probe Lua) o HTTP PATCH fallback | **No** (IPC) / opcional HTTP |
 | **Calibración** (`aprender.bat`) | Solo lectura | **No** (con probe activo) |
-| **Autopiloto** (`iniciar_autopilot.bat`) | Lectura UE4SS + mandos IPC; planning HTTP opcional | **No** (mandos); sí para 2 límites |
-| **Planning distancias** | HTTP `DriverAid` + odometría 10 Hz entre polls | Parcial (sin HTTP solo para dist) |
+| **Autopiloto** (`iniciar_autopilot.bat`) | Lectura UE4SS + mandos IPC; planning HTTP + HUD DB | **No** (mandos); **sí** (paradas HUD) |
+| **Planning distancias** | Probe 2 límites ~20 Hz + odometría HTTP | No (límites); sí (estaciones HUD) |
 
 **Conclusión:** patrón Dastsc completo para mandos (`GetData.txt` + `SendCommand.txt`).
 `-HTTPAPI` queda **opcional** (planning anticipatorio con 2 límites; gradiente ya en probe).
@@ -102,7 +103,42 @@ Sesión ref.: `logs/ue4ss_probe_20260818_022527.txt` — **~17 Hz** medio.
 
 ---
 
-## Gradiente y planning
+## Velocidad actual — congelado ✅ (2026-08-22)
+
+**Validado in-game:** fluida en GUI autopilot (~20 Hz). **No tocar** salvo regresión en tests.
+
+### Pipeline (único camino)
+
+```text
+```
+
+| Regla | Detalle |
+| --- | --- |
+| Sin caché | Cada tick lee `GetData.txt`; `speed_mph` no pasa por `_planning_dist` |
+| Sin odometría | La velocidad no se interpola ni estima en Python |
+| Planning aparte | `_apply_probe_planning` solo toca distancias/límites, no `speed_mph` |
+| Conversión | `speed_mph = speed_ms × 2.236936` (`MS_TO_MPH` en `governor_constants`) |
+
+### Comprobar
+
+```bat
+```
+
+`speed` debe subir/bajar al instante con el tren. En GUI: barra inferior `probe seq=…` avanza.
+
+### Tests de regresión (obligatorio pasar antes de tocar)
+
+- `test_speed_direct_from_probe_no_planning_touch`
+- `test_speed_updates_each_probe_read`
+- `test_tsw_ue4ss_reader.py` (parser `speed_ms`)
+
+### Fuera de alcance (no mezclar con velocidad)
+
+- Distancias a límites / planning — ver sección Planning abajo
+- Mandos IPC — B4
+- Aceleración suavizada en `SpeedDecider` — física del decider, no telemetría probe
+
+---
 
 ### Gradiente — ✅ resuelto (Class 323, 2026-08-18)
 
@@ -136,22 +172,27 @@ Alternativa por eje (simulación):
 
 ### Planning (estaciones, next limit)
 
-Solo existía en RailBridge (`companion_dmi_planning_delta`). HTTPAPI tiene señales/distancias en
-`DriverAid.Data` pero no el route monitor completo.
+##### Límites de velocidad — ✅
 
-**Integrado en autopilot (2026-08-19):**
+- Probe: `dist_limit_cm`, `next_limit_ms`, `dist_limit2_*` en `GetData.txt` (~20 Hz)
+- HTTP fallback + odometría entre polls
+- `brake_planner.py` + `brake_command.py` (Dastsc B1–B3)
 
-- `driver_aid_parser.build_speed_limits_queue()` — cola unificada (próx. 2 límites)
-- `tsw_telemetry_source` — poll HTTP async (~2 s) + **odometría** (`dist -= v×Δt`) a 10 Hz entre
-  lecturas (evita distancia congelada al cartel)
-- `brake_planner.py` — plan por pasos B1–B3 (puerto Dastsc `planBrake.ts`)
-- `braking_advisor.py` — plan Dastsc + emergencias P1; decel por muesca vía `OnlineLearner`
-- Autopilot **solo frenado** (conductor acelera); sin tracción automática
+##### Estaciones comerciales — ✅ (2026-08-23)
 
-**Integrado en probe (2026-08-19):** `dist_limit_cm`, `next_limit_ms`, `dist_limit2_*` en
-`GetData.txt` (~20 Hz). Estaciones siguen vía HTTP si está disponible.
+- `hud_timetable.py` + `tsw_hud.db` (extractor TSW HUD)
+- `DriverAid.PlayerInfo`: `currentServiceName` + `geoLocation`
+- `DriverAid.TrackData.markers` filtrados por horario STOP
+- Distancia tablón: `car_stop_signs` cuando TrackData no coincide (`hud_geo`)
+- GUI: `schedule_source`, `[horario HUD #ID]`, próxima parada
 
-**Pendiente:** estaciones en probe (baja prioridad).
+Detalle setup: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
+
+**Pendiente estaciones:**
+
+- [ ] `planBrakeForStation` — frenado planificado al tablón
+- [ ] Recalcular distancia GPS cada refresh (no solo odometría)
+- [ ] Estaciones en probe Lua (baja prioridad)
 
 ---
 
@@ -170,7 +211,7 @@ implementa un subconjunto).
 
 | Campo IPC | Lua | Uso autopiloto |
 | --- | --- | --- |
-| `speed_ms` | `HUD_GetSpeed` | ✅ núcleo |
+| `speed_ms` | `HUD_GetSpeed` | ✅ **congelado** — GUI ~20 Hz, sin caché |
 | `power` / `handle_notch` | `HUD_GetPowerHandle` | ✅ mandos UK |
 | `train_brake` | `HUD_GetTrainBrakeHandle` | ✅ freight + UK |
 | `loco_brake` | `HUD_GetLocomotiveBrakeHandle` | ✅ freight |
@@ -274,11 +315,17 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 - [x] `aprender.bat` conecta en modo UE4SS
 - [x] `gradient_pct` en probe (`GetDriverAidData.Gradient`) + fallback HTTP `DriverAid.Data`
 - [x] Documentar en [GUIA.md](GUIA.md)
-- [x] `autopilot_core.py` + `autopilot_gui.py` — bucle 10 Hz, GUI en hilo aparte
+- [x] `autopilot_core.py` + `autopilot_gui.py` — bucle 20 Hz, GUI en hilo aparte
+- [x] **Velocidad actual** — congelada; tests regresión `test_speed_*`
 - [x] Planning HTTP: `next_limit` + cola 2 límites + odometría entre polls
 - [x] Frenado: `brake_planner.py` + perfil decel por muesca (`OnlineLearner`)
+- [x] **Ejecución Dastsc P1** — `brake_command.py` + notch IPC directo
+
+  ([DASTSC_PARITY.md](DASTSC_PARITY.md))
+
 - [x] Modo **solo frenado** (sin acelerador automático)
 - [x] Planning en probe Lua (`distanceToNextSpeedLimit` / 2 límites @ ~20 Hz)
+- [x] **Horario HUD** — `hud_timetable.py`, `tsw_hud.db`, filtro paradas, `car_stop_signs`
 
 ### B4. Escritura sin HTTPAPI — ✅ (mandos vía SendCommand.txt)
 
@@ -289,7 +336,6 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 
 **Planning:** sin `-HTTPAPI` no hay cola de 2 límites HTTP; opcional probe v2 con distancias.
 
-
 **Opcional antes de B4 (mejora planning, no sustituye mandos):** probe v2 con
 `distanceToNextSpeedLimit` en `GetData.txt`.
 
@@ -299,7 +345,7 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 
 | # | Criterio | Estado |
 | --- | --- | --- |
-| 1 | ≥15 Hz `speed_ms` + mando en Python | ✅ |
+| 1 | ≥15 Hz `speed_ms` + mando en Python | ✅ congelado 2026-08-22 |
 | 2 | Valores Lua ≈ HTTPAPI misma sesión | ✅ 323 |
 | 3 | `aprender.bat` sin RailBridge | ✅ |
 | 3b | Autopiloto frenado con planning 2 límites | ✅ |
@@ -340,11 +386,16 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 | 2026-08-19 | B4 IPC | SendCommand.txt + flag; mandos sin -HTTPAPI |
 
 | 2026-08-19 | Probe v2 | 2 límites en GetData.txt; planning sin HTTP |
+| 2026-08-22 | Velocidad | Congelada: probe directo ~20 Hz GUI; tests regresión; planning aparte |
+| 2026-08-23 | HUD horario | `tsw_hud.db`, filtro paradas, `car_stop_signs`, merge `hud_geo`; SQLite thread-local |
 
 ---
 
 ## Próximo paso
 
-1. **Usuario:** validar mandos IPC + planning probe in-game (Class 323, sin `-HTTPAPI`).
-2. **Usuario:** sesión estabilidad 10+ min (A4) cuando puedas.
-3. **Después:** SD40-2 en probe (A3 freight) + fases FREIGHT_NA 4–6.
+1. **Usuario:** validar paradas HUD in-game (2R17 Cross-City, GUI Planning).
+2. **Código:** `planBrakeForStation` + distancia tablón en tiempo real.
+3. **Usuario:** sesión estabilidad 10+ min (A4).
+4. **Después:** SD40-2 en probe (A3 freight) + fases FREIGHT_NA 4–6.
+
+**No retocar** pipeline velocidad salvo bug confirmado (pasar `test_speed_*` antes).

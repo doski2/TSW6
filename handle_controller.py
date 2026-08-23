@@ -27,6 +27,7 @@ import logging
 import time
 from typing import Optional
 
+from brake_command import BrakeCommand
 from governor_constants import (
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
     CONTROL_INTERVAL_RPC,
@@ -147,19 +148,82 @@ class HandleController:
 
     # ── Ejecución ─────────────────────────────────────────────────────────
 
-    def execute(self, action: str, state: TrainState,
-                conn: Optional[object], hwnd: Optional[int]) -> bool:
+    def _apply_combined_notch(
+        self,
+        conn: Optional[object],
+        hwnd: Optional[int],
+        new_notch: int,
+        current: int,
+        *,
+        label: str,
+    ) -> bool:
+        """Un paso hacia ``new_notch``: teclado A/D (fiable) o IPC absoluto."""
+        new_notch = max(0, min(_MAX_NOTCH, int(new_notch)))
+        if new_notch == current:
+            return False
+
+        # Con ventana TSW: teclado (un notch/ciclo). IPC solo confirma escritura
+        # del archivo, no que Lua haya movido el mando in-game.
+        if hwnd is not None:
+            step = current + (1 if new_notch > current else -1)
+            key = VK_A if new_notch > current else VK_D
+            send_key(hwnd, key)
+            _log.info(
+                "KEY  %-11s  notch %d→%d  (obj=%d  %s)",
+                label, current, step, new_notch,
+                "A" if new_notch > current else "D")
+            return True
+
+        if self._use_rpc(conn):
+            val = new_notch / float(_MAX_NOTCH)
+            if self._try_rpc(conn, "PowerBrakeHandle", val):
+                _log.info(
+                    "IPC  %-11s  notch %d→%d  (val=%.3f)",
+                    label, current, new_notch, val)
+                return True
+
+        _log.warning("execute: sin hwnd ni IPC — no se puede enviar %s", label)
+        return False
+
+    def execute(
+        self,
+        action: str,
+        state: TrainState,
+        conn: Optional[object],
+        hwnd: Optional[int],
+        brake_command: Optional[BrakeCommand] = None,
+    ) -> bool:
         """
         Ejecuta la acción enviando un paso de control al mando.
 
         Devuelve True si envió un comando, False si esperó (rate-limit,
         ya en posición, HOLD/PAUSED, o suppresión anti-oscilación).
         """
+        now = time.time()
+        use_rpc = self._use_rpc(conn) and hwnd is None
+
+        # ── Dastsc P1: notch del plan (antes de HOLD — action puede ser HOLD) ─
+        if brake_command is not None and brake_command.target_notch is not None:
+            interval = (CONTROL_INTERVAL_RPC if use_rpc
+                        else CONTROL_INTERVAL_BRAKE)
+            if now - self._last_control < interval:
+                return False
+            current = state.handle_notch
+            label = brake_command.display_action()
+            target = brake_command.target_notch
+            if brake_command.kind == "COAST_THROTTLE":
+                target = min(current, _NOTCH_NEUTRAL)
+            elif brake_command.kind == "RELEASE":
+                target = _NOTCH_NEUTRAL
+            if self._apply_combined_notch(
+                    conn, hwnd, target, current, label=label):
+                self._last_control = now
+                return True
+            return False
+
         if action in ("HOLD", "PAUSED"):
             return False
 
-        now = time.time()
-        use_rpc = self._use_rpc(conn)
         interval = (CONTROL_INTERVAL_RPC if use_rpc
                     else self._INTERVALS.get(action, CONTROL_INTERVAL))
         if now - self._last_control < interval:
@@ -196,55 +260,49 @@ class HandleController:
 
         if use_rpc:
             new_notch = target
-            if action == "ACCELERATE":
-                eff = (state.target_mph if state.target_mph > 0
-                       else state.limit_mph)
-                gap = eff - state.speed_mph
-                if gap <= 5:
-                    new_notch = min(_MAX_NOTCH, current + 1)
-                elif gap > 25:
-                    new_notch = min(_MAX_NOTCH, current + 3)
-                elif gap > 12:
-                    new_notch = min(_MAX_NOTCH, current + 2)
-            elif action == "COAST" and current > _NOTCH_NEUTRAL:
-                eff = (state.target_mph if state.target_mph > 0
-                       else state.limit_mph)
-                overshoot = state.speed_mph - eff
-                if overshoot > 8:
-                    new_notch = max(_NOTCH_NEUTRAL, current - 3)
-                elif overshoot > 3:
-                    new_notch = max(_NOTCH_NEUTRAL, current - 2)
-                else:
-                    new_notch = current - 1
+            if brake_command is None:
+                if action == "ACCELERATE":
+                    eff = (state.target_mph if state.target_mph > 0
+                           else state.limit_mph)
+                    gap = eff - state.speed_mph
+                    if gap <= 5:
+                        new_notch = min(_MAX_NOTCH, current + 1)
+                    elif gap > 25:
+                        new_notch = min(_MAX_NOTCH, current + 3)
+                    elif gap > 12:
+                        new_notch = min(_MAX_NOTCH, current + 2)
+                elif action == "COAST" and current > _NOTCH_NEUTRAL:
+                    eff = (state.target_mph if state.target_mph > 0
+                           else state.limit_mph)
+                    overshoot = state.speed_mph - eff
+                    if overshoot > 8:
+                        new_notch = max(_NOTCH_NEUTRAL, current - 3)
+                    elif overshoot > 3:
+                        new_notch = max(_NOTCH_NEUTRAL, current - 2)
+                    else:
+                        new_notch = current - 1
         else:
             new_notch = current + (1 if target > current else -1)
 
-        # Intentar RPC primero
         if use_rpc:
-            val = new_notch / float(_MAX_NOTCH)
-            if self._try_rpc(conn, "PowerBrakeHandle", val):
-                _log.debug(
-                    "RPC  action=%-11s  notch %d→%d  (val=%.3f)",
-                    action, current, new_notch, val)
+            if self._apply_combined_notch(
+                    conn, hwnd, new_notch, current, label=action):
                 self._last_control = now
                 return True
-            # RPC falló: caer a teclado en esta misma llamada
+        elif hwnd is not None:
+            if new_notch > current:
+                send_key(hwnd, VK_A)
+            else:
+                send_key(hwnd, VK_D)
+            _log.debug(
+                "KEY  action=%-11s  notch %d→%d  key=%s",
+                action, current, new_notch, "A" if new_notch > current else "D")
+            self._last_control = now
+            return True
 
-        # Fallback: teclado (requiere TSW en primer plano)
         if hwnd is None:
             _log.warning("execute: sin hwnd — no se puede enviar %s por teclado", action)
-            return False
-
-        if new_notch > current:
-            send_key(hwnd, VK_A)
-        else:
-            send_key(hwnd, VK_D)
-
-        _log.debug(
-            "KEY  action=%-11s  notch %d→%d  key=%s",
-            action, current, new_notch, "A" if new_notch > current else "D")
-        self._last_control = now
-        return True
+        return False
 
     # ── Sincronización y reset ────────────────────────────────────────────
 

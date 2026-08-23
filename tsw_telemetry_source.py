@@ -9,18 +9,25 @@ Escritura de mandos vía ``SendCommand.txt`` (IPC Lua) o ``tsw_command_bus`` (HT
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 from control_layout import detect_control_layout
+from distance_format import infer_distance_units
 from driver_aid_parser import (
+    filter_stations_by_service,
+    filter_stations_by_stop_names,
+    load_service_timetable,
     parse_driver_aid_planning,
     parse_gradient_pct,
     parse_track_data_stations,
+    select_next_scheduled_stop,
     _prune_zero_distance_limits,
 )
+from hud_timetable import HudTimetableStore
 from tsw_api_client import TswApiClient, client_from_key_file
 from tsw_command_bus import combined_value_to_notch, dispatch_brake, dispatch_combined_notch
 from tsw_ipc_bus import (
@@ -92,6 +99,12 @@ def _telem_from_probe(
     age_ms: float = 0.0,
     gradient_fallback: Optional[float] = None,
 ) -> dict[str, Any]:
+    """Telemetría base desde probe — velocidad directa, sin caché ni planning.
+
+    CONGELADO (2026-08-22): ``speed_mph`` = ``speed_ms`` × MS_TO_MPH tal cual el probe.
+    El planning/distancias no debe modificar este dict; solo añadir campos aparte.
+    Tests: ``test_speed_*`` en ``test_telemetry_source.py``.
+    """
     handle = snap.combined_handle_notch()
     if handle is None:
         handle = 4
@@ -161,7 +174,19 @@ class TswTelemetrySource:
         self._diag_poll_miss = 0
         self._diag_last_seq: Optional[int] = None
         self._diag_last_dist: Optional[float] = None
+        self._diag_last_probe_dist: Optional[float] = None
+        self._motion_last_probe_dist: Optional[float] = None
+        self._motion_probe_dist_since = 0.0
+        self._motion_last_odo_m: Optional[float] = None
+        self._motion_odo_since = 0.0
+        self._motion_frozen = False
+        self._planning_hold = False
         self._api_lock = threading.Lock()
+        self._timetable = load_service_timetable()
+        self._hud = HudTimetableStore()
+        self._hud_match: Optional[dict[str, Any]] = None
+        self._player_geo: Optional[tuple[float, float]] = None
+        self._service_name: Optional[str] = None
         self._api_ok_cache: Optional[bool] = None
         self._api_ok_ts = 0.0
 
@@ -236,13 +261,60 @@ class TswTelemetrySource:
             if d is not None:
                 entry["distance_m"] = max(0.0, float(d) - delta_m)
 
+    def _update_probe_motion_frozen(
+        self,
+        probe_dist_m: Optional[float],
+        odo_m: Optional[float] = None,
+    ) -> bool:
+        """True si el tren no avanza (odómetro API o distancia probe congelada)."""
+        now = time.monotonic()
+        prev = self._motion_frozen
+
+        if odo_m is not None:
+            if self._motion_last_odo_m is None:
+                self._motion_last_odo_m = odo_m
+                self._motion_odo_since = now
+            elif abs(odo_m - self._motion_last_odo_m) > 0.05:
+                self._motion_last_odo_m = odo_m
+                self._motion_odo_since = now
+                self._motion_frozen = False
+            else:
+                self._motion_frozen = (now - self._motion_odo_since) > 0.25
+        elif probe_dist_m is None:
+            self._motion_frozen = False
+            if self._motion_frozen != prev:
+                _log.info("juego EN MOVIMIENTO  (sin dato dist/odo)")
+            return self._motion_frozen
+        else:
+            if self._motion_last_probe_dist is None:
+                self._motion_last_probe_dist = probe_dist_m
+                self._motion_probe_dist_since = now
+                self._motion_frozen = False
+            elif abs(probe_dist_m - self._motion_last_probe_dist) < 0.5:
+                self._motion_frozen = (now - self._motion_probe_dist_since) > 0.30
+            else:
+                self._motion_last_probe_dist = probe_dist_m
+                self._motion_probe_dist_since = now
+                self._motion_frozen = False
+
+        if self._motion_frozen != prev:
+            _log.info(
+                "juego %s  probe_dist=%s  odo_m=%s",
+                "CONGELADO" if self._motion_frozen else "EN MOVIMIENTO",
+                f"{probe_dist_m:.1f}m" if probe_dist_m is not None else "—",
+                f"{odo_m:.1f}" if odo_m is not None else "—",
+            )
+        return self._motion_frozen
+
     def _maybe_diag_log(
         self,
         snap: Optional[ProbeSnapshot] = None,
         *,
         dist_m: Optional[float] = None,
+        probe_dist_m: Optional[float] = None,
         age_ms: float = 0.0,
         probe_fresh: bool = False,
+        motion_frozen: bool = False,
     ) -> None:
         """Log periódico de refresco probe (detectar congelación)."""
         now = time.monotonic()
@@ -264,17 +336,25 @@ class TswTelemetrySource:
             if dist_m is not None and self._diag_last_dist is not None
             else None
         )
+        probe_delta = (
+            probe_dist_m - self._diag_last_probe_dist
+            if probe_dist_m is not None and self._diag_last_probe_dist is not None
+            else None
+        )
         _log.info(
             "probe poll=%.1fHz miss=%d seq=%s Δseq=%s dist=%.1fm Δdist=%s "
-            "age=%.0fms fresh=%s",
+            "probe_raw=%.1fm Δprobe=%s age=%.0fms fresh=%s frozen=%s",
             hz,
             self._diag_poll_miss,
             seq if seq is not None else "?",
             seq_delta if seq_delta is not None else "?",
             dist_m if dist_m is not None else -1.0,
             f"{dist_delta:+.1f}m" if dist_delta is not None else "?",
+            probe_dist_m if probe_dist_m is not None else -1.0,
+            f"{probe_delta:+.1f}m" if probe_delta is not None else "?",
             age_ms,
             probe_fresh,
+            "Y" if motion_frozen else "N",
         )
         self._diag_last_log_t = now
         self._diag_poll_n = 0
@@ -283,6 +363,12 @@ class TswTelemetrySource:
             self._diag_last_seq = seq
         if dist_m is not None:
             self._diag_last_dist = dist_m
+        if probe_dist_m is not None:
+            self._diag_last_probe_dist = probe_dist_m
+
+    def set_planning_hold(self, hold: bool) -> None:
+        """Congela distancias de planning (p. ej. autopilot en pausa)."""
+        self._planning_hold = hold
 
     def _ensure_api_client(self, silent: bool = False) -> bool:
         """HTTP API para escritura de mandos (y fallback de lectura)."""
@@ -319,6 +405,54 @@ class TswTelemetrySource:
             )
         return True
 
+    def _apply_station_filter(
+        self,
+        stations: list[dict[str, Any]],
+        service_name: Optional[str],
+    ) -> list[dict[str, Any]]:
+        svc = service_name or self._service_name
+        if svc and self._hud.available:
+            lat = lng = None
+            if self._player_geo:
+                lat, lng = self._player_geo
+            try:
+                resolved = self._hud.resolve_service_stops(svc, lat=lat, lng=lng)
+            except sqlite3.Error as exc:
+                _log.warning("HUD timetable query fallo (svc=%s): %s", svc, exc)
+                resolved = None
+            if resolved:
+                self._hud_match = resolved
+                matched = filter_stations_by_stop_names(
+                    stations, resolved["stop_names"])
+                merged = self._hud.merge_schedule_stations(
+                    matched,
+                    resolved["entries"],
+                    resolved["stop_names"],
+                    lat=lat,
+                    lng=lng,
+                )
+                if merged:
+                    return merged
+        self._hud_match = None
+        return filter_stations_by_service(stations, self._timetable, svc)
+
+    def _update_player_geo(self, info: Any) -> None:
+        if not isinstance(info, dict):
+            return
+        geo = info.get("geoLocation") or info.get("playerPosition")
+        if not isinstance(geo, dict):
+            return
+        lat_raw = geo.get("latitude")
+        lng_raw = geo.get("longitude")
+        if lat_raw is None or lng_raw is None:
+            return
+        try:
+            lat = float(lat_raw)
+            lng = float(lng_raw)
+        except (TypeError, ValueError):
+            return
+        self._player_geo = (lat, lng)
+
     def _poll_driver_aid_planning(self) -> dict[str, Any]:
         """DriverAid.Data + TrackData (en hilo aparte) para P1 y paradas."""
         if not self._ensure_api_client(silent=True):
@@ -344,6 +478,19 @@ class TswTelemetrySource:
                 stations = parse_track_data_stations(track)
                 if stations:
                     out["stations"] = stations
+
+            info = client.get_node("DriverAid.PlayerInfo",
+                                   timeout=PLANNING_READ_TIMEOUT)
+            if info is not None:
+                self._update_player_geo(info)
+                svc = info.get("currentServiceName")
+                if svc:
+                    out["service_name"] = str(svc).strip()
+
+            if out.get("stations"):
+                svc = out.get("service_name") or self._service_name
+                out["stations"] = self._apply_station_filter(
+                    out["stations"], svc)
             return out
         finally:
             self._api_lock.release()
@@ -386,11 +533,25 @@ class TswTelemetrySource:
                 if d is not None:
                     entry["distance_m"] = max(0.0, float(d) - delta_m)
 
+    def _attach_next_stop(self, parsed: dict[str, Any],
+                          stations: list[dict[str, Any]]) -> None:
+        nxt = select_next_scheduled_stop(stations)
+        if nxt is None:
+            parsed.pop("next_stop", None)
+            parsed.pop("next_stop_name", None)
+            parsed.pop("next_stop_distance_m", None)
+            return
+        parsed["next_stop"] = dict(nxt)
+        parsed["next_stop_name"] = nxt.get("name")
+        parsed["next_stop_distance_m"] = nxt.get("distance_m")
+
     def _overlay_planning_distances(self, parsed: dict[str, Any]) -> None:
         """Sustituye distancias del caché por las estimadas en tiempo real."""
         pd = self._planning_dist
         if not pd:
             return
+        if not self._planning_hold:
+            self._tick_station_distances(float(parsed.get("speed_mph") or 0.0))
         if pd.get("distance_next_m") is not None:
             parsed["distance_next_m"] = pd["distance_next_m"]
         if pd.get("distance_next_2_m") is not None:
@@ -406,6 +567,7 @@ class TswTelemetrySource:
         stations = pd.get("stations") or []
         if stations:
             parsed["stations"] = [dict(s) for s in stations]
+            self._attach_next_stop(parsed, parsed["stations"])
 
     def _probe_fresh(self, age_ms: float) -> bool:
         return age_ms <= UE4SS_STALE_S * 1000.0
@@ -443,6 +605,35 @@ class TswTelemetrySource:
             self._planning_odom_seq = probe_seq
         return True
 
+    def _advance_probe_seq(self, probe_seq: Optional[int]) -> None:
+        if probe_seq is not None:
+            self._planning_probe_seq = probe_seq
+
+    def _sync_planning_if_not_frozen_decrease(
+        self,
+        source: dict[str, Any],
+        probe_seq: Optional[int],
+        *,
+        motion_frozen: bool,
+        speed_mph: float,
+    ) -> None:
+        """Resync desde probe; ignora bajadas si el tren no se mueve."""
+        new_dist = source.get("distance_next_m")
+        cur_dist = self._planning_dist.get("distance_next_m")
+        reject_decrease = motion_frozen or speed_mph < 0.5
+        if (
+            reject_decrease
+            and new_dist is not None
+            and cur_dist is not None
+            and float(new_dist) < float(cur_dist) - 0.5
+        ):
+            self._advance_probe_seq(probe_seq)
+            dist = source.get("distance_next_m")
+            if dist is not None:
+                self._planning_probe_dist = float(dist)
+            return
+        self._sync_planning_snapshot(source, probe_seq)
+
     def _apply_probe_planning(
         self,
         parsed: dict[str, Any],
@@ -451,32 +642,46 @@ class TswTelemetrySource:
         probe_seq: Optional[int],
         probe_fresh: bool,
     ) -> None:
-        """Distancias desde probe: resync cada lectura + extrapolación entre polls."""
+        """Distancias desde probe: solo DriverAid (cm→m); sin odometría Python."""
         with self._planning_lock:
-            now = time.monotonic()
-            if probe_seq is not None and probe_seq != self._planning_probe_seq:
-                self._probe_seq_changed_t = now
+            speed = float(parsed.get("speed_mph") or 0.0)
+            probe_raw_dist = probe_planning.get("distance_next_m")
+            odo_m = parsed.get("odo_m")
+            motion_frozen = self._update_probe_motion_frozen(probe_raw_dist, odo_m)
+            if self._planning_hold:
+                motion_frozen = True
+            parsed["probe_motion_frozen"] = motion_frozen
+            parsed["planning_hold"] = self._planning_hold
+            if probe_raw_dist is not None:
+                parsed["probe_dist_limit_m"] = float(probe_raw_dist)
+
+            if self._planning_hold and self._planning_dist:
+                self._overlay_planning_distances(parsed)
+                return
+
+            seq_changed = (
+                probe_seq is not None
+                and probe_seq != self._planning_probe_seq
+            )
 
             stations = (
                 self._planning_dist.get("stations")
                 or self._planning_cache.get("stations")
                 or []
             )
-            self._sync_planning_snapshot(probe_planning, probe_seq)
 
-            speed = float(parsed.get("speed_mph") or 0.0)
-            seq_recent = (now - self._probe_seq_changed_t) < 0.15
-            if probe_fresh and speed > 0.3 and seq_recent:
-                if self._probe_extrap_last_t > 0:
-                    dt = now - self._probe_extrap_last_t
-                    if 0 < dt < 0.3:
-                        self._subtract_planning_distance(speed * MPH_TO_MS * dt)
-            self._probe_extrap_last_t = now
+            if not self._planning_dist:
+                self._sync_planning_snapshot(probe_planning, probe_seq)
+            elif seq_changed:
+                self._sync_planning_if_not_frozen_decrease(
+                    probe_planning,
+                    probe_seq,
+                    motion_frozen=motion_frozen,
+                    speed_mph=speed,
+                )
 
             if stations:
                 self._planning_dist["stations"] = [dict(s) for s in stations]
-                if probe_fresh and speed > 0.3:
-                    self._tick_station_distances(speed)
             self._overlay_planning_distances(parsed)
 
     def _tick_station_distances(self, speed_mph: float) -> None:
@@ -506,6 +711,9 @@ class TswTelemetrySource:
     ) -> None:
         """Actualiza distancias de planning (ruta HTTP / fallback sin probe)."""
         with self._planning_lock:
+            if self._planning_hold and self._planning_dist:
+                self._overlay_planning_distances(parsed)
+                return
             if interpolate and probe_fresh:
                 speed = float(parsed.get("speed_mph") or 0.0)
                 if self._odometry_allowed(speed_mph=speed, probe_seq=probe_seq):
@@ -529,6 +737,28 @@ class TswTelemetrySource:
         for key, val in planning.items():
             if val is not None:
                 parsed[key] = val
+        svc = planning.get("service_name")
+        if svc:
+            self._service_name = str(svc)
+        stations = parsed.get("stations")
+        if stations:
+            filtered = self._apply_station_filter(
+                list(stations), self._service_name)
+            parsed["stations"] = filtered
+            self._attach_schedule_meta(parsed)
+            self._attach_next_stop(parsed, filtered)
+
+    def _attach_schedule_meta(self, parsed: dict[str, Any]) -> None:
+        if self._hud_match:
+            parsed["schedule_source"] = "hud_db"
+            parsed["hud_timetable_id"] = self._hud_match.get("timetable_id")
+            route = self._hud_match.get("route_name")
+            if route:
+                parsed["hud_route_name"] = route
+        elif self._timetable:
+            parsed["schedule_source"] = "timetable_json"
+        else:
+            parsed["schedule_source"] = "trackdata"
 
     def _poll_slow(self) -> None:
         if self._client is None:
@@ -577,6 +807,8 @@ class TswTelemetrySource:
             if snap.gradient_pct is None else None,
         )
         parsed["probe_seq"] = snap.seq
+        if snap.odo_m is not None:
+            parsed["odo_m"] = float(snap.odo_m)
         self._merge_planning(parsed, planning, probe_gradient=snap.gradient_pct)
 
         has_probe_dist = bool(probe_planning)
@@ -595,11 +827,16 @@ class TswTelemetrySource:
                 probe_fresh=probe_fresh,
                 interpolate=probe_fresh,
             )
+        probe_raw_m = (
+            snap.dist_limit_cm / 100.0 if snap.dist_limit_cm is not None else None
+        )
         self._maybe_diag_log(
             snap,
             dist_m=parsed.get("distance_next_m"),
+            probe_dist_m=probe_raw_m,
             age_ms=age_ms,
             probe_fresh=probe_fresh,
+            motion_frozen=bool(parsed.get("probe_motion_frozen")),
         )
         if snap.vehicle and snap.vehicle != "?":
             self._vehicle_name = snap.vehicle
@@ -661,7 +898,8 @@ class TswTelemetrySource:
         if td:
             stations = parse_track_data_stations(td)
             if stations:
-                planning["stations"] = stations
+                planning["stations"] = self._apply_station_filter(
+                    stations, self._service_name)
         if slow_tick and planning:
             planning_source = planning
         else:
@@ -696,8 +934,13 @@ class TswTelemetrySource:
         with self._telem_lock:
             out = dict(self._telem)
         vehicle = self.get_vehicle_name()
+        layout = detect_control_layout(vehicle)
         out["vehicle_name"] = vehicle
-        out["control_layout"] = detect_control_layout(vehicle)
+        out["control_layout"] = layout
+        out["distance_units"] = infer_distance_units(vehicle, layout)
+        stations = out.get("stations")
+        if stations:
+            self._attach_next_stop(out, stations)
         return out
 
     def has_ipc_control(self) -> bool:

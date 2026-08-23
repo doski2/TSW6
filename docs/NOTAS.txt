@@ -1,2 +1,4 @@
 # Notas personales
-probar si la distancia de limite velocidad esta bien
+- Probar distancia límite velocidad (probe vs HTTP)
+- Validar paradas HUD: 2R17 Cross-City → Four Oaks primero, sin Shenstone en Planning
+- Tras extraer en hud.exe: ejecutar preparar_db_hud.bat

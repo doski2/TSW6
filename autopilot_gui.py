@@ -18,6 +18,11 @@ from tkinter import messagebox, simpledialog, ttk
 from typing import Optional
 
 from autopilot_core import AutopilotConfig, AutopilotEngine, AutopilotSnapshot
+from distance_format import (
+    distance_unit_label,
+    format_distance,
+    format_distance_pair,
+)
 
 _PADX = 8
 _PADY = 4
@@ -28,6 +33,7 @@ _ACTION_COLORS = {
     "ACCELERATE": "#2a7",
     "HOLD": "#07a",
     "COAST": "#a80",
+    "RELEASE": "#07a",
     "BRAKE": "#c33",
     "HARDBRAKE": "#e00",
     "FULLSTOP": "#90c",
@@ -44,6 +50,7 @@ class AutopilotApp:
         self._last_snap: Optional[AutopilotSnapshot] = None
         self._last_limits_sig: Optional[tuple] = None
         self._last_stations_sig: Optional[tuple] = None
+        self._last_dist_units: Optional[str] = None
         self._snap_lock = threading.Lock()
         self._control_error: Optional[str] = None
 
@@ -195,6 +202,9 @@ class AutopilotApp:
 
         st_frame = ttk.LabelFrame(parent, text="Estaciones programadas")
         st_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.lbl_next_stop = ttk.Label(
+            st_frame, text="Próxima parada: —", foreground="#07a")
+        self.lbl_next_stop.pack(anchor=tk.W, padx=6, pady=(4, 0))
         cols2 = ("name", "dist_m", "platform_m")
         self.tree_stations = ttk.Treeview(
             st_frame, columns=cols2, show="headings", height=6)
@@ -321,10 +331,12 @@ class AutopilotApp:
         self.lbl_eff_limit.configure(text=f"{s.effective_limit:.1f} mph")
         self.lbl_next_limit.configure(
             text=self._format_limit_ahead(
-                s.next_limit_mph, s.distance_next_m, s.speed_mph))
+                s.next_limit_mph, s.distance_next_m, s.speed_mph,
+                probe_dist_m=s.probe_dist_limit_m, units=s.distance_units))
         self.lbl_next_limit_2.configure(
             text=self._format_limit_ahead(
-                s.next_limit_2_mph, s.distance_next_2_m, s.speed_mph))
+                s.next_limit_2_mph, s.distance_next_2_m, s.speed_mph,
+                units=s.distance_units))
         self.lbl_handle.configure(
             text=str(s.handle_notch) if s.handle_notch is not None else "?")
         if s.acceleration_ms2 is not None:
@@ -339,6 +351,8 @@ class AutopilotApp:
         fsm = s.station_state or "—"
         if s.station_name:
             fsm += f" → {s.station_name}"
+        elif s.next_stop_name:
+            fsm += f" → próx: {s.next_stop_name}"
         self.lbl_fsm.configure(text=fsm)
         self.lbl_doors.configure(text="ABIERTAS" if s.doors_open else "cerradas")
         self.lbl_ack.configure(
@@ -351,12 +365,21 @@ class AutopilotApp:
         action = s.final_action
         if s.paused:
             action = "PAUSED"
+        elif s.brake_phase:
+            action = s.brake_phase
+        elif s.final_action == "RELEASE":
+            action = "RELEASE"
         color = _ACTION_COLORS.get(action, "#333")
+        if action in ("B1", "B2", "B3"):
+            color = "#c33"
         extra = ""
         if s.override:
             extra = f"  (override: {s.override})"
+        notch_txt = ""
+        if s.brake_target_notch is not None:
+            notch_txt = f"  →N{s.brake_target_notch}"
         self.lbl_action.configure(
-            text=f"{action}{extra}  ← decider: {s.action}"
+            text=f"{action}{notch_txt}{extra}  ← decider: {s.action}"
                  f"  {'[cmd OK]' if s.last_cmd_sent else '[sin cmd]'}",
             foreground=color)
         self.lbl_fps.configure(
@@ -380,6 +403,37 @@ class AutopilotApp:
         self.lbl_ocr.configure(text=f"OCR: {ocr}")
 
     def _refresh_planning(self, s: AutopilotSnapshot) -> None:
+        units = s.distance_units
+        src = s.schedule_source or "—"
+        if s.next_stop_name and s.next_stop_distance_m is not None:
+            extra = ""
+            if s.schedule_source == "hud_db" and s.hud_timetable_id:
+                extra = f"  [horario HUD #{s.hud_timetable_id}]"
+            elif s.schedule_source == "timetable_json":
+                extra = "  [timetable.json]"
+            self.lbl_next_stop.configure(
+                text=(f"Próxima parada: {s.next_stop_name}  @ "
+                      f"{format_distance(s.next_stop_distance_m, units)}{extra}"))
+        elif s.stations:
+            if s.schedule_source == "hud_db":
+                hint = "sin coincidencia TrackData ↔ horario HUD"
+            elif s.schedule_source == "timetable_json":
+                hint = "sin coincidencia en timetable.json"
+            else:
+                hint = f"sin filtro de horario (fuente: {src})"
+            self.lbl_next_stop.configure(text=f"Próxima parada: — ({hint})")
+        else:
+            self.lbl_next_stop.configure(
+                text="Próxima parada: — (requiere DriverAid.TrackData vía HTTPAPI)")
+
+        if units != self._last_dist_units:
+            self._last_dist_units = units
+            tag = distance_unit_label(units)
+            self.tree_limits.heading("dist_m", text=f"Distancia ({tag})")
+            self.tree_limits.heading("brake_m", text=f"Freno desde ({tag})")
+            self.tree_stations.heading("dist_m", text=f"Distancia ({tag})")
+            self.tree_stations.heading("platform_m", text=f"Andén ({tag})")
+
         ahead = s.speed_limits_ahead
         if not ahead and s.next_limit_mph is not None:
             ahead = [{
@@ -405,8 +459,10 @@ class AutopilotApp:
                     mph, dist, brake = entry[0], entry[1] if len(entry) > 1 else None, None
                 self.tree_limits.insert("", tk.END, values=(
                     f"{mph:.0f}" if isinstance(mph, (int, float)) else str(mph),
-                    f"{dist:.1f}" if isinstance(dist, (int, float)) else "—",
-                    f"{brake:.0f}" if isinstance(brake, (int, float)) else "—",
+                    format_distance(dist, units)
+                    if isinstance(dist, (int, float)) else "—",
+                    format_distance(brake, units)
+                    if isinstance(brake, (int, float)) else "—",
                 ))
 
         stations_sig = tuple(
@@ -418,40 +474,48 @@ class AutopilotApp:
             for item in self.tree_stations.get_children():
                 self.tree_stations.delete(item)
             for st in s.stations[:8]:
+                dist_m = st.get("distance_m", 0)
+                plat_m = st.get("platform_length_m", st.get("platform_m"))
                 self.tree_stations.insert("", tk.END, values=(
                     st.get("name", "?"),
-                    f"{st.get('distance_m', 0):.0f}",
-                    f"{st.get('platform_length_m', st.get('platform_m', 0)):.0f}"
-                    if st.get("platform_length_m") or st.get("platform_m") else "—",
+                    format_distance(float(dist_m), units),
+                    format_distance(float(plat_m), units)
+                    if plat_m else "—",
                 ))
 
         if s.next_limit_mph is not None and s.distance_next_m is not None:
             self.lbl_next_brake.configure(
                 **self._p1_brake_style(
-                    s, s.next_limit_mph, s.distance_next_m, label="P1 #1"))
+                    s, s.next_limit_mph, s.distance_next_m, label="P1 #1",
+                    units=units))
         else:
             self.lbl_next_brake.configure(text="Sin datos de próximo límite")
 
         if s.next_limit_2_mph is not None and s.distance_next_2_m is not None:
             self.lbl_next_brake_2.configure(
                 **self._p1_brake_style(
-                    s, s.next_limit_2_mph, s.distance_next_2_m, label="P1 #2"))
+                    s, s.next_limit_2_mph, s.distance_next_2_m, label="P1 #2",
+                    units=units))
         else:
             self.lbl_next_brake_2.configure(text="")
 
     def _format_limit_ahead(
             self, mph: Optional[float], dist_m: Optional[float],
-            speed_mph: Optional[float]) -> str:
+            speed_mph: Optional[float],
+            *,
+            probe_dist_m: Optional[float] = None,
+            units: str = "uk_imperial") -> str:
         if mph is None or dist_m is None:
             return "—"
         extra = ""
         if speed_mph is not None and mph < speed_mph - 0.5:
             extra = "  ↓"
-        return f"{mph:.0f} mph @ {dist_m:.1f} m{extra}"
+        dist_txt = format_distance_pair(dist_m, probe_dist_m, units)
+        return f"{mph:.0f} mph @ {dist_txt}{extra}"
 
     def _p1_brake_style(
             self, s: AutopilotSnapshot, limit_mph: float, dist_m: float,
-            *, label: str) -> dict:
+            *, label: str, units: str = "uk_imperial") -> dict:
         need = None
         if s.speed_mph is not None:
             need = self.engine.decider.braking_distance(
@@ -461,8 +525,8 @@ class AutopilotApp:
         ok = dist_m >= need
         return {
             "text": (f"{label}: {'OK' if ok else 'FRENAR'} — "
-                     f"{limit_mph:.0f} mph @ {dist_m:.0f}m "
-                     f"(freno ~{need:.0f}m)"),
+                     f"{limit_mph:.0f} mph @ {format_distance(dist_m, units)} "
+                     f"(freno ~{format_distance(need, units)})"),
             "foreground": "#2a7" if ok else "#c33",
         }
 
