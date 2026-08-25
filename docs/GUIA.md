@@ -57,12 +57,17 @@ Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás mod
 ### Autopiloto (estado actual)
 
 - **Lee** mandos y velocidad del probe (~20 Hz).
-- **Escribe** frenos vía `SendCommand.txt` (IPC Lua; HTTP PATCH como fallback).
+- **Escribe** mandos vía `SendCommand.txt` (**IPC Lua, preferido**; teclado A/D solo fallback;
+
+  HTTP PATCH si no hay UE4SS).
+
 - **Planning límites:** probe UE4SS ~20 Hz (2 límites adelante).
 - **Planning estaciones:** HTTP `DriverAid` + **`tsw_hud.db`** (horario comercial,
 
   `car_stop_signs`).
+
 - **Puertas:** telemetría física `PassengerDoor_*` (~20 Hz vía probe; HTTP como fallback).
+
   Mensajes DMI (`dmi-doors-open/closed`) son secundarios.
 
 `-HTTPAPI` **no** es necesario para mandos ni distancias a límites. **Sí** hace falta para
@@ -89,7 +94,11 @@ recurre a DMI u OCR.
 
 Clave API (planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
 
-Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) · `tsw_ipc_bus.py`.
+Detalle IPC: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) (sección «Mandos: IPC vs teclado»)
+· `tsw_ipc_bus.py`.
+
+**¿Por qué IPC?** Escribe el notch absoluto (0–8) en un ciclo. El teclado solo se usa si IPC
+falla (5 intentos → penalización 5 min). No hace falta tener TSW en primer plano.
 Horarios: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
 
 ---
@@ -102,7 +111,10 @@ Para filtrar paradas del servicio activo (sin paso, dirección correcta, tablón
 2. `abrir_hud_extraccion.bat` — extraer DLCs en `hud.exe` → **Load my DLCs**
 3. Tras cada extracción: volver a ejecutar `preparar_db_hud.bat`
 4. `python verificar_hud_db.py` — comprobar BD y horario 2R17 / Cross-City
-5. En juego: TSW con **`-HTTPAPI`**, servicio comercial → GUI **Planning** muestra `[horario HUD#…]`
+5. En juego: TSW con **`-HTTPAPI`**, servicio comercial → GUI **Planning** muestra `[horario
+
+   HUD#…]`,
+   columnas Llegada/Salida y próxima parada con arr/dep (validado 2026-08-24).
 
 Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refrescar_path_rust.bat`.
 
@@ -155,7 +167,8 @@ Con UE4SS no hace falta `-HTTPAPI` para calibrar. El gradiente de vía sale en e
 
 ## `iniciar_autopilot.bat`
 
-Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
+Usa el perfil existente y **actualiza el JSON en vivo** (Auto-aprender activo por defecto).
+Usa `--no-learn` en CLI o desmarca el checkbox en GUI para congelar el perfil.
 
 | Opción | Modo |
 | --- | --- |
@@ -165,11 +178,22 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 | **4** | Telemetría manual por teclado |
 | **5** | Monitor API |
 
+En la GUI del autopiloto (pestaña **Aprendizaje**): **Auto-aprender** viene marcado por defecto;
+desmárcalo si solo quieres refinar al frenar. Calibración guiada completa (opcional):
+`aprender.bat`.
+
 **Requisitos:** perfil calibrado + **TelemetryProbeMod** activo.
 
 - **Mandos:** IPC (sin `-HTTPAPI`).
 - **Paradas HUD:** `-HTTPAPI` recomendado.
-- **Puertas:** probe UE4SS (reinstalar con `install_ue4ss_probe.bat` si no ves `doors_telem` en `GetData.txt`).
+- **Puertas:** probe UE4SS (reinstalar con `install_ue4ss_probe.bat` si no ves `doors_telem` en
+
+  `GetData.txt`).
+
+- **Aprendizaje:** pestaña **Aprendizaje** — *Auto-aprender* ON por defecto (todas las muescas).
+
+  Desmarcar = solo muescas 0–3 al frenar.
+
 - Opción **3** (`--no-control`): solo telemetría, sin escribir mandos.
 
 ---
@@ -191,5 +215,6 @@ Usa el perfil existente. **No calibra** salvo `--learn` en línea de comandos.
 | `iniciar_autopilot` | Conduce con ese conocimiento (IPC mandos; HTTP para paradas HUD; probe para puertas) |
 
 Más detalle técnico: [ARQUITECTURA.md](ARQUITECTURA.md) ·
+[FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) ·
 [HUD_TIMETABLE.md](HUD_TIMETABLE.md) ·
 [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).

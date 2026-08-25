@@ -123,11 +123,22 @@ local function api_value_to_input(control_name, value)
     return (clamp_num(value, 0.0, 1.0) - 0.5) * 2.0
 end
 
+local function lever_input_value(control_name, api_value)
+    local num = tonumber(api_value)
+    if num == nil then return nil end
+    if control_name == "IndependentBrake" then
+        return clamp_num(num, -1.0, 1.0)
+    end
+    -- PowerBrakeHandle UK: API 0..1 (notch/8) → eje -1..1 (neutro @ 0.5)
+    return (clamp_num(num, 0.0, 1.0) - 0.5) * 2.0
+end
+
 local function write_send_ack(name, value, ok)
     ensure_bridge_dir()
     local f = io.open(send_ack_path(), "w")
     if not f then return end
     f:write(string.format("%s:%.4f:%s\n", name, value, ok and "ok" or "fail"))
+    f:flush()
     f:close()
 end
 
@@ -177,7 +188,11 @@ local function find_control(name, controller)
                     local ok, obj_name = pcall(function()
                         return obj:GetName():ToString()
                     end)
-                    if ok and obj_name and string.find(obj_name, name, 1, true) then
+                    if ok and obj_name and (
+                        string.find(obj_name, name, 1, true)
+                        or (name == "PowerBrakeHandle"
+                            and string.find(obj_name, "PowerBrake", 1, true))
+                    ) then
                         return cache_and_return(obj)
                     end
                 end
@@ -191,22 +206,28 @@ local function apply_control_value(name, value, controller)
     if not ALLOWED_CONTROLS[name] then return false end
     local num = tonumber(value)
     if num == nil then return false end
-    local prev = last_applied[name]
-    if prev ~= nil and math.abs(prev - num) < 0.0001 then
-        write_send_ack(name, num, true)
-        return true
-    end
+    -- No omitir por last_applied: la telemetría puede ir retrasada y el
+    -- mando no haberse movido aunque Lua escribiera la propiedad.
     local ctrl = find_control(name, controller)
     if not ctrl then
         print("[TelemetryProbe] WARN control not found: " .. name .. "\n")
         write_send_ack(name, num, false)
         return false
     end
-    local ok = pcall(function()
-        if ctrl.Value ~= nil then
+    local input_val = lever_input_value(name, num)
+    local ok, err = pcall(function()
+        if name == "PowerBrakeHandle" or name == "IndependentBrake" then
+            if ctrl.InputValue ~= nil then
+                ctrl.InputValue = input_val
+            elseif ctrl.Value ~= nil then
+                ctrl.Value = num
+            else
+                error("no writable property")
+            end
+        elseif ctrl.Value ~= nil then
             ctrl.Value = num
         elseif ctrl.InputValue ~= nil then
-            ctrl.InputValue = api_value_to_input(name, num)
+            ctrl.InputValue = input_val or num
         else
             error("no writable property")
         end
@@ -216,7 +237,8 @@ local function apply_control_value(name, value, controller)
         write_send_ack(name, num, true)
         return true
     end
-    print(string.format("[TelemetryProbe] WARN set %s=%.4f failed\n", name, num))
+    print(string.format(
+        "[TelemetryProbe] WARN set %s=%.4f failed: %s\n", name, num, tostring(err)))
     write_send_ack(name, num, false)
     return false
 end

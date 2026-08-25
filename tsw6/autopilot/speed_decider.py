@@ -1,38 +1,36 @@
 #!/usr/bin/env python3
 """
-speed_decider.py — Lógica de decisión de velocidad (P1 + P2 + FSM).
+speed_decider.py — Lógica de decisión de velocidad (P1 + FSM).
 
 Solo frenado automático: el conductor acelera manualmente.
-P1 usa planificador estilo Dastsc (``brake_planner.py``).
+P1 usa frenado v2 (``tsw6/braking/v2``) para límites, estación y señal.
 
 SpeedDecider recibe un TrainState y devuelve una acción de control:
-  COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
+  COAST | BRAKE | BRAKE_FAST | EMERGENCY | HOLD | PAUSED
 
 Separación de responsabilidades:
   - SpeedDecider: SOLO decide qué hacer, sin saber cómo ejecutarlo
   - HandleController: SOLO ejecuta, sin saber por qué
-  - SafetyWatchdog: override de emergencia, sin lógica de crucero
+  - SafetyWatchdog: override de emergencia (exceso persistente), sin P2
 
 Estado interno permitido:
   - TrainPhysics (acelerómetro, learner)
   - StationFSM (máquina de estados de paradas)
-  - BrakingAdvisor (plan Dastsc + emergencias P1)
-  - ACK state (2 booleans)
+  - BrakeCoordinatorV2 (límite / estación / señal + emergencias P1)
 
 No hay seguimiento de notch interno. Toda la posición del handle se lee
 de state.handle_notch (telemetría como fuente de verdad).
 """
 
 import logging
-import time
 from typing import Optional
 
-from tsw6.governor.governor_constants import (
-    CONTROL_INTERVAL, P2_LIMIT_BRAKE_THRESHOLD, P2_TSM_BRAKE_THRESHOLD,
-    RATE_TOLERANCE, STATION_STOPPED_MPH,
+from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
+from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, HOLD, PAUSED,
 )
 from tsw6.governor.governor_physics import TrainPhysics
-from tsw6.braking.braking_advisor import BrakingAdvisor
 from tsw6.governor.governor_station import StationFSM
 from tsw6.autopilot.train_state import TrainState
 
@@ -56,23 +54,20 @@ class SpeedDecider:
     def __init__(self, target_mph: float = 0.0) -> None:
         self._physics   = TrainPhysics()
         self._fsm       = StationFSM()
-        self._braking   = BrakingAdvisor()
+        self._braking   = BrakeCoordinatorV2()
 
         self.target_mph: float = target_mph
         self.paused:     bool  = False
 
-        # ACK (ATP activo)
-        self._ack_was_required:    bool  = False
-        self._ack_approach_warned: bool  = False
-        self._ack_started_t:       float = 0.0   # monotonico: cuando empezó ACK
-        self._ack_last_warn_t:     float = 0.0   # última vez que avisamos
-
         # Estado público para logging / dashboard
         self.effective_limit: float = 0.0
-        self.last_action:     str   = "HOLD"
+        self.last_action:     str   = HOLD
 
         # Caché del último TrainState visto (para propiedades de dashboard)
         self._last_state: Optional[TrainState] = None
+
+        # P1 v2 — transición activo/inactivo para log de reset
+        self._p1_was_active: bool = False
 
     # ── Physics API (llamar antes de decide() cada ciclo) ─────────────────
 
@@ -176,8 +171,37 @@ class SpeedDecider:
 
     @property
     def brake_command(self):
-        """Último comando Dastsc (B1/B2/B3 notch directo) del plan P1."""
+        """Último ``BrakeCommand`` IPC del plan P1 (None si no hay plan activo)."""
         return self._braking.last_brake_command
+
+    def brake_command_for(self, action: str, state: TrainState):
+        """Comando IPC del plan P1 (watchdog sin plan usa teclado en HandleController)."""
+        del action, state
+        return self._braking.last_brake_command
+
+    @property
+    def p1_debug(self) -> str:
+        return self._braking.last_debug
+
+    @property
+    def p1_active(self) -> bool:
+        state = self._last_state
+        if state is None:
+            return False
+        stations = list(state.stations) if state.stations else None
+        return self._p1_should_run(state, state.speed_mph, stations)
+
+    @property
+    def p1_investigate_suffix(self) -> str:
+        if hasattr(self._braking, "investigate_suffix"):
+            return self._braking.investigate_suffix()
+        return ""
+
+    @property
+    def p1_unified_stop(self) -> bool:
+        if hasattr(self._braking, "unified_stop_latched"):
+            return bool(self._braking.unified_stop_latched)
+        return False
 
     # ── Delegados de physics para el dashboard ─────────────────────────────
 
@@ -212,6 +236,44 @@ class SpeedDecider:
     def _ocr_used(self) -> bool:
         return self._fsm._ocr_used
 
+    @staticmethod
+    def _p1_should_run(
+        state: TrainState,
+        speed_mph: float,
+        stations: Optional[list],
+    ) -> bool:
+        """
+        P1 activo salvo en APPROACHING/DEPARTING lento — salvo cartel agrupado
+        con la estación (Dastsc: frenar al 55 antes del andén).
+        """
+        fsm_state = state.station_state
+        if fsm_state not in ("APPROACHING", "DEPARTING"):
+            return True
+        if speed_mph > 10.0:
+            return True
+        if fsm_state != "APPROACHING":
+            return False
+
+        dist_lim = state.distance_next_m
+        lim = state.next_limit_mph
+        dist_stn = state.next_stop_distance_m
+        if dist_stn is None and stations:
+            target_name = state.station_name or state.next_stop_name
+            for st in stations:
+                if target_name and st.get("name") == target_name:
+                    dist_stn = st.get("distance_m")
+                    break
+        if (
+            dist_lim is not None
+            and dist_stn is not None
+            and lim is not None
+            and should_merge_limit_and_station_plans(dist_lim, dist_stn)
+            and dist_lim > 50
+            and speed_mph > lim + 0.5
+        ):
+            return True
+        return False
+
     # ── Decisión principal ────────────────────────────────────────────────
 
     def decide(self, state: TrainState) -> str:
@@ -219,16 +281,19 @@ class SpeedDecider:
         Decide la acción de control para el ciclo actual.
 
         Capas de prioridad (mayor a menor):
-          ACK (ATP) → FSM estación → P1 (plan Dastsc) → P2 (overspeed)
+          FSM estación → marcador DMI → P1 (v2) → HOLD
+
+        Sin capa P2: el crucero reactivo chocaba con P1 (cartel + estación).
+        El watchdog cubre exceso grave persistente.
 
         Garantía: siempre devuelve una de:
-          COAST | BRAKE | HARDBRAKE | FULLSTOP | HOLD | PAUSED
+          COAST | BRAKE | BRAKE_FAST | EMERGENCY | HOLD | PAUSED
         """
         self._last_state = state
 
         if state.paused:
-            self.last_action = "PAUSED"
-            return "PAUSED"
+            self.last_action = PAUSED
+            return PAUSED
 
         speed   = state.speed_mph
         limit   = state.limit_mph
@@ -238,68 +303,6 @@ class SpeedDecider:
         # Atajos locales (reducen ruido visual en el código)
         th_n    = state.throttle_notch     # 0-4
         th_act  = state.throttle_active
-        br_act  = state.brake_active
-        sup     = state.supervision
-
-        # ── Aviso pre-ACK ─────────────────────────────────────────────────
-        if (not state.ack_required
-                and not self._ack_approach_warned
-                and speed > limit + 1.0):
-            _log.warning(
-                "PRE-ACK  spd=%.1f  lim=%.1f  exceso=+%.1f mph",
-                speed, limit, speed - limit)
-            self._ack_approach_warned = True
-
-        # ── ACK: supervisión ATP activa ───────────────────────────────────
-        # Durante ACK el ATP tiene control total. Solo:
-        #   - COAST si hay tracción activa (liberar la maneta al neutro)
-        #   - HOLD en todo lo demás (no interferir con el frenado del ATP)
-        # No enviamos ACCELERATE para liberar frenos: el ATP
-        # puede estar frenando intencionadamente (ej. parada en estación) y
-        # el ACCELERATE genera un bucle boost→COAST-suprimido→decel.
-        if state.ack_required:
-            now_t = time.monotonic()
-            if not self._ack_was_required:
-                _log.warning(
-                    "ACK requerido – cediendo control al ATP  spd=%.1f", speed)
-                self._ack_was_required = True
-                self._ack_started_t    = now_t
-                self._ack_last_warn_t  = now_t
-
-            # Aviso cada 15 s cuando el tren está parado y el ACK no se libera
-            elif (speed <= 0.5
-                  and now_t - self._ack_last_warn_t >= 15.0):
-                elapsed = now_t - self._ack_started_t
-                _log.warning(
-                    "ACK lleva %.0fs activo con tren parado — "
-                    "confirma la alerta en el DMI "
-                    "(botón ACK / Acknowledge) para que el autopilot pueda salir.",
-                    elapsed)
-                self._ack_last_warn_t = now_t
-
-            self.effective_limit = limit
-            self.last_action = "HOLD"
-
-            if th_act:
-                self.last_action = "COAST"
-                return "COAST"
-            return "HOLD"
-
-        # Transición ack → libre
-        if self._ack_was_required:
-            self._ack_was_required    = False
-            self._ack_approach_warned = False
-            elapsed_ack = time.monotonic() - self._ack_started_t
-            _log.info(
-                "ACK liberado tras %.0fs – retomando control  fsm=%s  spd=%.1f",
-                elapsed_ack, state.station_state or "-", speed)
-            if state.station_state == "APPROACHING":
-                self._fsm.state            = None
-                self._fsm.name             = None
-                self._fsm._min_stop_dist   = None
-                self._fsm._ocr_offset      = None
-                self._fsm._ocr_used        = False
-                _log.info("FSM reset: APPROACHING → None  (post-ATP)")
 
         # ── FSM de paradas en estación ────────────────────────────────────
         stations_list = list(state.stations) if state.stations else None
@@ -317,12 +320,20 @@ class SpeedDecider:
             braking_dist_fn = self._physics.braking_distance,
             eff_max_decel   = self._physics.eff_max_decel,
             eff_k_stop      = self._physics.eff_k_stop,
+            next_limit_mph  = state.next_limit_mph,
+            distance_next_m = state.distance_next_m,
         )
 
         if action_override is not None:
             self.effective_limit = eff_limit_override or 0.0
             self.last_action = action_override
             return action_override
+
+        # Salida de andén: liberar freno residual
+        if state.station_state == "DEPARTING" and speed < 25.0 and state.brake_active:
+            self.effective_limit = limit
+            self.last_action = COAST
+            return COAST
 
         # Límite efectivo de crucero
         effective_limit = (min(limit, state.target_mph)
@@ -339,25 +350,41 @@ class SpeedDecider:
                 effective_limit = min(effective_limit, limit)
             if bm <= max(50.0, bm_bd * 0.25) and speed > limit + 1.0:
                 _log.warning(
-                    "Marcador freno HARDBRAKE  spd=%.1f  lim=%.1f  "
+                    "Marcador freno BRAKE_FAST  spd=%.1f  lim=%.1f  "
                     "marker=%.0fm  bd=%.0fm",
                     speed, limit, bm, bm_bd)
-                act = "HARDBRAKE"
+                act = BRAKE_FAST
                 self.effective_limit = effective_limit
                 self.last_action = act
                 return act
             if bm <= bm_bd * 0.6 and speed > limit:
-                act = "COAST" if th_act else "BRAKE"
+                act = COAST if th_act else BRAKE
                 self.effective_limit = effective_limit
                 self.last_action = act
                 return act
 
         # ── P1: Frenado anticipado al próximo límite ──────────────────────
-        _p1_active = (state.station_state not in ("APPROACHING", "DEPARTING")
-                      or speed > 10.0)
+        _p1_active = self._p1_should_run(
+            state, speed, stations_list,
+        )
         if not _p1_active:
+            if self._p1_was_active:
+                _log.info(
+                    "P1 reset fsm=%s spd=%.1f stop=%s",
+                    state.station_state,
+                    speed,
+                    state.next_stop_name or self._fsm.name or "—",
+                )
             self._braking.reset()
         else:
+            _station_dist = state.next_stop_distance_m
+            if _station_dist is None and stations_list:
+                _target = self._fsm.name or state.next_stop_name
+                if _target:
+                    for st in stations_list:
+                        if st.get("name") == _target:
+                            _station_dist = st.get("distance_m")
+                            break
             p1_action, effective_limit = self._braking.evaluate(
                 speed_mph          = speed,
                 next_limit_mph     = state.next_limit_mph,
@@ -365,177 +392,23 @@ class SpeedDecider:
                 effective_limit    = effective_limit,
                 gradient_pct       = grad,
                 acceleration_ms2   = a,
-                braking_distance_fn= self._physics.braking_distance,
-                should_brake_fn    = self._physics.should_brake_for_next,
-                eff_k_stop         = self._physics.eff_k_stop,
                 throttle_notch     = th_n,
                 speed_limits_ahead = speed_lims_list,
                 base_decel_ms2     = self._physics.eff_max_decel,
                 predict_decel      = self._physics.predict_brake_decel_ms2,
                 handle_notch       = state.handle_notch,
+                station_distance_m = _station_dist,
+                station_name     = state.next_stop_name or self._fsm.name,
+                station_eta      = state.next_stop_arrival,
+                brake_transition_s = self._physics.brake_transition_s,
             )
             if p1_action is not None:
                 self.effective_limit = effective_limit
                 self.last_action = p1_action
+                self._p1_was_active = True
                 return p1_action
 
+        self._p1_was_active = _p1_active
         self.effective_limit = effective_limit
-        error = effective_limit - speed
-
-        # ── P2: Control con histéresis adaptativa ─────────────────────────
-        _rain         = self._physics._rain_intensity
-        _band_narrow  = 0.7 if grad < -0.5 else 1.0
-        _rain_serv    = 1.0 if _rain > 0.3 else 0.0
-        _rain_crit    = 2.0 if _rain > 0.3 else 0.0
-
-        # Gradiente crítico → HARDBRAKE
-        if (error < 0
-                and self._physics.is_critical_gradient(grad)
-                and speed > effective_limit + 1.0):
-            _log.warning(
-                "P2 GRADIENTE CRITICO  spd=%.1f  elim=%.1f  grad=%.1f%%  → HARDBRAKE",
-                speed, effective_limit, grad)
-            act = "HARDBRAKE"
-            self.last_action = act
-            return act
-
-        # Exceso crítico sobre límite de vía real → HARDBRAKE
-        if state.station_state not in ("APPROACHING", "STOPPED"):
-            _over_crit = (3.0 - _rain_crit) * _band_narrow
-            if speed > limit + _over_crit:
-                _log.warning(
-                    "P2 OVER-CRITICO  spd=%.1f  lim=%.1f  umbral=+%.1f",
-                    speed, limit, _over_crit)
-                act = "HARDBRAKE"
-                self.last_action = act
-                return act
-
-        # Crucero pegado al límite
-        if (error >= 0
-                and state.station_state not in ("APPROACHING", "STOPPED")):
-            _p2_excess = speed - limit
-            if _p2_excess >= P2_LIMIT_BRAKE_THRESHOLD:
-                act = "COAST" if th_act else "BRAKE"
-                self.last_action = act
-                return act
-            if _p2_excess > 0.0:
-                act = "COAST" if th_act else "HOLD"
-                self.last_action = act
-                return act
-            if speed > limit and th_act:
-                self.last_action = "COAST"
-                return "COAST"
-            if grad < -0.5 and speed > limit - 2.0 and th_act:
-                self.last_action = "COAST"
-                return "COAST"
-
-        # P2 Overspeed
-        if error < 0:
-            if state.station_state == "APPROACHING":
-                if th_act:
-                    self.last_action = "COAST"
-                    return "COAST"
-                if (effective_limit == 0.0
-                        and speed <= STATION_STOPPED_MPH + 1.0):
-                    self.last_action = "HOLD"
-                    return "HOLD"
-                if effective_limit == 0.0:
-                    v_ms  = speed * 0.44704
-                    d_m   = max(self._fsm._min_stop_dist or 1.0, 1.0)
-                    a_need = (v_ms ** 2) / (2.0 * d_m)
-                    a_now  = -(a if a is not None else 0.0)
-                    if a_now < a_need * 0.85:
-                        _log.info(
-                            "P2 FULLSTOP  spd=%.1f  d=%.1fm  need=%.2f  now=%.2f  ocr=%s",
-                            speed, d_m, a_need, a_now,
-                            "si" if self._fsm._ocr_used else "no")
-                        self.last_action = "FULLSTOP"
-                        return "FULLSTOP"
-                    self.last_action = "HOLD"
-                    return "HOLD"
-                else:
-                    _brake_cond = (a is None
-                                   or a > -(self._physics.target_decel_ms2 - RATE_TOLERANCE))
-                    if error < -8.0 or _brake_cond:
-                        _log.info(
-                            "P2 BRAKE (APPROACHING)  spd=%.1f  elim=%.1f  err=%.1f  a=%s",
-                            speed, effective_limit, error,
-                            f"{a:.2f}" if a is not None else "?")
-                        self.last_action = "BRAKE"
-                        return "BRAKE"
-                    self.last_action = "HOLD"
-                    return "HOLD"
-
-            if th_act:
-                self.last_action = "COAST"
-                return "COAST"
-
-            _decel_ok = (a is not None and a <= -self._physics.target_decel_ms2 + RATE_TOLERANCE)
-            _over_serv      = (0.5 + _rain_serv) * _band_narrow
-            _over_crit_elim = 5.0 - _rain_crit
-
-            if -error > _over_crit_elim:
-                if not _decel_ok:
-                    _log.warning(
-                        "P2 OVER-CRITICO (elim)  spd=%.1f  elim=%.1f  err=%.1f",
-                        speed, effective_limit, error)
-                    self.last_action = "HARDBRAKE"
-                    return "HARDBRAKE"
-
-            if sup in ("tsm", "overspeed") and speed > limit - 1.5:
-                _tsm_excess = speed - limit
-                if _tsm_excess < P2_TSM_BRAKE_THRESHOLD:
-                    if _tsm_excess > 0 and th_act:
-                        self.last_action = "COAST"
-                        return "COAST"
-                    self.last_action = "HOLD"
-                    return "HOLD"
-                if _decel_ok:
-                    self.last_action = "HOLD"
-                    return "HOLD"
-                _log.info(
-                    "P2 BRAKE (tsm/overspeed)  spd=%.1f  lim=%.1f  sup=%s  exceso=%.1f",
-                    speed, limit, sup, _tsm_excess)
-                self.last_action = "BRAKE"
-                return "BRAKE"
-
-            if grad < -0.5:
-                if speed > effective_limit:
-                    if _decel_ok:
-                        self.last_action = "HOLD"
-                        return "HOLD"
-                    _log.info(
-                        "P2 BRAKE (bajada)  spd=%.1f  elim=%.1f  grad=%.1f%%",
-                        speed, effective_limit, grad)
-                    self.last_action = "BRAKE"
-                    return "BRAKE"
-                if th_act:
-                    self.last_action = "COAST"
-                    return "COAST"
-                self.last_action = "HOLD"
-                return "HOLD"
-
-            self.last_action = "HOLD"
-            return "HOLD"
-
-        # Freno residual en parada: conductor libera manualmente
-        if br_act:
-            self.last_action = "HOLD"
-            return "HOLD"
-
-        # Guardia: soltar tracción en APPROACHING sin creep
-        if state.station_state == "APPROACHING" and not self._fsm._creep_to_station:
-            if th_act and (a is None or a > 0.15):
-                self.last_action = "COAST"
-                return "COAST"
-            self.last_action = "HOLD"
-            return "HOLD"
-
-        if (state.station_state == "STOPPED"
-                or (state.station_state == "APPROACHING"
-                    and not self._fsm._creep_to_station)):
-            self.last_action = "HOLD"
-            return "HOLD"
-
-        self.last_action = "HOLD"
-        return "HOLD"
+        self.last_action = HOLD
+        return HOLD

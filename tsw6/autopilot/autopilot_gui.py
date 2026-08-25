@@ -29,15 +29,18 @@ _PADY = 4
 _UI_MS = 50
 _LOOP_HZ = 20.0
 
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED, RELEASE,
+)
+
 _ACTION_COLORS = {
-    "ACCELERATE": "#2a7",
-    "HOLD": "#07a",
-    "COAST": "#a80",
-    "RELEASE": "#07a",
-    "BRAKE": "#c33",
-    "HARDBRAKE": "#e00",
-    "FULLSTOP": "#90c",
-    "PAUSED": "#888",
+    HOLD: "#07a",
+    COAST: "#a80",
+    RELEASE: "#07a",
+    BRAKE: "#c33",
+    BRAKE_FAST: "#e00",
+    EMERGENCY: "#f0f",
+    PAUSED: "#888",
 }
 
 
@@ -111,6 +114,21 @@ class AutopilotApp:
                    command=lambda: self._bump_target(5)).pack(side=tk.LEFT, padx=1)
         ttk.Label(row2, text="(0 = seguir límite de vía)").pack(side=tk.LEFT, padx=8)
 
+        row3 = ttk.Frame(ctrl)
+        row3.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self.var_learn = tk.BooleanVar(value=self.engine.config.learn)
+        ttk.Checkbutton(
+            row3,
+            text="Auto-aprender (todas las muescas, estilo Dastsc)",
+            variable=self.var_learn,
+            command=self._toggle_learn,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            row3,
+            text="Desmarcar: solo refina al frenar (muescas 0–3)",
+            foreground="#666",
+        ).pack(side=tk.LEFT, padx=8)
+
         mid = ttk.Frame(self.root)
         mid.pack(fill=tk.BOTH, expand=True, padx=_PADX, pady=_PADY)
 
@@ -128,6 +146,10 @@ class AutopilotApp:
         tab_debug = ttk.Frame(self.notebook)
         self.notebook.add(tab_debug, text="Depuración")
         self._build_debug_tab(tab_debug)
+
+        tab_learn = ttk.Frame(self.notebook)
+        self.notebook.add(tab_learn, text="Aprendizaje")
+        self._build_learn_tab(tab_learn)
 
         bottom = ttk.LabelFrame(self.root, text="Acción")
         bottom.pack(fill=tk.X, padx=_PADX, pady=_PADY)
@@ -153,7 +175,7 @@ class AutopilotApp:
             "Gradiente",
             "Estación FSM",
             "Puertas",
-            "ACK / supervisión",
+            "Supervisión",
             "Lluvia",
         ):
             rows.append((title, ttk.Label(grid, text="—", font=("Consolas", 10))))
@@ -205,15 +227,17 @@ class AutopilotApp:
         self.lbl_next_stop = ttk.Label(
             st_frame, text="Próxima parada: —", foreground="#07a")
         self.lbl_next_stop.pack(anchor=tk.W, padx=6, pady=(4, 0))
-        cols2 = ("name", "dist_m", "platform_m")
+        cols2 = ("name", "dist_m", "arrival", "departure")
         self.tree_stations = ttk.Treeview(
             st_frame, columns=cols2, show="headings", height=6)
         self.tree_stations.heading("name", text="Estación")
         self.tree_stations.heading("dist_m", text="Distancia m")
-        self.tree_stations.heading("platform_m", text="Andén m")
-        self.tree_stations.column("name", width=220)
-        self.tree_stations.column("dist_m", width=100)
-        self.tree_stations.column("platform_m", width=90)
+        self.tree_stations.heading("arrival", text="Llegada")
+        self.tree_stations.heading("departure", text="Salida")
+        self.tree_stations.column("name", width=200)
+        self.tree_stations.column("dist_m", width=90)
+        self.tree_stations.column("arrival", width=72)
+        self.tree_stations.column("departure", width=72)
         self.tree_stations.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
     def _build_debug_tab(self, parent: ttk.Frame) -> None:
@@ -229,6 +253,56 @@ class AutopilotApp:
             relief=tk.FLAT, bg="#1e1e1e", fg="#d4d4d4")
         self.txt_log.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.txt_log.configure(state=tk.DISABLED)
+
+    def _build_learn_tab(self, parent: ttk.Frame) -> None:
+        top = ttk.Frame(parent)
+        top.pack(fill=tk.X, padx=6, pady=6)
+        self.lbl_learn_profile = ttk.Label(top, text="Perfil: —", font=("Segoe UI", 10))
+        self.lbl_learn_profile.pack(anchor=tk.W)
+        self.lbl_learn_state = ttk.Label(
+            top, text="Estado: —", font=("Consolas", 9), foreground="#444")
+        self.lbl_learn_state.pack(anchor=tk.W, pady=(2, 0))
+
+        prog = ttk.LabelFrame(parent, text="Progreso matriz (8 muestras/celda)")
+        prog.pack(fill=tk.X, padx=6, pady=4)
+        self.learn_prog_var = tk.DoubleVar(value=0.0)
+        ttk.Progressbar(prog, variable=self.learn_prog_var, maximum=100).pack(
+            fill=tk.X, padx=6, pady=4)
+        self.lbl_learn_prog = ttk.Label(prog, text="0/0 celdas")
+        self.lbl_learn_prog.pack(anchor=tk.W, padx=6, pady=(0, 4))
+
+        const = ttk.LabelFrame(parent, text="Constantes de frenado (perfil activo)")
+        const.pack(fill=tk.X, padx=6, pady=4)
+        grid = ttk.Frame(const)
+        grid.pack(fill=tk.X, padx=6, pady=4)
+        self.lbl_learn_max = ttk.Label(grid, text="MAX_DECEL: —", font=("Consolas", 9))
+        self.lbl_learn_max.grid(row=0, column=0, sticky=tk.W, padx=4, pady=2)
+        self.lbl_learn_tgt = ttk.Label(grid, text="TARGET_DECEL: —", font=("Consolas", 9))
+        self.lbl_learn_tgt.grid(row=0, column=1, sticky=tk.W, padx=4, pady=2)
+        self.lbl_learn_coast = ttk.Label(grid, text="COAST: —", font=("Consolas", 9))
+        self.lbl_learn_coast.grid(row=1, column=0, sticky=tk.W, padx=4, pady=2)
+        self.lbl_learn_eff = ttk.Label(grid, text="eff_max (lluvia): —", font=("Consolas", 9))
+        self.lbl_learn_eff.grid(row=1, column=1, sticky=tk.W, padx=4, pady=2)
+        self.lbl_learn_hint = ttk.Label(
+            const,
+            text="Si pasas de estación con parada@ bajando bien, revisa MAX_DECEL "
+                 "y muestras en muesca 0–3.",
+            foreground="#666", wraplength=820, justify=tk.LEFT)
+        self.lbl_learn_hint.pack(anchor=tk.W, padx=6, pady=(0, 4))
+
+        samp = ttk.LabelFrame(parent, text="Muestras por muesca")
+        samp.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.tree_learn = ttk.Treeview(
+            samp, columns=("notch", "samples"), show="headings", height=9)
+        self.tree_learn.heading("notch", text="Muesca")
+        self.tree_learn.heading("samples", text="Muestras")
+        self.tree_learn.column("notch", width=200)
+        self.tree_learn.column("samples", width=80)
+        self.tree_learn.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self._last_learn_sig: Optional[tuple] = None
+
+    def _toggle_learn(self) -> None:
+        self.engine.set_learn_enabled(bool(self.var_learn.get()))
 
     def _toggle_pause(self) -> None:
         paused = self.engine.toggle_pause()
@@ -355,8 +429,7 @@ class AutopilotApp:
             fsm += f" → próx: {s.next_stop_name}"
         self.lbl_fsm.configure(text=fsm)
         self.lbl_doors.configure(text="ABIERTAS" if s.doors_open else "cerradas")
-        self.lbl_ack.configure(
-            text=f"ACK={'Sí' if s.ack_required else 'No'}  {s.supervision}")
+        self.lbl_ack.configure(text=s.supervision or "—")
         self.lbl_rain.configure(text=f"{s.rain_intensity:.2f}")
 
         if spd is not None and lim is not None and lim > 0:
@@ -392,6 +465,7 @@ class AutopilotApp:
             ))
 
         self._refresh_planning(s)
+        self._refresh_learn(s)
         self._refresh_log()
         self.lbl_hwnd.configure(
             text=f"hwnd: {s.hwnd:#010x}" if s.hwnd else "hwnd: no encontrada")
@@ -411,9 +485,18 @@ class AutopilotApp:
                 extra = f"  [horario HUD #{s.hud_timetable_id}]"
             elif s.schedule_source == "timetable_json":
                 extra = "  [timetable.json]"
+            sched = ""
+            if s.next_stop_arrival or s.next_stop_departure:
+                parts = []
+                if s.next_stop_arrival:
+                    parts.append(f"arr {s.next_stop_arrival}")
+                if s.next_stop_departure:
+                    parts.append(f"dep {s.next_stop_departure}")
+                sched = "  ·  " + "  ".join(parts)
             self.lbl_next_stop.configure(
                 text=(f"Próxima parada: {s.next_stop_name}  @ "
-                      f"{format_distance(s.next_stop_distance_m, units)}{extra}"))
+                      f"{format_distance(s.next_stop_distance_m, units)}"
+                      f"{sched}{extra}"))
         elif s.stations:
             if s.schedule_source == "hud_db":
                 hint = "sin coincidencia TrackData ↔ horario HUD"
@@ -432,7 +515,8 @@ class AutopilotApp:
             self.tree_limits.heading("dist_m", text=f"Distancia ({tag})")
             self.tree_limits.heading("brake_m", text=f"Freno desde ({tag})")
             self.tree_stations.heading("dist_m", text=f"Distancia ({tag})")
-            self.tree_stations.heading("platform_m", text=f"Andén ({tag})")
+            self.tree_stations.heading("arrival", text="Llegada")
+            self.tree_stations.heading("departure", text="Salida")
 
         ahead = s.speed_limits_ahead
         if not ahead and s.next_limit_mph is not None:
@@ -475,12 +559,11 @@ class AutopilotApp:
                 self.tree_stations.delete(item)
             for st in s.stations[:8]:
                 dist_m = st.get("distance_m", 0)
-                plat_m = st.get("platform_length_m", st.get("platform_m"))
                 self.tree_stations.insert("", tk.END, values=(
                     st.get("name", "?"),
                     format_distance(float(dist_m), units),
-                    format_distance(float(plat_m), units)
-                    if plat_m else "—",
+                    st.get("arrival") or "—",
+                    st.get("departure") or "—",
                 ))
 
         if s.next_limit_mph is not None and s.distance_next_m is not None:
@@ -498,6 +581,41 @@ class AutopilotApp:
                     units=units))
         else:
             self.lbl_next_brake_2.configure(text="")
+
+    def _refresh_learn(self, s: AutopilotSnapshot) -> None:
+        mode = "ON" if s.learn_enabled else "OFF (solo freno)"
+        self.lbl_learn_profile.configure(
+            text=f"Perfil: {s.learn_profile or '—'}   ·   Auto-aprender: {mode}")
+        self.lbl_learn_state.configure(text=f"Learner: {s.learn_reason or '—'}")
+
+        total = s.learn_total_cells
+        done = s.learn_done_cells
+        if total > 0:
+            pct = 100.0 * done / total
+            self.learn_prog_var.set(pct)
+            self.lbl_learn_prog.configure(
+                text=f"{done}/{total} celdas completas (≥8 muestras/celda)")
+        else:
+            self.learn_prog_var.set(0.0)
+            self.lbl_learn_prog.configure(text="0/0 celdas")
+
+        def _fmt(v: Optional[float]) -> str:
+            return f"{v:.3f} m/s²" if v is not None else "—"
+
+        self.lbl_learn_max.configure(text=f"MAX_DECEL: {_fmt(s.learn_max_decel)}")
+        self.lbl_learn_tgt.configure(text=f"TARGET_DECEL: {_fmt(s.learn_target_decel)}")
+        self.lbl_learn_coast.configure(text=f"COAST: {_fmt(s.learn_coast_decel)}")
+        self.lbl_learn_eff.configure(text=f"eff_max: {_fmt(s.eff_max_decel)}")
+
+        status = s.learn_confidence
+        if isinstance(status, dict):
+            sig = tuple(sorted((str(k), int(v)) for k, v in status.items()))
+            if sig != self._last_learn_sig:
+                self._last_learn_sig = sig
+                for item in self.tree_learn.get_children():
+                    self.tree_learn.delete(item)
+                for label, count in sorted(status.items()):
+                    self.tree_learn.insert("", tk.END, values=(label, count))
 
     def _format_limit_ahead(
             self, mph: Optional[float], dist_m: Optional[float],
@@ -559,8 +677,9 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
                             help="Solo monitorizar, sin mandos")
         parser.add_argument("--manual", action="store_true",
                             help="Telemetría manual")
-        parser.add_argument("--learn", action="store_true",
-                            help="Re-aprender calibración en vivo")
+        parser.add_argument("--no-learn", dest="learn", action="store_false",
+                            help="No actualizar perfil en vivo (por defecto: sí aprende)")
+        parser.set_defaults(learn=True)
         parser.add_argument("--stop", type=float, default=None, metavar="MILLAS",
                             help="Distancia a próxima parada en millas")
         args = parser.parse_args()

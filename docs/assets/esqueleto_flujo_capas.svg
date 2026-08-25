@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="820" viewBox="0 0 960 820" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0, 10 4, 0 8" fill="#444"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="820" fill="#f7f8fa"/>
+  <text x="480" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a2e">TSW6  -  Esqueleto de flujo por capas</text>
+  <text x="480" y="58" text-anchor="middle" font-size="13" fill="#555">Comandos de freno P1: telemetr-a - decisi-n - IPC - cabina</text>
+
+  <!-- Layer 6: Juego -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="80" width="880" height="88" rx="10" fill="#e8f4fc" stroke="#2b6cb0" stroke-width="2"/>
+    <text x="56" y="104" font-size="11" font-weight="700" fill="#2b6cb0">CAPA 1  -  JUEGO</text>
+    <rect x="80" y="114" width="200" height="40" rx="6" fill="#fff" stroke="#90cdf4"/>
+    <text x="180" y="139" text-anchor="middle" font-size="13" fill="#1a365d">TSW6 (cabina)</text>
+    <rect x="320" y="114" width="280" height="40" rx="6" fill="#fff" stroke="#90cdf4"/>
+    <text x="460" y="132" text-anchor="middle" font-size="13" fill="#1a365d">TelemetryProbeMod</text>
+    <text x="460" y="148" text-anchor="middle" font-size="11" fill="#4a5568">mods/.../main.lua</text>
+    <rect x="640" y="114" width="240" height="40" rx="6" fill="#fff" stroke="#90cdf4"/>
+    <text x="760" y="132" text-anchor="middle" font-size="12" fill="#1a365d">PowerBrakeHandle</text>
+    <text x="760" y="148" text-anchor="middle" font-size="11" fill="#4a5568">mando 0=freno &amp; 4=neutro &amp; 8=traccion</text>
+  </g>
+
+  <!-- Arrows L1 <-> L2 -->
+  <line x1="460" y1="168" x2="460" y2="198" stroke="#444" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="472" y="188" font-size="10" fill="#666">GetData.txt -</text>
+  <line x1="520" y1="198" x2="520" y2="168" stroke="#c53030" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="532" y="188" font-size="10" fill="#c53030">SendCommand.txt -</text>
+
+  <!-- Layer 5: Puente IPC -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="200" width="880" height="88" rx="10" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/>
+    <text x="56" y="224" font-size="11" font-weight="700" fill="#4a5568">CAPA 2  -  PUENTE IPC / TELEMETR-A</text>
+    <rect x="100" y="234" width="220" height="40" rx="6" fill="#fff" stroke="#a0aec0"/>
+    <text x="210" y="252" text-anchor="middle" font-size="12" fill="#2d3748">tsw_ue4ss_reader</text>
+    <text x="210" y="266" text-anchor="middle" font-size="10" fill="#718096">lee GetData.txt ~20 Hz</text>
+    <rect x="370" y="234" width="220" height="40" rx="6" fill="#fff" stroke="#a0aec0"/>
+    <text x="480" y="252" text-anchor="middle" font-size="12" fill="#2d3748">tsw_telemetry_source</text>
+    <text x="480" y="266" text-anchor="middle" font-size="10" fill="#718096">+ HTTPAPI planning HUD</text>
+    <rect x="640" y="234" width="220" height="40" rx="6" fill="#fff" stroke="#a0aec0"/>
+    <text x="750" y="252" text-anchor="middle" font-size="12" fill="#2d3748">tsw_ipc_bus</text>
+    <text x="750" y="266" text-anchor="middle" font-size="10" fill="#718096">escribe SendCommand.txt</text>
+  </g>
+
+  <line x1="480" y1="288" x2="480" y2="318" stroke="#444" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="492" y="308" font-size="10" fill="#666">dict telemetr-a</text>
+
+  <!-- Layer 4: Autopilot core -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="320" width="880" height="88" rx="10" fill="#f0fff4" stroke="#276749" stroke-width="2"/>
+    <text x="56" y="344" font-size="11" font-weight="700" fill="#276749">CAPA 3  -  BUCLE AUTOPILOT</text>
+    <rect x="120" y="354" width="260" height="40" rx="6" fill="#fff" stroke="#9ae6b4"/>
+    <text x="250" y="372" text-anchor="middle" font-size="12" fill="#22543d">autopilot_core.tick()</text>
+    <text x="250" y="386" text-anchor="middle" font-size="10" fill="#2f855a">~20 Hz - GUI - log</text>
+    <rect x="420" y="354" width="260" height="40" rx="6" fill="#fff" stroke="#9ae6b4"/>
+    <text x="550" y="372" text-anchor="middle" font-size="12" fill="#22543d">build_train_state()</text>
+    <text x="550" y="386" text-anchor="middle" font-size="10" fill="#2f855a">TrainState inmutable / ciclo</text>
+    <rect x="720" y="354" width="160" height="40" rx="6" fill="#fff" stroke="#9ae6b4"/>
+    <text x="800" y="379" text-anchor="middle" font-size="12" fill="#22543d">SafetyWatchdog</text>
+  </g>
+
+  <line x1="480" y1="408" x2="480" y2="438" stroke="#444" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Layer 3: Decisi-n -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="440" width="880" height="100" rx="10" fill="#fffaf0" stroke="#c05621" stroke-width="2"/>
+    <text x="56" y="464" font-size="11" font-weight="700" fill="#c05621">CAPA 4  -  DECISI-N</text>
+    <rect x="80" y="474" width="240" height="52" rx="6" fill="#fff" stroke="#fbd38d"/>
+    <text x="200" y="494" text-anchor="middle" font-size="12" font-weight="600" fill="#7b341e">speed_decider.decide()</text>
+    <text x="200" y="510" text-anchor="middle" font-size="10" fill="#9c4221">FSM estacion - DMI - P1 - HOLD</text>
+    <rect x="360" y="474" width="200" height="52" rx="6" fill="#fed7d7" stroke="#fc8181"/>
+    <text x="460" y="496" text-anchor="middle" font-size="12" font-weight="700" fill="#9b2c2c">P1 anticipado</text>
+    <text x="460" y="512" text-anchor="middle" font-size="10" fill="#c53030">BrakeCoordinatorV2</text>
+    <rect x="600" y="474" width="200" height="52" rx="6" fill="#fff" stroke="#fbd38d"/>
+    <text x="700" y="496" text-anchor="middle" font-size="12" fill="#7b341e">sin plan / watchdog</text>
+    <text x="700" y="512" text-anchor="middle" font-size="10" fill="#9c4221">HOLD / BRAKE_FAST</text>
+    <rect x="820" y="474" width="80" height="52" rx="6" fill="#fff" stroke="#fbd38d"/>
+    <text x="860" y="504" text-anchor="middle" font-size="11" fill="#7b341e">acci-n</text>
+  </g>
+
+  <line x1="460" y1="540" x2="460" y2="568" stroke="#c53030" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="472" y="558" font-size="10" fill="#c53030">si P1 activo</text>
+
+  <!-- Layer 2: Frenado P1 -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="570" width="880" height="108" rx="10" fill="#fff5f5" stroke="#c53030" stroke-width="2"/>
+    <text x="56" y="594" font-size="11" font-weight="700" fill="#c53030">CAPA 5  -  FRENADO P1 (tsw6/braking/v2)</text>
+    <rect x="60" y="606" width="150" height="58" rx="6" fill="#fff" stroke="#feb2b2"/>
+    <text x="135" y="626" text-anchor="middle" font-size="11" font-weight="600">coordinator</text>
+    <text x="135" y="642" text-anchor="middle" font-size="9" fill="#666">RELEASE - unified</text>
+    <text x="135" y="654" text-anchor="middle" font-size="9" fill="#666">emergencia</text>
+    <rect x="230" y="606" width="130" height="58" rx="6" fill="#fff" stroke="#feb2b2"/>
+    <text x="295" y="630" text-anchor="middle" font-size="11">limit_brake</text>
+    <text x="295" y="646" text-anchor="middle" font-size="9" fill="#666">cartel v-a</text>
+    <rect x="380" y="606" width="130" height="58" rx="6" fill="#fff" stroke="#feb2b2"/>
+    <text x="445" y="630" text-anchor="middle" font-size="11">station_brake</text>
+    <text x="445" y="646" text-anchor="middle" font-size="9" fill="#666">and-n HUD</text>
+    <rect x="530" y="606" width="120" height="58" rx="6" fill="#fff" stroke="#feb2b2"/>
+    <text x="590" y="630" text-anchor="middle" font-size="11">planner</text>
+    <text x="590" y="646" text-anchor="middle" font-size="9" fill="#666">perfil - ETA</text>
+    <rect x="670" y="606" width="220" height="58" rx="6" fill="#fed7d7" stroke="#fc8181" stroke-width="2"/>
+    <text x="780" y="626" text-anchor="middle" font-size="12" font-weight="700" fill="#9b2c2c">BrakeCommand</text>
+    <text x="780" y="644" text-anchor="middle" font-size="10" fill="#c53030">APPLY notch - RELEASE - 4</text>
+    <text x="780" y="658" text-anchor="middle" font-size="9" fill="#666">decider.brake_command</text>
+  </g>
+
+  <line x1="780" y1="678" x2="780" y2="708" stroke="#c53030" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="780" y1="708" x2="480" y2="708" stroke="#c53030" stroke-width="2"/>
+  <line x1="480" y1="708" x2="480" y2="728" stroke="#c53030" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Layer 1: Ejecuci-n -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="730" width="880" height="72" rx="10" fill="#ebf8ff" stroke="#2b6cb0" stroke-width="2"/>
+    <text x="56" y="754" font-size="11" font-weight="700" fill="#2b6cb0">CAPA 6  -  EJECUCI-N MANDOS</text>
+    <rect x="140" y="762" width="280" height="32" rx="6" fill="#fff" stroke="#90cdf4"/>
+    <text x="280" y="783" text-anchor="middle" font-size="12" fill="#1a365d">handle_controller.execute()</text>
+    <text x="500" y="783" font-size="18" fill="#c53030">-</text>
+    <rect x="520" y="762" width="200" height="32" rx="6" fill="#fff" stroke="#90cdf4"/>
+    <text x="620" y="783" text-anchor="middle" font-size="12" fill="#1a365d">notch absoluto IPC</text>
+    <text x="760" y="783" font-size="18" fill="#c53030">-</text>
+    <text x="820" y="783" text-anchor="middle" font-size="11" fill="#2b6cb0">vuelta a capa 1</text>
+  </g>
+
+  <!-- Legend -->
+  <rect x="40" y="12" width="8" height="8" fill="#c53030"/>
+  <text x="54" y="20" font-size="10" fill="#666">ruta P1 freno</text>
+  <rect x="140" y="12" width="8" height="8" fill="#444"/>
+  <text x="154" y="20" font-size="10" fill="#666">telemetr-a / datos</text>
+</svg>

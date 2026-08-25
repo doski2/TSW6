@@ -579,6 +579,35 @@ class LearnMonitor:
         print("═" * 64)
 
 
+def learn_progress_summary(
+    learner,
+    vehicle: str = "",
+    *,
+    target: int = TARGET_SAMPLES,
+    layout: str = "combined",
+) -> dict:
+    """Resumen para GUI autopilot: progreso matriz + constantes del perfil."""
+    mon = LearnMonitor(
+        learner, vehicle or "?", target,
+        layout=layout, auto_render=False,
+    )
+    done, total = mon._total_progress()
+    consts = learner.get_constants()
+    conf: dict = {}
+    if hasattr(learner, "confidence"):
+        conf = learner.confidence()
+    return {
+        "done_cells": done,
+        "total_cells": total,
+        "target_per_cell": target,
+        "profile": os.path.basename(getattr(learner, "save_path", "") or ""),
+        "last_reason": getattr(learner, "last_reason", "—"),
+        "constants": consts,
+        "confidence": conf,
+        "layout": layout,
+    }
+
+
 # ── Entrada principal ─────────────────────────────────────────────────────────
 
 def main() -> None:

@@ -19,10 +19,17 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de 
 | `tsw6/telemetry/driver_aid_parser.py` | DriverAid → planning, estaciones |
 | `tsw6/telemetry/tsw_ipc_bus.py` | Mandos `SendCommand.txt` |
 | `tsw6/telemetry/tsw_command_bus.py` | Mandos HTTP PATCH (fallback) |
-| `tsw6/braking/brake_planner.py` | Plan P1 B1–B3 (Dastsc) |
-| `tsw6/governor/governor_station.py` | FSM paradas |
+| `tsw6/autopilot/train_state.py` | Instantánea inmutable por ciclo |
+| `tsw6/autopilot/speed_decider.py` | FSM → P1 v2 → HOLD |
+| `tsw6/autopilot/handle_controller.py` | Ejecución notch + SafetyWatchdog |
+| `tsw6/governor/governor_physics.py` | Física tren, learner, distancias |
+| `tsw6/governor/governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
+| `tsw6/braking/v2/` | **Frenado P1** — physics, command, planner, coordinator |
 | `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz + GUI |
 | `archive/railbridge/` | Companion SSE — **no usar** |
+
+Detalle frenado P1: [BRAKE_V2.md](BRAKE_V2.md). Paridad Dastsc:
+[DASTSC_PARITY.md](DASTSC_PARITY.md).
 
 ---
 
@@ -38,7 +45,8 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de 
 | Escribir mandos | ✅ `SendCommand.txt` | ✅ PATCH (fallback) |
 
 **Calibración** (`aprender.bat`): solo lectura → UE4SS basta.
-**Autopiloto mandos:** IPC (sin `-HTTPAPI`).
+**Autopiloto mandos:** IPC (sin `-HTTPAPI`). IPC es **más fiable** que teclado: notch absoluto en un
+ciclo; teclado solo como fallback (pulso corto 120 ms).
 **Autopiloto paradas HUD:** `-HTTPAPI` + `tsw_hud.db`.
 
 ---
@@ -90,7 +98,7 @@ Lectura crítica (velocidad) en UE4SS; HTTP para planning lento.
 | --- | --- |
 | `GetData.txt` | ✅ TelemetryProbeMod |
 | `SendCommand.txt` | ✅ `tsw_ipc_bus.py` |
-| `command_bus.py` | `brake_command.py` + allowlist IPC/HTTP |
+| `command_bus.py` | `v2/command.py` + `BrakeCoordinatorV2` + allowlist IPC/HTTP |
 
 Mandos permitidos: `PowerBrakeHandle`, `AutomaticBrake`, `IndependentBrake`, `DynamicBrake`.
 
@@ -105,8 +113,10 @@ Mandos permitidos: `PowerBrakeHandle`, `AutomaticBrake`, `IndependentBrake`, `Dy
 | Gradiente (Lua probe) | ✅ | `gradient_pct` en GetData.txt |
 | Escritura Lua (B4) | ✅ | `SendCommand.txt` |
 | Planning 2 límites probe | ✅ | `dist_limit_*` en GetData.txt |
-| Horario HUD (`tsw_hud.db`) | ✅ planning | `hud_timetable.py` |
-| Parada exacta tablón (frenado) | 🔄 | `planBrakeForStation` |
+| Horario HUD (`tsw_hud.db`) | ✅ planning + GUI arr/dep | `hud_timetable.py` |
+| Frenado P1 v2 (autopilot) | ✅ | `braking/v2/` — ver [BRAKE_V2.md](BRAKE_V2.md) |
+| Parada andén (`plan_brake_for_station`) | ✅ | `v2/station_brake` → `v2/planner.py` |
+| Señal rojo (DANGER) | ⬜ | `signal_brake.py` stub; falta telemetría |
 | Freight SD40-2 probe | ⬜ | 4 mandos en `GetData.txt` |
 
 Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
@@ -120,7 +130,7 @@ Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 3. ~~Planning estaciones sin RailBridge~~ → HUD DB + HTTP ✅
 4. ~~B4 SendCommand~~ ✅
 5. Distancia tablón en tiempo real (GPS cada tick) vs odometría — pendiente
-6. `planBrakeForStation` — prioridad para parada exacta
+6. Telemetría señal DANGER → `signal_brake` v2
 
 ---
 
@@ -132,3 +142,5 @@ Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 | 2026-08-19 | IPC mandos; planning 2 límites |
 | 2026-08-22 | Velocidad congelada ~20 Hz GUI |
 | 2026-08-23 | HUD timetable: filtro paradas, `car_stop_signs`, merge `hud_geo` |
+| 2026-08-24 | P1 v2 en autopilot (`BrakeCoordinatorV2`); todo frenado en `braking/v2/` |
+| 2026-08-24 | Consolidación v2 — eliminado `archive/braking_v1/` |

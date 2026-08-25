@@ -1,7 +1,7 @@
 # Horarios TSW HUD (`tsw_hud.db`)
 
 Integración opcional con el extractor del proyecto [TSW
-HUD](https://www.trainsimcommunity.com/mods/c3-train-sim-world/c75-utilities/i7169-tsw-hud-timetable-extractor)
+HUD](<https://www.trainsimcommunity.com/mods/c3-train-sim-world/c75-utilities/i7169-tsw-hud-timetable-extractor>)
 (`tsw_projects-main/hud`).
 
 **Estado (2026-08-23):** ✅ planning de paradas integrado · 🔄 parada exacta en tablón (frenado)
@@ -49,7 +49,7 @@ El clone de GitHub **no incluye** `tsw_hud.db` (`.gitignore`). Sin ella, `hud.ex
 
 1. Descarga [TSW HUD & Timetable Extractor
 
-   v4.0.2](https://www.trainsimcommunity.com/mods/c3-train-sim-world/c75-utilities/i7169-tsw-hud-timetable-extractor)
+v4.0.2](<https://www.trainsimcommunity.com/mods/c3-train-sim-world/c75-utilities/i7169-tsw-hud-timetable-extractor>)
    (`2-July-2026-hud-rust.zip`, ~770 MB).
 
 2. Dentro del ZIP: `hud\resources\db\tsw_hud.db`
@@ -73,9 +73,14 @@ reciente.
 
 | Prioridad | Ruta |
 | --- | --- |
-| 1 | `TSW6/tsw_hud.db` |
-| 2 | Variable de entorno `TSW_HUD_DB` |
-| 3 | `…/hud/resources/db/tsw_hud.db` en el clone de `tsw_projects-main` |
+| 1 | Variable de entorno `TSW_HUD_DB` |
+| 2 | **`hud/src-tauri/target/release/resources/db/tsw_hud.db`** — BD completa tras extracción DLCs (~4 GB) |
+| 3 | `TSW6/tsw_hud.db` (copia local) |
+| 4 | `TSW6/data/tsw_hud.db` |
+| 5 | `hud/resources/db/tsw_hud.db` (semilla del mod) |
+
+Tras extraer en `hud.exe`, la BD de **release** es la referencia; `preparar_db_hud.bat` también
+copia a `TSW6/tsw_hud.db` como respaldo.
 
 ### Verificar
 
@@ -95,9 +100,26 @@ Debe mostrar `[OK] BD encontrada` y, si extrajiste Cross-City, un horario `2R17`
 | `hud_route_name` | Nombre de ruta (ej. Birmingham Cross-City) |
 | `next_stop_name` | Próxima parada programada |
 | `next_stop_distance_m` | Distancia (TrackData o `hud_geo`) |
+| `next_stop_arrival` | Hora llegada programada (HUD DB) |
+| `next_stop_departure` | Hora salida programada (HUD DB) |
+| `stations[].arrival` / `departure` | Horario por fila en planning |
 | `stations[].source` | `hud_geo` cuando la distancia viene de `car_stop_signs` |
 
-En la GUI (pestaña **Planning**): `Próxima parada: … [horario HUD #ID]`.
+En la GUI (pestaña **Planning**): horas `arr` / `dep` en próxima parada y tabla de estaciones.
+
+---
+
+## `car_stop_signs` — qué es
+
+Tabla en `tsw_hud.db` con la **posición GPS del tablón de parada** en cada andén (`latitude`,
+`longitude`, `platform_name`, `route_id`).
+
+| Uso | Detalle |
+| --- | --- |
+| **Planning** | Si TrackData trae andenes incorrectos, distancia haversine tren → tablón (`source: hud_geo`). |
+| **Frenado** | 🔄 El tablón marca dónde debe quedar el tren parado; P1 aún no frena exactamente ahí (falta OCR/GPS cada tick). |
+
+No es cartel de velocidad ni semáforo: es el **punto de parada comercial** del horario en el mundo.
 
 ---
 
@@ -122,10 +144,13 @@ Conexión SQLite **thread-local** (hilo principal + `tsw-planning` no comparten 
 3. Comprobar:
    - `Próxima parada: Four Oaks … [horario HUD #…]` (no Shenstone/Lichfield si no están en el
 
-        horario).
+     horario).
 
-   - Tabla de estaciones = paradas del horario HUD, en orden.
+   - Columnas **Llegada** / **Salida** en la tabla de estaciones (horario comercial).
    - Barra superior: `Estaciones: HTTP`.
+
+**Estado (2026-08-24):** horarios y arr/dep en GUI validados in-game. Pendiente: frenado fino en
+andén y uso de `station_eta` en v2.
 
 ---
 
@@ -136,6 +161,7 @@ Conexión SQLite **thread-local** (hilo principal + `tsw-planning` no comparten 
 | Lista de paradas correcta (horario HUD) | ✅ |
 | Coordenadas `car_stop_signs` en planning | ✅ |
 | Distancia `hud_geo` (haversine) si TrackData no coincide | ✅ |
+| Horas llegada/salida en telemetría/GUI | ✅ (validado in-game 2026-08-24) |
 | Recalcular distancia cada tick con GPS | ❌ (odometría entre polls HTTP ~2 s) |
 | Frenado planificado `planBrakeForStation` | ❌ (FSM usa perfil simple) |
 | OCR «DETÉNGASE EN EL LUGAR» | ❌ (opcional: `pip install mss pytesseract`) |

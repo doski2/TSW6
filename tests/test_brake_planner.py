@@ -2,14 +2,22 @@
 
 import pytest
 
-from tsw6.braking.brake_planner import (
+from tsw6.autopilot.control_actions import BRAKE, COAST
+from tsw6.braking.v2.planner import (
     UK_SERVICE_PHASES,
     apply_zone_margin_m,
     braking_distance_m,
     plan_brake,
+    plan_for_approach_targets,
     plan_for_speed_limits,
     plan_to_governor_action,
+    resolve_chained_limit_target,
+    select_urgent_brake_plan,
     select_urgent_plan,
+    sequential_limit_stop_feasible,
+    should_merge_limit_and_station_plans,
+    should_delay_unified_station_plan,
+    targets_are_clustered,
 )
 
 
@@ -60,7 +68,7 @@ class TestGovernorAction:
         plan.active_step.apply_now = True
         action, _ = plan_to_governor_action(
             plan, speed_mph=55.0, throttle_notch=2, effective_limit=60.0)
-        assert action == "COAST"
+        assert action == COAST
 
     def test_brake_when_no_throttle(self):
         plan = plan_brake(
@@ -69,7 +77,7 @@ class TestGovernorAction:
         plan.active_step.apply_now = True
         action, _ = plan_to_governor_action(
             plan, speed_mph=55.0, throttle_notch=0, effective_limit=60.0)
-        assert action in ("BRAKE", "HARDBRAKE")
+        assert action == BRAKE
 
 
 class TestLimitQueue:
@@ -81,6 +89,116 @@ class TestLimitQueue:
         plan = plan_for_speed_limits(55.0, limits, 60.0, 0.0, 0.8)
         assert plan is not None
         assert plan.target_speed_mph == 30.0
+
+
+class TestClusteredLimitStation:
+    """Paridad Dastsc: cartel 55 antes del andén."""
+
+    def test_targets_clustered(self):
+        assert targets_are_clustered(300, 400) is True
+        assert targets_are_clustered(300, 800) is False
+
+    def test_merge_when_sign_before_platform(self):
+        assert should_merge_limit_and_station_plans(300, 400) is True
+        assert should_merge_limit_and_station_plans(800, 500) is False
+
+    def test_prefers_limit_plan_when_55_before_stop(self):
+        """60 mph, cartel 55 a 500 m, estación a 800 m → parada unificada (gap corto)."""
+        limits = [{"limit_mph": 55.0, "distance_m": 500.0}]
+        result = plan_for_approach_targets(
+            60.0, limits, 800.0, 60.0, 0.0, 0.8, station_name="Alden")
+        assert result is not None
+        assert result.active.target_kind == "STATION"
+        assert result.follow_up is None
+        assert result.chain is not None
+        assert result.chain.unified_stop is True
+        assert result.chain.phase == 2
+
+    def test_two_phase_when_gap_allows_stop_after_limit(self):
+        """60→30 mph con andén a +320 m: sí cabe frenar al cartel y luego parar."""
+        limits = [{"limit_mph": 30.0, "distance_m": 500.0}]
+        assert sequential_limit_stop_feasible(
+            limit_mph=30.0, limit_dist_m=500.0, station_dist_m=820.0) is True
+        result = plan_for_approach_targets(
+            60.0, limits, 820.0, 60.0, 0.0, 0.8, station_name="Alden")
+        assert result is not None
+        assert result.active.target_kind == "SPEED_LIMIT"
+        assert result.active.target_speed_mph == 30.0
+        assert result.follow_up is not None
+        assert result.follow_up.target_kind == "STATION"
+        assert result.chain is not None
+        assert result.chain.clustered is True
+        assert result.chain.phase == 1
+        assert result.chain.unified_stop is False
+
+    def test_unified_stop_when_gap_too_short_after_limit(self):
+        """60→55 con andén a +150 m: no hay margen para soltar y parar."""
+        limits = [{"limit_mph": 55.0, "distance_m": 400.0}]
+        assert sequential_limit_stop_feasible(
+            limit_mph=55.0, limit_dist_m=400.0, station_dist_m=550.0) is False
+        result = plan_for_approach_targets(
+            60.0, limits, 550.0, 60.0, 0.0, 0.8, station_name="Alden")
+        assert result is not None
+        assert result.active.target_kind == "STATION"
+        assert result.follow_up is None
+        assert result.chain is not None
+        assert result.chain.unified_stop is True
+        assert result.chain.phase == 2
+
+    def test_delays_station_at_limit_speed_until_near_sign(self):
+        """55 mph, cartel a 700 m, andén a 987 m — coast hasta ~200 m del cartel."""
+        limits = [{"limit_mph": 55.0, "distance_m": 700.0}]
+        assert should_delay_unified_station_plan(
+            speed_mph=55.0,
+            limit_mph=55.0,
+            limit_dist_m=700.0,
+            station_dist_m=987.0,
+        ) is True
+        far = plan_for_approach_targets(
+            55.0, limits, 987.0, 60.0, 0.0, 0.8, station_name="Four Oaks")
+        assert far is None
+        near = plan_for_approach_targets(
+            55.0, limits, 487.0, 60.0, 0.0, 0.8, station_name="Four Oaks")
+        assert near is not None
+        assert near.active.target_kind == "STATION"
+
+    def test_two_phase_chain_uses_follow_up_after_limit(self):
+        limits = [{"limit_mph": 30.0, "distance_m": 500.0}]
+        result = plan_for_approach_targets(
+            60.0, limits, 820.0, 60.0, 0.0, 0.8, station_name="Alden")
+        assert result is not None
+        phase2 = plan_for_approach_targets(
+            30.0, limits, 770.0, 60.0, 0.0, 0.8,
+            station_name="Alden", limit_phase_done=True)
+        assert phase2 is not None
+        assert phase2.active.target_kind == "STATION"
+        assert phase2.follow_up is None
+        assert phase2.chain is not None
+        assert phase2.chain.phase == 2
+
+    def test_resolve_chained_limit_target(self):
+        limits = [
+            {"limit_mph": 75.0, "distance_m": 400.0},
+            {"limit_mph": 25.0, "distance_m": 600.0},
+        ]
+        tgt = resolve_chained_limit_target(limits)
+        assert tgt is not None
+        assert tgt["limit_mph"] == 25.0
+
+    def test_select_urgent_drops_station_when_merged(self):
+        limit_plan = plan_brake(
+            speed_mph=60.0, distance_to_target_m=500.0, target_speed_mph=55.0)
+        station_plan = plan_brake(
+            speed_mph=60.0, distance_to_target_m=800.0, target_speed_mph=0.0,
+            target_kind="STATION")
+        assert limit_plan and station_plan
+        selected = select_urgent_brake_plan(
+            [limit_plan, station_plan],
+            limit_dist_m=500.0,
+            station_dist_m=800.0,
+        )
+        assert selected is not None
+        assert selected.target_kind == "SPEED_LIMIT"
 
 
 class TestLearnedDecel:

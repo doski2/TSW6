@@ -14,6 +14,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
+)
 from tsw6.autopilot.train_state import TrainState
 from tsw6.autopilot.handle_controller import HandleController, SafetyWatchdog, _NOTCH_NEUTRAL, _MAX_NOTCH
 
@@ -44,12 +47,6 @@ def _fresh() -> HandleController:
 # ── Target notch ──────────────────────────────────────────────────────────────
 
 class TestTargetNotch:
-    def test_accelerate_increases(self):
-        c = _fresh()
-        assert c._target_notch("ACCELERATE", 4) == 5
-        assert c._target_notch("ACCELERATE", 7) == 8
-        assert c._target_notch("ACCELERATE", 8) == 8  # máximo
-
     def test_coast_no_below_neutral(self):
         c = _fresh()
         assert c._target_notch("COAST", 6) == 5
@@ -68,22 +65,18 @@ class TestTargetNotch:
         # Limite: no bajar de _BRAKE_MIN_HANDLE (1)
         assert c._target_notch("BRAKE", 1) == 1
 
-    def test_hardbrake_jumps_to_neutral(self):
+    def test_brake_fast_jumps_to_neutral(self):
         c = _fresh()
-        # Desde tracción: saltar a neutro
-        assert c._target_notch("HARDBRAKE", 7) == 4
-        assert c._target_notch("HARDBRAKE", 5) == 4
-        # Desde neutro/freno: aplicar freno completo
-        assert c._target_notch("HARDBRAKE", 4) == 3
-        assert c._target_notch("HARDBRAKE", 1) == 0
+        assert c._target_notch(BRAKE_FAST, 7) == 4
+        assert c._target_notch(BRAKE_FAST, 5) == 4
+        assert c._target_notch(BRAKE_FAST, 4) == 3
+        assert c._target_notch(BRAKE_FAST, 1) == 1
 
-    def test_fullstop_to_zero(self):
+    def test_emergency_goes_to_notch_zero(self):
         c = _fresh()
-        # Desde tracción: neutro primero
-        assert c._target_notch("FULLSTOP", 6) == 4
-        # Desde neutro/freno: freno máximo
-        assert c._target_notch("FULLSTOP", 4) == 0
-        assert c._target_notch("FULLSTOP", 2) == 0
+        assert c._target_notch(EMERGENCY, 6) == 4
+        assert c._target_notch(EMERGENCY, 4) == 0
+        assert c._target_notch(EMERGENCY, 2) == 0
 
 
 # ── HOLD/PAUSED ───────────────────────────────────────────────────────────────
@@ -92,12 +85,12 @@ class TestHoldPaused:
     def test_hold_returns_false(self):
         c = _fresh()
         s = _state()
-        assert c.execute("HOLD", s, None, None) is False
+        assert c.execute(HOLD, s, None, None) is False
 
     def test_paused_returns_false(self):
         c = _fresh()
         s = _state()
-        assert c.execute("PAUSED", s, None, None) is False
+        assert c.execute(PAUSED, s, None, None) is False
 
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -108,48 +101,36 @@ class TestRateLimit:
         hwnd = MagicMock()
 
         with patch("tsw6.autopilot.handle_controller.send_key"):
-            s = _state(handle_notch=4)
-            # Primera llamada: pasa
-            c.execute("ACCELERATE", s, None, hwnd)
-            # Segunda llamada inmediata: bloqueada por rate-limit
-            result = c.execute("ACCELERATE", s, None, hwnd)
+            s = _state(handle_notch=6)
+            c.execute(COAST, s, None, hwnd)
+            result = c.execute(COAST, s, None, hwnd)
         assert result is False
 
-    def test_hardbrake_uses_shorter_interval(self):
-        """HARDBRAKE tiene intervalo más corto que ACCELERATE."""
-        from tsw6.governor.governor_constants import CONTROL_INTERVAL, CONTROL_INTERVAL_EMERG
-        assert CONTROL_INTERVAL_EMERG < CONTROL_INTERVAL
+    def test_brake_fast_uses_shorter_interval(self):
+        """BRAKE_FAST tiene intervalo más corto que COAST."""
+        from tsw6.governor.governor_constants import CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_FAST
+        assert CONTROL_INTERVAL_FAST < CONTROL_INTERVAL_BRAKE
 
 
 # ── Teclado (mock hwnd) ───────────────────────────────────────────────────────
 
 class TestKeyboard:
-    def test_accelerate_sends_vk_a(self):
-        from tsw6.autopilot.handle_controller import VK_A
-        c = _fresh()
-        s = _state(handle_notch=4)  # quiere subir a 5
-        hwnd = MagicMock()
-
-        with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("ACCELERATE", s, None, hwnd)
-        assert result is True
-        mock_send.assert_called_once_with(hwnd, VK_A)
-
     def test_coast_sends_vk_d(self):
         from tsw6.autopilot.handle_controller import VK_D
+        from tsw6.autopilot.tsw_keys import KEY_TAP_MS
         c = _fresh()
         s = _state(handle_notch=6)  # quiere bajar a 5
         hwnd = MagicMock()
 
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, hwnd)
+            result = c.execute(COAST, s, None, hwnd)
         assert result is True
-        mock_send.assert_called_once_with(hwnd, VK_D)
+        mock_send.assert_called_once_with(hwnd, VK_D, hold_ms=KEY_TAP_MS)
 
     def test_no_hwnd_returns_false(self):
         c = _fresh()
-        s = _state(handle_notch=4)
-        result = c.execute("ACCELERATE", s, None, None)
+        s = _state(handle_notch=6)
+        result = c.execute(COAST, s, None, None)
         assert result is False
 
     def test_coast_when_already_neutral_no_send(self):
@@ -158,7 +139,7 @@ class TestKeyboard:
         s = _state(handle_notch=4)  # ya en neutro
 
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, 1)
+            result = c.execute(COAST, s, None, 1)
         assert result is False
         mock_send.assert_not_called()
 
@@ -176,21 +157,20 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=6, ack_required=False)
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, 1)
+            result = c.execute(COAST, s, None, 1)
         assert result is False
         mock_send.assert_not_called()
 
     def test_coast_not_suppressed_for_plus_one_jump(self):
         """Salto de +1 es nuestro propio comando — NO activa supresión."""
         c = _fresh()
-        # Autopilot envió ACCELERATE, notch subió 4→5 (+1 = propio)
         c._last_seen_notch = 4
         # Simular: _last_ext_up_t queda del pasado (no fue detectado como externo)
         c._last_ext_up_t = 0.0
 
         s = _state(handle_notch=5, ack_required=False)
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, 1)
+            result = c.execute(COAST, s, None, 1)
         assert result is True
 
     def test_coast_allowed_after_grace_period(self):
@@ -199,17 +179,7 @@ class TestCoastSuppression:
 
         s = _state(handle_notch=6, ack_required=False)
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, 1)
-        assert result is True
-
-    def test_coast_not_suppressed_during_ack(self):
-        """Durante ACK, la supresión no aplica — hay que liberar tracción igualmente."""
-        c = _fresh()
-        c._last_ext_up_t = time.time() - 0.1  # boost muy reciente
-
-        s = _state(handle_notch=6, ack_required=True)  # ACK activo
-        with patch("tsw6.autopilot.handle_controller.send_key") as mock_send:
-            result = c.execute("COAST", s, None, 1)
+            result = c.execute(COAST, s, None, 1)
         assert result is True
 
 
@@ -228,7 +198,7 @@ class TestSafetyWatchdog:
         assert w.check(s) is None
 
     def test_hardbrake_after_persistent_overspeed(self):
-        """Exceso >= 5mph durante >= 3s → HARDBRAKE."""
+        """Exceso >= 5mph durante >= 3s → BRAKE_FAST."""
         w = SafetyWatchdog()
         # Exceso inmediato
         s = _state(speed_mph=57.0, limit_mph=50.0, acceleration_ms2=0.1)
@@ -237,7 +207,7 @@ class TestSafetyWatchdog:
         w._overspeed_since = time.time() - 4.0
 
         result = w.check(s)
-        assert result == "HARDBRAKE"
+        assert result == BRAKE_FAST
 
     def test_overspeed_resets_when_speed_drops(self):
         w = SafetyWatchdog()
@@ -265,7 +235,7 @@ class TestSafetyWatchdog:
 
 class TestDastscDirectNotch:
     def test_ipc_applies_absolute_notch_from_brake_command(self):
-        from tsw6.braking.brake_command import BrakeCommand
+        from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
         conn = MagicMock()
@@ -282,13 +252,33 @@ class TestDastscDirectNotch:
         assert args[0] == "PowerBrakeHandle"
         assert abs(args[1] - 0.25) < 0.01
 
-    def test_hwnd_prefers_keyboard_over_ipc(self):
-        from tsw6.braking.brake_command import BrakeCommand
+    def test_apply_uses_ipc_with_hwnd_when_available(self):
+        from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
         conn = MagicMock()
         conn.mode = "ue4ss"
         conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = True
+
+        cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
+        s = _state(handle_notch=4)
+        hwnd = MagicMock()
+
+        with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
+            mock_key.assert_not_called()
+            conn.set_control_value.assert_called_once()
+            assert abs(conn.set_control_value.call_args[0][1] - 0.25) < 0.01
+
+    def test_apply_falls_back_to_keyboard_when_ipc_fails(self):
+        from tsw6.braking.v2.command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock()
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = False
 
         cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
         s = _state(handle_notch=4)
@@ -297,10 +287,28 @@ class TestDastscDirectNotch:
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
             assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
             mock_key.assert_called_once()
-            conn.set_control_value.assert_not_called()
+
+    def test_release_uses_ipc_to_neutral_even_with_hwnd(self):
+        from tsw6.braking.v2.command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock()
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = True
+
+        cmd = BrakeCommand(kind="RELEASE", target_notch=4)
+        s = _state(handle_notch=3)
+        hwnd = MagicMock()
+
+        with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
+            assert c.execute("RELEASE", s, conn, hwnd, brake_command=cmd) is True
+            mock_key.assert_not_called()
+            conn.set_control_value.assert_called_once()
+            assert abs(conn.set_control_value.call_args[0][1] - 0.5) < 0.01
 
     def test_hold_still_executes_brake_command(self):
-        from tsw6.braking.brake_command import BrakeCommand
+        from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
         cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")

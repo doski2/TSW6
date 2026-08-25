@@ -8,6 +8,7 @@ from unittest import mock
 
 from tsw6.telemetry.tsw_ipc_bus import (
     APPLY_FLAG_FILENAME,
+    SEND_ACK_FILENAME,
     SEND_COMMAND_FILENAME,
     dispatch_ipc_brake,
     dispatch_ipc_combined_notch,
@@ -15,7 +16,9 @@ from tsw6.telemetry.tsw_ipc_bus import (
     format_send_command_line,
     purge_lua_commands,
     release_controls,
+    send_ack_path,
     write_send_command,
+    write_send_command_with_ack,
 )
 
 
@@ -50,10 +53,48 @@ class TestIpcBus(unittest.TestCase):
         self.assertEqual(result["error"], "command_not_allowed")
 
     def test_dispatch_combined_notch(self):
-        result = dispatch_ipc_combined_notch(2)
+        with mock.patch(
+            "tsw6.telemetry.tsw_ipc_bus.wait_send_ack",
+            return_value={"name": "PowerBrakeHandle", "value": 0.25, "ok": True},
+        ):
+            result = dispatch_ipc_combined_notch(2)
         self.assertTrue(result["ok"])
         self.assertEqual(result["path"], "PowerBrakeHandle")
         self.assertAlmostEqual(result["value"], 0.25)
+
+    def test_dispatch_ack_timeout(self):
+        with mock.patch("tsw6.telemetry.tsw_ipc_bus.wait_send_ack", return_value=None):
+            result = dispatch_ipc_combined_notch(2)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "ack_timeout")
+
+    def test_write_clears_stale_ack(self):
+        bridge = self._bridge()
+        bridge.mkdir(parents=True, exist_ok=True)
+        (bridge / SEND_ACK_FILENAME).write_text(
+            "PowerBrakeHandle:0.0000:ok\n", encoding="utf-8")
+        with mock.patch(
+            "tsw6.telemetry.tsw_ipc_bus.wait_send_ack",
+            return_value={"name": "PowerBrakeHandle", "value": 0.25, "ok": True},
+        ):
+            result = write_send_command_with_ack("combined_brake", 0.25)
+        self.assertTrue(result["ok"])
+        self.assertFalse(send_ack_path().is_file())
+
+    def test_optimistic_success_when_command_consumed(self):
+        with mock.patch(
+            "tsw6.telemetry.tsw_ipc_bus.write_send_command", return_value=True,
+        ):
+            with mock.patch(
+                "tsw6.telemetry.tsw_ipc_bus.wait_send_ack", return_value=None,
+            ):
+                with mock.patch(
+                    "tsw6.telemetry.tsw_ipc_bus.send_command_path",
+                ) as mock_cmd_path:
+                    mock_cmd_path.return_value.is_file.return_value = False
+                    result = write_send_command_with_ack("combined_brake", 0.25)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["ack"].get("optimistic"))
 
     def test_purge_removes_files(self):
         enable_lua_commands()

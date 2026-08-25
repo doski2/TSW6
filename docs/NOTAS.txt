@@ -1,4 +1,15 @@
 # Notas personales
-- preguntar si al aplicar los frenos aprende o calibra los frenos
-- 
-- 
+- planes de frenado probar y revisar con detalle
+- ~~revisar si en la base de datos hay horario~~ → OK: `tsw_hud.db` + arr/dep en GUI (2026-08-24)
+- añadir señales de ambar y rojo (semaforos)
+- car_stop_signs gps nos hace falta extraer gps del juego para frenar al milimetro
+- mandos: usar IPC siempre que `mandos=ipc` en heartbeat (más fiable que teclado A/D)
+
+estudiado documento estado:
+1. main api = hud vemos datos driverAid el que ve limites,puertas y demas y getdata recopila info de todo lo que nos manda driverAid
+ 1.1 reviar que nos puede servir para una mejora 
+ 1.2 Estaciones y andenes hay que estudiar si uno de los nombre es el que nos mande parar aqui en este punto exacto como el hud del juego
+  1.2.1 gps y cordenadas 
+ 1.3 cameraMode insertar y probar mas adelante
+ 2. y la parte fisica del juego que datos podemos optener?
+ 3. debemos usar proximo limite mas fiable o añadir otro para asegurar?

@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from tsw6.braking.v2.planner import normalize_station_eta
 from tsw6.learning.control_layout import detect_control_layout
 
 
@@ -80,6 +81,9 @@ class TrainState:
     ind_brake_value:   Optional[float] = None
     dyn_brake_value:   Optional[float] = None
     dyn_brake_active:  Optional[bool] = None
+    next_stop_distance_m: Optional[float] = None
+    next_stop_name: Optional[str] = None
+    next_stop_arrival: Optional[str] = None  # HH:MM HUD — station_eta en P1
 
     # ── Metadata ─────────────────────────────────────────────────────────
     timestamp: float = field(default_factory=time.time)
@@ -168,6 +172,12 @@ def build_train_state(
         except (TypeError, ValueError):
             return None
 
+    def _str_or_none(value: object) -> Optional[str]:
+        if value is None:
+            return None
+        s = str(value).strip()
+        return s or None
+
     dyn_active = telem.get("dyn_brake_active")
     if isinstance(dyn_active, bool):
         dyn_active_val: Optional[bool] = dyn_active
@@ -204,5 +214,8 @@ def build_train_state(
         station_state      = station_state,
         station_name       = station_name,
         paused             = paused,
+        next_stop_distance_m = _float_or_none("next_stop_distance_m"),
+        next_stop_name     = telem.get("next_stop_name"),
+        next_stop_arrival  = normalize_station_eta(telem.get("next_stop_arrival")),
         timestamp          = time.time(),
     )

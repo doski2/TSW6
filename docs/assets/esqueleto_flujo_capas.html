@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TSW6 — Esqueleto flujo por capas</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #e8e8e8;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
+    p { margin: 0 0 20px; color: #aaa; font-size: 0.9rem; }
+    .frame {
+      background: #fff;
+      border-radius: 12px;
+      padding: 8px;
+      max-width: 100%;
+      overflow: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    img, object { display: block; max-width: 100%; height: auto; }
+    a { color: #63b3ed; }
+  </style>
+</head>
+<body>
+  <h1>Esqueleto de flujo por capas — frenos P1</h1>
+  <nav>
+    <a href="esqueleto_flujo_cronologico.html">Cronologico (recomendado)</a>
+    <a href="esqueleto_flujo_capas.html">Por capas</a>
+  </nav>
+  <div class="frame">
+    <object data="esqueleto_flujo_capas.svg" type="image/svg+xml" width="960" height="820">
+      <img src="esqueleto_flujo_capas.svg" alt="Diagrama por capas TSW6" width="960">
+    </object>
+  </div>
+</body>
+</html>

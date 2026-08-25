@@ -11,8 +11,10 @@
 | [ARQUITECTURA.md](ARQUITECTURA.md) | Desarrollo | API TSW, módulos, UE4SS, latencia |
 | [DRIVERAID_API.md](DRIVERAID_API.md) | HTTPAPI / DriverAid | Catálogo nodos, estaciones, geo |
 | [DASTSC_PARITY.md](DASTSC_PARITY.md) | Frenado P1 | Paridad con Dastsc, B1–B3, pendientes |
+| [BRAKE_V2.md](BRAKE_V2.md) | Frenado activo | Arquitectura P1 v2, módulos, prioridad |
 | [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 / diesel NA | Layout multi-mando, fases 4–6 |
-| [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / telemetría | Probe, IPC, planning híbrido |
+| [ESTADO.md](ESTADO.md) | Tablero visual (Mermaid) qué está hecho y qué sigue |
+| [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / probe / foco de trabajo |
 | [NOTAS.txt](NOTAS.txt) | Personal | Recordatorios de pruebas |
 
 ## Código activo (mapa rápido)
@@ -28,9 +30,7 @@
 | `autopilot_core.py` | Bucle de control ~20 Hz |
 | `autopilot_gui.py` | GUI tkinter (Estado / Planning / Depuración) |
 | `speed_decider.py` | Decisiones velocidad/freno + FSM estación |
-| `brake_planner.py` | Plan límite B1–B3 (Dastsc) |
-| `brake_command.py` | Comando notch directo P1 |
-| `brake_release.py` | RELEASE al objetivo, anti-rebrake |
+| `braking/v2/` | **Frenado P1** — physics, command, planner, coordinator |
 | `governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
 | `handle_controller.py` | Ejecución mandos |
 | `distance_format.py` | Distancias uk_imperial / metric en GUI |

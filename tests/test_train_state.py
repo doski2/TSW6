@@ -133,7 +133,22 @@ class TestBuildTrainState:
         assert s.ack_required is True
         assert s.target_mph == 40.0
 
-    def test_defaults_on_empty_telem(self):
+    def test_next_stop_arrival_from_telem(self):
+        s = build_train_state({
+            "next_stop_arrival": "08:18:00",
+            "next_stop_name": "Four Oaks",
+        })
+        assert s.next_stop_arrival == "8:18"
+        assert s.next_stop_name == "Four Oaks"
+
+    def test_next_stop_arrival_hhmm_passthrough(self):
+        s = build_train_state({"next_stop_arrival": "14:38"})
+        assert s.next_stop_arrival == "14:38"
+
+    def test_next_stop_arrival_empty_omitted(self):
+        s = build_train_state({"next_stop_arrival": "  "})
+        assert s.next_stop_arrival is None
+
         s = build_train_state({})
         assert s.speed_mph == 0.0
         assert s.limit_mph == 0.0

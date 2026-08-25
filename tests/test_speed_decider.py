@@ -2,11 +2,9 @@
 test_speed_decider.py — Tests unitarios para SpeedDecider.
 
 Verifica:
-  - P2: crucero, overspeed, HARDBRAKE
-  - P3: proyección de velocidad, anti-oscilación
-  - ACK: supervisión ATP
+  - HOLD por defecto sin plan P1
   - Pausa
-  - Integración básica con TrainState
+  - Integración básica con TrainState y P1 v2
 """
 
 import time
@@ -14,6 +12,9 @@ from typing import Any, Optional
 
 import pytest
 
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
+)
 from tsw6.autopilot.train_state import TrainState, build_train_state
 from tsw6.autopilot.speed_decider import SpeedDecider
 
@@ -45,78 +46,34 @@ class TestPaused:
     def test_paused_returns_paused(self):
         d = _decider()
         s = _state(paused=True)
-        assert d.decide(s) == "PAUSED"
+        assert d.decide(s) == PAUSED
 
     def test_not_paused_does_not_return_paused(self):
         d = _decider()
         s = _state(paused=False, speed_mph=40.0, limit_mph=50.0)
-        assert d.decide(s) != "PAUSED"
+        assert d.decide(s) != PAUSED
 
 
-# ── ACK ───────────────────────────────────────────────────────────────────────
 
-class TestAck:
-    def test_ack_with_throttle_returns_coast(self):
-        d = _decider()
-        s = _state(ack_required=True, handle_notch=6, speed_mph=50.0, limit_mph=50.0)
-        assert d.decide(s) == "COAST"
+# ── Sin plan P1 ───────────────────────────────────────────────────────────────
 
-    def test_ack_over_limit_returns_hold(self):
-        """Durante ACK cedemos al ATP — no enviamos BRAKE, solo HOLD."""
-        d = _decider()
-        s = _state(ack_required=True, handle_notch=4, speed_mph=55.0, limit_mph=50.0)
-        assert d.decide(s) == "HOLD"
-
-    def test_ack_below_limit_returns_hold(self):
-        d = _decider()
-        s = _state(ack_required=True, handle_notch=4, speed_mph=45.0, limit_mph=50.0)
-        assert d.decide(s) == "HOLD"
-
-    def test_ack_no_accelerate_from_brake_zone(self):
-        """Durante ACK nunca enviamos ACCELERATE — cede el ATP."""
-        d = _decider()
-        s = _state(ack_required=True, handle_notch=1, speed_mph=15.0, limit_mph=50.0)
-        assert d.decide(s) == "HOLD"
-
-    def test_ack_sets_effective_limit(self):
-        d = _decider()
-        s = _state(ack_required=True, limit_mph=60.0, speed_mph=50.0, handle_notch=4)
-        d.decide(s)
-        assert d.effective_limit == 60.0
-
-
-# ── P2: Crucero ───────────────────────────────────────────────────────────────
-
-class TestP2Cruise:
-    def test_below_limit_with_throttle_no_brake(self):
-        """Por debajo del límite con tracción: debería acelerarse o mantener."""
+class TestNoP1Plan:
+    def test_below_limit_holds(self):
         d = _decider()
         s = _state(speed_mph=45.0, limit_mph=50.0, handle_notch=5, acceleration_ms2=0.5)
-        action = d.decide(s)
-        assert action not in ("BRAKE", "HARDBRAKE", "FULLSTOP")
+        assert d.decide(s) == HOLD
 
-    def test_over_limit_with_residual_acceleration_coasts(self):
-        """Por encima del límite con tracción activa y aceleración positiva: COAST."""
+    def test_overspeed_with_throttle_holds(self):
+        """Sin objetivo P1: no hay capa reactiva — P1 o watchdog cubren el frenado."""
         d = _decider()
-        # Tren acelerando activamente (handle=6) mientras supera el límite
         s = _state(speed_mph=52.0, limit_mph=50.0, handle_notch=6, acceleration_ms2=0.2)
-        action = d.decide(s)
-        assert action == "COAST"
+        assert d.decide(s) == HOLD
 
-    def test_over_limit_with_throttle_coast(self):
-        """Por encima del límite con tracción activa: COAST primero."""
-        d = _decider()
-        s = _state(speed_mph=52.0, limit_mph=50.0, handle_notch=6, acceleration_ms2=0.0)
-        action = d.decide(s)
-        assert action == "COAST"
-
-    def test_critical_overspeed_hardbrake(self):
-        """Exceso crítico sobre límite: HARDBRAKE."""
+    def test_critical_overspeed_holds_without_p1_target(self):
         d = _decider()
         s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=4,
                    acceleration_ms2=0.0, station_state=None)
-        action = d.decide(s)
-        assert action == "HARDBRAKE"
+        assert d.decide(s) == HOLD
 
 
 # ── Solo frenado (sin tracción automática) ─────────────────────────────────────
@@ -127,20 +84,32 @@ class TestBrakeOnly:
         d = _decider()
         s = _state(speed_mph=25.0, limit_mph=50.0, handle_notch=4,
                    acceleration_ms2=None)
-        assert d.decide(s) == "HOLD"
+        assert d.decide(s) == HOLD
 
-    def test_overspeed_still_brakes(self):
+    def test_overspeed_holds_without_p1_target(self):
         d = _decider()
         s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=7,
                    acceleration_ms2=0.1, station_state=None)
-        assert d.decide(s) in ("COAST", "BRAKE", "HARDBRAKE")
+        assert d.decide(s) == HOLD
 
     def test_brake_residual_holds(self):
         """Freno residual: conductor libera manualmente."""
         d = _decider()
         s = _state(speed_mph=40.0, limit_mph=50.0, handle_notch=2,
                    acceleration_ms2=0.0, station_state=None)
-        assert d.decide(s) == "HOLD"
+        assert d.decide(s) == HOLD
+
+
+class TestBrakeCommand:
+    def test_brake_command_only_from_p1(self):
+        from tsw6.braking.v2.command import BrakeCommand
+
+        d = _decider()
+        s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=4)
+        assert d.brake_command_for(BRAKE_FAST, s) is None
+        p1_cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2", reason="P1")
+        d._braking.last_brake_command = p1_cmd
+        assert d.brake_command_for(BRAKE_FAST, s) is p1_cmd
 
 
 # ── last_action tracking ──────────────────────────────────────────────────────
@@ -212,3 +181,64 @@ class TestDashboardProperties:
         d.target_stop_min_m = 1500.0
         assert d.target_stop_min_m == 1500.0
         assert d._fsm.target_stop_min_m == 1500.0
+
+
+class TestP1V2Integration:
+    def test_decider_uses_brake_coordinator_v2(self):
+        from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+
+        d = _decider()
+        assert isinstance(d._braking, BrakeCoordinatorV2)
+
+    def test_p1_limit_produces_brake_command(self):
+        d = _decider()
+        s = _state(
+            speed_mph=60.0,
+            limit_mph=70.0,
+            next_limit_mph=55.0,
+            distance_next_m=150.0,
+            speed_limits_ahead=({"limit_mph": 55.0, "distance_m": 150.0},),
+        )
+        action = d.decide(s)
+        assert action == "HOLD"
+        assert d.brake_command is not None
+        assert d.brake_command.kind == "APPLY"
+        assert "v2" in d.p1_debug
+
+    def test_p1_reset_when_fsm_approaching_slow(self):
+        from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+
+        d = _decider()
+        d._braking.last_debug = "prev"
+        s = _state(
+            speed_mph=5.0,
+            station_state="APPROACHING",
+            next_limit_mph=25.0,
+            distance_next_m=500.0,
+        )
+        d.decide(s)
+        assert isinstance(d._braking, BrakeCoordinatorV2)
+        assert d._braking.last_debug == ""
+
+    def test_p1_passes_station_eta_to_coordinator(self):
+        from unittest.mock import patch
+
+        d = _decider()
+        captured: dict = {}
+
+        def _capture_evaluate(**kwargs):
+            captured.update(kwargs)
+            return None, 60.0
+
+        s = _state(
+            speed_mph=44.7,
+            limit_mph=75.0,
+            next_stop_distance_m=900.0,
+            next_stop_name="Four Oaks",
+            next_stop_arrival="14:38",
+            stations=({"name": "Four Oaks", "distance_m": 900.0},),
+        )
+        with patch.object(d._braking, "evaluate", side_effect=_capture_evaluate):
+            d.decide(s)
+        assert captured.get("station_eta") == "14:38"
+        assert captured.get("station_distance_m") == 900.0

@@ -43,6 +43,7 @@ VK_SEMICOLON  = 0xBA   # train_brake_decrease  (tecla ;)
 
 # Duración de pulsación por notch (Class 323)
 KEY_HOLD_MS = 350      # ~350 ms = 1 notch en el PowerBrakeHandle
+KEY_TAP_MS = 120       # pulso corto: un paso sin saltar neutro (RELEASE/COAST)
 
 SW_RESTORE = 9
 

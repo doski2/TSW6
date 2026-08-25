@@ -102,6 +102,31 @@ def test_scheduled_stop_names_skip_via(hud_db: Path):
     assert "Blake Street" not in names
 
 
+def test_schedule_times_for_station(hud_db: Path):
+    from tsw6.hud.hud_timetable import schedule_times_for_station
+
+    store = HudTimetableStore(hud_db)
+    entries = store.get_schedule_entries(10)
+    arr, dep = schedule_times_for_station(entries, "Four Oaks, anden 1")
+    assert arr == "10:00"
+    assert dep is None
+    arr2, dep2 = schedule_times_for_station(entries, "Sutton Coldfield")
+    assert arr2 == "10:12"
+    assert dep2 is None
+
+
+def test_merge_schedule_stations_includes_times(hud_db: Path):
+    store = HudTimetableStore(hud_db)
+    entries = store.get_schedule_entries(10)
+    stops = store.scheduled_stop_names(10)
+    merged = store.merge_schedule_stations(
+        [{"name": "Four Oaks", "distance_m": 500.0}],
+        entries,
+        stops,
+    )
+    assert merged[0].get("arrival") == "10:00"
+
+
 def test_resolve_service_stops(hud_db: Path):
     store = HudTimetableStore(hud_db)
     resolved = store.resolve_service_stops("2R17", lat=52.676, lng=-1.830)

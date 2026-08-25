@@ -16,12 +16,18 @@ def main() -> int:
         print(f"  [{mark}] {p}")
 
     store = HudTimetableStore()
-    if not store.available:
+    db_path = store.db_path
+    if db_path is None:
         print("\n[NO] No se encontro tsw_hud.db.")
         print("     Sigue extraer_horario_hud.bat o copia la BD manualmente.")
         return 1
 
-    print(f"\n[OK] BD encontrada: {store.db_path}")
+    print(f"\n[OK] BD encontrada: {db_path}")
+    try:
+        size_mb = db_path.stat().st_size / (1024 * 1024)
+        print(f"     Tamaño: {size_mb:.1f} MB")
+    except OSError:
+        pass
     found = False
     for svc in ("2R17", "2R17 Cross-City"):
         match = store.find_active_timetable(svc, lat=52.676, lng=-1.830)

@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="1480" viewBox="0 0 820 1480" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4a5568"/>
+    </marker>
+    <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2b6cb0"/>
+    </marker>
+    <marker id="arr-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#c53030"/>
+    </marker>
+    <marker id="arr-g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#276749"/>
+    </marker>
+  </defs>
+
+  <rect width="820" height="1480" fill="#fafbfc"/>
+  <text x="410" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#1a202c">Arbol cronologico  -  comandos de freno P1</text>
+  <text x="410" y="54" text-anchor="middle" font-size="12" fill="#718096">Un ciclo ~20 Hz: arriba = primero, abajo = ultimo  |  ramas = en paralelo o fusion</text>
+
+  <!-- timeline axis -->
+  <line x1="120" y1="72" x2="120" y2="1420" stroke="#e2e8f0" stroke-width="3"/>
+
+  <!-- ═══════════════ LECTURA ═══════════════ -->
+  <rect x="24" y="78" width="92" height="22" rx="4" fill="#e8f4fc"/>
+  <text x="70" y="93" text-anchor="middle" font-size="10" font-weight="700" fill="#2b6cb0">LECTURA</text>
+
+  <!-- Step 1 -->
+  <circle cx="120" cy="108" r="14" fill="#2b6cb0"/>
+  <text x="120" y="113" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">1</text>
+  <rect x="150" y="90" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4" stroke-width="1.5"/>
+  <text x="162" y="108" font-size="12" font-weight="600" fill="#1a365d">main.lua (UE4SS)  -  ReceiveTick ~20 Hz</text>
+  <text x="162" y="120" font-size="9" fill="#718096">mods/TelemetryProbeMod/Scripts/main.lua</text>
+
+  <!-- Step 1 branches: sources in game -->
+  <line x1="120" y1="122" x2="120" y2="136" stroke="#2b6cb0" stroke-width="2"/>
+  <line x1="120" y1="136" x2="680" y2="136" stroke="#2b6cb0" stroke-width="1.5"/>
+  <line x1="220" y1="136" x2="220" y2="148" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <line x1="400" y1="136" x2="400" y2="148" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <line x1="580" y1="136" x2="580" y2="148" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+
+  <rect x="155" y="150" width="130" height="56" rx="5" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+  <text x="220" y="168" text-anchor="middle" font-size="10" font-weight="700" fill="#2c5282">HUD cabina</text>
+  <text x="220" y="182" text-anchor="middle" font-size="8.5" fill="#4a5568">HUD_GetSpeed</text>
+  <text x="220" y="194" text-anchor="middle" font-size="8.5" fill="#4a5568">Power / brakes / accel</text>
+  <text x="220" y="206" text-anchor="middle" font-size="8.5" fill="#4a5568">max_speed, vehicle</text>
+
+  <rect x="335" y="150" width="130" height="56" rx="5" fill="#ebf8ff" stroke="#63b3ed" stroke-width="1.5"/>
+  <text x="400" y="168" text-anchor="middle" font-size="10" font-weight="700" fill="#2c5282">DriverAid</text>
+  <text x="400" y="182" text-anchor="middle" font-size="8.5" fill="#4a5568">SpeedLimit, gradient</text>
+  <text x="400" y="194" text-anchor="middle" font-size="8.5" fill="#4a5568">dist_limit x2 (cola)</text>
+  <text x="400" y="206" text-anchor="middle" font-size="8.5" fill="#4a5568">doors DMI, odo_m</text>
+
+  <rect x="515" y="150" width="250" height="56" rx="5" fill="#bee3f8" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="640" y="168" text-anchor="middle" font-size="10" font-weight="700" fill="#1a365d">GetData.txt</text>
+  <text x="640" y="182" text-anchor="middle" font-size="8.5" fill="#4a5568">%TEMP%\TSW6Bridge\</text>
+  <text x="640" y="194" text-anchor="middle" font-size="8.5" fill="#4a5568">1 linea key=value (TSV)</text>
+  <text x="640" y="206" text-anchor="middle" font-size="8.5" fill="#4a5568">seq speed_ms handle_notch ...</text>
+
+  <line x1="285" y1="178" x2="515" y2="178" stroke="#2b6cb0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="465" y1="178" x2="515" y2="178" stroke="#2b6cb0" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <line x1="120" y1="206" x2="120" y2="228" stroke="#4a5568" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 2 -->
+  <circle cx="120" cy="242" r="14" fill="#2b6cb0"/>
+  <text x="120" y="247" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">2</text>
+  <rect x="150" y="224" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4"/>
+  <text x="162" y="242" font-size="12" font-weight="600">tsw_ue4ss_reader.py</text>
+  <text x="162" y="254" font-size="9" fill="#718096">parse_probe_line()  -  ProbeSnapshot (dataclass)</text>
+
+  <rect x="515" y="262" width="250" height="40" rx="5" fill="#fff" stroke="#90cdf4"/>
+  <text x="640" y="278" text-anchor="middle" font-size="9" font-weight="600" fill="#2b6cb0">Salida paso 2</text>
+  <text x="640" y="292" text-anchor="middle" font-size="8.5" fill="#4a5568">seq, speed_ms, dist_limit_cm, gradient...</text>
+
+  <line x1="640" y1="224" x2="640" y2="262" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <line x1="120" y1="258" x2="120" y2="318" stroke="#4a5568" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 3 -->
+  <circle cx="120" cy="332" r="14" fill="#2b6cb0"/>
+  <text x="120" y="337" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">3</text>
+  <rect x="150" y="314" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4" stroke-width="1.5"/>
+  <text x="162" y="332" font-size="12" font-weight="600">tsw_telemetry_source.py  -  _poll_ue4ss()</text>
+  <text x="162" y="344" font-size="9" fill="#718096">Fusiona ramas abajo  -  get_telemetry() para autopilot</text>
+
+  <!-- Step 3 merge branches -->
+  <line x1="120" y1="348" x2="120" y2="362" stroke="#2b6cb0" stroke-width="2"/>
+  <line x1="120" y1="362" x2="700" y2="362" stroke="#2b6cb0" stroke-width="1.5"/>
+  <line x1="210" y1="362" x2="210" y2="374" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <line x1="400" y1="362" x2="400" y2="374" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <line x1="590" y1="362" x2="590" y2="374" stroke="#2b6cb0" stroke-width="1.5" marker-end="url(#arr-b)"/>
+
+  <rect x="140" y="376" width="140" height="58" rx="5" fill="#ebf8ff" stroke="#3182ce" stroke-width="1.5"/>
+  <text x="210" y="394" text-anchor="middle" font-size="9" font-weight="700" fill="#2c5282">Rama A: probe</text>
+  <text x="210" y="408" text-anchor="middle" font-size="8" fill="#4a5568">_telem_from_probe()</text>
+  <text x="210" y="420" text-anchor="middle" font-size="8" fill="#4a5568">speed, handle, grad</text>
+  <text x="210" y="432" text-anchor="middle" font-size="8" fill="#4a5568">dist_limit ~20 Hz</text>
+
+  <rect x="330" y="376" width="140" height="58" rx="5" fill="#fffaf0" stroke="#dd6b20" stroke-width="1.5"/>
+  <text x="400" y="394" text-anchor="middle" font-size="9" font-weight="700" fill="#c05621">Rama B: HTTP</text>
+  <text x="400" y="408" text-anchor="middle" font-size="8" fill="#4a5568">_poll_slow()</text>
+  <text x="400" y="420" text-anchor="middle" font-size="8" fill="#4a5568">DriverAid.TrackData</text>
+  <text x="400" y="432" text-anchor="middle" font-size="8" fill="#4a5568">stations[], puertas</text>
+
+  <rect x="520" y="376" width="140" height="58" rx="5" fill="#faf5ff" stroke="#805ad5" stroke-width="1.5"/>
+  <text x="590" y="394" text-anchor="middle" font-size="9" font-weight="700" fill="#553c9a">Rama C: HUD DB</text>
+  <text x="590" y="408" text-anchor="middle" font-size="8" fill="#4a5568">hud_timetable.py</text>
+  <text x="590" y="420" text-anchor="middle" font-size="8" fill="#4a5568">arr / dep / next_stop</text>
+  <text x="590" y="432" text-anchor="middle" font-size="8" fill="#4a5568">station_eta  -  P1</text>
+
+  <!-- merge node -->
+  <line x1="210" y1="434" x2="210" y2="448" stroke="#2b6cb0" stroke-width="1"/>
+  <line x1="590" y1="434" x2="590" y2="448" stroke="#2b6cb0" stroke-width="1"/>
+  <line x1="210" y1="448" x2="590" y2="448" stroke="#2b6cb0" stroke-width="1.5"/>
+  <line x1="400" y1="448" x2="400" y2="462" stroke="#2b6cb0" stroke-width="2" marker-end="url(#arr-b)"/>
+
+  <rect x="300" y="464" width="200" height="36" rx="5" fill="#bee3f8" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="400" y="480" text-anchor="middle" font-size="10" font-weight="700" fill="#1a365d">dict _telem</text>
+  <text x="400" y="494" text-anchor="middle" font-size="8.5" fill="#4a5568">_merge_planning + probe_seq</text>
+
+  <text x="720" y="400" font-size="8" fill="#c53030" font-weight="600">pendiente:</text>
+  <text x="720" y="412" font-size="8" fill="#c53030">senal DANGER</text>
+  <text x="720" y="424" font-size="8" fill="#c53030">(rama futura)</text>
+
+  <line x1="120" y1="500" x2="120" y2="528" stroke="#4a5568" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ═══════════════ CICLO ═══════════════ -->
+  <rect x="24" y="512" width="92" height="22" rx="4" fill="#f0fff4"/>
+  <text x="70" y="527" text-anchor="middle" font-size="10" font-weight="700" fill="#276749">CICLO</text>
+
+  <circle cx="120" cy="552" r="14" fill="#276749"/>
+  <text x="120" y="557" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">4</text>
+  <rect x="150" y="534" width="620" height="34" rx="6" fill="#fff" stroke="#9ae6b4"/>
+  <text x="162" y="552" font-size="12" font-weight="600">autopilot_core.tick()</text>
+  <text x="162" y="564" font-size="9" fill="#718096">get_telemetry()  -  bucle principal ~20 Hz</text>
+
+  <line x1="120" y1="568" x2="120" y2="590" stroke="#4a5568" stroke-width="2" marker-end="url(#arr)"/>
+
+  <circle cx="120" cy="606" r="14" fill="#276749"/>
+  <text x="120" y="611" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">5</text>
+  <rect x="150" y="588" width="620" height="34" rx="6" fill="#fff" stroke="#9ae6b4"/>
+  <text x="162" y="606" font-size="12" font-weight="600">build_train_state()  -  TrainState</text>
+  <text x="162" y="618" font-size="9" fill="#718096">Instantanea inmutable del ciclo</text>
+
+  <!-- ═══════════════ DECISION ═══════════════ -->
+  <rect x="24" y="638" width="92" height="22" rx="4" fill="#fffaf0"/>
+  <text x="70" y="653" text-anchor="middle" font-size="10" font-weight="700" fill="#c05621">DECISION</text>
+
+  <line x1="120" y1="622" x2="120" y2="672" stroke="#4a5568" stroke-width="2" marker-end="url(#arr)"/>
+
+  <circle cx="120" cy="686" r="14" fill="#c05621"/>
+  <text x="120" y="691" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">6</text>
+  <rect x="150" y="668" width="620" height="34" rx="6" fill="#fff" stroke="#fbd38d"/>
+  <text x="162" y="686" font-size="12" font-weight="600">speed_decider.decide()</text>
+  <text x="162" y="698" font-size="9" fill="#718096">FSM - DMI - P1 - HOLD (sin P2)</text>
+
+  <!-- Step 6: P1 o HOLD -->
+  <line x1="120" y1="702" x2="120" y2="716" stroke="#4a5568" stroke-width="2"/>
+  <line x1="120" y1="716" x2="500" y2="716" stroke="#4a5568" stroke-width="1.5"/>
+  <line x1="280" y1="716" x2="280" y2="728" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+  <line x1="480" y1="716" x2="480" y2="728" stroke="#718096" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+
+  <rect x="210" y="730" width="140" height="40" rx="5" fill="#fed7d7" stroke="#fc8181" stroke-width="2"/>
+  <text x="280" y="748" text-anchor="middle" font-size="10" font-weight="700" fill="#9b2c2c">P1 activo</text>
+  <text x="280" y="762" text-anchor="middle" font-size="8.5" fill="#666">plan anticipado  -  paso 7</text>
+
+  <rect x="410" y="730" width="140" height="40" rx="5" fill="#edf2f7" stroke="#a0aec0" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="480" y="748" text-anchor="middle" font-size="10" font-weight="600" fill="#4a5568">sin plan P1</text>
+  <text x="480" y="762" text-anchor="middle" font-size="8.5" fill="#666">HOLD (+ watchdog)</text>
+
+  <line x1="280" y1="770" x2="280" y2="798" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <!-- ═══════════════ P1 FRENO ═══════════════ -->
+  <rect x="24" y="788" width="92" height="22" rx="4" fill="#fff5f5"/>
+  <text x="70" y="803" text-anchor="middle" font-size="10" font-weight="700" fill="#c53030">P1 FRENO</text>
+
+  <circle cx="120" cy="822" r="14" fill="#c53030"/>
+  <text x="120" y="827" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">7</text>
+  <rect x="150" y="804" width="620" height="34" rx="6" fill="#fed7d7" stroke="#fc8181" stroke-width="1.5"/>
+  <text x="162" y="822" font-size="12" font-weight="700" fill="#9b2c2c">BrakeCoordinatorV2.evaluate()</text>
+  <text x="162" y="834" font-size="9" fill="#718096">RELEASE / emergencia / priority.py elige objetivo</text>
+
+  <!-- P1 parallel branches 8-10 (+ signal stub) -->
+  <line x1="120" y1="838" x2="120" y2="852" stroke="#c53030" stroke-width="2"/>
+  <line x1="120" y1="852" x2="700" y2="852" stroke="#c53030" stroke-width="2"/>
+  <line x1="200" y1="852" x2="200" y2="866" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+  <line x1="340" y1="852" x2="340" y2="866" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+  <line x1="480" y1="852" x2="480" y2="866" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+  <line x1="620" y1="852" x2="620" y2="866" stroke="#c53030" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr-r)"/>
+
+  <text x="410" y="846" text-anchor="middle" font-size="8" font-weight="700" fill="#9b2c2c">RAMAS EN PARALELO (coordinator consulta todas)</text>
+
+  <rect x="130" y="868" width="140" height="52" rx="5" fill="#fff" stroke="#fc8181" stroke-width="2"/>
+  <text x="200" y="886" text-anchor="middle" font-size="10" font-weight="700" fill="#9b2c2c">8 limit_brake</text>
+  <text x="200" y="900" text-anchor="middle" font-size="8.5" fill="#666">cartel via</text>
+  <text x="200" y="914" text-anchor="middle" font-size="8" fill="#666">perfil B1-B3</text>
+
+  <rect x="270" y="868" width="140" height="52" rx="5" fill="#fff" stroke="#fc8181" stroke-width="2"/>
+  <text x="340" y="886" text-anchor="middle" font-size="10" font-weight="700" fill="#9b2c2c">9 station_brake</text>
+  <text x="340" y="900" text-anchor="middle" font-size="8.5" fill="#666">anden HUD</text>
+  <text x="340" y="914" text-anchor="middle" font-size="8" fill="#666">parada comercial</text>
+
+  <rect x="410" y="868" width="140" height="52" rx="5" fill="#fff" stroke="#fc8181" stroke-width="2"/>
+  <text x="480" y="886" text-anchor="middle" font-size="10" font-weight="700" fill="#9b2c2c">10 planner</text>
+  <text x="480" y="900" text-anchor="middle" font-size="8.5" fill="#666">perfil / ETA</text>
+  <text x="480" y="914" text-anchor="middle" font-size="8" fill="#666">cluster 350 m</text>
+
+  <rect x="550" y="868" width="140" height="52" rx="5" fill="#fff5f5" stroke="#fc8181" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="620" y="886" text-anchor="middle" font-size="10" font-weight="600" fill="#c53030">signal_brake</text>
+  <text x="620" y="900" text-anchor="middle" font-size="8.5" fill="#666">senal DANGER</text>
+  <text x="620" y="914" text-anchor="middle" font-size="8" fill="#c53030">STUB pendiente</text>
+
+  <!-- merge to BrakeCommand -->
+  <line x1="200" y1="920" x2="200" y2="934" stroke="#c53030" stroke-width="1.5"/>
+  <line x1="620" y1="920" x2="620" y2="934" stroke="#c53030" stroke-width="1.5"/>
+  <line x1="200" y1="934" x2="620" y2="934" stroke="#c53030" stroke-width="2"/>
+  <line x1="410" y1="934" x2="410" y2="948" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <rect x="310" y="950" width="200" height="32" rx="5" fill="#fed7d7" stroke="#c53030" stroke-width="1.5"/>
+  <text x="410" y="966" text-anchor="middle" font-size="9" font-weight="600" fill="#9b2c2c">priority + cluster  -  gana 1 plan</text>
+  <text x="410" y="978" text-anchor="middle" font-size="8" fill="#666">unificado cartel+anden</text>
+
+  <line x1="120" y1="838" x2="120" y2="934" stroke="#c53030" stroke-width="1"/>
+  <line x1="120" y1="934" x2="200" y2="934" stroke="#c53030" stroke-width="1.5"/>
+
+  <line x1="410" y1="982" x2="410" y2="998" stroke="#c53030" stroke-width="2"/>
+  <line x1="120" y1="998" x2="410" y2="998" stroke="#c53030" stroke-width="2"/>
+  <line x1="120" y1="998" x2="120" y2="1012" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <circle cx="120" cy="1026" r="14" fill="#c53030"/>
+  <text x="120" y="1031" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">11</text>
+  <rect x="150" y="1008" width="620" height="34" rx="6" fill="#fed7d7" stroke="#fc8181" stroke-width="2"/>
+  <text x="162" y="1026" font-size="12" font-weight="700" fill="#9b2c2c">BrakeCommand</text>
+  <text x="162" y="1038" font-size="9" fill="#718096">APPLY notch N | RELEASE neutro (4)  -  decider.brake_command</text>
+
+  <line x1="120" y1="1042" x2="120" y2="1064" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <!-- ═══════════════ EJECUCION ═══════════════ -->
+  <rect x="24" y="1070" width="92" height="22" rx="4" fill="#ebf8ff"/>
+  <text x="70" y="1085" text-anchor="middle" font-size="10" font-weight="700" fill="#2b6cb0">EJECUCION</text>
+
+  <circle cx="120" cy="1098" r="14" fill="#2b6cb0"/>
+  <text x="120" y="1103" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">12</text>
+  <rect x="150" y="1080" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4"/>
+  <text x="162" y="1098" font-size="12" font-weight="600">handle_controller.execute()</text>
+  <text x="162" y="1110" font-size="9" fill="#718096">Prioridad: brake_command IPC (P1)</text>
+
+  <line x1="120" y1="1114" x2="120" y2="1136" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <circle cx="120" cy="1152" r="14" fill="#2b6cb0"/>
+  <text x="120" y="1157" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">13</text>
+  <rect x="150" y="1134" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4"/>
+  <text x="162" y="1152" font-size="12" font-weight="600">tsw_ipc_bus  -  SendCommand.txt</text>
+  <text x="162" y="1164" font-size="9" fill="#718096">PowerBrakeHandle:valor  -  TSW6ApplyCommands.flag</text>
+
+  <line x1="120" y1="1168" x2="120" y2="1190" stroke="#c53030" stroke-width="2" marker-end="url(#arr-r)"/>
+
+  <!-- ═══════════════ JUEGO ═══════════════ -->
+  <rect x="24" y="1196" width="92" height="22" rx="4" fill="#e8f4fc"/>
+  <text x="70" y="1211" text-anchor="middle" font-size="10" font-weight="700" fill="#2b6cb0">JUEGO</text>
+
+  <circle cx="120" cy="1224" r="14" fill="#2b6cb0"/>
+  <text x="120" y="1229" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">14</text>
+  <rect x="150" y="1206" width="620" height="34" rx="6" fill="#fff" stroke="#90cdf4" stroke-width="2"/>
+  <text x="162" y="1224" font-size="12" font-weight="700" fill="#1a365d">main.lua aplica  -  PowerBrakeHandle</text>
+  <text x="162" y="1236" font-size="9" fill="#718096">Vuelta al paso 1 en el siguiente ciclo</text>
+
+  <line x1="120" y1="1240" x2="120" y2="1270" stroke="#718096" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <text x="132" y="1260" font-size="10" fill="#718096">ciclo siguiente  -  otra lectura paso 1</text>
+
+  <!-- legend -->
+  <rect x="150" y="1288" width="620" height="172" rx="8" fill="#fff" stroke="#e2e8f0"/>
+  <text x="170" y="1312" font-size="12" font-weight="700" fill="#2d3748">Leyenda de ramas</text>
+  <text x="170" y="1334" font-size="10" fill="#2b6cb0">&#9632; Azul solido = LECTURA (1-3): fuentes juego, parser, fusion probe+HTTP+HUD</text>
+  <text x="170" y="1352" font-size="10" fill="#276749">&#9632; Verde = CICLO (4-5): tick y TrainState</text>
+  <text x="170" y="1370" font-size="10" fill="#c05621">&#9632; Naranja paso 6: P1 (rojo) o HOLD sin plan (gris punteado)</text>
+  <text x="170" y="1388" font-size="10" fill="#c53030">&#9632; Rojo paso 7-11: 4 ramas paralelas  -  priority elige 1  -  BrakeCommand</text>
+  <text x="170" y="1406" font-size="10" fill="#4a5568">&#9632; Caja punteada = pendiente (signal_brake)  |  Detalle: docs/ESTADO.md</text>
+  <text x="170" y="1430" font-size="9" fill="#a0aec0">esqueleto_flujo_capas.svg  |  docs/FLUJO_FRENOS.md</text>
+  <text x="170" y="1446" font-size="9" fill="#a0aec0">TSW6  -  actualizado 2026-08-25</text>
+</svg>

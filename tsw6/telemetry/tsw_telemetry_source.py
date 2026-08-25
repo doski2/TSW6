@@ -45,7 +45,7 @@ from tsw6.telemetry.driver_aid_parser import (
     select_next_scheduled_stop,
     _prune_zero_distance_limits,
 )
-from tsw6.hud.hud_timetable import HudTimetableStore
+from tsw6.hud.hud_timetable import HudTimetableStore, schedule_times_for_station
 from tsw6.telemetry.tsw_api_client import TswApiClient, client_from_key_file
 from tsw6.telemetry.tsw_command_bus import combined_value_to_notch, dispatch_brake, dispatch_combined_notch
 from tsw6.telemetry.tsw_ipc_bus import (
@@ -86,6 +86,14 @@ _SLOW_READS: dict[str, str] = {
 _DOOR_API_PATHS: tuple[str, ...] = (
     f"{DRIVABLE}/PassengerDoor_FL.Function.GetCurrentInputValue",
     f"{DRIVABLE}/PassengerDoor_FR.Function.GetCurrentInputValue",
+    f"{DRIVABLE}/PassengerDoor_FL.Function.GetCurrentOutputValue",
+    f"{DRIVABLE}/PassengerDoor_FR.Function.GetCurrentOutputValue",
+    f"{DRIVABLE}/PassengerDoor_BL.Function.GetCurrentInputValue",
+    f"{DRIVABLE}/PassengerDoor_BR.Function.GetCurrentInputValue",
+    "CurrentFormation/0/Door_PassengerDoor_FL.Function.GetCurrentOutputValue",
+    "CurrentFormation/0/Door_PassengerDoor_FR.Function.GetCurrentOutputValue",
+    "CurrentFormation/1/Door_PassengerDoor_FL.Function.GetCurrentOutputValue",
+    "CurrentFormation/1/Door_PassengerDoor_FR.Function.GetCurrentOutputValue",
     "CurrentFormation/1/Door_PassengerDoor_BL.Function.GetCurrentOutputValue",
     "CurrentFormation/1/Door_PassengerDoor_BR.Function.GetCurrentOutputValue",
 )
@@ -590,13 +598,35 @@ class TswTelemetrySource:
                           stations: list[dict[str, Any]]) -> None:
         nxt = select_next_scheduled_stop(stations)
         if nxt is None:
-            parsed.pop("next_stop", None)
-            parsed.pop("next_stop_name", None)
-            parsed.pop("next_stop_distance_m", None)
+            for key in (
+                "next_stop",
+                "next_stop_name",
+                "next_stop_distance_m",
+                "next_stop_arrival",
+                "next_stop_departure",
+            ):
+                parsed.pop(key, None)
             return
         parsed["next_stop"] = dict(nxt)
         parsed["next_stop_name"] = nxt.get("name")
         parsed["next_stop_distance_m"] = nxt.get("distance_m")
+        arr = nxt.get("arrival")
+        dep = nxt.get("departure")
+        if arr is None or dep is None:
+            if self._hud_match:
+                entries = self._hud_match.get("entries") or []
+                name = str(nxt.get("name") or "")
+                eta_arr, eta_dep = schedule_times_for_station(entries, name)
+                arr = arr or eta_arr
+                dep = dep or eta_dep
+        if arr:
+            parsed["next_stop_arrival"] = arr
+        else:
+            parsed.pop("next_stop_arrival", None)
+        if dep:
+            parsed["next_stop_departure"] = dep
+        else:
+            parsed.pop("next_stop_departure", None)
 
     def _overlay_planning_distances(self, parsed: dict[str, Any]) -> None:
         """Sustituye distancias del caché por las estimadas en tiempo real."""
@@ -784,7 +814,7 @@ class TswTelemetrySource:
             self._attach_next_stop(parsed, filtered)
 
     def _apply_door_state(self, parsed: dict[str, Any]) -> None:
-        """Mantiene último estado: telemetría física > DMI > cerrado."""
+        """Mantiene último estado; abierto si telemetría o DMI lo confirman."""
         if parsed.get("doors_telem") is not None:
             self._doors_telem = bool(parsed["doors_telem"])
         if parsed.get("doors_dmi") is not None:
@@ -792,8 +822,12 @@ class TswTelemetrySource:
 
         parsed["doors_telem"] = self._doors_telem
         parsed["doors_dmi"] = self._doors_dmi
-        if self._doors_telem is not None:
-            parsed["doors_open"] = self._doors_telem
+        if self._doors_telem is True or self._doors_dmi is True:
+            parsed["doors_open"] = True
+        elif self._doors_telem is False and self._doors_dmi is False:
+            parsed["doors_open"] = False
+        elif self._doors_telem is not None:
+            parsed["doors_open"] = bool(self._doors_telem)
         elif self._doors_dmi is not None:
             parsed["doors_open"] = bool(self._doors_dmi)
         else:
@@ -1094,7 +1128,10 @@ class TswTelemetrySource:
                 result = dispatch_ipc_brake(name, val)
             if result.get("ok"):
                 return True
-            _log.debug("set_control_value IPC falló: %s", result)
+            err = result.get("error", "?")
+            _log.warning(
+                "IPC mandos falló (%s) %s=%.3f — %s",
+                err, name, val, result.get("ack") or result)
 
         if not self._ensure_api_client(silent=True):
             return False

@@ -15,42 +15,27 @@ SAFETY_MARGIN      = 1.40    # 40 % de margen extra en distancia de frenado
 COAST_DECEL_MS2    = 0.095   # m/s² deceleración mínima en inercia (suelo de braking_distance)
 BRAKE_TRANSITION_S = 0.5     # segundos para transición aceleración→neutro→freno
 
-# ── Protocolo de tracción / frenado de servicio ───────────────────────────────
-# Basado en teoría de tracción ferroviaria: control por tasa de aceleración
-# en lugar de control proporcional por error de velocidad.
-TARGET_ACCEL_MS2      = 0.301   # tasa de aceleración objetivo (arranque → crucero)
-TARGET_DECEL_MS2      = 0.433   # tasa de deceleración objetivo (frenado de servicio)
-RATE_TOLERANCE        = 0.18    # banda muerta ±0.18 m/s² para decisiones de frenado (P2)
+# ── Frenado de servicio y calibración del learner ─────────────────────────────
+# TARGET_ACCEL_MS2 solo lo usa OnlineLearner (--learn); el autopilot no acelera.
+TARGET_ACCEL_MS2      = 0.301   # aceleración típica tracción máx (learner)
+TARGET_DECEL_MS2      = 0.433   # deceleración objetivo frenado de servicio (P1 / learner)
+RATE_TOLERANCE        = 0.18    # banda muerta ±0.18 m/s² (reservado física / learner)
 
-# ── P3: Rastreo de aceleración objetivo ──────────────────────────────────────
-# En lugar de proyectar la velocidad futura, P3 calcula la aceleración
-# necesaria para alcanzar el límite en P3_LOOKAHEAD_S segundos:
-#   a_target = min(error_mph × 0.44704 / P3_LOOKAHEAD_S, TARGET_ACCEL_MS2)
-# y compara con la aceleración real medida por el acelerómetro.
-# Resultado: se usa la muesca MÍNIMA que produce la aceleración correcta;
-# nunca se va a tracción máxima si el tren ya acelera suficientemente.
-# Ventaja: elimina el ciclo "acelera a fondo → proyecta exceso → suelta".
-P3_LOOKAHEAD_S     = 8.0    # constante de tiempo (s): cuánto tarda en llegar al límite
-P3_ACCEL_TOL_MS2   = 0.05   # m/s²: banda muerta ±tol alrededor de a_target
-P3_COAST_MIN_ERROR_MPH = 8.0  # no soltar tracción si faltan >8 mph al objetivo
-# Ciclos de banda muerta anti-oscilación antes de permitir cambio de dirección de notch
-P3_DEADBAND_CYCLES = 5      # 5 ciclos × 100ms = 500ms de estabilización
-
-# Notch 4 = freno máximo: solo para parada final en andén y emergencia.
-# El frenado de servicio (reducciones de límite) usa como mucho notch 3.
-SERVICE_MAX_BRAKE = 3
+# Handle combinado Class 323: 0=emergencia ATP, 1..3=servicio B3..B1, 4=neutro.
+# El juego activa emergencia en notch 0 — no se puede soltar y seguir como servicio.
+SERVICE_MIN_HANDLE = 1          # B3 — freno de servicio máximo (muesca freno 3)
+EMERGENCY_BRAKE_HANDLE = 0      # solo paradas de emergencia a muy poca distancia
+EMERGENCY_BRAKE_MAX_DIST_M = 25.0
+SERVICE_MAX_BRAKE = 3           # B1..B3 (handle 3..1)
 
 # ── Histéresis del controlador ────────────────────────────────────────────────
 
 CONTROL_INTERVAL       = 0.35   # teclado: ~1 notch cada 350ms + margen
-CONTROL_INTERVAL_BRAKE = 0.35   # COAST / BRAKE / FULLSTOP
-CONTROL_INTERVAL_EMERG = 0.25  # HARDBRAKE y ACK
+CONTROL_INTERVAL_BRAKE = 0.35   # COAST / BRAKE
+CONTROL_INTERVAL_FAST = 0.25  # BRAKE_FAST / EMERGENCY
+# Alias legacy (tests externos)
+CONTROL_INTERVAL_EMERG = CONTROL_INTERVAL_FAST
 CONTROL_INTERVAL_RPC   = 0.12  # HTTPAPI: mandos directos sin esperar tecla
-
-# ── Histéresis de frenado TSM/overspeed (v3) ─────────────────────────────────
-# Exceso mínimo sobre límite para activar BRAKE (antes era 0.0)
-P2_TSM_BRAKE_THRESHOLD   = 0.5   # mph: exceso mínimo para BRAKE con sup=tsm
-P2_LIMIT_BRAKE_THRESHOLD = 1.0   # mph: exceso mínimo para BRAKE por límite de vía
 
 # Límite mínimo creíble para next_limit_mph de la API (0 = dato inválido)
 P1_MIN_NEXT_LIMIT_MPH = 1.0
@@ -67,9 +52,9 @@ P1_ACK_GUARD_S = 1.0
 
 # ── P1 mejorado: umbrales de urgencia progresiva ─────────────────────────────
 P1_ALERTA_FACTOR    = 1.5   # dist ≤ bd_hor × 1.5 → perfil gradual
-P1_EMERGENCIA_DIST  = 50.0  # metros: dist ≤ 50m con exceso > 5mph → HARDBRAKE
+P1_EMERGENCIA_DIST  = 50.0  # metros: dist ≤ 50m con exceso > 5mph → BRAKE (B3)
 P1_EMERGENCIA_MPH   = 5.0   # mph de exceso para P1-EMERGENCIA
-P1_CRITICO_DIST     = 20.0  # metros: dist ≤ 20m con exceso > 10mph → FULLSTOP
+P1_CRITICO_DIST     = 20.0  # metros: dist ≤ 20m con exceso > 10mph → EMERGENCY o BRAKE
 P1_CRITICO_MPH      = 10.0  # mph de exceso para P1-CRITICO
 
 # ── Física: umbral de gradiente crítico ───────────────────────────────────────

@@ -18,14 +18,17 @@ from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource
 
 # ── Colores por acción ────────────────────────────────────────────────────────
 
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
+)
+
 ACTION_COLOR: dict[str, str] = {
-    "ACCELERATE": Fore.GREEN,
-    "HOLD":       Fore.CYAN,
-    "COAST":      Fore.YELLOW,
-    "BRAKE":      Fore.RED,
-    "HARDBRAKE":  Fore.RED + Style.BRIGHT,
-    "FULLSTOP":   Fore.MAGENTA + Style.BRIGHT,
-    "PAUSED":     Fore.WHITE + Style.DIM,
+    HOLD:       Fore.CYAN,
+    COAST:      Fore.YELLOW,
+    BRAKE:      Fore.RED,
+    BRAKE_FAST: Fore.RED + Style.BRIGHT,
+    EMERGENCY:  Fore.MAGENTA + Style.BRIGHT,
+    PAUSED:     Fore.WHITE + Style.DIM,
 }
 
 # ── Barras de progreso ────────────────────────────────────────────────────────

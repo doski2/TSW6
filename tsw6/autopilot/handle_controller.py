@@ -7,12 +7,12 @@ Dos clases en este módulo:
   HandleController
     - Recibe (action, TrainState, conn, hwnd) y envía un paso de control
     - USA state.handle_notch como fuente de verdad (nunca un contador interno)
-    - RPC preferido (set_control_value), teclado como fallback
+    - IPC preferido siempre (notch absoluto); teclado solo si IPC falla
     - Detecta interferencia externa y suprime COAST durante 1.5s
     - Sin stuck-detection ni force_neutral automáticos
 
   SafetyWatchdog
-    - Monitorea exceso de velocidad persistente → HARDBRAKE
+    - Monitorea exceso de velocidad persistente → BRAKE_FAST
     - Notch máximo sin aceleración → solo WARNING en log
     - NO fuerza resets automáticos (era la causa de los frenos de emergencia falsos)
     - El operador usa tecla N para sincronizar manualmente si hace falta
@@ -27,13 +27,18 @@ import logging
 import time
 from typing import Optional
 
-from tsw6.braking.brake_command import BrakeCommand
+from tsw6.autopilot.control_actions import (
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
+)
+from tsw6.braking.v2.command import BrakeCommand
 from tsw6.governor.governor_constants import (
-    CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_EMERG,
+    CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_FAST,
     CONTROL_INTERVAL_RPC,
+    EMERGENCY_BRAKE_HANDLE,
     SERVICE_MAX_BRAKE,
 )
-from tsw6.autopilot.tsw_keys import VK_A, VK_D, KEY_HOLD_MS, send_key
+from tsw6.autopilot.tsw_keys import VK_A, VK_D, KEY_HOLD_MS, KEY_TAP_MS, send_key
+from tsw6.braking.v2.command import clamp_brake_handle
 from tsw6.autopilot.train_state import TrainState
 
 _log = logging.getLogger("tsw.controller")
@@ -63,11 +68,10 @@ class HandleController:
     """
 
     _INTERVALS: dict[str, float] = {
-        "ACCELERATE": CONTROL_INTERVAL,
-        "COAST":      CONTROL_INTERVAL_BRAKE,
-        "BRAKE":      CONTROL_INTERVAL_BRAKE,
-        "FULLSTOP":   CONTROL_INTERVAL_BRAKE,
-        "HARDBRAKE":  CONTROL_INTERVAL_EMERG,
+        COAST:      CONTROL_INTERVAL_BRAKE,
+        BRAKE:      CONTROL_INTERVAL_BRAKE,
+        BRAKE_FAST: CONTROL_INTERVAL_FAST,
+        EMERGENCY:  CONTROL_INTERVAL_FAST,
     }
 
     def __init__(self) -> None:
@@ -125,25 +129,21 @@ class HandleController:
         Calcula el notch objetivo para la acción dada.
         Un paso por ciclo (el rate-limit controla la velocidad total).
         """
-        if action == "ACCELERATE":
-            return min(_MAX_NOTCH, current + 1)
-        if action == "COAST":
+        if action == COAST:
             # Solo soltar tracción: si ya estamos en neutro o freno, no hacer nada
             if current > _NOTCH_NEUTRAL:
                 return current - 1
             return current
-        if action == "BRAKE":
+        if action == BRAKE:
             if current > _NOTCH_NEUTRAL:
                 return current - 1          # soltar tracción primero
             return max(_BRAKE_MIN_HANDLE, current - 1)
-        if action == "HARDBRAKE":
-            if current > _NOTCH_NEUTRAL:
-                return _NOTCH_NEUTRAL       # saltar directo a neutro
-            return max(0, current - 1)      # freno completo permitido
-        if action == "FULLSTOP":
+        if action in (BRAKE_FAST, EMERGENCY):
             if current > _NOTCH_NEUTRAL:
                 return _NOTCH_NEUTRAL
-            return 0                        # freno total
+            if action == EMERGENCY:
+                return EMERGENCY_BRAKE_HANDLE
+            return max(_BRAKE_MIN_HANDLE, current - 1)
         return current
 
     # ── Ejecución ─────────────────────────────────────────────────────────
@@ -157,22 +157,10 @@ class HandleController:
         *,
         label: str,
     ) -> bool:
-        """Un paso hacia ``new_notch``: teclado A/D (fiable) o IPC absoluto."""
+        """Escribe ``new_notch`` (0–8): IPC absoluto primero; teclado A/D si falla."""
         new_notch = max(0, min(_MAX_NOTCH, int(new_notch)))
         if new_notch == current:
             return False
-
-        # Con ventana TSW: teclado (un notch/ciclo). IPC solo confirma escritura
-        # del archivo, no que Lua haya movido el mando in-game.
-        if hwnd is not None:
-            step = current + (1 if new_notch > current else -1)
-            key = VK_A if new_notch > current else VK_D
-            send_key(hwnd, key)
-            _log.info(
-                "KEY  %-11s  notch %d→%d  (obj=%d  %s)",
-                label, current, step, new_notch,
-                "A" if new_notch > current else "D")
-            return True
 
         if self._use_rpc(conn):
             val = new_notch / float(_MAX_NOTCH)
@@ -181,8 +169,22 @@ class HandleController:
                     "IPC  %-11s  notch %d→%d  (val=%.3f)",
                     label, current, new_notch, val)
                 return True
+            _log.warning(
+                "IPC falló %s notch %d→%d — probando teclado",
+                label, current, new_notch)
 
-        _log.warning("execute: sin hwnd ni IPC — no se puede enviar %s", label)
+        if hwnd is not None:
+            step = current + (1 if new_notch > current else -1)
+            key = VK_A if new_notch > current else VK_D
+            hold_ms = KEY_TAP_MS if abs(step - current) == 1 else KEY_HOLD_MS
+            send_key(hwnd, key, hold_ms=hold_ms)
+            _log.info(
+                "KEY  %-11s  notch %d→%d  (obj=%d  %s  %dms  fallback)",
+                label, current, step, new_notch,
+                "A" if new_notch > current else "D", hold_ms)
+            return True
+
+        _log.warning("execute: sin IPC ni hwnd — no se puede enviar %s", label)
         return False
 
     def execute(
@@ -200,7 +202,7 @@ class HandleController:
         ya en posición, HOLD/PAUSED, o suppresión anti-oscilación).
         """
         now = time.time()
-        use_rpc = self._use_rpc(conn) and hwnd is None
+        use_rpc = self._use_rpc(conn)
 
         # ── Dastsc P1: notch del plan (antes de HOLD — action puede ser HOLD) ─
         if brake_command is not None and brake_command.target_notch is not None:
@@ -215,13 +217,15 @@ class HandleController:
                 target = min(current, _NOTCH_NEUTRAL)
             elif brake_command.kind == "RELEASE":
                 target = _NOTCH_NEUTRAL
+            elif brake_command.kind == "APPLY" and target is not None:
+                target = clamp_brake_handle(target, brake_command.distance_m)
             if self._apply_combined_notch(
                     conn, hwnd, target, current, label=label):
                 self._last_control = now
                 return True
             return False
 
-        if action in ("HOLD", "PAUSED"):
+        if action in (HOLD, PAUSED):
             return False
 
         interval = (CONTROL_INTERVAL_RPC if use_rpc
@@ -242,12 +246,8 @@ class HandleController:
             _log.debug("Subida externa: notch %d → %d", self._last_seen_notch, current)
         self._last_seen_notch = current
 
-        # Suprimir COAST durante _GRACE_AFTER_EXT tras subida externa,
-        # EXCEPTO en modo ACK donde el ATP tiene control y la supresión
-        # solo prolonga la lucha entre autopilot y ATP.
-        ack = getattr(state, "ack_required", False)
-        if (action == "COAST"
-                and not ack
+        # Suprimir COAST durante _GRACE_AFTER_EXT tras subida externa.
+        if (action == COAST
                 and now - self._last_ext_up_t < _GRACE_AFTER_EXT):
             _log.debug(
                 "COAST suprimido (%.1fs tras subida externa)",
@@ -260,48 +260,23 @@ class HandleController:
 
         if use_rpc:
             new_notch = target
-            if brake_command is None:
-                if action == "ACCELERATE":
-                    eff = (state.target_mph if state.target_mph > 0
-                           else state.limit_mph)
-                    gap = eff - state.speed_mph
-                    if gap <= 5:
-                        new_notch = min(_MAX_NOTCH, current + 1)
-                    elif gap > 25:
-                        new_notch = min(_MAX_NOTCH, current + 3)
-                    elif gap > 12:
-                        new_notch = min(_MAX_NOTCH, current + 2)
-                elif action == "COAST" and current > _NOTCH_NEUTRAL:
-                    eff = (state.target_mph if state.target_mph > 0
-                           else state.limit_mph)
-                    overshoot = state.speed_mph - eff
-                    if overshoot > 8:
-                        new_notch = max(_NOTCH_NEUTRAL, current - 3)
-                    elif overshoot > 3:
-                        new_notch = max(_NOTCH_NEUTRAL, current - 2)
-                    else:
-                        new_notch = current - 1
+            if brake_command is None and action == COAST and current > _NOTCH_NEUTRAL:
+                eff = (state.target_mph if state.target_mph > 0
+                       else state.limit_mph)
+                overshoot = state.speed_mph - eff
+                if overshoot > 8:
+                    new_notch = max(_NOTCH_NEUTRAL, current - 3)
+                elif overshoot > 3:
+                    new_notch = max(_NOTCH_NEUTRAL, current - 2)
+                else:
+                    new_notch = current - 1
         else:
             new_notch = current + (1 if target > current else -1)
 
-        if use_rpc:
-            if self._apply_combined_notch(
-                    conn, hwnd, new_notch, current, label=action):
-                self._last_control = now
-                return True
-        elif hwnd is not None:
-            if new_notch > current:
-                send_key(hwnd, VK_A)
-            else:
-                send_key(hwnd, VK_D)
-            _log.debug(
-                "KEY  action=%-11s  notch %d→%d  key=%s",
-                action, current, new_notch, "A" if new_notch > current else "D")
+        if self._apply_combined_notch(
+                conn, hwnd, new_notch, current, label=action):
             self._last_control = now
             return True
-
-        if hwnd is None:
-            _log.warning("execute: sin hwnd — no se puede enviar %s por teclado", action)
         return False
 
     # ── Sincronización y reset ────────────────────────────────────────────
@@ -339,13 +314,23 @@ class HandleController:
         self._last_sync_t = now
         _log.info("force_neutral: handle en neutro (pos %d)", _NOTCH_NEUTRAL)
 
-    def reset_neutral(self, hwnd: Optional[int],
-                      current_handle: int = _NOTCH_NEUTRAL) -> None:
+    def reset_neutral(
+        self,
+        hwnd: Optional[int],
+        current_handle: int = _NOTCH_NEUTRAL,
+        conn: Optional[object] = None,
+    ) -> None:
         """
         Lleva el handle a neutro desde una posición conocida.
         Llamar al salir del autopilot con el último handle conocido de la telemetría.
         """
+        if self._use_rpc(conn):
+            _log.info("reset_neutral: IPC → neutro (0.5)")
+            if self._try_rpc(conn, "PowerBrakeHandle", 0.5):
+                return
+
         if hwnd is None:
+            _log.warning("reset_neutral: sin IPC ni hwnd")
             return
         pause = KEY_HOLD_MS / 1000.0 + 0.05
         pos = current_handle
@@ -357,7 +342,7 @@ class HandleController:
             send_key(hwnd, VK_A)
             time.sleep(pause)
             pos += 1
-        _log.info("reset_neutral: handle en neutro")
+        _log.info("reset_neutral: handle en neutro (teclado)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,7 +353,7 @@ class SafetyWatchdog:
     Capa de seguridad: monitorea condiciones críticas y genera overrides.
 
     Diseño conservador:
-    - HARDBRAKE solo para exceso de velocidad PERSISTENTE (> 5mph durante > 3s)
+    - BRAKE_FAST solo para exceso de velocidad PERSISTENTE (> 5mph durante > 3s)
     - Notch máximo sin respuesta → solo log de warning, SIN reset forzado
     - El operador decide cuándo sincronizar con tecla N
 
@@ -392,7 +377,7 @@ class SafetyWatchdog:
         Evalúa el estado del tren en busca de condiciones de emergencia.
 
         Returns:
-            "HARDBRAKE" si se debe frenar de emergencia, None si todo OK.
+            BRAKE_FAST si se debe frenar con urgencia, None si todo OK.
         """
         now = time.time()
 
@@ -405,9 +390,9 @@ class SafetyWatchdog:
                     state.speed_mph - state.limit_mph, state.limit_mph)
             elif now - self._overspeed_since >= self._OVERSPEED_TRIGGER_S:
                 _log.warning(
-                    "SafetyWatchdog HARDBRAKE: exceso %.1f mph durante ≥%.0fs",
+                    "SafetyWatchdog BRAKE_FAST: exceso %.1f mph durante ≥%.0fs",
                     state.speed_mph - state.limit_mph, self._OVERSPEED_TRIGGER_S)
-                return "HARDBRAKE"
+                return BRAKE_FAST
         else:
             self._overspeed_since = None
 

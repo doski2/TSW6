@@ -130,8 +130,9 @@ def main() -> None:
                         help="Forzar introducción manual de telemetría")
     parser.add_argument("--stop", type=float, default=None, metavar="MILLAS",
                         help="Distancia en millas a la próxima parada")
-    parser.add_argument("--learn", action="store_true",
-                        help="Re-aprender la calibración en vivo")
+    parser.add_argument("--no-learn", dest="learn", action="store_false",
+                        help="No actualizar perfil del tren en vivo (por defecto: sí aprende)")
+    parser.set_defaults(learn=True)
     parser.add_argument("--console", action="store_true",
                         help="Usar consola en lugar de la GUI")
     args = parser.parse_args()

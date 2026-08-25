@@ -14,11 +14,16 @@ import math
 import time
 from typing import Optional
 
+from tsw6.braking.v2.physics import (
+    BrakePhysicsContext,
+    braking_distance_mph,
+    should_brake_for_target,
+)
 from tsw6.learning.online_learner import OnlineLearner
 from tsw6.learning.freight_learner import FreightLearner, create_learner, profile_layout_from_file
 from tsw6.governor.governor_constants import (
     MAX_DECEL_MS2, SAFETY_MARGIN, COAST_DECEL_MS2, BRAKE_TRANSITION_S,
-    TARGET_ACCEL_MS2, TARGET_DECEL_MS2, CRITICAL_DECEL_THRESHOLD,
+    TARGET_DECEL_MS2, CRITICAL_DECEL_THRESHOLD,
 )
 
 _log = logging.getLogger("tsw.physics")
@@ -36,15 +41,9 @@ class TrainPhysics:
         # Constantes físicas (actualizables por OnlineLearner)
         self.max_decel_ms2    = MAX_DECEL_MS2
         self.target_decel_ms2 = TARGET_DECEL_MS2
-        self.target_accel_ms2 = TARGET_ACCEL_MS2
         self.coast_decel_ms2  = COAST_DECEL_MS2
 
-        # D: Transición throttle→brake medida dinámicamente
-        self.brake_transition_s: float = BRAKE_TRANSITION_S  # valor inicial hardcodeado
-        self._transition_start_t: Optional[float] = None
-        self._transition_start_accel: Optional[float] = None
-        self._transition_measurements: list[float] = []
-        self._MAX_TRANSITION_SAMPLES = 10
+        self.brake_transition_s: float = BRAKE_TRANSITION_S
 
         # Clima: factor de reducción de adherencia 0.0 (seco) … 1.0 (tormenta)
         self._rain_intensity: float = 0.0
@@ -65,15 +64,11 @@ class TrainPhysics:
             self.max_decel_ms2    = consts["MAX_DECEL_MS2"]
         if "TARGET_DECEL_MS2" in consts:
             self.target_decel_ms2 = consts["TARGET_DECEL_MS2"]
-        if "TARGET_ACCEL_MS2" in consts:
-            self.target_accel_ms2 = consts["TARGET_ACCEL_MS2"]
         if "COAST_DECEL_MS2"  in consts:
             self.coast_decel_ms2  = consts["COAST_DECEL_MS2"]
         _log.info(
-            "Constantes físicas: MAX_DECEL=%.3f  TARGET_DECEL=%.3f  "
-            "TARGET_ACCEL=%.3f  COAST=%.3f",
-            self.max_decel_ms2, self.target_decel_ms2,
-            self.target_accel_ms2, self.coast_decel_ms2,
+            "Constantes físicas: MAX_DECEL=%.3f  TARGET_DECEL=%.3f  COAST=%.3f",
+            self.max_decel_ms2, self.target_decel_ms2, self.coast_decel_ms2,
         )
 
     def feed_learner(self, speed_mph: float, current_notch: int,
@@ -97,18 +92,6 @@ class TrainPhysics:
         if updated:
             _log.info("FreightLearner actualizó: %s", updated)
             self._apply_constants(updated)
-
-    def predict_accel(self, notch: int, speed_mph: float,
-                      grad_pct: float) -> Optional[float]:
-        if isinstance(self.learner, FreightLearner):
-            return self.learner.predict_accel("throttle", float(notch), speed_mph, grad_pct)
-        return self.learner.predict_accel(notch, speed_mph, grad_pct)
-
-    def predict_throttle_ceiling(self, handle_notch: int) -> float:
-        """Techo mph de la muesca de tracción (handle 5–8)."""
-        if isinstance(self.learner, FreightLearner):
-            return 200.0
-        return self.learner.predict_throttle_ceiling(handle_notch)
 
     def predict_brake_decel_ms2(self, handle_notch: int, speed_mph: float,
                                 grad_pct: float = 0.0) -> Optional[float]:
@@ -161,37 +144,6 @@ class TrainPhysics:
         else:
             self.learner.adopt_profile(vehicle)
         self._apply_constants(self.learner.get_constants())
-
-    # ── D: Medición dinámica de BRAKE_TRANSITION_S ────────────────────────────
-
-    def start_brake_transition(self) -> None:
-        """Llamar cuando se inicia una transición de throttle a brake.
-        Registra el timestamp para medir el tiempo real de transición."""
-        self._transition_start_t = time.time()
-        self._transition_start_accel = self.acceleration_ms2
-
-    def end_brake_transition(self) -> None:
-        """Llamar cuando se confirma que el freno está actuando (aceleración negativa).
-        Calcula el tiempo real de transición y actualiza la constante."""
-        if self._transition_start_t is None:
-            return
-        elapsed = time.time() - self._transition_start_t
-        self._transition_start_t = None
-        self._transition_start_accel = None
-
-        # Solo aceptar mediciones razonables (0.1 a 3.0 segundos)
-        if 0.1 <= elapsed <= 3.0:
-            self._transition_measurements.append(elapsed)
-            if len(self._transition_measurements) > self._MAX_TRANSITION_SAMPLES:
-                self._transition_measurements.pop(0)
-            # Actualizar constante como media de las mediciones
-            avg_transition = sum(self._transition_measurements) / len(self._transition_measurements)
-            if abs(avg_transition - self.brake_transition_s) > 0.05:
-                _log.info(
-                    "Brake transition actualizado: %.2fs → %.2fs (n=%d)",
-                    self.brake_transition_s, avg_transition,
-                    len(self._transition_measurements))
-                self.brake_transition_s = avg_transition
 
     # ── Clima / lluvia ───────────────────────────────────────────────────────
 
@@ -276,37 +228,37 @@ class TrainPhysics:
         eff = self.effective_decel_for_gradient(gradient_pct)
         return eff < CRITICAL_DECEL_THRESHOLD
 
+    def _brake_ctx(
+        self,
+        gradient_pct: Optional[float] = None,
+        current_accel_ms2: Optional[float] = None,
+        decel: Optional[float] = None,
+        margin: float = SAFETY_MARGIN,
+    ) -> BrakePhysicsContext:
+        return BrakePhysicsContext(
+            base_decel_ms2=decel if decel is not None else self.eff_max_decel,
+            safety_margin=margin,
+            coast_decel_ms2=self.coast_decel_ms2,
+            brake_transition_s=self.brake_transition_s,
+            gradient_pct=gradient_pct or 0.0,
+            current_accel_ms2=current_accel_ms2,
+        )
+
     def braking_distance(self, from_mph: float, to_mph: float,
                          decel: Optional[float] = None,
                          margin: float = SAFETY_MARGIN,
                          gradient_pct: Optional[float] = None,
                          current_accel_ms2: Optional[float] = None) -> float:
         """
-        Distancia de frenado en metros con margen de seguridad.
-        Con gradient_pct se corrige la deceleración efectiva:
-          - bajada (< 0): gravedad opone frenado → distancia mayor
-          - subida (> 0): gravedad asiste frenado → distancia menor
-        Si current_accel_ms2 > 0, modela la distancia extra recorrida durante
-        la transición aceleración→neutro→freno (BRAKE_TRANSITION_S segundos).
+        Distancia de frenado en metros (delega en ``brake_physics``).
         """
-        if decel is None:
-            decel = self.max_decel_ms2
-        v1 = from_mph * 0.44704
-        v2 = to_mph   * 0.44704
-        if v1 <= v2:
-            return 0.0
-        if gradient_pct is not None:
-            g_comp = 9.81 * gradient_pct / 100.0
-            effective_decel = max(decel + g_comp, self.coast_decel_ms2)
-        else:
-            effective_decel = decel
-        if current_accel_ms2 is not None and current_accel_ms2 > 0.0:
-            t_trans = self.brake_transition_s  # D: usar valor medido dinámicamente
-            v_peak = v1 + current_accel_ms2 * t_trans
-            d_trans = v1 * t_trans + 0.5 * current_accel_ms2 * t_trans ** 2
-            d_brake = (v_peak ** 2 - v2 ** 2) / (2 * effective_decel)
-            return (d_trans + d_brake) * margin
-        return ((v1 ** 2 - v2 ** 2) / (2 * effective_decel)) * margin
+        return braking_distance_mph(
+            from_mph,
+            to_mph,
+            decel_ms2=decel,
+            ctx=self._brake_ctx(gradient_pct, current_accel_ms2, decel, margin),
+            apply_margin=True,
+        )
 
     def should_brake_for_next(self, speed_mph: float,
                                next_limit_mph: Optional[float],
@@ -314,14 +266,11 @@ class TrainPhysics:
                                gradient_pct: Optional[float] = None,
                                react_s: float = 0.0,
                                current_accel_ms2: Optional[float] = None) -> bool:
-        """¿Hay que empezar a frenar ya para el próximo límite?
-        react_s: segundos de margen de reacción (distancia extra = speed * react_s).
-        """
-        if next_limit_mph is None or distance_m is None:
-            return False
-        if next_limit_mph >= speed_mph:
-            return False
-        react_m = speed_mph * 0.44704 * react_s
-        return distance_m <= self.braking_distance(speed_mph, next_limit_mph,
-                                                    gradient_pct=gradient_pct,
-                                                    current_accel_ms2=current_accel_ms2) + react_m
+        """¿Hay que empezar a frenar ya para el próximo límite?"""
+        return should_brake_for_target(
+            speed_mph,
+            next_limit_mph,
+            distance_m,
+            ctx=self._brake_ctx(gradient_pct, current_accel_ms2),
+            react_s=react_s,
+        )

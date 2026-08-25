@@ -75,23 +75,25 @@ class TestFSMTransitions(unittest.TestCase):
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
 
-    def test_stopped_prefers_telem_over_dmi(self):
-        """Telemetría física tiene prioridad sobre mensajes DMI."""
+    def test_stopped_dmi_open_when_telem_closed(self):
+        """DMI abierto cuenta aunque la telemetría de cabina diga cerrado."""
         self.fsm.state = "STOPPED"
         self.fsm.name = "Test Station"
-        self.fsm._doors_opened = True
+        self.fsm._doors_opened = False
         self.fsm._stopped_at = time.time()
         self.fsm._we_stopped = True
         stations = [{"name": "Test Station", "distance_m": 10.0,
                      "platform_length_m": 100.0}]
         action, lim = self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=60.0, stations=stations,
-            doors_open=True, doors_dmi=True,
+            doors_open=False, doors_dmi=True,
             doors_telem=False,
             ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
-        self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertEqual(self.fsm.state, "STOPPED")
+        self.assertTrue(self.fsm._doors_opened)
+        self.assertEqual(action, "HOLD")
 
     def test_departing_to_none(self):
         """Transiciona a None cuando se aleja de la estación."""

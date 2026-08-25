@@ -11,7 +11,12 @@ import time
 import math
 from typing import Optional, Tuple
 
-from tsw6.telemetry.driver_aid_parser import select_next_scheduled_stop, station_base_name
+from tsw6.telemetry.driver_aid_parser import (
+    resolve_station_door_state,
+    select_next_scheduled_stop,
+    station_base_name,
+)
+from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
 from tsw6.governor.governor_constants import (
     STATION_APPROACH_M, STATION_STOPPED_MPH, STATION_DWELL_TIMEOUT_S,
 )
@@ -86,9 +91,12 @@ class StationFSM:
                                  doors_open: bool, doors_dmi: Optional[bool],
                                  ocr_stop_dist_m: Optional[float],
                                  ocr_task: Optional[str],
-                                 braking_dist_fn, eff_max_decel: float,
+                                 braking_dist_fn,                                  eff_max_decel: float,
                                  eff_k_stop: float,
-                                 doors_telem: Optional[bool] = None) -> Tuple[Optional[str], float]:
+                                 doors_telem: Optional[bool] = None,
+                                 next_limit_mph: Optional[float] = None,
+                                 distance_next_m: Optional[float] = None,
+                                 ) -> Tuple[Optional[str], float]:
         """
         Ejecuta las transiciones de la FSM de estación basándose en telemetría.
         Devuelve una tupla (accion_override, effective_limit_override) si el estado
@@ -172,7 +180,10 @@ class StationFSM:
         if self.state == "APPROACHING":
             return self._handle_approaching(
                 speed_mph, limit_mph, next_stop, doors_dmi, ocr_stop_dist_m,
-                braking_dist_fn, eff_max_decel, eff_k_stop)
+                braking_dist_fn, eff_max_decel, eff_k_stop,
+                doors_telem=doors_telem,
+                next_limit_mph=next_limit_mph,
+                distance_next_m=distance_next_m)
 
         return None, 0.0
 
@@ -183,31 +194,13 @@ class StationFSM:
                         ocr_task: Optional[str],
                         *, doors_telem: Optional[bool] = None) -> Tuple[Optional[str], float]:
         """Gestiona el estado STOPPED: puertas, dwell y transición a DEPARTING."""
-        _OCR_NEXT_STOP_M = 300.0
-        if doors_telem is not None:
-            effective_doors = doors_telem
-            _ocr_door_src   = "telem-open" if doors_telem else "telem-closed"
-        elif doors_dmi is True:
-            effective_doors = True
-            _ocr_door_src   = "dmi-open"
-        elif doors_dmi is False:
-            effective_doors = False
-            _ocr_door_src   = "dmi-closed"
-        elif ocr_task == "board":
-            effective_doors = True
-            _ocr_door_src   = "ocr_task=board"
-        elif ocr_task == "stop":
-            effective_doors = False
-            _ocr_door_src   = "ocr_task=stop"
-        elif ocr_stop_dist_m is not None and ocr_stop_dist_m > _OCR_NEXT_STOP_M:
-            effective_doors = False
-            _ocr_door_src   = f"ocr_dist={ocr_stop_dist_m:.0f}m>300m"
-        elif ocr_stop_dist_m is None and ocr_task is None:
-            effective_doors = doors_open
-            _ocr_door_src   = "doors_open_event"
-        else:
-            effective_doors = doors_open
-            _ocr_door_src   = "event"
+        effective_doors, _ocr_door_src = resolve_station_door_state(
+            doors_telem=doors_telem,
+            doors_dmi=doors_dmi,
+            doors_open=doors_open,
+            ocr_task=ocr_task,
+            ocr_stop_dist_m=ocr_stop_dist_m,
+        )
 
         if effective_doors:
             if not self._doors_opened:
@@ -231,8 +224,12 @@ class StationFSM:
                 dwell_s = 15.0
                 timeout_type = " doors-open-no-close"
             else:
-                dwell_s = STATION_DWELL_TIMEOUT_S if self._we_stopped else 3.0
-                timeout_type = "" if self._we_stopped else " cold-start"
+                if doors_telem is None and doors_dmi is None:
+                    dwell_s = STATION_DWELL_TIMEOUT_S
+                    timeout_type = " no-door-data"
+                else:
+                    dwell_s = STATION_DWELL_TIMEOUT_S if self._we_stopped else 3.0
+                    timeout_type = "" if self._we_stopped else " cold-start"
             if time.time() - self._stopped_at >= dwell_s:
                 _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s)  (%s)",
                           dwell_s, timeout_type, self.name or "?")
@@ -244,7 +241,11 @@ class StationFSM:
                             next_stop: Optional[dict], doors_dmi: Optional[bool],
                             ocr_stop_dist_m: Optional[float],
                             braking_dist_fn, eff_max_decel: float,
-                            eff_k_stop: float) -> Tuple[Optional[str], float]:
+                            eff_k_stop: float,
+                            *, doors_telem: Optional[bool] = None,
+                            next_limit_mph: Optional[float] = None,
+                            distance_next_m: Optional[float] = None,
+                            ) -> Tuple[Optional[str], float]:
         """Gestiona el estado APPROACHING: calibración OCR, perfil cinemático y transición a STOPPED."""
         api_dist = next_stop["distance_m"] if next_stop else 0.0
 
@@ -290,7 +291,7 @@ class StationFSM:
                       self.name or "?", stop_dist_m)
             self.state               = "STOPPED"
             self._creep_to_station   = False
-            self._doors_opened       = False
+            self._doors_opened       = (doors_telem is True) or (doors_dmi is True)
             self._stopped_at         = time.time()
             self._min_stop_dist      = None
             self._ocr_offset         = None
@@ -304,10 +305,16 @@ class StationFSM:
 
         # En andén parado: gestionar puertas directamente
         if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
-            if doors_dmi is True:
+            effective_doors, _src = resolve_station_door_state(
+                doors_telem=doors_telem,
+                doors_dmi=doors_dmi,
+            )
+            if effective_doors:
                 self._doors_opened = True
-            elif self._doors_opened and doors_dmi is False:
-                _log.info("FSM: APPROACHING → DEPARTING (puertas cerradas)  '%s'", self.name or "?")
+            elif self._doors_opened and not effective_doors:
+                _log.info(
+                    "FSM: APPROACHING → DEPARTING (puertas cerradas, src=%s)  '%s'",
+                    _src, self.name or "?")
                 self.state = "DEPARTING"
                 self._doors_opened = False
                 self._min_stop_dist = None
@@ -317,8 +324,20 @@ class StationFSM:
         # Perfil cinemático de velocidad límite para parar en el andén
         if stop_dist_m < stop_window:
             return None, 0.0
-        else:
-            eff_lim = min(limit_mph or 30.0, eff_k_stop * math.sqrt(stop_dist_m))
-            if self._creep_to_station:
-                eff_lim = min(eff_lim, 10.0)
-            return None, eff_lim
+
+        # Dastsc: cartel 55 agrupado con parada → P1 frena al límite; FSM no √→0
+        _stn_dist = api_dist
+        if (
+            distance_next_m is not None
+            and next_limit_mph is not None
+            and _stn_dist > 0
+            and should_merge_limit_and_station_plans(distance_next_m, _stn_dist)
+            and distance_next_m > 80
+            and speed_mph > next_limit_mph + 1.0
+        ):
+            return None, 0.0
+
+        eff_lim = min(limit_mph or 30.0, eff_k_stop * math.sqrt(stop_dist_m))
+        if self._creep_to_station:
+            eff_lim = min(eff_lim, 10.0)
+        return None, eff_lim

@@ -63,6 +63,25 @@ def test_build_speed_limits_queue_dedupes_near_duplicates():
     assert limits[1]["distance_m"] == 1200.0
 
 
+def test_build_speed_limits_queue_collapses_same_mph_at_distances():
+    """DriverAid repite el mismo cartel a distancias distintas (ruido GUI)."""
+    mph_45_ms = 20.12  # ~45 mph
+    data = {
+        "distanceToNextSpeedLimit": 29700.0,
+        "nextSpeedLimit": {"value": mph_45_ms},
+        "nextSpeedLimits": [
+            {"distanceToNextSpeedLimit": 31600.0, "value": {"value": mph_45_ms}},
+            {"distanceToNextSpeedLimit": 33500.0, "value": {"value": mph_45_ms}},
+            {"distanceToNextSpeedLimit": 120000.0, "value": {"value": 11.18}},
+        ],
+    }
+    limits = build_speed_limits_queue(data)
+    assert len(limits) == 2
+    assert limits[0]["distance_m"] == 297.0
+    assert abs(limits[0]["limit_mph"] - 45.0) < 1.0
+    assert limits[1]["distance_m"] == 1200.0
+
+
 def test_parse_door_state_dmi_messages():
     from tsw6.telemetry.driver_aid_parser import parse_door_state
 
@@ -85,6 +104,20 @@ def test_parse_passenger_door_api():
     assert parse_passenger_door_api({"ReturnValue": 0.0}, {"ReturnValue": 0.0}) is False
     assert parse_passenger_door_api({"ReturnValue": 0.0}, {"ReturnValue": 1.0}) is True
     assert parse_passenger_door_api(None, None) is None
+
+
+def test_resolve_station_door_state():
+    from tsw6.telemetry.driver_aid_parser import resolve_station_door_state
+
+    open_flag, src = resolve_station_door_state(
+        doors_telem=False, doors_dmi=True)
+    assert open_flag is True
+    assert src == "dmi-open"
+
+    closed_flag, src = resolve_station_door_state(
+        doors_telem=False, doors_dmi=False)
+    assert closed_flag is False
+    assert src == "telem+dmi-closed"
 
 
 def test_parse_driver_aid_planning_includes_doors():

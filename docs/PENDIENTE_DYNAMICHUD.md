@@ -2,11 +2,102 @@
 
 **Objetivo:** telemetría **in-process** (~17–20 Hz) vía UE4SS y puente a Python (`GetData.txt`).
 
-**Estado:** ✅ MVP Class 323 (2026-08-23) — velocidad congelada · mandos IPC · planning límites probe
-· **horario HUD estaciones** · SD40-2 pendiente
-**Paquete UE4SS:** `C:\Users\doski\Desktop\investigacion tsw 6\DynamicHUD v1.0.0`
-**Relacionado:** [ARQUITECTURA.md](ARQUITECTURA.md) · [FREIGHT_NA.md](FREIGHT_NA.md) ·
-[GUIA.md](GUIA.md)
+**Estado:** ✅ MVP Class 323 (2026-08-24) — velocidad congelada · mandos IPC · planning límites probe
+· **horario HUD estaciones + arr/dep en GUI (validado in-game)** · **P1 frenado v2 consolidado en
+`braking/v2/`** · `station_eta` cableado al planner · log ciclo ampliado para depuración v2
+· SD40-2 pendiente
+
+**Relacionado:** [ARQUITECTURA.md](ARQUITECTURA.md) · [BRAKE_V2.md](BRAKE_V2.md) ·
+[DASTSC_PARITY.md](DASTSC_PARITY.md) ·
+[FREIGHT_NA.md](FREIGHT_NA.md) · [GUIA.md](GUIA.md)
+
+---
+
+## Foco actual — no distraerse
+
+### ✅ Cerrado (no reabrir salvo regresión)
+
+| Tema | Dónde | Nota |
+| --- | --- | --- |
+| Velocidad probe ~20 Hz | `tsw_telemetry_source` | Tests `test_speed_*` obligatorios |
+| Mandos IPC B4 | `tsw_ipc_bus` + probe Lua | Sin `-HTTPAPI` para escribir; **preferido** frente a teclado (notch absoluto) |
+| P1 frenado Dastsc | `braking/v2/` → `SpeedDecider` | Todo en v2; eliminado `archive/braking_v1/` |
+| RELEASE cartel+andén unificado | `v2/coordinator.py` + `v2/cluster.py` | Soltar al cartel y coast; `should_delay_unified_station_plan` |
+| `station_eta` → planner | `TrainState.next_stop_arrival` → `SpeedDecider` | HUD `HH:MM:SS` normalizado a `HH:MM` |
+| Log ciclo v2 | `autopilot_core._log_cycle` + `investigate_suffix` | `thr`, `gap`, `wd`, `p1eta`, `uni`, `p1tgt/p1ds` |
+| Horario HUD paradas | `hud_timetable.py` + BD release | Paradas, distancias, **arr/dep en GUI** (validado) |
+| Gradiente en probe | `gradient_pct` en GetData.txt | Class 323 validado |
+
+### 🎯 Hacer ahora (impacto paridad Dastsc)
+
+| # | Tarea | Por qué |
+| --- | --- | --- |
+| 1 | **Validar in-game** frenado v2 (2R17 Cross-City) cartel+andén + RELEASE @55 | Confirmar fix unified; log `gap=`, `uni=Y`, `p1eta=` |
+| 2 | **Telemetría señal** (`distanceToSignal`, aspecto DANGER) → `TrainState` + P1 | `signal_brake.py` es stub |
+| 3 | **Distancia tablón** OCR/GPS cada tick → `station_brake` / coordinador | Parada andén menos precisa que Dastsc |
+
+### ⏸️ Después (no bloquean MVP UK)
+
+- `station_traveled_m` / `station_anchor_m` → planner (anti-fantasma turnaround)
+- 2.º límite en cola visible en log ciclo (`speed_limits_ahead[1]`)
+- SD40-2 probe (A3 freight) + [FREIGHT_NA.md](FREIGHT_NA.md)
+- Campos probe extra (patinaje, manómetros, `IS_GetBrakeState`)
+- Renombrar mod a `TelemetryBridgeMod`, flag “autopilot armed”
+- Estabilidad 10+ min (A4), benchmark formal vs HTTP
+
+**Regla:** si no está en «Hacer ahora», no abrir PR ni refactor hasta cerrar 1–3.
+
+---
+
+## P1 v2 — estado y log de depuración (2026-08-24)
+
+Arquitectura: [BRAKE_V2.md](BRAKE_V2.md). Todo el frenado vive en `tsw6/braking/v2/`.
+
+### Integración autopilot — ✅
+
+| Pieza | Ruta |
+| --- | --- |
+| Decisión | `speed_decider.py` → `BrakeCoordinatorV2.evaluate()` |
+| Mandos | `handle_controller.py` ← `BrakeCommand` (notch IPC absoluto) |
+| Física distancias | `governor_physics.py` → `v2/physics.py` |
+| Horario parada | `telem.next_stop_arrival` → `TrainState` → `station_eta` → `v2/planner.py` |
+
+### Log ciclo (`autopilot_*.log`) — campos v2
+
+Línea de ciclo (cada ~2 s en DEBUG tras los 5 primeros INFO):
+
+| Campo | Significado |
+| --- | --- |
+| `p1dbg` | Estado interno P1: `v2 SPEED_LIMIT B1`, `RELEASE→NEU`, `sin_plan_activo`, `release_blocked:…`, `perfil activo` |
+| `p1tgt` / `p1d` / `p1ds` | Objetivo activo, distancia en vía, distStart (cuándo frenar) |
+| `p1apply` | `Y` = APPLY este ciclo |
+| `p1cmd` / `p1r` | APPLY / RELEASE + razón |
+| `uni=Y` | Parada unificada cartel+andén latched |
+| `gap=` | Andén − cartel (m); cluster si &lt; 350 m |
+| `p1eta=` | ETA pasada al planner (`HH:MM`, desde HUD `arr`) |
+| `p1=B1→N3` | Comando P1 del ciclo |
+| `thr=` | Muesca tracción (0 si sin tracción) |
+| `wd=` | Watchdog override (p. ej. `BRAKE_FAST`) si distinto de `action` |
+| `arr` / `dep` / `sched` | Horario HUD próxima parada |
+
+Logger detallado: `[tsw.governor.v2] P1v2 …` en cada APPLY (cada ~100 ms).
+
+### Qué mirar in-game
+
+| Situación | Campos clave |
+| --- | --- |
+| Frenada al cartel | `p1apply=Y`, `P1v2 SPEED_LIMIT`, `p1ds` bajando |
+| 60→55 + andén cercano | `uni=Y`, `gap=<350m`, RELEASE al llegar a ~55 (`p1dbg=RELEASE→NEU`) |
+| Coast con horario | `p1eta=8:18`, B2 más tarde si vas adelantado al `arr` |
+| Freno atascado | `notch=3` + `p1dbg=sin_plan_activo` sin `RELEASE→NEU` → bug |
+
+### Pendiente P1 v2 (código)
+
+- [ ] `signal_distance_m` / `signal_aspect` en `TrainState` y `SpeedDecider.evaluate()`
+- [ ] `station_traveled_m` / `station_anchor_m` (supresión turnaround en `v2/planner.py`)
+- [ ] OCR distancia tablón → `station_brake` / coordinador
+- [ ] 2.º límite en cola en log ciclo
+- [ ] Validar in-game post-fix RELEASE unified (sesión 2R17)
 
 ---
 
@@ -165,10 +256,7 @@ Campo: `"gradient": -0.62` (número en %, minúsculas). Poll lento en
 `tsw_telemetry_source._poll_slow`
 (~0,5–1 s), no en el bucle de 17 Hz.
 
-Alternativa por eje (simulación):
-
-```http
-```
+Alternativa por eje (simulación): `Simulation/Axle_*_*.TrackGradient_DEG` vía HTTP explore.
 
 ### Planning (estaciones, next limit)
 
@@ -176,22 +264,26 @@ Alternativa por eje (simulación):
 
 - Probe: `dist_limit_cm`, `next_limit_ms`, `dist_limit2_*` en `GetData.txt` (~20 Hz)
 - HTTP fallback + odometría entre polls
-- `brake_planner.py` + `brake_command.py` (Dastsc B1–B3)
+- **P1 activo:** `braking/v2/limit_brake.py` + `v2/command.py` (B1–B3 Dastsc)
 
-##### Estaciones comerciales — ✅ (2026-08-23)
+##### Estaciones comerciales — ✅ planning / 🔄 frenado fino
 
 - `hud_timetable.py` + `tsw_hud.db` (extractor TSW HUD)
 - `DriverAid.PlayerInfo`: `currentServiceName` + `geoLocation`
 - `DriverAid.TrackData.markers` filtrados por horario STOP
 - Distancia tablón: `car_stop_signs` cuando TrackData no coincide (`hud_geo`)
 - GUI: `schedule_source`, `[horario HUD #ID]`, próxima parada
+- **Frenado andén:** `v2/station_brake.py` → `v2/planner.py`
 
-Detalle setup: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
+Detalle setup: [HUD_TIMETABLE.md](HUD_TIMETABLE.md). Frenado: [BRAKE_V2.md](BRAKE_V2.md).
 
-**Pendiente estaciones:**
+**Pendiente estaciones (solo foco 2–3 arriba):**
 
-- [ ] `planBrakeForStation` — frenado planificado al tablón
-- [ ] Recalcular distancia GPS cada refresh (no solo odometría)
+- [x] `planBrakeForStation` — vía `station_brake` + `v2/planner` (funcional)
+- [x] `station_eta` — `next_stop_arrival` HUD → `SpeedDecider` → planner (reaction scale / coast)
+- [ ] Pasar `signal_distance_m` / aspecto desde probe o HTTP → `signal_brake`
+- [ ] Recalcular distancia tablón OCR/GPS cada tick (no solo odometría HTTP)
+- [ ] `station_traveled_m` / `station_anchor_m` en telemetría (anti-fantasma turnaround)
 - [ ] Estaciones en probe Lua (baja prioridad)
 
 ---
@@ -243,7 +335,7 @@ implementa un subconjunto).
 | --- | --- | --- |
 | `distanceToNextSpeedLimit` | `GetDriverAidData` → probe | ✅ ~20 Hz |
 | `nextSpeedLimits[]` | idem (2 primeros) | ✅ |
-| `distanceToSignal` / `nextSignals[]` | idem | Señales (menos crítico offline) |
+| `distanceToSignal` / `nextSignals[]` | idem | **🎯 siguiente** — `signal_brake` v2 (hoy stub) |
 | `formationMaxSpeed` / `trackMaxSpeed` | idem | Techo real del consist |
 | Perfil altura vía | `DriverAid.TrackData` | Curvas / túneles (futuro) |
 
@@ -318,8 +410,8 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 - [x] `autopilot_core.py` + `autopilot_gui.py` — bucle 20 Hz, GUI en hilo aparte
 - [x] **Velocidad actual** — congelada; tests regresión `test_speed_*`
 - [x] Planning HTTP: `next_limit` + cola 2 límites + odometría entre polls
-- [x] Frenado: `brake_planner.py` + perfil decel por muesca (`OnlineLearner`)
-- [x] **Ejecución Dastsc P1** — `brake_command.py` + notch IPC directo
+- [x] Frenado P1 v2: `BrakeCoordinatorV2` + perfil decel por muesca (`OnlineLearner`)
+- [x] **Ejecución Dastsc P1** — `v2/command.py` + notch IPC directo
 
   ([DASTSC_PARITY.md](DASTSC_PARITY.md))
 
@@ -348,7 +440,7 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 | 1 | ≥15 Hz `speed_ms` + mando en Python | ✅ congelado 2026-08-22 |
 | 2 | Valores Lua ≈ HTTPAPI misma sesión | ✅ 323 |
 | 3 | `aprender.bat` sin RailBridge | ✅ |
-| 3b | Autopiloto frenado con planning 2 límites | ✅ |
+| 3b | Autopiloto frenado P1 v2 (límite + estación + prioridad) | ✅ |
 | 4 | Sin mandos colgados al cerrar Python | ✅ (neutro + purga IPC) |
 | 5 | Autopiloto sin `-HTTPAPI` | ✅ (mandos; planning HTTP opcional) |
 
@@ -379,7 +471,7 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 | 2026-08-18 | HUD | `enabled.txt` anulaba `mods.txt : 0`; borrado; HUD normal |
 | 2026-08-18 | Gradiente | `gradient_pct` en probe vía `driverAid.gradient`; 323 validado in-game |
 | 2026-08-18 | probe bat | Restaurado `--benchmark` en `tsw_ue4ss_reader.py` |
-| 2026-08-19 | Autopilot | Solo frenado; `brake_planner` (Dastsc); GUI 10 Hz |
+| 2026-08-19 | Autopilot | Solo frenado; P1 Dastsc; GUI 10 Hz |
 | 2026-08-19 | Planning | Cola 2 límites; odometría dist HTTP; decel/muesca en perfil JSON |
 | 2026-08-19 | Learner | Freno muescas 0–3 siempre; tracción con `--learn` |
 
@@ -388,14 +480,42 @@ No necesarios para frenar; sí para escenarios de servicio comercial.
 | 2026-08-19 | Probe v2 | 2 límites en GetData.txt; planning sin HTTP |
 | 2026-08-22 | Velocidad | Congelada: probe directo ~20 Hz GUI; tests regresión; planning aparte |
 | 2026-08-23 | HUD horario | `tsw_hud.db`, filtro paradas, `car_stop_signs`, merge `hud_geo`; SQLite thread-local |
+| 2026-08-24 | Frenado P1 v2 | `BrakeCoordinatorV2` en autopilot; tests coordinator |
+| 2026-08-24 | Consolidación frenado | Todo en `braking/v2/`; eliminado `archive/braking_v1/` |
+| 2026-08-24 | Horario GUI | arr/dep y tabla paradas validados in-game (2R17 / Cross-City) |
+| 2026-08-24 | Mandos solo IPC | P1/P2/reset: IPC absoluto primero; teclado solo fallback |
+| 2026-08-24 | RELEASE unified | Coordinator: soltar en cartel + coast; tests coordinator |
+| 2026-08-24 | `station_eta` | `next_stop_arrival` → planner; parser `HH:MM:SS` |
+| 2026-08-24 | Log v2 | `thr`, `gap`, `wd`, `p1eta` en ciclo; guía en sección P1 v2 arriba |
 
 ---
 
-## Próximo paso
+## Mandos: IPC vs teclado
 
-1. **Usuario:** validar paradas HUD in-game (2R17 Cross-City, GUI Planning).
-2. **Código:** `planBrakeForStation` + distancia tablón en tiempo real.
-3. **Usuario:** sesión estabilidad 10+ min (A4).
-4. **Después:** SD40-2 en probe (A3 freight) + fases FREIGHT_NA 4–6.
+| Vía | Cuándo | Fiabilidad |
+| --- | --- | --- |
+| **IPC** (`SendCommand.txt` → Lua) | **Siempre primero** si `mandos=ipc` (P1 B1–B3, RELEASE, P2) | ✅ **Por defecto** — notch absoluto 0–8 en un ciclo (~120 ms) |
+| **Teclado** (A/D, pulso 120 ms) | Solo si IPC falla 5 veces (penalización 5 min) o sin bridge | ⚠️ Fallback; riesgo de saltar neutro |
+| **HTTP PATCH** | Fallback legacy si no hay UE4SS | Más lento (50–150 ms); requiere `-HTTPAPI` |
 
-**No retocar** pipeline velocidad salvo bug confirmado (pasar `test_speed_*` antes).
+Con `mandos=ipc` en el heartbeat del autopilot, **todos** los mandos van por
+`PowerBrakeHandle` absoluto. El teclado solo entra si IPC falla repetidamente.
+
+Detalle: `handle_controller.py` (`prefer_absolute` en RELEASE/COAST_THROTTLE) · `tsw_ipc_bus.py`.
+
+## Próximo paso (orden fijo)
+
+1. **Validar in-game** — 2R17 Cross-City: cartel+andén, `uni=Y`, `gap=`, RELEASE @55, `p1eta=`.
+
+   Horario GUI ✅.
+
+2. **Telemetría señal** — probe o HTTP: `distanceToSignal` + aspecto → `TrainState` →
+
+   `signal_brake`.
+
+3. **Tablón OCR/GPS** — cablear distancia fina a `station_brake` / coordinador.
+4. **Sesión A4** — estabilidad probe 10+ min (cuando 1–3 OK).
+5. **SD40-2** — probe freight + [FREIGHT_NA.md](FREIGHT_NA.md) (después de UK cerrado).
+
+**No retocar** pipeline velocidad sin tests: `test_brake_v2.py` + `test_brake_coordinator.py` +
+`test_speed_decider.py`.

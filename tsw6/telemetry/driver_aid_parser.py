@@ -3,7 +3,7 @@
 driver_aid_parser.py — Planning desde DriverAid (HTTPAPI).
 
 Convierte ``DriverAid.Data`` y ``DriverAid.TrackData`` al formato que esperan
-``build_train_state()``, ``BrakingAdvisor`` (P1) y ``StationFSM``.
+``build_train_state()``, ``BrakeCoordinatorV2`` (P1) y ``StationFSM``.
 """
 
 from __future__ import annotations
@@ -60,6 +60,24 @@ def _prune_zero_distance_limits(
     while limits and limits[0].get("distance_m", 0) <= 1.0:
         limits.pop(0)
     return limits
+
+
+def _collapse_same_limit_entries(
+    limits: list[dict[str, float]],
+    *,
+    mph_tol: float = 0.5,
+) -> list[dict[str, float]]:
+    """Colapsa tramos consecutivos con el mismo límite (ruido HTTP de DriverAid)."""
+    if not limits:
+        return limits
+    out: list[dict[str, float]] = [dict(limits[0])]
+    for entry in limits[1:]:
+        prev = out[-1]
+        if abs(prev["limit_mph"] - entry["limit_mph"]) <= mph_tol:
+            prev["distance_m"] = min(prev["distance_m"], entry["distance_m"])
+        else:
+            out.append(dict(entry))
+    return out
 
 
 def parse_gradient_pct(node: Any) -> Optional[float]:
@@ -127,7 +145,8 @@ def build_speed_limits_queue(data: dict[str, Any]) -> list[dict[str, float]]:
         _merge_limit_entry(limits, d_m, float(lim_ms) * MS_TO_MPH)
 
     limits.sort(key=lambda x: x["distance_m"])
-    return _prune_zero_distance_limits(limits)
+    limits = _prune_zero_distance_limits(limits)
+    return _collapse_same_limit_entries(limits)
 
 
 _DOOR_OPEN_IDS = frozenset({
@@ -189,6 +208,43 @@ def merge_passenger_door_states(*states: Optional[bool]) -> Optional[bool]:
     if not vals:
         return None
     return any(vals)
+
+
+def resolve_station_door_state(
+    *,
+    doors_telem: Optional[bool] = None,
+    doors_dmi: Optional[bool] = None,
+    doors_open: bool = False,
+    ocr_task: Optional[str] = None,
+    ocr_stop_dist_m: Optional[float] = None,
+    ocr_next_stop_m: float = 300.0,
+) -> tuple[bool, str]:
+    """
+    Estado efectivo de puertas para la FSM de estación.
+
+    Abierto si *cualquier* fuente fiable dice abierto (telemetría **o** DMI).
+    Cerrado solo con señal explícita de cierre; ``doors_telem=False`` no
+    anula un ``doors_dmi=True`` (cabina sin sensor ≠ puertas de pasajeros).
+    """
+    if doors_telem is True or doors_dmi is True:
+        if doors_telem is True:
+            return True, "telem-open"
+        return True, "dmi-open"
+    if ocr_task == "board":
+        return True, "ocr_task=board"
+    if doors_telem is False and doors_dmi is False:
+        return False, "telem+dmi-closed"
+    if doors_dmi is False:
+        return False, "dmi-closed"
+    if doors_telem is False:
+        return False, "telem-closed"
+    if ocr_task == "stop":
+        return False, "ocr_task=stop"
+    if ocr_stop_dist_m is not None and ocr_stop_dist_m > ocr_next_stop_m:
+        return False, f"ocr_dist={ocr_stop_dist_m:.0f}m>{ocr_next_stop_m:.0f}m"
+    if doors_open:
+        return True, "doors_open_event"
+    return False, "unknown"
 
 
 def parse_door_state(data: Any) -> dict[str, Optional[bool]]:

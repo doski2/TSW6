@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tsw6.telemetry.driver_aid_parser import station_base_name
-from tsw6.paths import HUD_DB_FILENAME, PROJECT_ROOT
+from tsw6.paths import HUD_DB_FILENAME, HUD_RELEASE_DB, PROJECT_ROOT
 
 _log = logging.getLogger("tsw.hud_timetable")
 
@@ -108,13 +108,33 @@ def is_scheduled_stop_action(action: str) -> bool:
     return act == "WAIT"
 
 
+def schedule_times_for_station(
+    entries: list[ScheduleEntry],
+    stop_name: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Hora programada llegada/salida para una parada (nombre base)."""
+    base = station_base_name(stop_name)
+    if not base:
+        return None, None
+    for entry in entries:
+        if entry.is_pass_through or not entry.location:
+            continue
+        if station_base_name(entry.location) != base:
+            continue
+        if not is_scheduled_stop_action(entry.action):
+            continue
+        return entry.arrival, entry.departure
+    return None, None
+
+
 def default_hud_db_paths() -> list[Path]:
     root = PROJECT_ROOT
     env = os.environ.get("TSW_HUD_DB", "").strip()
     candidates = [
+        Path(env) if env else None,
+        HUD_RELEASE_DB,
         root / HUD_DB_FILENAME,
         root / "data" / HUD_DB_FILENAME,
-        Path(env) if env else None,
         Path.home()
         / "Desktop"
         / "investigacion tsw 6"
@@ -410,19 +430,29 @@ class HudTimetableStore:
             base = station_base_name(stop)
             if not base:
                 continue
+            arr, dep = schedule_times_for_station(entries, stop)
             if base in track_by_base:
                 row = dict(track_by_base[base])
                 row["scheduled"] = True
+                if arr:
+                    row["arrival"] = arr
+                if dep:
+                    row["departure"] = dep
                 out.append(row)
                 continue
             if lat is not None and lng is not None and base in coord_by_base:
                 plat, plng = coord_by_base[base]
-                out.append({
+                row = {
                     "name": stop,
                     "distance_m": round(haversine_m(lat, lng, plat, plng), 1),
                     "scheduled": True,
                     "source": "hud_geo",
-                })
+                }
+                if arr:
+                    row["arrival"] = arr
+                if dep:
+                    row["departure"] = dep
+                out.append(row)
 
         out.sort(key=lambda s: float(s.get("distance_m") or 0))
         return out
