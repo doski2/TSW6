@@ -5,11 +5,15 @@ Mermaid.
 Se abre en Cursor, GitHub o cualquier visor que renderice Mermaid.
 
 **Detalle largo:** [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) · **Runtime frenos:**
-[FLUJO_FRENOS.md](FLUJO_FRENOS.md) · **Física / aprendizaje:**
+[FLUJO_FRENOS.md](FLUJO_FRENOS.md) · **Canal IPC/mandos (fases):**
+[CANAL_CONTROL.md](CANAL_CONTROL.md) · **Física / aprendizaje:**
 [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) ·
-**Paridad:** [DASTSC_PARITY.md](DASTSC_PARITY.md)
+**Paridad:** [DASTSC_PARITY.md](DASTSC_PARITY.md) ·
+**Comparativa paso a paso con Dastsc V4:**
+[COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md)
+(Dastsc: `C:\Users\doski\Dastsc\docs\FLUJO_FRENOS_V4.md`)
 
-Última revisión: **2026-08-25** · **Estudio activo:** pasos **7–14** del
+Última revisión: **2026-08-26** · **Estudio activo:** pasos **7–14** del
 [árbol cronológico](assets/esqueleto_flujo_cronologico.svg) (numeración = círculos del SVG)
 
 ---
@@ -278,38 +282,14 @@ Campos clave para P1:
 
 **Regla de numeración:** los círculos del
 [SVG](assets/esqueleto_flujo_cronologico.svg) son la fuente de verdad. Las cajas **sin círculo**
-(`priority + cluster`, `signal_brake` punteado) son sub-fases **dentro del paso 7**, no pasos nuevos.
+(`priority + cluster`, `signal_brake` punteado) son sub-fases **dentro del paso 7**, no pasos
+nuevos.
 
 El paso **7** es `BrakeCoordinatorV2.evaluate()` (`coordinator.py`), invocado desde el paso 6
 cuando `_p1_should_run()` es verdadero. Los pasos **8–10** son ramas en paralelo que el coordinator
 consulta; **11** es el `BrakeCommand` resultante.
 
 ```mermaid
-flowchart TB
-  IN["7 BrakeCoordinatorV2.evaluate()"]
-  R["RELEASE / emergencia / sin objetivo"]
-  PAR["ramas en paralelo"]
-  LIM["8 limit_brake"]
-  STN["9 station_brake"]
-  PLN["10 planner"]
-  SIG["signal_brake stub sin nº"]
-  PRI["priority + cluster sin nº"]
-  BC["11 BrakeCommand"]
-  HC["12 handle_controller.execute()"]
-  IPC["13 tsw_ipc_bus"]
-  LUA["14 main.lua aplica"]
-
-  IN --> R
-  R --> PAR
-  PAR --> LIM
-  PAR --> STN
-  PAR --> PLN
-  PAR -.-> SIG
-  LIM --> PRI
-  STN --> PRI
-  PLN --> PRI
-  SIG -.-> PRI
-  PRI --> BC --> HC --> IPC --> LUA
 ```
 
 | Paso SVG | Módulo | Notas |
@@ -330,7 +310,7 @@ flowchart TB
 | Fase | Qué hace | Si no aplica |
 | --- | --- | --- |
 | **A. Entrada** | Cola `speed_limits_ahead[0]` → `_nl`, `_dn`; log `gap`, `p1eta` | — |
-| **B. RELEASE** | Si hay freno y ya vas al objetivo → `RELEASE` neutro | `release_blocked:unified_stop` |
+| **B. RELEASE** | Si hay freno y ya vas al objetivo → `RELEASE` neutro | `release_blocked:unified_stop`, `release_blocked:station` |
 | **C. Sin objetivo** | Sin estación y sin cartel útil | `sin_objetivo_v2` → `None` |
 | **D. Parada unificada** | Cartel+andén ≤350 m y no caben dos frenadas → `uni=Y` | — |
 | **E. Emergencia** | Andén/señal muy cerca + mucha velocidad | B3 o muesca 0 |
@@ -344,13 +324,18 @@ flowchart TB
 
 ### Ejemplos (E1 Cross-City)
 
+Zona APPLY = `apply_zone_margin_m` (ver
+[BRAKE_V2.md](BRAKE_V2.md#ventana-de-aplicación-2026-08-26)).
+A **60 mph** con `apply_at` ~400 m → zona ≈ **67 m** (no 60 m fijo).
+
 | Escenario | Qué hace el coordinator |
 | --- | --- |
-| 60 mph, cartel 55 @ 800 m | `sin_plan_activo` hasta `dist_start` &lt; zona; luego `v2 SPEED_LIMIT B1` |
+| 60 mph, cartel 55 @ 800 m | `sin_plan_activo` hasta &#124;`dist_start`&#124; &lt; zona (~67 m); luego `v2 SPEED_LIMIT B1` |
 | 60 mph, cartel 55 + andén @ 350 m (`gap≈0`) | `uni=Y`; gana **estación**; RELEASE @ ~55; coast al andén |
 | Tracción en notch 6, plan B2 activo | `COAST_THROTTLE` un tick, luego `APPLY` B2 |
 | Casi parado en andén con freno | `RELEASE` vía `to_brake_command` (parada) |
-| Andén a 30 m, 45 mph | `P1-EMERGENCIA-STATION` → B3 |
+| Andén a 30 m, 45 mph | `P1-EMERGENCIA-STATION` → B3 (distancia absoluta — no usa zona APPLY) |
+| RELEASE con estación en ventana | `release_blocked:station` — evita oscilación RELEASE↔STATION |
 
 **Siguiente bloque SVG:** pasos **12–14** (ejecución IPC y vuelta al juego). Ver
 [FLUJO_FRENOS.md](FLUJO_FRENOS.md).
@@ -456,7 +441,7 @@ Imágenes: [esqueleto_arquitectura.svg](assets/esqueleto_arquitectura.svg) ·
 **Problema:** la capa P2 reactiva (`speed` vs `limit`) chocaba con P1 cuando cartel y estación
 estaban agrupados (~350 m): frenaba al 55 mph con la estación aún lejos.
 
-**Solución:** eliminado del código. Si P1 no tiene plan → `HOLD`. Red de seguridad: **watchdog**
+#### Solución:** eliminado del código. Si P1 no tiene plan → `HOLD`. Red de seguridad: **watchdog
 
 (+5 mph durante ≥3 s → `BRAKE_FAST` por teclado).
 
@@ -485,6 +470,24 @@ Documento dedicado: **[FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md)**
 | ¿Para qué `aprender.bat`? | Mismo `OnlineLearner`, pero **guiado** (matriz, conducción manual sistemática) |
 | ¿Perfil genérico? | Hoy: constantes 323 + fracciones B1–B3; **pendiente:** semillas `data/profiles/seed/` |
 | ¿`0.80` vs `1.071`? | **Unificado** → una sola `MAX_DECEL_MS2` (1.071 m/s²) para P1 y fallbacks v2 |
+| ¿Más física del simulador? | Catálogos [TSW_HTTPAPI_INDEX](TSW_HTTPAPI_INDEX.md) · debate en [CURRENTFORMATION_API](CURRENTFORMATION_API.md) |
+
+### Ventana APPLY (2026-08-26)
+
+Migración **metros fijos → física** en `v2/physics.py`:
+
+| Antes | Ahora |
+| --- | --- |
+| Zona APPLY 60 m | `apply_zone_margin_m` (velocidad + `apply_at`, min 25 / max 150 m) |
+| Histeresis limit 80 / 30 m | ±`apply_zone_m` del plan |
+| Contención bajada 150 m | `apply_zone_margin_m(speed, distance)` |
+| B3 tarde −30 m | `−brake_command_apply_zone_m(...)` |
+
+- Emisión APPLY: `should_emit_brake_command` (±zona o envelope tarde).
+- Prioridad / RELEASE: `is_in_brake_action_window`; `release_blocked:station` en coordinator.
+- Tests: **354** pytest OK.
+
+Documentación: [BRAKE_V2.md](BRAKE_V2.md) · [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md).
 
 ---
 

@@ -63,17 +63,20 @@ class TestNoP1Plan:
         s = _state(speed_mph=45.0, limit_mph=50.0, handle_notch=5, acceleration_ms2=0.5)
         assert d.decide(s) == HOLD
 
-    def test_overspeed_with_throttle_holds(self):
-        """Sin objetivo P1: no hay capa reactiva — P1 o watchdog cubren el frenado."""
+    def test_overspeed_with_throttle_coasts_first(self):
+        """P1 activo sin cartel adelante: soltar tracción antes de frenar."""
         d = _decider()
         s = _state(speed_mph=52.0, limit_mph=50.0, handle_notch=6, acceleration_ms2=0.2)
-        assert d.decide(s) == HOLD
+        assert d.decide(s) == COAST
 
-    def test_critical_overspeed_holds_without_p1_target(self):
+    def test_critical_overspeed_brakes_on_current_limit(self):
         d = _decider()
         s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=4,
                    acceleration_ms2=0.0, station_state=None)
-        assert d.decide(s) == HOLD
+        action = d.decide(s)
+        assert action == HOLD
+        assert d.brake_command is not None
+        assert d.brake_command.kind == "APPLY"
 
 
 # ── Solo frenado (sin tracción automática) ─────────────────────────────────────
@@ -86,11 +89,11 @@ class TestBrakeOnly:
                    acceleration_ms2=None)
         assert d.decide(s) == HOLD
 
-    def test_overspeed_holds_without_p1_target(self):
+    def test_overspeed_engages_p1_on_current_limit(self):
         d = _decider()
         s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=7,
                    acceleration_ms2=0.1, station_state=None)
-        assert d.decide(s) == HOLD
+        assert d.decide(s) == COAST
 
     def test_brake_residual_holds(self):
         """Freno residual: conductor libera manualmente."""

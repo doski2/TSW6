@@ -12,4 +12,6 @@ estudiado documento estado:
   1.2.1 gps y cordenadas 
  1.3 cameraMode insertar y probar mas adelante
  2. y la parte fisica del juego que datos podemos optener?
- 3. debemos usar proximo limite mas fiable o añadir otro para asegurar?
+ 3. debemos usar proximo limite mas fiable o añadir otro para mas seguridad respaldo?
+ 4. porque lua va lento podemos mejorar la velocidad?
+ 5. falta añadir fuerza en lua

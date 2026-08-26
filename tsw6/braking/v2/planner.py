@@ -14,18 +14,21 @@ from typing import Callable, Optional
 
 from tsw6.braking.v2.physics import (
     BrakePhysicsContext,
+    DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
     DOWNHILL_LIMIT_GRADIENT_PCT,
     MPH_TO_MS,
     STATION_COAST_CUTOFF_M,
     TARGET_CLUSTER_GAP_M,
     apply_zone_margin_m,
+    brake_reaction_margin_m,
     braking_distance_m,
     braking_distance_mph as _braking_distance_mph_core,
     decel_for_notch,
     is_in_apply_zone,
     low_speed_reaction_scale,
     reaction_margin_m,
+    should_emit_brake_command,
 )
 from tsw6.braking.v2.plan import (
     BrakePlan,
@@ -182,6 +185,7 @@ def plan_brake(
     target_kind: TargetKind = "SPEED_LIMIT",
     phases: tuple[BrakePhase, ...] = UK_SERVICE_PHASES,
     predict_decel: Optional[PredictDecelFn] = None,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> Optional[BrakePlan]:
     """Puerto de ``planBrake`` para un objetivo (límite o estación)."""
     speed_ms = speed_mph * MPH_TO_MS
@@ -194,7 +198,7 @@ def plan_brake(
     if distance_to_target_m < -10:
         return None
 
-    reaction = reaction_margin_m(speed_ms)
+    reaction = brake_reaction_margin_m(speed_ms, brake_fill_s=brake_fill_s)
     if target_kind == "SPEED_LIMIT":
         reaction *= low_speed_reaction_scale(speed_ms, target_ms)
 
@@ -357,8 +361,12 @@ def schedule_slack_sec(
     speed_mph: float,
     eta: Optional[str],
     now: Optional[datetime] = None,
+    *,
+    schedule_slack_enabled: bool = True,
 ) -> Optional[float]:
     """Segundos de holgura (+ = pronto, - = tarde)."""
+    if not schedule_slack_enabled:
+        return None
     if not eta or not eta.strip() or speed_mph < 0.5 or distance_m <= 0:
         return None
     diff_min = minutes_until_eta(eta, now)
@@ -373,8 +381,13 @@ def schedule_reaction_scale(
     speed_mph: float,
     eta: Optional[str],
     now: Optional[datetime] = None,
+    *,
+    schedule_slack_enabled: bool = True,
 ) -> float:
-    slack = schedule_slack_sec(distance_m, speed_mph, eta, now)
+    if not schedule_slack_enabled:
+        return 1.0
+    slack = schedule_slack_sec(
+        distance_m, speed_mph, eta, now, schedule_slack_enabled=True)
     if slack is None:
         return 1.0
     if slack > 60:
@@ -395,10 +408,15 @@ def schedule_coast_allowance_m(
     speed_mph: float,
     eta: Optional[str],
     now: Optional[datetime] = None,
+    *,
+    schedule_slack_enabled: bool = True,
 ) -> float:
+    if not schedule_slack_enabled:
+        return 0.0
     if distance_m < STATION_COAST_CUTOFF_M:
         return 0.0
-    slack = schedule_slack_sec(distance_m, speed_mph, eta, now)
+    slack = schedule_slack_sec(
+        distance_m, speed_mph, eta, now, schedule_slack_enabled=True)
     if slack is None or slack <= 8 or speed_mph < 0.5:
         return 0.0
     speed_ms = speed_mph * MPH_TO_MS
@@ -456,6 +474,8 @@ def select_station_active_step(
     distance_to_target_m: float,
     schedule_eta: Optional[str] = None,
     now: Optional[datetime] = None,
+    *,
+    schedule_slack_enabled: bool = True,
 ) -> Optional[BrakePlanStep]:
     """Puerto de ``selectStationActiveStep`` (Dastsc)."""
     if not steps:
@@ -464,7 +484,12 @@ def select_station_active_step(
     moderate_label = _moderate_service_notch_label()
     speed_mph = speed_ms / MPH_TO_MS
     slack_sec = schedule_slack_sec(
-        distance_to_target_m, speed_mph, schedule_eta, now)
+        distance_to_target_m,
+        speed_mph,
+        schedule_eta,
+        now,
+        schedule_slack_enabled=schedule_slack_enabled,
+    )
     coasting_for_schedule = (
         slack_sec is not None and slack_sec > 18 and distance_to_target_m > 300
     )
@@ -494,10 +519,7 @@ def select_station_active_step(
     )
 
     late_for_schedule = slack_sec is not None and slack_sec < -12
-    final_approach = (
-        distance_to_target_m < 280
-        or (distance_to_target_m < 800 and speed_ms > 22)
-    )
+    final_approach = distance_to_target_m < 280
     terminal_zone = distance_to_target_m < 50
 
     if terminal_zone:
@@ -514,21 +536,20 @@ def select_station_active_step(
             return _prefer_strongest(upcoming)
         return _prefer_strongest(steps)
 
-    if distance_to_target_m < 380 and upcoming and upcoming[0].dist_start < 60:
-        return _prefer_strongest(upcoming)
+    if distance_to_target_m < 380 and upcoming:
+        step = upcoming[0]
+        zone = apply_zone_margin_m(speed_ms, step.apply_at_remaining_m)
+        if step.dist_start < zone:
+            return _prefer_weakest(upcoming)
 
     if due or in_zone:
         pool = [*due, *in_zone]
         service = _moderate_or_stronger(pool)
         if service:
-            if distance_to_target_m < 800 and speed_ms > 22:
-                return _prefer_strongest(service)
             moderate = [s for s in service if s.notch == moderate_label]
             if moderate:
                 return _prefer_weakest(moderate)
-            return _prefer_strongest(service)
-        if distance_to_target_m < 800 and speed_ms > 22:
-            return _prefer_strongest(pool)
+            return _prefer_weakest(service)
         return _prefer_weakest(pool)
 
     return (
@@ -692,6 +713,8 @@ def plan_station_service_brake(
     station_eta: Optional[str] = None,
     now: Optional[datetime] = None,
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+    schedule_slack_enabled: bool = True,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> Optional[BrakePlan]:
     speed_ms = speed_mph * MPH_TO_MS
     target_ms = 0.0
@@ -703,16 +726,29 @@ def plan_station_service_brake(
     if station_distance_m < -10:
         return None
 
-    reaction = reaction_margin_m(
-        speed_ms, reaction_time_s=cfg.station_reaction_time_s)
+    reaction = brake_reaction_margin_m(
+        speed_ms,
+        brake_fill_s=brake_fill_s,
+        reaction_base_s=cfg.station_reaction_time_s,
+    )
     reaction *= schedule_reaction_scale(
-        station_distance_m, speed_mph, station_eta, now)
+        station_distance_m,
+        speed_mph,
+        station_eta,
+        now,
+        schedule_slack_enabled=schedule_slack_enabled,
+    )
     if station_distance_m < cfg.terminal_approach_m:
         t = max(0.0, station_distance_m / cfg.terminal_approach_m)
         reaction *= 0.45 + 0.55 * t
 
     coast_allowance_m = schedule_coast_allowance_m(
-        station_distance_m, speed_mph, station_eta, now)
+        station_distance_m,
+        speed_mph,
+        station_eta,
+        now,
+        schedule_slack_enabled=schedule_slack_enabled,
+    )
 
     steps: list[BrakePlanStep] = []
     for i, phase in enumerate(UK_SERVICE_PHASES):
@@ -735,7 +771,13 @@ def plan_station_service_brake(
         ))
 
     active = select_station_active_step(
-        steps, speed_ms, station_distance_m, station_eta, now)
+        steps,
+        speed_ms,
+        station_distance_m,
+        station_eta,
+        now,
+        schedule_slack_enabled=schedule_slack_enabled,
+    )
     return BrakePlan(
         target_kind="STATION",
         distance_to_target_m=station_distance_m,
@@ -759,6 +801,8 @@ def plan_brake_for_station(
     station_anchor_m: Optional[float] = None,
     now: Optional[datetime] = None,
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+    schedule_slack_enabled: bool = True,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> Optional[BrakePlan]:
     if station_distance_m < 0:
         return None
@@ -793,6 +837,8 @@ def plan_brake_for_station(
         station_eta=station_eta,
         now=now,
         cfg=cfg,
+        schedule_slack_enabled=schedule_slack_enabled,
+        brake_fill_s=brake_fill_s,
     )
 
 
@@ -802,6 +848,7 @@ def _build_limit_plan(
     gradient_pct: float,
     base_decel: float,
     predict_decel: Optional[PredictDecelFn],
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> Optional[BrakePlan]:
     lim = entry.get("limit_mph")
     dist = entry.get("distance_m")
@@ -815,6 +862,7 @@ def _build_limit_plan(
         base_decel=base_decel,
         target_kind="SPEED_LIMIT",
         predict_decel=predict_decel,
+        brake_fill_s=brake_fill_s,
     )
 
 
@@ -949,7 +997,13 @@ def plan_to_governor_action(
     cap = profile_cap_from_plan(plan, speed_mph, effective_limit)
     effective_limit = min(effective_limit, cap)
 
-    if not step.apply_now and step.dist_start > 60:
+    if not should_emit_brake_command(
+        apply_now=step.apply_now,
+        dist_start=step.dist_start,
+        speed_mph=speed_mph,
+        distance_to_target_m=plan.distance_to_target_m,
+        apply_at_remaining_m=step.apply_at_remaining_m,
+    ):
         return None, effective_limit
 
     if throttle_notch > 0:

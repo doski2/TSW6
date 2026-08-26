@@ -7,8 +7,17 @@ from tsw6.braking.v2.limit_brake import (
     _apply_notch_hysteresis,
     evaluate_limit_brake,
 )
+from tsw6.braking.v2.physics import brake_command_apply_zone_m
 from tsw6.braking.v2.priority import select_urgent_target
 from tsw6.braking.v2.types import BrakeTargetResult
+
+
+def _apply_zone(speed_mph: float, dist_start: float, distance_m: float = 400.0) -> float:
+    apply_at = distance_m - dist_start
+    return brake_command_apply_zone_m(
+        speed_mph=speed_mph,
+        apply_at_remaining_m=apply_at,
+    )
 
 
 class TestEmergencyV2:
@@ -94,7 +103,7 @@ class TestLimitBrakeV2:
         assert flat and hill
         assert hill.handle_notch <= flat.handle_notch
 
-    def test_committed_notch_does_not_weaken(self):
+    def test_committed_notch_does_not_weaken_in_apply_zone(self):
         state = LimitBrakeState()
         state.committed_handle = 2
         state.committed_phase = "B2"
@@ -104,9 +113,48 @@ class TestLimitBrakeV2:
             phase="B1",
             dist_start=50.0,
             apply_now=True,
+            apply_zone_m=_apply_zone(58.0, 50.0),
+            speed_mph=58.0,
+            limit_mph=55.0,
         )
         assert handle == 2
         assert phase == "B2"
+
+    def test_committed_notch_downgrades_with_margin(self):
+        state = LimitBrakeState()
+        state.committed_handle = 1
+        state.committed_phase = "B3"
+        zone = _apply_zone(58.0, 90.0)
+        handle, phase = _apply_notch_hysteresis(
+            state,
+            handle=3,
+            phase="B1",
+            dist_start=90.0,
+            apply_now=False,
+            apply_zone_m=zone,
+            speed_mph=58.0,
+            limit_mph=55.0,
+        )
+        assert 90.0 > zone
+        assert handle == 3
+        assert phase == "B1"
+
+    def test_committed_notch_downgrades_at_target_speed(self):
+        state = LimitBrakeState()
+        state.committed_handle = 1
+        state.committed_phase = "B3"
+        handle, phase = _apply_notch_hysteresis(
+            state,
+            handle=3,
+            phase="B1",
+            dist_start=5.0,
+            apply_now=True,
+            apply_zone_m=_apply_zone(54.5, 5.0),
+            speed_mph=54.5,
+            limit_mph=55.0,
+        )
+        assert handle == 3
+        assert phase == "B1"
 
     def test_committed_notch_escalates(self):
         state = LimitBrakeState()
@@ -118,6 +166,9 @@ class TestLimitBrakeV2:
             phase="B2",
             dist_start=10.0,
             apply_now=True,
+            apply_zone_m=_apply_zone(58.0, 10.0),
+            speed_mph=58.0,
+            limit_mph=55.0,
         )
         assert handle == 2
         assert phase == "B2"
@@ -152,7 +203,20 @@ class TestPriorityV2:
         assert picked is signal
 
     def test_station_wins_unified_stop_over_limit(self):
-        """60→55 con andén a +150 m: parada unificada, no plan de cartel aparte."""
+        """A 54 mph en parada unificada (andén en ventana): estación gana sobre cartel."""
+        limit = self._r("SPEED_LIMIT", 400.0, 50.0, target_mph=55.0)
+        station = self._r("STATION", 550.0, 30.0)
+        picked = select_urgent_target(
+            [limit, station],
+            speed_mph=54.0,
+            limit_mph=55.0,
+            limit_dist_m=400.0,
+            station_dist_m=550.0,
+        )
+        assert picked is station
+
+    def test_limit_wins_unified_overspeed_before_station_window(self):
+        """60→55 con andén a +150 m: aún por encima del cartel, límite primero."""
         limit = self._r("SPEED_LIMIT", 400.0, 50.0, target_mph=55.0)
         station = self._r("STATION", 550.0, 30.0)
         picked = select_urgent_target(
@@ -162,7 +226,7 @@ class TestPriorityV2:
             limit_dist_m=400.0,
             station_dist_m=550.0,
         )
-        assert picked is station
+        assert picked is limit
 
     def test_limit_first_when_two_phase_ok(self):
         """Cartel a 400 m, andén a 820 m: sí cabe frenar al cartel y luego parar."""
@@ -187,6 +251,19 @@ class TestPriorityV2:
             limit_mph=55.0,
             limit_dist_m=1500.0,
             station_dist_m=1750.0,
+        )
+        assert picked is limit
+
+    def test_limit_wins_when_station_plan_late(self):
+        """60 mph con plan estación «tarde» (dist_start muy negativo): cartel primero."""
+        limit = self._r("SPEED_LIMIT", 400.0, 80.0, target_mph=55.0)
+        station = self._r("STATION", 550.0, -300.0)
+        picked = select_urgent_target(
+            [limit, station],
+            speed_mph=60.0,
+            limit_mph=55.0,
+            limit_dist_m=400.0,
+            station_dist_m=550.0,
         )
         assert picked is limit
 

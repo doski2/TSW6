@@ -79,9 +79,9 @@ def should_delay_unified_station_plan(
     """
     if limit_mph is None or limit_dist_m is None or station_dist_m is None:
         return False
-    if limit_dist_m <= approach_m:
-        return False
     if speed_mph > limit_mph + 3.0:
+        return False
+    if limit_dist_m <= approach_m:
         return False
     gap_m = station_dist_m - limit_dist_m
     if gap_m <= 0 or gap_m > TARGET_CLUSTER_GAP_M:

@@ -70,6 +70,14 @@ _CEILING_SATURATE_A_MS2 = 0.10   # |a| bajo → muesca en equilibrio
 _OBSERVED = {_MAX_NOTCH, *_BRAKE_NOTCHES, _COAST_NOTCH,
              *_TRACTION_LOW, *_TRACTION_NOTCHES}
 
+_NOTCH_LABELS: dict[int, str] = {
+    0: "MAX_DECEL(n0)",
+    1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
+    4: "COAST(n4)",
+    5: "ACCEL(n5)", 6: "ACCEL(n6)",
+    7: "ACCEL(n7)", 8: "ACCEL(n8)",
+}
+
 # ── Límites duros (clamp) para constantes aprendidas ──────────────────────────
 _CLAMP = {
     "TARGET_ACCEL_MS2": (0.15, 0.80),
@@ -117,6 +125,11 @@ def _gravity_compensation(grad_pct: float) -> float:
 
 
 from tsw6.paths import LOGS_DIR
+from tsw6.braking.v2.physics import (
+    BRAKE_FILL_CLAMP,
+    DEFAULT_BRAKE_FILL_S,
+    PRESSURE_BRAKING_MIN_BAR,
+)
 
 _PROFILES_DIR = LOGS_DIR / "profiles"
 
@@ -175,6 +188,12 @@ class OnlineLearner:
         self._throttle_ceiling: dict[int, float] = {}
         self._throttle_ceiling_n: dict[int, int] = {}
 
+        # Fill-time neumático (segundos hasta P >= umbral tras aplicar freno)
+        self._brake_fill_s: float = DEFAULT_BRAKE_FILL_S
+        self._brake_fill_n: int = 0
+        self._fill_armed_since: Optional[float] = None
+        self._last_feed_notch: int = 4
+
         # Diagnóstico: motivo del último feed (para el monitor en vivo)
         self.last_reason: str = "esperando datos"
 
@@ -203,6 +222,10 @@ class OnlineLearner:
         self._window = []
         self._throttle_ceiling = {}
         self._throttle_ceiling_n = {}
+        self._brake_fill_s = DEFAULT_BRAKE_FILL_S
+        self._brake_fill_n = 0
+        self._fill_armed_since = None
+        self._last_feed_notch = 4
 
         self._load()
         consts = self.get_constants()
@@ -272,13 +295,18 @@ class OnlineLearner:
     # ── Alimentar muestras ───────────────────────────────────────────────────
 
     def feed(self, speed_mph: float, notch: int,
-             grad_pct: float, accel_ms2: Optional[float]) -> Optional[dict]:
+             grad_pct: float, accel_ms2: Optional[float],
+             brake_cyl_bar: Optional[float] = None) -> Optional[dict]:
         """
         Recibe una muestra de telemetría.
         Devuelve las constantes actualizadas si hubo un nuevo aprendizaje,
         o None si aún no hay cambio que aplicar.
+
+        ``brake_cyl_bar``: presión cilindro (probe). Si está disponible, filtra
+        muestras de freno sin aire y alimenta el EMA de fill-time.
         """
         now = time.time()
+        self._observe_brake_fill(notch, brake_cyl_bar, now)
         self._window.append((now, speed_mph, notch, grad_pct, accel_ms2))
 
         # Purgar entradas antiguas
@@ -319,6 +347,17 @@ class OnlineLearner:
         if min(v for _, v, _, _, _ in self._window) < self._min_speed:
             self.last_reason = f"velocidad <{self._min_speed:.0f} mph"
             return None
+
+        # 5b. Freno sin aire (transitorio neumático)
+        if notch in (_MAX_NOTCH, *_BRAKE_NOTCHES) and brake_cyl_bar is not None:
+            if brake_cyl_bar < PRESSURE_BRAKING_MIN_BAR:
+                reason = (
+                    f"esperando aire ({brake_cyl_bar:.1f}<{PRESSURE_BRAKING_MIN_BAR:.0f} BAR)"
+                )
+                if reason != self.last_reason:
+                    _log.info("Filtro presión: %s", reason)
+                self.last_reason = reason
+                return None
 
         # 6. Cambio de velocidad apreciable (confirma que el notch tiene efecto)
         speeds = [v for _, v, _, _, _ in self._window]
@@ -431,6 +470,46 @@ class OnlineLearner:
             return consts
         return None
 
+    def _observe_brake_fill(
+        self,
+        notch: int,
+        brake_cyl_bar: Optional[float],
+        now: float,
+    ) -> None:
+        """EMA del retardo aire: muesca freno → P >= umbral."""
+        was_coast = self._last_feed_notch >= _COAST_NOTCH
+        is_brake = notch < _COAST_NOTCH
+        self._last_feed_notch = notch
+
+        if brake_cyl_bar is None:
+            return
+
+        if is_brake and was_coast and brake_cyl_bar < PRESSURE_BRAKING_MIN_BAR:
+            self._fill_armed_since = now
+        elif not is_brake:
+            self._fill_armed_since = None
+        elif (
+            self._fill_armed_since is not None
+            and brake_cyl_bar >= PRESSURE_BRAKING_MIN_BAR
+        ):
+            elapsed = now - self._fill_armed_since
+            if 0.15 < elapsed < 10.0:
+                if self._brake_fill_n == 0:
+                    self._brake_fill_s = elapsed
+                else:
+                    self._brake_fill_s = (
+                        EMA_ALPHA * elapsed
+                        + (1.0 - EMA_ALPHA) * self._brake_fill_s
+                    )
+                self._brake_fill_n += 1
+                _log.info(
+                    "Fill-time observado: %.2fs (n=%d, EMA=%.2fs)",
+                    elapsed, self._brake_fill_n, self._brake_fill_s,
+                )
+                if self._brake_fill_n >= MIN_SAMPLES:
+                    self._save()
+            self._fill_armed_since = None
+
     def _recalculate_combined(self) -> None:
         """Recalcula _ema y _n combinando todas las bandas de velocidad."""
         all_notches = set()
@@ -488,6 +567,10 @@ class OnlineLearner:
         v = _trusted_avg(_TRACTION_NOTCHES)
         if v is not None and v > 0.05:
             result["TARGET_ACCEL_MS2"] = _clamp(v, "TARGET_ACCEL_MS2")
+
+        if self._brake_fill_n >= MIN_SAMPLES:
+            lo, hi = BRAKE_FILL_CLAMP
+            result["BRAKE_FILL_S"] = max(lo, min(hi, self._brake_fill_s))
 
         return result
 
@@ -559,44 +642,25 @@ class OnlineLearner:
 
     def confidence(self) -> dict[str, int]:
         """Devuelve el número de muestras por notch relevante."""
-        labels = {
-            0: "MAX_DECEL(n0)",
-            1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
-            4: "COAST(n4)",
-            5: "ACCEL(n5)", 6: "ACCEL(n6)",
-            7: "ACCEL(n7)", 8: "ACCEL(n8)",
-        }
-        return {labels[n]: self._n.get(n, 0) for n in _OBSERVED}
+        return {_NOTCH_LABELS[n]: self._n.get(n, 0) for n in _OBSERVED}
 
     def confidence_by_band(self) -> dict[str, dict[str, int]]:
         """Devuelve el número de muestras por notch y banda de velocidad."""
-        labels = {
-            0: "MAX_DECEL(n0)",
-            1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
-            4: "COAST(n4)",
-            5: "ACCEL(n5)", 6: "ACCEL(n6)",
-            7: "ACCEL(n7)", 8: "ACCEL(n8)",
-        }
         result = {}
         for i, (lo, hi) in enumerate(_SPEED_BANDS):
             band_label = f"{lo}-{hi}mph"
-            result[band_label] = {labels[n]: self._n_bands[i].get(n, 0)
-                                  for n in _OBSERVED}
+            result[band_label] = {
+                _NOTCH_LABELS[n]: self._n_bands[i].get(n, 0) for n in _OBSERVED
+            }
         return result
 
     def confidence_by_gradient(self) -> dict[str, dict[str, int]]:
         """Devuelve el número de muestras por notch y banda de gradiente (v3)."""
-        labels = {
-            0: "MAX_DECEL(n0)",
-            1: "DECEL(n1)", 2: "DECEL(n2)", 3: "DECEL(n3)",
-            4: "COAST(n4)",
-            5: "ACCEL(n5)", 6: "ACCEL(n6)",
-            7: "ACCEL(n7)", 8: "ACCEL(n8)",
-        }
         result = {}
         for i, band_name in enumerate(_GRAD_BANDS):
-            result[band_name] = {labels[n]: self._n_grad_bands[i].get(n, 0)
-                                 for n in _OBSERVED}
+            result[band_name] = {
+                _NOTCH_LABELS[n]: self._n_grad_bands[i].get(n, 0) for n in _OBSERVED
+            }
         return result
 
     def get_gradient_constants(self, grad_band: int) -> dict:
@@ -672,6 +736,10 @@ class OnlineLearner:
                     self._throttle_ceiling_n = {
                         int(k): int(v)
                         for k, v in d.get("throttle_ceiling_n", {}).items()}
+                if "brake_fill_s" in d:
+                    self._brake_fill_s = float(d["brake_fill_s"])
+                if "brake_fill_n" in d:
+                    self._brake_fill_n = int(d["brake_fill_n"])
                 consts = self.get_constants()
                 _log.info("OnlineLearner cargado: %s  constantes_confiables=%s",
                           self.save_path, list(consts.keys()))
@@ -707,6 +775,8 @@ class OnlineLearner:
                             str(k): v for k, v in self._throttle_ceiling.items()},
                         "throttle_ceiling_n": {
                             str(k): v for k, v in self._throttle_ceiling_n.items()},
+                        "brake_fill_s": self._brake_fill_s,
+                        "brake_fill_n": self._brake_fill_n,
                     },
                     f, indent=2,
                 )

@@ -34,6 +34,8 @@ local APPLY_FLAG_FILE = "TSW6ApplyCommands.flag"
 local SEND_ACK_FILE = "SendCommandAck.txt"
 local control_cache = {}
 local last_applied = {}
+local last_cmd_id = 0
+local last_ack_ok = false
 
 local ALLOWED_CONTROLS = {
     PowerBrakeHandle = true,
@@ -202,7 +204,22 @@ local function find_control(name, controller)
     return nil
 end
 
-local function apply_control_value(name, value, controller)
+local function input_to_notch(input_val)
+    if type(input_val) ~= "number" then return nil end
+    return math.max(0, math.min(8, 4 + math.floor(input_val * 4 + 0.5)))
+end
+
+local function read_lever_notch(controller)
+    local ctrl = find_control("PowerBrakeHandle", controller)
+    if not ctrl then return nil end
+    local ok, val = pcall(function() return ctrl.InputValue end)
+    if ok and type(val) == "number" then
+        return input_to_notch(val)
+    end
+    return nil
+end
+
+local function apply_control_value(name, value, controller, cmd_id)
     if not ALLOWED_CONTROLS[name] then return false end
     local num = tonumber(value)
     if num == nil then return false end
@@ -233,14 +250,25 @@ local function apply_control_value(name, value, controller)
         end
     end)
     if ok then
+        if cmd_id then last_cmd_id = cmd_id end
+        last_ack_ok = true
         last_applied[name] = num
         write_send_ack(name, num, true)
         return true
     end
+    if cmd_id then last_cmd_id = cmd_id end
+    last_ack_ok = false
     print(string.format(
         "[TelemetryProbe] WARN set %s=%.4f failed: %s\n", name, num, tostring(err)))
     write_send_ack(name, num, false)
     return false
+end
+
+local function parse_send_line(line)
+    local name, val, cid = string.match(line, "^%s*([^:]+)%s*:%s*([^:]+)%s*:%s*(%d+)%s*$")
+    if name then return name, val, tonumber(cid) end
+    name, val = string.match(line, "^%s*([^:]+)%s*:%s*(.+)%s*$")
+    return name, val, nil
 end
 
 local function process_send_commands(controller)
@@ -250,9 +278,9 @@ local function process_send_commands(controller)
     for line in io.lines(path) do
         opened = true
         if line ~= "" then
-            local name, val = string.match(line, "^%s*([^:]+)%s*:%s*(.+)%s*$")
+            local name, val, cid = parse_send_line(line)
             if name and val then
-                apply_control_value(name, val, controller)
+                apply_control_value(name, val, controller, cid)
             end
         end
     end
@@ -580,6 +608,28 @@ local function read_odometer_m(actor)
     return nil
 end
 
+-- Presión cilindro freno servicio (BAR). Validado HTTP 2026-08-26 Class 323:
+-- ~1 BAR reposo, ~5+ BAR con B1–B3. HUD_GetTractiveEffort devuelve 0 siempre.
+local BRAKE_CYL_NAMES = { "BrakeCylinder_2_1", "BrakeCylinder_Direct_P", "BrakeCylinder_1_1" }
+
+local function read_brake_cylinder_bar(actor)
+    local ok, v = pcall(function()
+        local sim = actor.Simulation
+        if not sim then return nil end
+        for _, name in ipairs(BRAKE_CYL_NAMES) do
+            local cyl = sim[name]
+            if cyl and type(cyl.Pressure_BAR) == "number" and cyl.Pressure_BAR == cyl.Pressure_BAR then
+                return cyl.Pressure_BAR
+            end
+        end
+        return nil
+    end)
+    if ok and type(v) == "number" and v == v and v >= 0 then
+        return v
+    end
+    return nil
+end
+
 local function actor_moved_since_last(actor)
     local ok, loc = pcall(function() return actor:K2_GetActorLocation() end)
     if not ok or not loc then return true end
@@ -651,10 +701,14 @@ local function build_line(sample)
         "power=" .. fmt_num(sample.power),
         "power_neg=" .. (sample.power_neg and "1" or "0"),
         "handle_notch=" .. fmt_num(sample.handle_notch),
+        "lever_notch=" .. fmt_num(sample.lever_notch),
+        "last_cmd_id=" .. tostring(sample.last_cmd_id or 0),
+        "last_ack_ok=" .. (sample.last_ack_ok and "1" or "0"),
         "train_brake=" .. fmt_num(sample.train_brake),
         "loco_brake=" .. fmt_num(sample.loco_brake),
         "dyn_brake=" .. fmt_num(sample.dyn_brake),
         "accel_ms2=" .. fmt_num(sample.accel_ms2),
+        "brake_cyl_bar=" .. fmt_num(sample.brake_cyl_bar),
         "max_speed_ms=" .. fmt_num(sample.max_speed_ms),
         "speed_limit_ms=" .. fmt_num(sample.speed_limit_ms),
         "gradient_pct=" .. fmt_num(sample.gradient_pct),
@@ -748,9 +802,13 @@ local function collect_sample(controller, debug_driver_aid)
         return read_brake_handle(actor, "HUD_GetElectricBrakeHandle")
     end)
     sample.accel_ms2 = safe_read("accel", function() return read_accel(actor) end)
+    sample.brake_cyl_bar = safe_read("brake_cyl", function() return read_brake_cylinder_bar(actor) end)
     sample.odo_m = safe_read("odo", function() return read_odometer_m(actor) end)
     sample.max_speed_ms = safe_read("max_speed", function() return read_max_speed(actor) end)
     sample.handle_notch = power_to_notch(sample.power, sample.power_neg)
+    sample.lever_notch = safe_read("lever", function() return read_lever_notch(controller) end)
+    sample.last_cmd_id = last_cmd_id
+    sample.last_ack_ok = last_ack_ok
     local doors_telem = safe_read("doors_telem", function() return read_passenger_doors(actor) end)
     if doors_telem ~= nil then
         sample.doors_telem = doors_telem

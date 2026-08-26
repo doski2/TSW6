@@ -96,6 +96,23 @@ class TestIpcBus(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["ack"].get("optimistic"))
 
+    def test_wait_ack_optimistic_when_send_file_consumed(self):
+        from tsw6.telemetry.tsw_ipc_bus import wait_send_ack
+
+        with mock.patch("tsw6.telemetry.tsw_ipc_bus.send_command_path") as mock_cmd:
+            mock_cmd.return_value.is_file.side_effect = [True, False]
+            with mock.patch("tsw6.telemetry.tsw_ipc_bus.send_ack_path") as mock_ack:
+                mock_ack.return_value.is_file.return_value = False
+                ack = wait_send_ack(
+                    0.12,
+                    expected_path="PowerBrakeHandle",
+                    expected_value=0.375,
+                )
+        self.assertIsNotNone(ack)
+        assert ack is not None
+        self.assertTrue(ack.get("optimistic"))
+        self.assertTrue(ack.get("consumed"))
+
     def test_purge_removes_files(self):
         enable_lua_commands()
         write_send_command("PowerBrakeHandle", 0.5)

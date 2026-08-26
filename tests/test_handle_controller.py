@@ -112,6 +112,39 @@ class TestRateLimit:
         assert CONTROL_INTERVAL_FAST < CONTROL_INTERVAL_BRAKE
 
 
+# ── IPC reintentos ────────────────────────────────────────────────────────────
+
+class TestIpcRetries:
+    def test_rpc_retries_before_fail(self):
+        c = _fresh()
+        conn = MagicMock()
+        conn.set_control_value.side_effect = [False, False, True]
+
+        with patch("tsw6.autopilot.handle_controller.time.sleep"):
+            ok = c._try_rpc(conn, "PowerBrakeHandle", 0.375)
+
+        assert ok is True
+        assert conn.set_control_value.call_count == 3
+        assert c._rpc_fail_count == 0
+
+    def test_rpc_short_disable_after_many_failures(self):
+        from tsw6.autopilot.handle_controller import (
+            _RPC_DISABLE_COUNT,
+            _RPC_DISABLE_S,
+        )
+
+        c = _fresh()
+        conn = MagicMock()
+        conn.set_control_value.return_value = False
+
+        with patch("tsw6.autopilot.handle_controller.time.sleep"):
+            for _ in range(_RPC_DISABLE_COUNT):
+                assert c._try_rpc(conn, "PowerBrakeHandle", 0.5) is False
+
+        assert c._rpc_disabled_until > 0
+        assert _RPC_DISABLE_S <= 10.0
+
+
 # ── Teclado (mock hwnd) ───────────────────────────────────────────────────────
 
 class TestKeyboard:
@@ -238,7 +271,7 @@ class TestDastscDirectNotch:
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
-        conn = MagicMock()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
         conn.mode = "ue4ss"
         conn.has_control_api.return_value = True
         conn.set_control_value.return_value = True
@@ -256,7 +289,7 @@ class TestDastscDirectNotch:
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
-        conn = MagicMock()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
         conn.mode = "ue4ss"
         conn.has_control_api.return_value = True
         conn.set_control_value.return_value = True
@@ -271,11 +304,28 @@ class TestDastscDirectNotch:
             conn.set_control_value.assert_called_once()
             assert abs(conn.set_control_value.call_args[0][1] - 0.25) < 0.01
 
+    def test_apply_uses_async_enqueue_when_available(self):
+        from tsw6.braking.v2.command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock(
+            spec=["mode", "has_control_api", "enqueue_control_value"])
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.enqueue_control_value.return_value = True
+
+        cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
+        s = _state(handle_notch=4)
+
+        assert c.execute("BRAKE", s, conn, None, brake_command=cmd) is True
+        conn.enqueue_control_value.assert_called_once()
+        assert abs(conn.enqueue_control_value.call_args[0][1] - 0.25) < 0.01
+
     def test_apply_falls_back_to_keyboard_when_ipc_fails(self):
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
-        conn = MagicMock()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
         conn.mode = "ue4ss"
         conn.has_control_api.return_value = True
         conn.set_control_value.return_value = False
@@ -292,7 +342,7 @@ class TestDastscDirectNotch:
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
-        conn = MagicMock()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
         conn.mode = "ue4ss"
         conn.has_control_api.return_value = True
         conn.set_control_value.return_value = True

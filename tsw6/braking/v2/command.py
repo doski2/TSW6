@@ -9,7 +9,11 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from tsw6.braking.v2.physics import DOWNHILL_LIMIT_GRADIENT_PCT
+from tsw6.braking.v2.physics import (
+    DOWNHILL_LIMIT_GRADIENT_PCT,
+    brake_command_apply_zone_m,
+    should_emit_brake_command,
+)
 from tsw6.braking.v2.plan import BrakePlan, profile_cap_from_plan
 from tsw6.autopilot.control_actions import COAST, EMERGENCY, HOLD, RELEASE
 from tsw6.governor.governor_constants import (
@@ -25,9 +29,14 @@ BrakeCommandKind = Literal["APPLY", "RELEASE", "COAST_THROTTLE"]
 
 NEUTRAL_NOTCH = 4
 RELEASE_MARGIN_MPH = 2.0          # parada en andén (spd muy baja)
-LIMIT_RELEASE_MAX_OVER_MPH = 0.5  # cartel: soltar solo si spd <= target + esto
-COAST_REBRAKE_MARGIN_MPH = 5.0
-COAST_CLEAR_OVERSHOOT_MPH = 8.0
+# TSW penaliza si spd > límite + 1 mph; techo operativo del autopilot.
+LIMIT_SCORING_MAX_OVER_MPH = 0.9
+LIMIT_RELEASE_MAX_OVER_MPH = 0.4  # cartel: soltar si spd <= target + esto
+LIMIT_COAST_BAND_MPH = 0.25       # bajada: coast si spd <= limit + esto
+LIMIT_CONTAIN_ESCALATE_OVER_MPH = 0.65  # B2 si repunte cerca del techo
+LIMIT_RELEASE_MIN_SPEED_BAND_MPH = 5.0  # no soltar si spd << cartel (parado al arrancar)
+COAST_REBRAKE_MARGIN_MPH = 0.9
+COAST_CLEAR_OVERSHOOT_MPH = 2.0
 
 
 def clamp_brake_handle(
@@ -94,7 +103,21 @@ def plan_to_brake_command(
     cap = profile_cap_from_plan(plan, speed_mph, effective_limit)
     effective_limit = min(effective_limit, cap)
 
-    if not step.apply_now and step.dist_start > 60:
+    # Parada en andén: soltar freno cuando ya está casi parado (sin gate de zona).
+    if (plan.target_kind == "STATION"
+            and current_notch < 4
+            and speed_mph <= plan.target_speed_mph + RELEASE_MARGIN_MPH):
+        rel = release_brake_command(at_target=True)
+        if rel is not None:
+            return rel, min(effective_limit, plan.target_speed_mph)
+
+    if not should_emit_brake_command(
+        apply_now=step.apply_now,
+        dist_start=step.dist_start,
+        speed_mph=speed_mph,
+        distance_to_target_m=plan.distance_to_target_m,
+        apply_at_remaining_m=step.apply_at_remaining_m,
+    ):
         return None, effective_limit
 
     # Tracción activa: soltar a neutro primero (un salto IPC si se puede).
@@ -106,20 +129,21 @@ def plan_to_brake_command(
             reason="Soltar tracción antes de freno de servicio",
         ), effective_limit
 
-    # Parada en andén: soltar freno cuando ya está casi parado.
-    if (plan.target_kind == "STATION"
-            and current_notch < 4
-            and speed_mph <= plan.target_speed_mph + RELEASE_MARGIN_MPH):
-        rel = release_brake_command(at_target=True)
-        if rel is not None:
-            return rel, min(effective_limit, plan.target_speed_mph)
-
     target = int(step.handle_notch)
     if speed_mph > plan.target_speed_mph + 8:
         target = SERVICE_MIN_HANDLE
-    elif (step.dist_start < -30
-          and speed_mph > plan.target_speed_mph + RELEASE_MARGIN_MPH):
-        target = SERVICE_MIN_HANDLE
+    else:
+        late_zone_m = brake_command_apply_zone_m(
+            speed_mph=speed_mph,
+            distance_to_target_m=plan.distance_to_target_m,
+            apply_at_remaining_m=step.apply_at_remaining_m,
+            dist_start=step.dist_start,
+        )
+        if (
+            step.dist_start < -late_zone_m
+            and speed_mph > plan.target_speed_mph + RELEASE_MARGIN_MPH
+        ):
+            target = SERVICE_MIN_HANDLE
     target = clamp_brake_handle(target, plan.distance_to_target_m)
 
     return BrakeCommand(
@@ -283,15 +307,15 @@ def resolve_release_command(
     if next_limit_mph is None:
         return None
 
-    if is_downhill_limit_approach(gradient_pct, distance_next_m):
-        if speed_mph > STATION_STOPPED_MPH + 1.0:
-            return None
-
     if speed_mph > effective_limit + 0.5:
         return None
 
     target = target_speed_mph(plan, next_limit_mph, effective_limit)
     if speed_mph > target + LIMIT_RELEASE_MAX_OVER_MPH:
+        return None
+    # Parado con freno del jugador al iniciar escenario: spd=0 y cartel lejos no es
+    # «objetivo alcanzado» — solo soltar si vamos cerca de la velocidad del cartel.
+    if speed_mph < target - LIMIT_RELEASE_MIN_SPEED_BAND_MPH:
         return None
 
     cmd = release_brake_command(at_target=True)

@@ -28,6 +28,9 @@ DOWNHILL_LIMIT_GRADIENT_PCT = -0.3  # ‰ -3 en Dastsc
 STATION_COAST_CUTOFF_M = 100.0
 DEFAULT_BRAKE_FILL_S = 2.5
 DEFAULT_REACTION_S = 1.5
+PRESSURE_IDLE_MAX_BAR = 1.5
+PRESSURE_BRAKING_MIN_BAR = 2.0
+BRAKE_FILL_CLAMP = (0.8, 5.0)
 
 
 @dataclass
@@ -128,9 +131,25 @@ def apply_zone_margin_m(speed_ms: float, apply_at_remaining_m: float) -> float:
 
 
 def is_in_apply_zone(dist_start: float, apply_zone_m: float) -> bool:
-    if dist_start < 0:
-        return True
-    return dist_start <= apply_zone_m
+    """Ventana simétrica ±zona (misma regla que ``should_emit_brake_command``)."""
+    return -apply_zone_m <= dist_start <= apply_zone_m
+
+
+def is_in_brake_action_window(
+    dist_start: float,
+    *,
+    speed_mph: float,
+    distance_to_target_m: Optional[float] = None,
+    apply_at_remaining_m: Optional[float] = None,
+) -> bool:
+    """¿``dist_start`` está en la ventana de acción del plan (metros, vía física)?"""
+    zone = brake_command_apply_zone_m(
+        speed_mph=speed_mph,
+        distance_to_target_m=distance_to_target_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+        dist_start=dist_start,
+    )
+    return is_in_apply_zone(dist_start, zone)
 
 
 def low_speed_reaction_scale(speed_ms: float, target_speed_ms: float) -> float:
@@ -149,6 +168,25 @@ def reaction_margin_m(
     if reaction_time_s is not None and reaction_time_s > 0:
         return speed_ms * reaction_time_s
     return speed_ms * min(4.0, DEFAULT_REACTION_S + fill_time_s)
+
+
+def brake_reaction_margin_m(
+    speed_ms: float,
+    *,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    reaction_base_s: Optional[float] = None,
+) -> float:
+    """
+  Margen de reacción con fill-time aprendido.
+
+  - Sin ``reaction_base_s``: ``DEFAULT_REACTION_S + brake_fill_s`` (plan límite).
+  - Con ``reaction_base_s``: base fija + delta si el tren tarda más que el fill por defecto
+    (latch cartel / estación).
+    """
+    if reaction_base_s is not None:
+        delta = max(0.0, brake_fill_s - DEFAULT_BRAKE_FILL_S)
+        return reaction_margin_m(speed_ms, reaction_time_s=reaction_base_s + delta)
+    return reaction_margin_m(speed_ms, fill_time_s=brake_fill_s)
 
 
 def should_brake_for_target(
@@ -194,3 +232,78 @@ def should_coast_throttle_before_brake(
         react_s=react_s,
         decel_ms2=decel_ms2,
     )
+
+
+def brake_command_apply_zone_m(
+    *,
+    speed_mph: float,
+    distance_to_target_m: Optional[float] = None,
+    apply_at_remaining_m: Optional[float] = None,
+    dist_start: Optional[float] = None,
+) -> float:
+    """
+    Ventana de emisión de comando (misma fórmula que el planificador).
+
+    Sustituye el antiguo umbral fijo de 60 m: escala con velocidad y distancia
+    de frenado (``apply_zone_margin_m``).
+    """
+    speed_ms = speed_mph * MPH_TO_MS
+    apply_at = _coherent_apply_at_remaining_m(
+        distance_to_target_m=distance_to_target_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+        dist_start=dist_start,
+    )
+    return apply_zone_margin_m(speed_ms, apply_at)
+
+
+def _coherent_apply_at_remaining_m(
+    *,
+    distance_to_target_m: Optional[float],
+    apply_at_remaining_m: Optional[float],
+    dist_start: Optional[float],
+) -> float:
+    """``apply_at`` coherente con ``distance`` y ``dist_start`` si ambos existen."""
+    derived: Optional[float] = None
+    if distance_to_target_m is not None and dist_start is not None:
+        derived = distance_to_target_m - dist_start
+    if derived is not None:
+        return max(0.0, derived)
+    if apply_at_remaining_m is not None:
+        return max(0.0, apply_at_remaining_m)
+    return 0.0
+
+
+def should_emit_brake_command(
+    *,
+    apply_now: bool,
+    dist_start: float,
+    speed_mph: float,
+    distance_to_target_m: Optional[float] = None,
+    apply_at_remaining_m: Optional[float] = None,
+) -> bool:
+    """
+    ¿Emitir APPLY/COAST_THROTTLE?
+
+    1. Ventana simétrica ±zona (velocidad + distancia de frenado).
+    2. Tarde (``dist_start < 0``) pero aún dentro del envelope ``distance <= apply_at``.
+    """
+    del apply_now
+    if is_in_brake_action_window(
+        dist_start,
+        speed_mph=speed_mph,
+        distance_to_target_m=distance_to_target_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+    ):
+        return True
+    apply_at = _coherent_apply_at_remaining_m(
+        distance_to_target_m=distance_to_target_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+        dist_start=dist_start,
+    )
+    if (
+        dist_start < 0
+        and distance_to_target_m is not None
+        and distance_to_target_m <= apply_at
+    ):
+        return True
+    return False

@@ -6,6 +6,7 @@ from tsw6.telemetry.driver_aid_parser import (
     parse_driver_aid_planning,
     parse_gradient_pct,
     parse_track_data_stations,
+    resolve_display_next_stop,
     select_next_scheduled_stop,
     station_base_name,
 )
@@ -222,6 +223,20 @@ def test_select_next_scheduled_stop_exclude_served():
     ]
     nxt = select_next_scheduled_stop(
         stops, min_distance_m=100.0, exclude_bases={"four oaks"},
+    )
+    assert nxt is not None
+    assert nxt["name"] == "Sutton Coldfield"
+
+
+def test_resolve_display_next_stop_uses_hud_when_track_lags():
+    """Tras servir la primera, HUD indica la segunda aunque TrackData solo tenga la actual."""
+    stops = [
+        {"name": "Four Oaks", "distance_m": 0.0, "scheduled": True},
+    ]
+    nxt = resolve_display_next_stop(
+        stops,
+        exclude_bases={"four oaks"},
+        hud_stop_names=["Four Oaks", "Sutton Coldfield", "Birmingham New Street"],
     )
     assert nxt is not None
     assert nxt["name"] == "Sutton Coldfield"

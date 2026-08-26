@@ -78,6 +78,10 @@ Detalle: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
 | `PATCH /set/{ruta}.Value?Value={n}` | Escribir mando |
 | `GET /list/{nodo}` | Descubrir rutas |
 
+Catálogos por árbol (`DriverAid`, `CurrentFormation`, `DriverInput`, …):
+[TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md). Física del tren (masa, aire, esfuerzos):
+[CURRENTFORMATION_API.md](CURRENTFORMATION_API.md).
+
 Catálogo DriverAid: [DRIVERAID_API.md](DRIVERAID_API.md).
 
 ### Latencia HTTP (Class 323)

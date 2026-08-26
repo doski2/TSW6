@@ -17,13 +17,12 @@ from tsw6.braking.v2.cluster import (
     sequential_limit_stop_feasible,
     targets_are_clustered,
 )
-from tsw6.braking.v2.physics import TARGET_CLUSTER_GAP_M
+from tsw6.braking.v2.physics import TARGET_CLUSTER_GAP_M, is_in_brake_action_window
 from tsw6.braking.v2.types import BrakeTargetKind, BrakeTargetResult
 
 _URGENCY_TIE_M = 5.0
 _SIGNAL_BEHIND_STATION_M = 50.0  # señal «un poco después» del andén
-_LIMIT_SPEED_MARGIN_MPH = 1.5
-_STATION_PLAN_ACTIVE_M = 60.0
+_LIMIT_SPEED_MARGIN_MPH = 0.9
 _KIND_PRIORITY: dict[BrakeTargetKind, int] = {
     "SIGNAL": 0,
     "SPEED_LIMIT": 1,
@@ -74,13 +73,22 @@ def signal_behind_station(
     return gap <= margin_m or targets_are_clustered(signal_dist_m, station_dist_m)
 
 
-def station_plan_actionable(pool: list[BrakeTargetResult]) -> bool:
-    """True si hay plan de estación en zona de aplicación (dist_start ≤ 60 m)."""
-    return any(
-        c.target_kind == "STATION"
-        and (c.apply_now or c.dist_start <= _STATION_PLAN_ACTIVE_M)
-        for c in pool
-    )
+def station_plan_actionable(
+    pool: list[BrakeTargetResult],
+    *,
+    speed_mph: float = 0.0,
+) -> bool:
+    """True si el plan de estación está en ventana de aplicación (no «tarde» a km)."""
+    for c in pool:
+        if c.target_kind != "STATION":
+            continue
+        if is_in_brake_action_window(
+            c.dist_start,
+            speed_mph=speed_mph,
+            distance_to_target_m=c.distance_m,
+        ):
+            return True
+    return False
 
 
 def should_prefer_signal_over_limit(
@@ -117,7 +125,7 @@ def _filter_pool(
         and limit_dist_m <= station_dist_m
         and targets_are_clustered(limit_dist_m, station_dist_m)
     ):
-        actionable_station = station_plan_actionable(out)
+        actionable_station = station_plan_actionable(out, speed_mph=speed_mph)
         unified = not sequential_limit_stop_feasible(
             limit_mph=limit_mph,
             limit_dist_m=limit_dist_m,
@@ -132,11 +140,11 @@ def _filter_pool(
             gradient_pct=gradient_pct,
         )
         if unified:
-            if actionable_station:
-                out = [c for c in out if c.target_kind != "SPEED_LIMIT"]
-            elif speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
-                # Andén lejos sin plan: frenar al cartel (60→55) aunque uni=Y.
+            if speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
+                # Aún por encima del cartel: fase límite antes que parada unificada.
                 out = [c for c in out if c.target_kind != "STATION"]
+            elif actionable_station:
+                out = [c for c in out if c.target_kind != "SPEED_LIMIT"]
         elif speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
             # Dos fases: cartel primero si aún por encima del límite.
             out = [c for c in out if c.target_kind != "STATION"]

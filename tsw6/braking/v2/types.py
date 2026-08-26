@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from tsw6.braking.v2.command import BrakeCommand, clamp_brake_handle
+from tsw6.braking.v2.physics import should_emit_brake_command
 
 BrakeTargetKind = Literal["SPEED_LIMIT", "STATION", "SIGNAL"]
 
@@ -43,7 +44,12 @@ class BrakeTargetResult:
         current_notch: int = 4,
         speed_mph: float = 0.0,
     ) -> Optional[BrakeCommand]:
-        if not self.apply_now and self.dist_start > 60:
+        if not should_emit_brake_command(
+            apply_now=self.apply_now,
+            dist_start=self.dist_start,
+            speed_mph=speed_mph,
+            distance_to_target_m=self.distance_m,
+        ):
             return None
         if throttle_notch > 0 or current_notch > 4:
             return BrakeCommand(

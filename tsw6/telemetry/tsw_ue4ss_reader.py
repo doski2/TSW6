@@ -77,13 +77,13 @@ def parse_probe_line(line: str) -> dict[str, Any]:
         if raw == "?":
             out[key] = "?" if key == "vehicle" else None
             continue
-        if key in ("seq", "handle_notch"):
+        if key in ("seq", "handle_notch", "lever_notch", "last_cmd_id"):
             try:
                 out[key] = int(raw)
             except ValueError:
                 out[key] = raw
             continue
-        if key in ("power_neg", "doors_open", "doors_telem", "doors_dmi"):
+        if key in ("power_neg", "doors_open", "doors_telem", "doors_dmi", "last_ack_ok"):
             out[key] = raw in ("1", "true", "True")
             continue
         if key == "vehicle":
@@ -103,10 +103,14 @@ class ProbeSnapshot:
     power: Optional[float] = None
     power_neg: bool = False
     handle_notch: Optional[int] = None
+    lever_notch: Optional[int] = None
+    last_cmd_id: Optional[int] = None
+    last_ack_ok: Optional[bool] = None
     train_brake: Optional[float] = None
     loco_brake: Optional[float] = None
     dyn_brake: Optional[float] = None
     accel_ms2: Optional[float] = None
+    brake_cyl_bar: Optional[float] = None
     max_speed_ms: Optional[float] = None
     speed_limit_ms: Optional[float] = None
     gradient_pct: Optional[float] = None
@@ -128,10 +132,14 @@ class ProbeSnapshot:
             power=data.get("power"),
             power_neg=bool(data.get("power_neg", False)),
             handle_notch=data.get("handle_notch"),
+            lever_notch=data.get("lever_notch"),
+            last_cmd_id=data.get("last_cmd_id"),
+            last_ack_ok=data.get("last_ack_ok"),
             train_brake=data.get("train_brake"),
             loco_brake=data.get("loco_brake"),
             dyn_brake=data.get("dyn_brake"),
             accel_ms2=data.get("accel_ms2"),
+            brake_cyl_bar=data.get("brake_cyl_bar"),
             max_speed_ms=data.get("max_speed_ms"),
             speed_limit_ms=data.get("speed_limit_ms"),
             gradient_pct=data.get("gradient_pct"),
@@ -191,6 +199,8 @@ class ProbeSnapshot:
         }
 
     def combined_handle_notch(self) -> Optional[int]:
+        if self.lever_notch is not None:
+            return int(self.lever_notch)
         if self.handle_notch is not None:
             return int(self.handle_notch)
         return power_to_combined_notch(self.power, self.power_neg)

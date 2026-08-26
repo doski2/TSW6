@@ -74,6 +74,37 @@ class TestFSMTransitions(unittest.TestCase):
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertIn("test station", self.fsm._served_bases)
+
+    def test_approaching_door_close_marks_served_far_from_marker(self):
+        """Parado lejos del tablón: puertas abrir/cerrar → servida y DEPARTING."""
+        self.fsm.state = "APPROACHING"
+        self.fsm.name = "Four Oaks, andén 2"
+        stations = [
+            {"name": "Four Oaks, andén 2", "distance_m": 480.0, "scheduled": True},
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2200.0, "scheduled": True},
+        ]
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=True,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5,
+        )
+        self.assertTrue(self.fsm._doors_opened)
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5,
+        )
+        self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertIn("four oaks", self.fsm._served_bases)
+        nxt = self.fsm.select_next_stop(stations)
+        self.assertIsNotNone(nxt)
+        if nxt is not None:
+            self.assertIn("Sutton", nxt["name"])
 
     def test_stopped_dmi_open_when_telem_closed(self):
         """DMI abierto cuenta aunque la telemetría de cabina diga cerrado."""

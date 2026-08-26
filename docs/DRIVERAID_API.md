@@ -19,6 +19,9 @@ actual**y**anticipación** (próximo límite, señal, estación).
 lista de tareas. El tablero de trabajo está en [ESTADO.md](ESTADO.md). Actualiza aquí solo cuando
 cambie el **estado de integración** (probe, HTTP, P1) — no hace falta releerlo entero cada sesión.
 
+**Índice de todos los árboles HTTPAPI:** [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) · Física del
+tren (masa, aire, esfuerzos): [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md)
+
 ### Mapa implementación TSW6 (2026-08-24)
 
 | Campo / nodo | Probe Lua (GetData) | HTTP (`tsw_telemetry_source`) | P1 autopilot |
@@ -266,6 +269,8 @@ DriverAid:
 | `docs/HUD_TIMETABLE.md` | Setup BD, validación in-game |
 | `docs/ESTADO.md` | Tablero trabajo; estudio flujo pasos 1–3 |
 | `docs/PENDIENTE_DYNAMICHUD.md` | Roadmap probe / IPC |
+| `docs/TSW_HTTPAPI_INDEX.md` | Índice dumps HTTPAPI |
+| `docs/CURRENTFORMATION_API.md` | Física tren (masa, aire, esfuerzos) |
 | `docs/ARQUITECTURA.md` | Lectura UE4SS vs HTTPAPI |
 
 ---

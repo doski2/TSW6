@@ -58,23 +58,22 @@ class TestCoordinatorRelease:
         assert coord.last_brake_command.kind == "RELEASE"
         assert coord.last_debug == "RELEASE→NEU"
 
-    def test_releases_when_stopped_far_from_platform_marker(self):
-        """Parada telemetría lejos del andén pero spd≈0 — Four Oaks."""
+    def test_no_release_when_parked_at_scenario_start(self):
+        """Arranque: freno aplicado, spd≈0 y cartel lejos — no tocar el handle."""
         coord = _coord()
         action, _ = _eval(
             coord,
-            speed_mph=0.5,
-            next_limit_mph=55.0,
-            distance_next_m=392.0,
-            effective_limit=60.0,
-            gradient_pct=-1.0,
+            speed_mph=0.0,
+            next_limit_mph=45.0,
+            distance_next_m=271.0,
+            effective_limit=20.0,
+            gradient_pct=0.2,
             handle_notch=1,
-            station_distance_m=654.0,
+            station_distance_m=11204.0,
             station_name="Four Oaks",
         )
-        assert action == "RELEASE"
-        assert coord.last_brake_command is not None
-        assert coord.last_brake_command.kind == "RELEASE"
+        assert action != "RELEASE"
+        assert coord.last_brake_command is None or coord.last_brake_command.kind != "RELEASE"
 
     def test_no_release_when_too_fast_for_limit(self):
         coord = _coord()
@@ -136,6 +135,45 @@ class TestCoordinatorUnifiedStop:
         assert action != "BRAKE"
         assert coord.last_brake_command is None or coord.last_brake_command.kind != "APPLY"
 
+    def test_station_wins_over_downhill_containment_in_unified_window(self):
+        """Bajada -1%: en ventana de parada la estación gana sobre contención B1."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=30.0,
+            next_limit_mph=55.0,
+            distance_next_m=80.0,
+            effective_limit=60.0,
+            gradient_pct=-1.0,
+            handle_notch=2,
+            station_distance_m=200.0,
+            station_name="Four Oaks",
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "STATION"
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "APPLY"
+        assert "Contención bajada" not in (coord.last_debug or "")
+
+    def test_downhill_containment_only_before_station_window(self):
+        """Repunte a 55.4 en bajada lejos del andén: B1 cartel, sin plan estación aún."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=55.4,
+            next_limit_mph=55.0,
+            distance_next_m=80.0,
+            effective_limit=60.0,
+            gradient_pct=-1.0,
+            handle_notch=4,
+            station_distance_m=600.0,
+            station_name="Four Oaks",
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
+        assert coord.last_target.phase == "B1"
+        assert "Contención bajada" in (coord.last_target.detail or "")
+
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -146,9 +184,9 @@ class TestCoordinatorUnifiedStop:
             handle_notch=4,
             station_distance_m=550.0,
         )
-        assert action == "HOLD"
+        assert action in ("HOLD", "BRAKE")
         assert coord.last_target is not None
-        assert coord.last_target.target_kind == "STATION"
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
         assert "unified" in coord.last_debug
 
     def test_unified_overspeed_brakes_to_limit_when_station_far(self):
@@ -170,7 +208,26 @@ class TestCoordinatorUnifiedStop:
         assert coord.last_brake_command.kind == "APPLY"
         assert coord.last_debug != "sin_plan_activo"
 
-    def test_allows_release_when_stopped_at_platform(self):
+    def test_unified_overspeed_60_brakes_to_limit_not_late_station(self):
+        """60 mph, cartel 400 m, andén 550 m: no dejar ganar estación con plan tardío."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=60.0,
+            next_limit_mph=55.0,
+            distance_next_m=400.0,
+            effective_limit=60.0,
+            handle_notch=4,
+            station_distance_m=550.0,
+            station_name="Four Oaks",
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "APPLY"
+
+    def test_no_release_when_stopped_without_station_plan(self):
+        """Parado cerca del andén sin plan activo (spd≈0): no soltar por cartel."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -179,7 +236,45 @@ class TestCoordinatorUnifiedStop:
             distance_next_m=50.0,
             effective_limit=60.0,
             handle_notch=1,
-            station_distance_m=80.0,
+            station_distance_m=50.0,
+        )
+        assert action != "RELEASE"
+
+
+class TestCoordinatorStationReleaseBlock:
+    def test_no_release_oscillation_during_station_approach(self):
+        """B1 contención @55 no debe soltar si estación en ventana de aplicación."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=54.0,
+            next_limit_mph=55.0,
+            distance_next_m=120.0,
+            effective_limit=60.0,
+            gradient_pct=-0.5,
+            handle_notch=3,
+            station_distance_m=800.0,
+            station_name="Sutton Coldfield",
+        )
+        assert action != "RELEASE"
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "STATION"
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "APPLY"
+
+    def test_release_allowed_when_station_far(self):
+        """55 mph en cartel con andén lejos (plan no accionable): soltar contención."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=55.0,
+            next_limit_mph=55.0,
+            distance_next_m=700.0,
+            effective_limit=60.0,
+            gradient_pct=0.0,
+            handle_notch=3,
+            station_distance_m=987.0,
+            station_name="Four Oaks",
         )
         assert action == "RELEASE"
 
@@ -251,6 +346,23 @@ class TestCoordinatorLimit:
         assert coord.last_brake_command.kind == "APPLY"
         assert coord.last_target is not None
         assert coord.last_target.target_kind == "SPEED_LIMIT"
+
+    def test_brakes_on_current_limit_when_last_sign_passed(self):
+        """Último cartel 60→45: sin next_limit en cola pero spd>45 — debe frenar."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=58.0,
+            next_limit_mph=None,
+            distance_next_m=None,
+            effective_limit=45.0,
+            handle_notch=4,
+        )
+        assert action == "HOLD"
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "APPLY"
 
     def test_reset_clears_state(self):
         coord = _coord()

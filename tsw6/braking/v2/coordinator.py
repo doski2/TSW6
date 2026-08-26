@@ -14,10 +14,9 @@ from tsw6.braking.v2.command import (
     LIMIT_RELEASE_MAX_OVER_MPH,
     governor_action_for_command,
     is_brake_applied,
-    is_downhill_limit_approach,
     resolve_release_command,
 )
-from tsw6.braking.v2.physics import DEFAULT_MAX_BRAKE_DECEL
+from tsw6.braking.v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 from tsw6.braking.v2.plan import BrakePlan
 from tsw6.braking.v2.cluster import (
     sequential_limit_stop_feasible,
@@ -26,13 +25,43 @@ from tsw6.braking.v2.cluster import (
 )
 from tsw6.braking.v2.emergency import check_p1_emergency, is_red_signal_aspect
 from tsw6.braking.v2.limit_brake import LimitBrakeState, evaluate_limit_brake
-from tsw6.braking.v2.priority import select_urgent_target
+from tsw6.braking.v2.priority import select_urgent_target, station_plan_actionable
 from tsw6.braking.v2.signal_brake import evaluate_signal_brake
 from tsw6.braking.v2.station_brake import evaluate_station_brake
 from tsw6.braking.v2.types import BrakeTargetResult
 from tsw6.governor.governor_constants import P1_MIN_NEXT_LIMIT_MPH, STATION_STOPPED_MPH
 
 _log = logging.getLogger("tsw.governor.v2")
+
+
+def _resolve_limit_objective(
+    *,
+    speed_mph: float,
+    effective_limit: float,
+    next_limit_mph: Optional[float],
+    distance_next_m: Optional[float],
+    speed_limits_ahead: Optional[list],
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Cartel adelante en cola, o límite vigente si ya lo violamos (último cartel).
+    """
+    nl = next_limit_mph
+    dn = distance_next_m
+    limits_queue = list(speed_limits_ahead or [])
+    if limits_queue:
+        nl = limits_queue[0].get("limit_mph", nl)
+        dn = limits_queue[0].get("distance_m", dn)
+    if speed_mph > effective_limit + 0.5:
+        next_inactive = (
+            nl is None
+            or dn is None
+            or float(dn) <= 1.0
+            or (nl is not None and float(nl) >= float(effective_limit) - 0.1)
+        )
+        if next_inactive:
+            nl = float(effective_limit)
+            dn = max(1.0, float(dn or 1.0))
+    return nl, dn
 
 
 class BrakeCoordinatorV2:
@@ -48,6 +77,7 @@ class BrakeCoordinatorV2:
         self._log_station_dist_m: Optional[float] = None
         self._log_limit_dist_m: Optional[float] = None
         self._log_station_eta: Optional[str] = None
+        self._schedule_slack_enabled: bool = False
 
     def reset(self) -> None:
         self._limit_state.reset()
@@ -63,6 +93,13 @@ class BrakeCoordinatorV2:
     @property
     def unified_stop_latched(self) -> bool:
         return self._unified_stop_latched
+
+    def set_schedule_slack_enabled(self, enabled: bool) -> None:
+        self._schedule_slack_enabled = enabled
+
+    @property
+    def schedule_slack_enabled(self) -> bool:
+        return self._schedule_slack_enabled
 
     def investigate_suffix(self) -> str:
         """Campos compactos P1 v2 para la línea de ciclo del autopilot."""
@@ -113,6 +150,7 @@ class BrakeCoordinatorV2:
         station_distance_m: Optional[float] = None,
         station_name: Optional[str] = None,
         brake_transition_s: float = 0.5,
+        brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
         station_eta: Optional[str] = None,
         station_traveled_m: Optional[float] = None,
         station_anchor_m: Optional[float] = None,
@@ -134,11 +172,13 @@ class BrakeCoordinatorV2:
         base_decel = base_decel_ms2 if base_decel_ms2 > 0 else DEFAULT_MAX_BRAKE_DECEL
 
         limits_queue = list(speed_limits_ahead or [])
-        _nl = next_limit_mph
-        _dn = distance_next_m
-        if limits_queue:
-            _nl = limits_queue[0].get("limit_mph", _nl)
-            _dn = limits_queue[0].get("distance_m", _dn)
+        _nl, _dn = _resolve_limit_objective(
+            speed_mph=speed_mph,
+            effective_limit=effective_limit,
+            next_limit_mph=next_limit_mph,
+            distance_next_m=distance_next_m,
+            speed_limits_ahead=limits_queue,
+        )
 
         self._log_station_dist_m = station_distance_m
         self._log_limit_dist_m = _dn
@@ -163,6 +203,33 @@ class BrakeCoordinatorV2:
                 base_decel=base_decel,
             )
 
+        unified = _unified_stop_active()
+        if unified:
+            self._unified_stop_latched = True
+
+        station_r: Optional[BrakeTargetResult] = None
+        if _has_station and station_distance_m is not None:
+            station_r = evaluate_station_brake(
+                speed_mph=speed_mph,
+                station_distance_m=station_distance_m,
+                gradient_pct=grad,
+                base_decel=base_decel,
+                predict_decel=predict_decel,
+                throttle_notch=throttle_notch,
+                station_eta=station_eta,
+                station_traveled_m=station_traveled_m,
+                station_anchor_m=station_anchor_m,
+                schedule_slack_enabled=self._schedule_slack_enabled,
+                brake_fill_s=brake_fill_s,
+            )
+            if unified and should_delay_unified_station_plan(
+                speed_mph=speed_mph,
+                limit_mph=_nl,
+                limit_dist_m=_dn,
+                station_dist_m=station_distance_m,
+            ):
+                station_r = None
+
         def _should_block_limit_release() -> bool:
             if not _unified_stop_active():
                 return False
@@ -176,11 +243,28 @@ class BrakeCoordinatorV2:
                 return False
             return True
 
+        def _station_braking_takes_priority() -> bool:
+            if station_r is None:
+                return False
+            return station_plan_actionable([station_r], speed_mph=speed_mph)
+
+        def _should_block_release(plan: Optional[BrakePlan] = None) -> bool:
+            if plan is not None and plan.target_kind == "STATION":
+                return True
+            if _station_braking_takes_priority():
+                return True
+            return _should_block_limit_release()
+
         def _attempt_release(plan: Optional[BrakePlan] = None) -> Optional[Tuple[str, float]]:
             if not is_brake_applied(handle_notch):
                 return None
-            if _should_block_limit_release():
-                self.last_debug = "release_blocked:unified_stop"
+            if _should_block_release(plan):
+                if _station_braking_takes_priority() or (
+                    plan is not None and plan.target_kind == "STATION"
+                ):
+                    self.last_debug = "release_blocked:station"
+                elif _should_block_limit_release():
+                    self.last_debug = "release_blocked:unified_stop"
                 return None
             rel = resolve_release_command(
                 speed_mph=speed_mph,
@@ -194,10 +278,8 @@ class BrakeCoordinatorV2:
             if rel is None:
                 return None
             self.last_brake_command = rel
-            if (
-                _nl is not None
-                and not is_downhill_limit_approach(grad, _dn)
-                and (plan is None or plan.target_kind == "SPEED_LIMIT")
+            if _nl is not None and (
+                plan is None or plan.target_kind == "SPEED_LIMIT"
             ):
                 self._release.latch(_nl)
             self.last_debug = "RELEASE→NEU"
@@ -209,14 +291,15 @@ class BrakeCoordinatorV2:
 
         if (
             not _has_station
-            and (_nl is None or _dn is None or _nl < P1_MIN_NEXT_LIMIT_MPH or _nl >= effective_limit)
+            and (
+                _nl is None
+                or _dn is None
+                or _nl < P1_MIN_NEXT_LIMIT_MPH
+                or _nl > effective_limit + 0.5
+            )
         ):
             self.last_debug = "sin_objetivo_v2"
             return None, effective_limit
-
-        unified = _unified_stop_active()
-        if unified:
-            self._unified_stop_latched = True
 
         emerg: Optional[Tuple[str, float, BrakeCommand]] = None
         emerg_candidates: list[tuple[float, Tuple[str, float, BrakeCommand]]] = []
@@ -271,31 +354,13 @@ class BrakeCoordinatorV2:
             accel_ms2=accel,
             base_decel=base_decel,
             predict_decel=predict_decel,
+            brake_fill_s=brake_fill_s,
         )
         if limit_r is not None:
             candidates.append(limit_r)
 
-        station_r = evaluate_station_brake(
-            speed_mph=speed_mph,
-            station_distance_m=station_distance_m,
-            gradient_pct=grad,
-            base_decel=base_decel,
-            predict_decel=predict_decel,
-            throttle_notch=throttle_notch,
-            station_eta=station_eta,
-            station_traveled_m=station_traveled_m,
-            station_anchor_m=station_anchor_m,
-        )
         if station_r is not None:
-            if unified and should_delay_unified_station_plan(
-                speed_mph=speed_mph,
-                limit_mph=_nl,
-                limit_dist_m=_dn,
-                station_dist_m=station_distance_m,
-            ):
-                station_r = None
-            if station_r is not None:
-                candidates.append(station_r)
+            candidates.append(station_r)
 
         signal_r = evaluate_signal_brake(
             speed_mph=speed_mph,

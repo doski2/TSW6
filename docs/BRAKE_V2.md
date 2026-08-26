@@ -21,7 +21,40 @@ Todo el código de frenado está en **`tsw6/braking/v2/`** (sin `archive/braking
 | `v2/types.py` | `BrakeTargetResult` → `BrakeCommand` |
 | `v2/command.py` | Notch IPC, RELEASE, anti-rebrake (coast latch) |
 | `v2/plan.py` | Tipos `BrakePlan`, `BrakePlanStep` |
-| `v2/physics.py` | Cinemática única (distancias, márgenes) — ver [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) |
+| `v2/physics.py` | Cinemática única (distancias, márgenes, **ventana de aplicación**) — ver abajo |
+
+### Ventana de aplicación (2026-08-26)
+
+Los metros de acción del plan **ya no son constantes**. Todo pasa por `physics.py`:
+
+| Función | Uso |
+| --- | --- |
+| `apply_zone_margin_m(speed_ms, apply_at)` | Zona base: `max(25, speed×2.5, apply_at×0.12)`, cap **150 m** |
+| `brake_command_apply_zone_m(...)` | Misma fórmula con `speed_mph` + `apply_at` coherente (`distance − dist_start`) |
+| `is_in_brake_action_window(...)` | Ventana simétrica **±zona** — prioridad estación, `station_brake`, bloqueo RELEASE |
+| `should_emit_brake_command(...)` | Emitir APPLY: ±zona **o** tarde dentro del envelope (`distance ≤ apply_at`) |
+
+**Ejemplo Class 323 @ 60 mph** (`apply_at ≈ 400 m`): zona ≈ **67 m** (antes 60 m fijo).
+
+**Dos reglas (no confundir):**
+
+| Regla | Función | Cuándo |
+| --- | --- | --- |
+| ¿Plan en ventana de acción? | `is_in_brake_action_window` | Prioridad, estación gana, `release_blocked:station` |
+| ¿Mandar APPLY / COAST_THROTTLE? | `should_emit_brake_command` | Emisión IPC; incluye tarde si aún `distance ≤ apply_at` |
+
+#### Migración: umbrales fijos → física
+
+| Antes (hardcoded) | Ahora | Módulo |
+| --- | --- | --- |
+| Zona APPLY **60 m** | `apply_zone_margin_m` / `brake_command_apply_zone_m` | `physics.py`, `command.py`, `planner.py` |
+| Histeresis cartel **80 m / 30 m** | ±`apply_zone_m` del plan activo | `limit_brake.py` |
+| Contención bajada **150 m** al cartel | `distance ≤ apply_zone_margin_m(speed, distance)` | `limit_brake.py` |
+| B3 tarde si `dist_start < −30` | `dist_start < −late_zone_m` (`brake_command_apply_zone_m`) | `command.py` |
+| RELEASE sin mirar estación | `release_blocked:station` si estación en ventana | `coordinator.py` |
+
+Constantes que **siguen** siendo fijas (no cinemática): `TARGET_CLUSTER_GAP_M = 350`,
+`STATION_COAST_CUTOFF_M = 100`, emergencia andén por distancia absoluta en `emergency.py`.
 
 Import público: `from tsw6.braking import BrakeCoordinatorV2`
 

@@ -9,6 +9,7 @@ from tsw6.braking.v2.command import (
 )
 from tsw6.braking.v2.plan import BrakePlan, BrakePlanStep
 from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+from tsw6.braking.v2.limit_brake import LimitBrakeState, evaluate_limit_brake
 
 
 def _minimal_plan() -> BrakePlan:
@@ -93,7 +94,7 @@ def test_coast_latch_inhibits_rebrake():
     state.latch(50.0)
     plan = _minimal_plan()
     assert state.should_inhibit_limit_rebrake(
-        speed_mph=52.0,
+        speed_mph=50.5,
         next_limit_mph=50.0,
         handle_notch=4,
         plan=plan,
@@ -163,21 +164,150 @@ def test_coast_latch_clears_on_limit_change():
     )
 
 
-def test_coordinator_releases_when_stopped_far_from_platform_marker():
-    """Parada telemetría a 650 m pero spd≈0 — debe soltar (Four Oaks log)."""
-    coord = BrakeCoordinatorV2()
+def test_no_release_parked_at_scenario_start():
+    """Arranque: parado con freno (notch=1) y cartel lejos — no soltar a neutro."""
+    cmd = resolve_release_command(
+        speed_mph=0.0,
+        handle_notch=1,
+        effective_limit=20.0,
+        next_limit_mph=45.0,
+        distance_next_m=271.0,
+        gradient_pct=0.2,
+    )
+    assert cmd is None
 
+
+def test_release_at_limit_speed_on_downhill():
+    """Bajada: soltar en el cartel (no mantener B3 hasta casi parado)."""
+    cmd = resolve_release_command(
+        speed_mph=45.0,
+        handle_notch=1,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=200.0,
+        gradient_pct=-1.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+    assert cmd.target_notch == 4
+
+
+def test_downhill_containment_b1_before_penalty():
+    """55.4 en cartel 55 bajada -1% → B1 (muesca servicio 1)."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=55.4,
+        limit_mph=55.0,
+        distance_m=300.0,
+        gradient_pct=-1.0,
+    )
+    assert r is not None
+    assert r.apply_now
+    assert r.phase == "B1"
+
+
+def test_downhill_containment_b2_near_ceiling():
+    """55.85 en cartel 55 → B2 antes de penalización (+1 mph)."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=55.85,
+        limit_mph=55.0,
+        distance_m=300.0,
+        gradient_pct=-1.0,
+    )
+    assert r is not None
+    assert r.phase == "B2"
+
+
+def test_downhill_containment_after_limit():
+    """Repunte leve en bajada → B1 inmediato, no esperar dist_start."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=45.5,
+        limit_mph=45.0,
+        distance_m=300.0,
+        gradient_pct=-1.0,
+    )
+    assert r is not None
+    assert r.apply_now
+    assert r.phase == "B1"
+    assert "Contención bajada" in r.detail
+
+
+def test_far_approach_uses_full_plan_not_containment():
+    """57 mph a 800 m del cartel: plan de aproximación, no contención."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=57.0,
+        limit_mph=55.0,
+        distance_m=800.0,
+        gradient_pct=-1.0,
+    )
+    assert r is not None
+    assert "Contención bajada" not in r.detail
+
+
+def test_coast_at_limit_on_downhill_no_brake():
+    """En el cartel en bajada → sin plan (coast)."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=45.0,
+        limit_mph=45.0,
+        distance_m=300.0,
+        gradient_pct=-1.0,
+    )
+    assert r is None
+
+
+def test_containment_inactive_during_station_approach_speed():
+    """Frenada final estación (spd << cartel): sin contención de límite."""
+    state = LimitBrakeState()
+    r = evaluate_limit_brake(
+        state,
+        speed_mph=25.0,
+        limit_mph=55.0,
+        distance_m=50.0,
+        gradient_pct=-1.0,
+    )
+    assert r is None
+
+
+def test_release_downhill_coordinator():
+    coord = BrakeCoordinatorV2()
     action, _ = coord.evaluate(
-        speed_mph=0.5,
-        next_limit_mph=55.0,
-        distance_next_m=392.0,
-        effective_limit=60.0,
+        speed_mph=45.0,
+        next_limit_mph=45.0,
+        distance_next_m=250.0,
+        effective_limit=55.0,
         gradient_pct=-1.0,
         acceleration_ms2=None,
         throttle_notch=0,
         handle_notch=1,
         base_decel_ms2=0.80,
-        station_distance_m=654.0,
-        station_name="Four Oaks",
+        station_distance_m=2200.0,
+        station_name="Sutton Coldfield",
     )
     assert action == "RELEASE"
+    assert coord.last_brake_command is not None
+    assert coord.last_brake_command.kind == "RELEASE"
+
+    coord = BrakeCoordinatorV2()
+    action, _ = coord.evaluate(
+        speed_mph=0.0,
+        next_limit_mph=45.0,
+        distance_next_m=271.0,
+        effective_limit=20.0,
+        gradient_pct=0.2,
+        acceleration_ms2=None,
+        throttle_notch=0,
+        handle_notch=1,
+        base_decel_ms2=0.80,
+        station_distance_m=11204.0,
+        station_name="Four Oaks",
+    )
+    assert action != "RELEASE"

@@ -48,8 +48,10 @@ _NOTCH_NEUTRAL     = 4
 _MAX_NOTCH         = 8
 _BRAKE_MIN_HANDLE  = _NOTCH_NEUTRAL - SERVICE_MAX_BRAKE   # = 1 (servicio)
 _GRACE_AFTER_EXT   = 1.5   # segundos de supresión de COAST tras subida externa
-_RPC_DISABLE_COUNT = 5     # fallos consecutivos antes de deshabilitar RPC
-_RPC_DISABLE_S     = 300.0  # segundos de penalización
+_RPC_MAX_RETRIES   = 3     # reintentos por mando antes de contar fallo
+_RPC_RETRY_BACKOFF_S = 0.025
+_RPC_DISABLE_COUNT = 12    # fallos tras reintentos antes de pausa corta IPC
+_RPC_DISABLE_S     = 5.0   # pausa IPC (s); teclado solo si sigue fallando
 
 
 class HandleController:
@@ -78,6 +80,8 @@ class HandleController:
         # RPC failure tracking
         self._rpc_fail_count:     int   = 0
         self._rpc_disabled_until: float = 0.0
+        self._last_ipc_notch:     Optional[int] = None
+        self._last_ipc_notch_t:   float = 0.0
 
         # Rate limiting
         self._last_control: float = 0.0
@@ -103,23 +107,36 @@ class HandleController:
         return False
 
     def _try_rpc(self, conn: object, control: str, val: float) -> bool:
-        """Intenta llamada RPC y actualiza el contador de fallos."""
-        try:
-            result = conn.set_control_value(control, val)  # type: ignore[union-attr]
-            if result:
-                self._rpc_fail_count = 0
-                self._rpc_disabled_until = 0.0
-                return True
-            self._rpc_fail_count += 1
-        except Exception as exc:
-            _log.debug("RPC excepción: %s", exc)
-            self._rpc_fail_count += 1
+        """Intenta IPC con reintentos; pausa corta IPC tras racha de fallos."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(_RPC_MAX_RETRIES):
+            try:
+                result = conn.set_control_value(control, val)  # type: ignore[union-attr]
+                if result:
+                    self._rpc_fail_count = 0
+                    self._rpc_disabled_until = 0.0
+                    if attempt > 0:
+                        _log.info(
+                            "IPC OK %s=%.3f (reintento %d/%d)",
+                            control, val, attempt + 1, _RPC_MAX_RETRIES)
+                    return True
+            except Exception as exc:
+                last_exc = exc
+                _log.debug("RPC excepción (intento %d): %s", attempt + 1, exc)
+            if attempt < _RPC_MAX_RETRIES - 1:
+                time.sleep(_RPC_RETRY_BACKOFF_S * (attempt + 1))
+
+        self._rpc_fail_count += 1
+        if last_exc is not None:
+            _log.debug(
+                "RPC falló tras %d intentos (%s=%.3f): %s",
+                _RPC_MAX_RETRIES, control, val, last_exc)
 
         if self._rpc_fail_count >= _RPC_DISABLE_COUNT:
             self._rpc_disabled_until = time.time() + _RPC_DISABLE_S
             _log.warning(
-                "RPC falló %d veces — usando teclado durante %.0fs",
-                self._rpc_fail_count, _RPC_DISABLE_S)
+                "IPC pausado %.0fs tras %d fallos — fallback teclado",
+                _RPC_DISABLE_S, self._rpc_fail_count)
         return False
 
     # ── Cálculo del notch objetivo ────────────────────────────────────────
@@ -162,9 +179,33 @@ class HandleController:
         if new_notch == current:
             return False
 
+        now = time.time()
+        if (
+            self._use_rpc(conn)
+            and self._last_ipc_notch == new_notch
+            and now - self._last_ipc_notch_t < 0.40
+            and current != new_notch
+        ):
+            return False
+
         if self._use_rpc(conn):
             val = new_notch / float(_MAX_NOTCH)
+            enqueue_fn = getattr(conn, "enqueue_control_value", None)
+            if callable(enqueue_fn):
+                if enqueue_fn("PowerBrakeHandle", val):
+                    self._last_ipc_notch = new_notch
+                    self._last_ipc_notch_t = time.time()
+                    _log.info(
+                        "IPC  %-11s  notch %d→%d  (val=%.3f  async)",
+                        label, current, new_notch, val)
+                    return True
+                _log.warning(
+                    "IPC cola llena %s notch %d→%d",
+                    label, current, new_notch)
+                return False
             if self._try_rpc(conn, "PowerBrakeHandle", val):
+                self._last_ipc_notch = new_notch
+                self._last_ipc_notch_t = time.time()
                 _log.info(
                     "IPC  %-11s  notch %d→%d  (val=%.3f)",
                     label, current, new_notch, val)

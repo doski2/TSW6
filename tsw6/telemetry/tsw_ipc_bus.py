@@ -67,12 +67,19 @@ def purge_lua_commands() -> bool:
     return removed
 
 
-def format_send_command_line(control: str, value: float,
-                             schema: Optional[dict] = None) -> str:
+def format_send_command_line(
+    control: str,
+    value: float,
+    schema: Optional[dict] = None,
+    *,
+    cmd_id: Optional[int] = None,
+) -> str:
     path = resolve_brake_path(control, schema)
     if not path:
         raise ValueError(f"unknown control: {control}")
     clamped = clamp_brake_value(path, value)
+    if cmd_id is not None:
+        return f"{path}:{clamped:.4f}:{int(cmd_id)}"
     return f"{path}:{clamped:.4f}"
 
 
@@ -91,7 +98,7 @@ def _clear_send_ack() -> None:
 
 
 def wait_send_ack(
-    timeout_s: float = 0.28,
+    timeout_s: float = 0.12,
     *,
     expected_path: Optional[str] = None,
     expected_value: Optional[float] = None,
@@ -99,9 +106,18 @@ def wait_send_ack(
 ) -> Optional[dict[str, Any]]:
     """Espera SendCommandAck.txt escrito por Lua tras aplicar el mando."""
     path = send_ack_path()
+    cmd_path = send_command_path()
     deadline = time.monotonic() + max(0.02, float(timeout_s))
     while time.monotonic() < deadline:
         try:
+            if not cmd_path.is_file():
+                return {
+                    "name": expected_path or "",
+                    "value": expected_value or 0.0,
+                    "ok": True,
+                    "optimistic": True,
+                    "consumed": True,
+                }
             if path.is_file():
                 line = path.read_text(encoding="utf-8").strip()
                 if line:
@@ -134,13 +150,15 @@ def write_send_command(
     control: str,
     value: float,
     schema: Optional[dict] = None,
+    *,
+    cmd_id: Optional[int] = None,
 ) -> bool:
     """Escribe SendCommand.txt de forma atómica. Devuelve False si falla validación o I/O."""
     path_name = resolve_brake_path(control, schema)
     if not path_name or not is_allowed_brake_path(path_name, schema):
         return False
     clamped = clamp_brake_value(path_name, value)
-    line = f"{path_name}:{clamped:.4f}"
+    line = format_send_command_line(control, clamped, schema, cmd_id=cmd_id)
     directory = bridge_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -166,23 +184,27 @@ def write_send_command_with_ack(
     value: float,
     schema: Optional[dict] = None,
     *,
-    ack_timeout_s: float = 0.28,
+    ack_timeout_s: float = 0.12,
+    cmd_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Escribe SendCommand y espera confirmación Lua."""
+    t0 = time.perf_counter()
     path_name = resolve_brake_path(control, schema)
     if not path_name or not is_allowed_brake_path(path_name, schema):
-        return {"ok": False, "error": "invalid_control", "control": control}
+        return {"ok": False, "error": "invalid_control", "control": control,
+                "ack_ms": 0.0}
     clamped = clamp_brake_value(path_name, value)
     _clear_send_ack()
     cmd_path = send_command_path()
-    if not write_send_command(control, clamped, schema):
+    if not write_send_command(control, clamped, schema, cmd_id=cmd_id):
         return {"ok": False, "error": "write_failed", "control": control,
-                "path": path_name, "value": clamped}
+                "path": path_name, "value": clamped, "ack_ms": 0.0}
     ack = wait_send_ack(
         ack_timeout_s,
         expected_path=path_name,
         expected_value=clamped,
     )
+    ack_ms = (time.perf_counter() - t0) * 1000.0
     if ack is None:
         if not cmd_path.is_file():
             return {
@@ -191,6 +213,7 @@ def write_send_command_with_ack(
                 "path": path_name,
                 "value": clamped,
                 "channel": "ipc",
+                "ack_ms": ack_ms,
                 "ack": {
                     "name": path_name,
                     "value": clamped,
@@ -199,16 +222,18 @@ def write_send_command_with_ack(
                 },
             }
         return {"ok": False, "error": "ack_timeout", "control": control,
-                "path": path_name, "value": clamped}
+                "path": path_name, "value": clamped, "ack_ms": ack_ms}
     if not ack.get("ok"):
         return {"ok": False, "error": "lua_rejected", "control": control,
-                "path": path_name, "value": clamped, "ack": ack}
+                "path": path_name, "value": clamped, "ack": ack,
+                "ack_ms": ack_ms}
     return {
         "ok": True,
         "control": control,
         "path": path_name,
         "value": clamped,
         "channel": "ipc",
+        "ack_ms": ack_ms,
         "ack": ack,
     }
 
@@ -219,6 +244,7 @@ def dispatch_ipc_brake(
     schema: Optional[dict] = None,
     *,
     wait_ack: bool = True,
+    cmd_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Valida y escribe un mando de freno al bridge IPC."""
     key = str(control or "").strip()
@@ -231,8 +257,9 @@ def dispatch_ipc_brake(
         return {"ok": False, "error": "command_not_allowed", "control": control}
     clamped = clamp_brake_value(path_name, value)
     if wait_ack:
-        return write_send_command_with_ack(control, clamped, schema)
-    if not write_send_command(control, clamped, schema):
+        return write_send_command_with_ack(
+            control, clamped, schema, cmd_id=cmd_id)
+    if not write_send_command(control, clamped, schema, cmd_id=cmd_id):
         return {"ok": False, "error": "write_failed", "control": control}
     return {
         "ok": True,
@@ -246,11 +273,14 @@ def dispatch_ipc_brake(
 def dispatch_ipc_combined_notch(
     notch: int,
     schema: Optional[dict] = None,
+    *,
+    cmd_id: Optional[int] = None,
 ) -> dict[str, Any]:
     return dispatch_ipc_brake(
         "combined_brake",
         combined_notch_to_value(notch),
         schema,
+        cmd_id=cmd_id,
     )
 
 

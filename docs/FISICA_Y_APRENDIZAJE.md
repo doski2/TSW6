@@ -118,6 +118,48 @@ en el JSON (`MAX_DECEL_MS2` clamp 0.50–1.50); P1 lee el valor ya aprendido cad
 | `SAFETY_MARGIN` | ×1.40 en distancias con `apply_margin=True` |
 | Fracciones 0.33/0.55/0.80 | B1/B2/B3 cuando `predict_decel` no tiene muestras |
 
+### Ventana APPLY — de metros fijos a física (2026-08-26)
+
+Fórmula única en `apply_zone_margin_m`:
+
+```text
+```
+
+`apply_at` = distancia de frenado planificada (cuándo debería empezar el perfil). Se deriva de
+`distance_to_target − dist_start` cuando ambos existen (`_coherent_apply_at_remaining_m`).
+
+| Constante / función | Significado |
+| --- | --- |
+| `APPLY_NOW_MARGIN_MIN_M` (25) | Piso — tren lento sigue teniendo ventana |
+| `APPLY_NOW_MARGIN_M` (150) | Techo — no ampliar más allá de esto |
+| `speed × 2.5` | ~2.5 s de reacción a velocidad actual |
+| `apply_at × 0.12` | 12 % de la distancia de frenado del plan |
+| `is_in_brake_action_window` | ±zona simétrica en `dist_start` |
+| `should_emit_brake_command` | ±zona **o** tarde (`dist_start < 0` y `distance ≤ apply_at`) |
+
+**Sustituye** en código: zona APPLY 60 m, histeresis limit 80/30 m, contención bajada 150 m,
+umbral B3 tarde −30 m. Detalle por módulo: [BRAKE_V2.md §
+Ventana](BRAKE_V2.md#ventana-de-aplicación-2026-08-26).
+
+| Velocidad | `apply_at` ejemplo | Zona ≈ |
+| --- | --- | --- |
+| 60 mph (26.8 m/s) | 400 m | **67 m** |
+| 30 mph | 200 m | **50 m** |
+| 10 mph | 80 m | **25 m** (mínimo) |
+
+### Fuentes de telemetría para física
+
+| Dato | Hoy | HTTPAPI (debate) |
+| --- | --- | --- |
+| `accel_ms2`, muescas | Probe `HUD_Get*` | [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) |
+| `gradient_pct` | Probe / DriverAid | `DriverAid.Data.gradient` |
+| Decel por muesca | Learner JSON | — |
+| Masa consist | — | `ClampPowerInput.Mass`, bogies |
+| Presión freno / fill time | Constante 2.5 s | `BrakeCylinder_*_Pressure` |
+| Esfuerzo N | — | `HUD_GetTractiveEffort` |
+
+Índice completo: [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md)
+
 ---
 
 ## Flujo físico en un tick P1
@@ -138,7 +180,8 @@ en el JSON (`MAX_DECEL_MS2` clamp 0.50–1.50); P1 lee el valor ya aprendido cad
 | Cinemática | `physics.ts` | `v2/physics.py` |
 | Decel por muesca | `brakeStats` | `OnlineLearner.predict_brake_decel_ms2` |
 | Base sin stats | `baseDecel` | `MAX_DECEL_MS2` + fracciones UK |
-| Masa | `massFactor(massT)` | ❌ implícito en muestras |
+| Masa | `massFactor(massT)` | 🟡 API `CurrentFormation` — ver [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) |
+| Esfuerzo freno real | — | 🟡 `HUD_GetTractiveEffort` (debate) |
 | Aprendizaje en agente | integrado | autopilot Auto-aprender (defecto) + `aprender.bat` opcional |
 
 ---
@@ -171,7 +214,8 @@ en el JSON (`MAX_DECEL_MS2` clamp 0.50–1.50); P1 lee el valor ya aprendido cad
 | ID | Tema |
 | --- | --- |
 | L1 | Perfiles semilla `data/profiles/seed/` por familia de tren |
-| L3 | `massT` en telemetría → `massFactor` Dastsc |
+| L3 | Masa consist vía [CURRENTFORMATION_API](CURRENTFORMATION_API.md) → `massFactor` Dastsc |
+| L4 | `HUD_GetTractiveEffort` / presión cilindro para fill time real |
 | L5 | Horario: reaction scale / coast allowance en paradas |
 
 ---
@@ -181,7 +225,8 @@ en el JSON (`MAX_DECEL_MS2` clamp 0.50–1.50); P1 lee el valor ya aprendido cad
 | Archivo | Rol |
 | --- | --- |
 | `tsw6/governor/governor_constants.py` | `MAX_DECEL_MS2`, márgenes P1 |
-| `tsw6/braking/v2/physics.py` | Cinemática compartida |
+| `tsw6/braking/v2/physics.py` | Cinemática + ventana de aplicación |
+| [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) | Catálogos HTTPAPI (física pendiente) |
 | `tsw6/governor/governor_physics.py` | Puente learner ↔ P1 |
 | `tsw6/learning/online_learner.py` | EMA, bandas, JSON |
 | `tsw6/learning/learn_monitor.py` | Monitor `aprender.bat` |

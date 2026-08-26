@@ -20,6 +20,7 @@ from tsw6.learning.online_learner import (
     _GRAD_BANDS, GRAD_FLAT_THRESHOLD, _gravity_compensation,
     MIN_STABLE_S, MIN_SAMPLES,
 )
+from tsw6.braking.v2.physics import BRAKE_FILL_CLAMP
 
 
 class TestSignCoherence(unittest.TestCase):
@@ -275,6 +276,56 @@ class TestThrottleCeiling(unittest.TestCase):
         self.learner._save()
         other = OnlineLearner(save_path="/tmp/test_learner_ceil.json")
         self.assertAlmostEqual(other.predict_throttle_ceiling(5), 14.2)
+
+
+class TestBrakePressureFilter(unittest.TestCase):
+    def setUp(self):
+        self.learner = OnlineLearner(save_path="/tmp/test_learner_pressure.json")
+
+    def tearDown(self):
+        try:
+            os.unlink("/tmp/test_learner_pressure.json")
+        except FileNotFoundError:
+            pass
+
+    def _feed_stable_brake(self, brake_cyl_bar=None):
+        """Ventana estable inyectada + feed final."""
+        notch = 2
+        accel = -0.5
+        now = time.time()
+        t0 = now - MIN_STABLE_S - 0.05
+        dt = MIN_STABLE_S / 3.0
+        speeds = [40.0 + i * 0.8 for i in range(4)]
+        for i in range(4):
+            self.learner._window.append(
+                (t0 + i * dt, speeds[i], notch, 0.0, accel))
+        return self.learner.feed(
+            speed_mph=speeds[-1], notch=notch, grad_pct=0.0, accel_ms2=accel,
+            brake_cyl_bar=brake_cyl_bar,
+        )
+
+    def test_rejects_brake_without_air(self):
+        result = self._feed_stable_brake(brake_cyl_bar=1.2)
+        self.assertIsNone(result)
+        self.assertIn("aire", self.learner.last_reason)
+
+    def test_accepts_brake_with_pressure(self):
+        self._feed_stable_brake(brake_cyl_bar=3.0)
+        self.assertIn("registrada", self.learner.last_reason)
+        self.assertEqual(self.learner._n.get(2, 0), 1)
+
+    def test_fill_time_persisted(self):
+        t0 = time.time()
+        self.learner._last_feed_notch = 4
+        for i, delay in enumerate((0.0, 2.0, 4.0)):
+            self.learner._observe_brake_fill(2, 1.0, t0 + delay)
+            self.learner._observe_brake_fill(2, 3.0, t0 + delay + 1.5)
+            self.learner._last_feed_notch = 4
+        consts = self.learner.get_constants()
+        self.assertIn("BRAKE_FILL_S", consts)
+        lo, hi = BRAKE_FILL_CLAMP
+        self.assertGreaterEqual(consts["BRAKE_FILL_S"], lo)
+        self.assertLessEqual(consts["BRAKE_FILL_S"], hi)
 
 
 if __name__ == "__main__":

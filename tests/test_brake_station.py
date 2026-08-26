@@ -29,6 +29,28 @@ class TestScheduleReactionScale:
         assert early < 1.0
         assert late > 1.0
 
+    def test_disabled_returns_neutral(self):
+        now = datetime(2026, 8, 1, 14, 30, 0)
+        assert schedule_slack_sec(
+            600, 44.7, "14:38", now, schedule_slack_enabled=False) is None
+        assert schedule_reaction_scale(
+            600, 44.7, "14:38", now, schedule_slack_enabled=False) == 1.0
+        assert schedule_coast_allowance_m(
+            900, 44.7, "14:38", now, schedule_slack_enabled=False) == 0.0
+        early = plan_station_service_brake(
+            speed_mph=44.7,
+            station_distance_m=900.0,
+            station_eta="14:38",
+            now=now,
+            schedule_slack_enabled=False,
+        )
+        plain = plan_station_service_brake(
+            speed_mph=44.7, station_distance_m=900.0)
+        assert early and plain
+        b2_early = next(s for s in early.steps if s.notch == "B2")
+        b2_plain = next(s for s in plain.steps if s.notch == "B2")
+        assert b2_early.dist_start == b2_plain.dist_start
+
     def test_hud_arrival_hhmmss_parses(self):
         from tsw6.braking.v2.planner import normalize_station_eta, parse_eta_minutes
 
@@ -177,11 +199,11 @@ class TestSelectStationActiveStep:
             apply_now=dist_start <= 0,
         )
 
-    def test_prefers_strongest_near_station(self):
+    def test_prefers_weakest_when_upcoming_soon(self):
         steps = [self._step("B3", 8), self._step("B2", 12), self._step("B1", 18)]
         active = select_station_active_step(steps, 12.0, 300.0)
         assert active is not None
-        assert active.notch == "B3"
+        assert active.notch == "B1"
 
     def test_b2_default_when_due(self):
         steps = [

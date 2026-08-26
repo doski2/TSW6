@@ -68,6 +68,11 @@ class SpeedDecider:
 
         # P1 v2 — transición activo/inactivo para log de reset
         self._p1_was_active: bool = False
+        self._schedule_slack_enabled: bool = False
+
+    def set_schedule_slack_enabled(self, enabled: bool) -> None:
+        self._schedule_slack_enabled = enabled
+        self._braking.set_schedule_slack_enabled(enabled)
 
     # ── Physics API (llamar antes de decide() cada ciclo) ─────────────────
 
@@ -80,13 +85,17 @@ class SpeedDecider:
             self._physics._api_accel = api_accel
 
     def feed_learner(self, speed_mph: float, handle_notch: int,
-                     gradient_pct: float, accel_ms2: Optional[float]) -> None:
+                     gradient_pct: float, accel_ms2: Optional[float],
+                     brake_cyl_bar: Optional[float] = None) -> None:
         """Alimenta el aprendiz online. Llamar una vez por ciclo.
 
         El learner usa la escala del handle combinado 0-8 (0=freno máx,
         4=neutro, 8=tracción máx), así que se pasa handle_notch tal cual.
         (Antes se restaba 4 y se registraban muescas erróneas.)"""
-        self._physics.feed_learner(speed_mph, handle_notch, gradient_pct, accel_ms2)
+        self._physics.feed_learner(
+            speed_mph, handle_notch, gradient_pct, accel_ms2,
+            brake_cyl_bar=brake_cyl_bar,
+        )
 
     def set_rain_intensity(self, intensity: float) -> None:
         self._physics.set_rain_intensity(intensity)
@@ -127,6 +136,10 @@ class SpeedDecider:
     ) -> Optional[dict]:
         """Próxima parada comercial respetando paradas ya servidas."""
         return self._fsm.select_next_stop(stations)
+
+    def served_station_bases(self) -> set[str]:
+        """Nombres base de paradas que no deben mostrarse como próxima."""
+        return self._fsm._stop_exclude_bases()
 
     @property
     def target_stop_min_m(self) -> Optional[float]:
@@ -283,8 +296,7 @@ class SpeedDecider:
         Capas de prioridad (mayor a menor):
           FSM estación → marcador DMI → P1 (v2) → HOLD
 
-        Sin capa P2: el crucero reactivo chocaba con P1 (cartel + estación).
-        El watchdog cubre exceso grave persistente.
+        Sin crucero reactivo (P2): la contención en bajada va en limit_brake (P1).
 
         Garantía: siempre devuelve una de:
           COAST | BRAKE | BRAKE_FAST | EMERGENCY | HOLD | PAUSED
@@ -339,8 +351,12 @@ class SpeedDecider:
         effective_limit = (min(limit, state.target_mph)
                            if state.target_mph > 0 else limit)
 
-        if state.station_state == "APPROACHING" and eff_limit_override is not None:
-            effective_limit = eff_limit_override
+        if (
+            state.station_state == "APPROACHING"
+            and eff_limit_override is not None
+            and eff_limit_override > 0
+        ):
+            effective_limit = min(effective_limit, eff_limit_override)
 
         # ── Marcador de freno advisory (DMI) ─────────────────────────────
         bm = state.brake_marker_m
@@ -401,6 +417,7 @@ class SpeedDecider:
                 station_name     = state.next_stop_name or self._fsm.name,
                 station_eta      = state.next_stop_arrival,
                 brake_transition_s = self._physics.brake_transition_s,
+                brake_fill_s       = self._physics.brake_fill_s,
             )
             if p1_action is not None:
                 self.effective_limit = effective_limit

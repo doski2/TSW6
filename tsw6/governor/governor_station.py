@@ -173,13 +173,14 @@ class StationFSM:
         # ── Estado: STOPPED ──────────────────────────────────────────────────
         if self.state == "STOPPED":
             return self._handle_stopped(
-                doors_open, doors_dmi, ocr_stop_dist_m, ocr_task,
+                speed_mph, doors_open, doors_dmi, ocr_stop_dist_m, ocr_task,
                 doors_telem=doors_telem)
 
         # ── Estado: APPROACHING ──────────────────────────────────────────────
         if self.state == "APPROACHING":
             return self._handle_approaching(
-                speed_mph, limit_mph, next_stop, doors_dmi, ocr_stop_dist_m,
+                speed_mph, limit_mph, next_stop, doors_open, doors_dmi,
+                ocr_stop_dist_m,
                 braking_dist_fn, eff_max_decel, eff_k_stop,
                 doors_telem=doors_telem,
                 next_limit_mph=next_limit_mph,
@@ -187,13 +188,77 @@ class StationFSM:
 
         return None, 0.0
 
+    def _mark_current_stop_served(self) -> None:
+        if self.name:
+            base = station_base_name(self.name)
+            if base:
+                self._served_bases.add(base)
+
+    def _handle_door_service_at_stop(
+        self,
+        speed_mph: float,
+        *,
+        doors_open: bool,
+        doors_dmi: Optional[bool],
+        doors_telem: Optional[bool] = None,
+        ocr_stop_dist_m: Optional[float] = None,
+        ocr_task: Optional[str] = None,
+    ) -> bool:
+        """
+        Ciclo puertas en parada — sin depender de distancia al tablón (Dastsc).
+
+        Abrir → STOPPED; cerrar tras abrir → DEPARTING + parada servida.
+        Devuelve True si pasó a DEPARTING este tick.
+        """
+        if speed_mph > STATION_STOPPED_MPH or not self.name:
+            return False
+        effective, src = resolve_station_door_state(
+            doors_telem=doors_telem,
+            doors_dmi=doors_dmi,
+            doors_open=doors_open,
+            ocr_task=ocr_task,
+            ocr_stop_dist_m=ocr_stop_dist_m,
+        )
+        if effective:
+            if not self._doors_opened:
+                _log.info("FSM: puertas abiertas (src=%s)  '%s'", src, self.name)
+            self._doors_opened = True
+            if self.state == "APPROACHING":
+                _log.info("FSM: APPROACHING → STOPPED (puertas)  '%s'", self.name)
+                self.state = "STOPPED"
+                self._stopped_at = time.time()
+                self._we_stopped = True
+            return False
+        if self._doors_opened and not effective:
+            self._mark_current_stop_served()
+            _log.info(
+                "FSM: %s → DEPARTING (puertas cerradas, servida, src=%s)  '%s'",
+                self.state, src, self.name,
+            )
+            self.state = "DEPARTING"
+            self._doors_opened = False
+            self._min_stop_dist = None
+            self._ocr_offset = None
+            return True
+        return False
+
     # ── Handlers por estado ───────────────────────────────────────────────────
 
-    def _handle_stopped(self, doors_open: bool, doors_dmi: Optional[bool],
+    def _handle_stopped(self, speed_mph: float, doors_open: bool, doors_dmi: Optional[bool],
                         ocr_stop_dist_m: Optional[float],
                         ocr_task: Optional[str],
                         *, doors_telem: Optional[bool] = None) -> Tuple[Optional[str], float]:
         """Gestiona el estado STOPPED: puertas, dwell y transición a DEPARTING."""
+        if self._handle_door_service_at_stop(
+            speed_mph,
+            doors_open=doors_open,
+            doors_dmi=doors_dmi,
+            doors_telem=doors_telem,
+            ocr_stop_dist_m=ocr_stop_dist_m,
+            ocr_task=ocr_task,
+        ):
+            return "HOLD", 0.0
+
         effective_doors, _ocr_door_src = resolve_station_door_state(
             doors_telem=doors_telem,
             doors_dmi=doors_dmi,
@@ -215,6 +280,7 @@ class StationFSM:
                 self.state = "DEPARTING"
                 self._doors_opened = False
         elif self._doors_opened and not effective_doors:
+            self._mark_current_stop_served()
             _log.info("FSM: STOPPED → DEPARTING (src=%s)  (%s)",
                       _ocr_door_src, self.name or "?")
             self.state  = "DEPARTING"
@@ -238,7 +304,8 @@ class StationFSM:
         return "HOLD", 0.0
 
     def _handle_approaching(self, speed_mph: float, limit_mph: float,
-                            next_stop: Optional[dict], doors_dmi: Optional[bool],
+                            next_stop: Optional[dict], doors_open: bool,
+                            doors_dmi: Optional[bool],
                             ocr_stop_dist_m: Optional[float],
                             braking_dist_fn, eff_max_decel: float,
                             eff_k_stop: float,
@@ -248,6 +315,15 @@ class StationFSM:
                             ) -> Tuple[Optional[str], float]:
         """Gestiona el estado APPROACHING: calibración OCR, perfil cinemático y transición a STOPPED."""
         api_dist = next_stop["distance_m"] if next_stop else 0.0
+
+        if self._handle_door_service_at_stop(
+            speed_mph,
+            doors_open=doors_open,
+            doors_dmi=doors_dmi,
+            doors_telem=doors_telem,
+            ocr_stop_dist_m=ocr_stop_dist_m,
+        ):
+            return "HOLD", 0.0
 
         # Calibración del offset OCR vs API
         if self._ocr_offset is None and ocr_stop_dist_m is not None:
@@ -302,24 +378,6 @@ class StationFSM:
             self._creep_to_station = False
         elif speed_mph <= STATION_STOPPED_MPH:
             self._creep_to_station = True
-
-        # En andén parado: gestionar puertas directamente
-        if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
-            effective_doors, _src = resolve_station_door_state(
-                doors_telem=doors_telem,
-                doors_dmi=doors_dmi,
-            )
-            if effective_doors:
-                self._doors_opened = True
-            elif self._doors_opened and not effective_doors:
-                _log.info(
-                    "FSM: APPROACHING → DEPARTING (puertas cerradas, src=%s)  '%s'",
-                    _src, self.name or "?")
-                self.state = "DEPARTING"
-                self._doors_opened = False
-                self._min_stop_dist = None
-                self._ocr_offset    = None
-            return "HOLD", 0.0
 
         # Perfil cinemático de velocidad límite para parar en el andén
         if stop_dist_m < stop_window:

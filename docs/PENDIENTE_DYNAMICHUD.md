@@ -27,6 +27,7 @@
 | Log ciclo v2 | `autopilot_core._log_cycle` + `investigate_suffix` | `thr`, `gap`, `wd`, `p1eta`, `uni`, `p1tgt/p1ds` |
 | Horario HUD paradas | `hud_timetable.py` + BD release | Paradas, distancias, **arr/dep en GUI** (validado) |
 | Gradiente en probe | `gradient_pct` en GetData.txt | Class 323 validado |
+| **Ventana APPLY física** | `v2/physics.py` | Sustituye 60/80/30/150 m fijos; ver [BRAKE_V2.md](BRAKE_V2.md) |
 
 ### 🎯 Hacer ahora (impacto paridad Dastsc)
 
@@ -35,6 +36,7 @@
 | 1 | **Validar in-game** frenado v2 (2R17 Cross-City) cartel+andén + RELEASE @55 | Confirmar fix unified; log `gap=`, `uni=Y`, `p1eta=` |
 | 2 | **Telemetría señal** (`distanceToSignal`, aspecto DANGER) → `TrainState` + P1 | `signal_brake.py` es stub |
 | 3 | **Distancia tablón** OCR/GPS cada tick → `station_brake` / coordinador | Parada andén menos precisa que Dastsc |
+| 4 | **Contención cartel en bajada** (`limit_brake` + `uni=Y`) | Mantener plan P1 cerca del límite con `gradient_pct < -0.3‰`; retirado 2026-08-26 |
 
 ### ⏸️ Después (no bloquean MVP UK)
 
@@ -46,6 +48,21 @@
 - Estabilidad 10+ min (A4), benchmark formal vs HTTP
 
 **Regla:** si no está en «Hacer ahora», no abrir PR ni refactor hasta cerrar 1–3.
+
+### Parada servida por puertas (2026-08-26)
+
+Si el tren queda en `APPROACHING` pero la distancia al tablón salta (parada aceptable a mitad de
+andén),
+la FSM **no** pasaba a `STOPPED` (`stop_dist_m` > ventana andén). La GUI seguía mostrando la misma
+parada.
+
+**Fix:** `_handle_door_service_at_stop` en `governor_station.py` — ciclo puertas **sin** umbral de
+distancia:
+
+1. Parado (`spd ≤ STATION_STOPPED_MPH`) + puertas abiertas → `STOPPED` (si venía de `APPROACHING`)
+2. Puertas cerradas tras haber abierto → `DEPARTING` + `served_bases` (siguiente parada en GUI)
+
+Log esperado: `FSM: puertas abiertas`, `FSM: … → DEPARTING (puertas cerradas, servida)`.
 
 ---
 
@@ -69,7 +86,7 @@ Línea de ciclo (cada ~2 s en DEBUG tras los 5 primeros INFO):
 | Campo | Significado |
 | --- | --- |
 | `p1dbg` | Estado interno P1: `v2 SPEED_LIMIT B1`, `RELEASE→NEU`, `sin_plan_activo`, `release_blocked:…`, `perfil activo` |
-| `p1tgt` / `p1d` / `p1ds` | Objetivo activo, distancia en vía, distStart (cuándo frenar) |
+| `p1tgt` / `p1d` / `p1ds` | Objetivo activo, distancia en vía, **distStart** (m hasta inicio de frenada; APPLY en ±zona física) |
 | `p1apply` | `Y` = APPLY este ciclo |
 | `p1cmd` / `p1r` | APPLY / RELEASE + razón |
 | `uni=Y` | Parada unificada cartel+andén latched |
@@ -86,7 +103,8 @@ Logger detallado: `[tsw.governor.v2] P1v2 …` en cada APPLY (cada ~100 ms).
 
 | Situación | Campos clave |
 | --- | --- |
-| Frenada al cartel | `p1apply=Y`, `P1v2 SPEED_LIMIT`, `p1ds` bajando |
+| Frenada al cartel | `p1apply=Y`, `P1v2 SPEED_LIMIT`, `p1ds` → 0 en ventana (~67 m @ 60 mph, no 60 fijo) |
+| RELEASE bloqueado | `p1dbg=release_blocked:station` — estación en ventana APPLY |
 | 60→55 + andén cercano | `uni=Y`, `gap=<350m`, RELEASE al llegar a ~55 (`p1dbg=RELEASE→NEU`) |
 | Coast con horario | `p1eta=8:18`, B2 más tarde si vas adelantado al `arr` |
 | Freno atascado | `notch=3` + `p1dbg=sin_plan_activo` sin `RELEASE→NEU` → bug |
@@ -96,6 +114,11 @@ Logger detallado: `[tsw.governor.v2] P1v2 …` en cada APPLY (cada ~100 ms).
 - [ ] `signal_distance_m` / `signal_aspect` en `TrainState` y `SpeedDecider.evaluate()`
 - [ ] `station_traveled_m` / `station_anchor_m` (supresión turnaround en `v2/planner.py`)
 - [ ] OCR distancia tablón → `station_brake` / coordinador
+- [ ] **Contención en bajada** — plan de cartel activo a velocidad del límite si `gradient_pct <
+
+  -0.3‰` (evitar `sin_plan_activo` por gravedad); retirado a petición 2026-08-26, reimplementar con
+  validación in-game
+
 - [ ] 2.º límite en cola en log ciclo
 - [ ] Validar in-game post-fix RELEASE unified (sesión 2R17)
 

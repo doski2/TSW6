@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from tsw6.braking.v2.physics import DEFAULT_BRAKE_FILL_S, is_in_brake_action_window
 from tsw6.braking.v2.planner import plan_brake_for_station
 from tsw6.braking.v2.types import BrakeTargetResult
 
@@ -25,6 +26,8 @@ def evaluate_station_brake(
     station_eta: Optional[str] = None,
     station_traveled_m: Optional[float] = None,
     station_anchor_m: Optional[float] = None,
+    schedule_slack_enabled: bool = True,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> Optional[BrakeTargetResult]:
     if station_distance_m is None or station_distance_m <= 0:
         return None
@@ -39,12 +42,19 @@ def evaluate_station_brake(
         station_eta=station_eta,
         station_traveled_m=station_traveled_m,
         station_anchor_m=station_anchor_m,
+        schedule_slack_enabled=schedule_slack_enabled,
+        brake_fill_s=brake_fill_s,
     )
     if plan is None or plan.active_step is None:
         return None
 
     step = plan.active_step
-    if not step.apply_now and step.dist_start > 60:
+    if not is_in_brake_action_window(
+        step.dist_start,
+        speed_mph=speed_mph,
+        distance_to_target_m=plan.distance_to_target_m,
+        apply_at_remaining_m=step.apply_at_remaining_m,
+    ):
         return None
     return BrakeTargetResult(
         target_kind="STATION",

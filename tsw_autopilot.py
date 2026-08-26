@@ -59,7 +59,7 @@ def run_console(args: argparse.Namespace) -> None:
         manual=args.manual,
         learn=args.learn,
         stop_miles=args.stop,
-        loop_hz=5.0,
+        loop_hz=20.0,
     )
     engine = AutopilotEngine(config, log_path=log_path)
     logging.getLogger("tsw.autopilot").info("Autopilot consola iniciado")
@@ -148,7 +148,7 @@ def main() -> None:
             manual=args.manual,
             learn=args.learn,
             stop_miles=args.stop,
-            loop_hz=10.0,
+            loop_hz=20.0,
         ))
 
 

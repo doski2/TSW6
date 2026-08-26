@@ -3,6 +3,10 @@
 Mapa de conexiones desde telemetría hasta el mando en cabina.
 Documentación detallada en este archivo y en [BRAKE_V2.md](BRAKE_V2.md).
 
+**Comparativa con Nexus V4 (Dastsc):** [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md)
+— misma numeración de pasos que el SVG cuando sea posible. Espejo en
+`C:\Users\doski\Dastsc\docs\FLUJO_FRENOS_V4.md` y `flujo_frenos_v4.svg` (15 pasos).
+
 **Diagramas (imagen):**
 
 | Tipo | Archivo | Para que sirve |
@@ -22,19 +26,26 @@ Navegador: [assets/esqueleto_arquitectura.html](assets/esqueleto_arquitectura.ht
 
 ---
 
-## Secuencia por ciclo (~20 Hz)
+## Secuencia por ciclo (~20 Hz) — numeración SVG
 
-| # | Módulo | Qué hace |
-| --- | --- | --- |
-| 1 | `main.lua` | Escribe velocidad, `handle_notch`, límites en `GetData.txt` |
-| 2 | `autopilot_core.tick()` | Lee telemetría, construye estado, decide, ejecuta |
-| 3 | `build_train_state()` | `TrainState` inmutable: speed, límites, distancia estación, ETA |
-| 4 | `speed_decider.decide()` | FSM → DMI → P1 → `HOLD` (sin P2) |
-| 5 | `coordinator.evaluate()` | RELEASE / emergencia / cartel / andén → `BrakeCommand` |
-| 6 | `decider.brake_command` | Último comando P1 (notch objetivo + motivo) |
-| 7 | `handle_controller.execute()` | **Prioridad:** si hay `brake_command`, notch absoluto por IPC |
-| 8 | `tsw_ipc_bus` | `PowerBrakeHandle:0.375` → `SendCommand.txt` |
-| 9 | `main.lua` | Aplica PATCH al juego, ack en `SendCommandAck.txt` |
+Alineada con [esqueleto_flujo_cronologico.svg](assets/esqueleto_flujo_cronologico.svg). Para el
+equivalente Dastsc por paso, ver [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md).
+
+| Paso | Bloque | Módulo | Qué hace |
+| --- | --- | --- | --- |
+| **1** | LECTURA | `main.lua` | HUD + DriverAid → `GetData.txt` (~20 Hz) |
+| **2** | LECTURA | `tsw_ue4ss_reader.py` | `parse_probe_line()` → `ProbeSnapshot` |
+| **3** | LECTURA | `tsw_telemetry_source.py` | Merge probe + HTTP + HUD DB → `_telem` |
+| **4** | CICLO | `autopilot_core.tick()` | Bucle principal |
+| **5** | CICLO | `build_train_state()` | `TrainState` inmutable |
+| **6** | DECISIÓN | `speed_decider.decide()` | FSM → DMI → P1 o `HOLD` (sin P2) |
+| **7–11** | P1 | `BrakeCoordinatorV2` | limit / station / planner → `BrakeCommand` |
+| **12** | EJECUCIÓN | `handle_controller.execute()` | Notch absoluto por IPC |
+| **13** | EJECUCIÓN | `tsw_ipc_bus` | `SendCommand.txt` |
+| **14** | JUEGO | `main.lua` | Aplica `PowerBrakeHandle`, ack |
+
+Detalle pasos 1–3: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-1-2-3-lectura). Pasos 4–6:
+[ESTADO.md](ESTADO.md#árbol-cronológico--pasos-4-5-6-ciclo--decisión).
 
 ---
 
@@ -46,6 +57,12 @@ Navegador: [assets/esqueleto_arquitectura.html](assets/esqueleto_arquitectura.ht
 **Parada unificada** (ej. cartel 60 mph + andén cerca): frena al cartel, **RELEASE @55**, coast
 hasta andén.
 Ver `coordinator.py` → `_should_block_limit_release()` y `cluster.py`.
+
+**Ventana APPLY (2026-08-26):** metros dinámicos vía `physics.apply_zone_margin_m` — sustituye
+60 m fijo, histeresis 80/30 m y contención 150 m. RELEASE bloqueado si estación en ventana
+(`release_blocked:station`). Detalle:
+[BRAKE_V2.md](BRAKE_V2.md#ventana-de-aplicación-2026-08-26) ·
+[FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md#ventana-apply--de-metros-fijos-a-física-2026-08-26).
 
 ---
 
@@ -70,9 +87,14 @@ En `logs/autopilot_*.log`:
 
 - `p1=B1→N3` — plan activo, notch objetivo
 - `p1cmd=APPLY` / `RELEASE` — tipo de comando
+- `p1ds=` — `dist_start` (m): negativo = tarde; APPLY cuando &#124;`p1ds`&#124; ≤ zona
+
+  (~`speed×2.5`, min 25 m)
+
 - `uni=Y` — parada unificada cartel+andén
 - `gap=` — distancia estación − distancia cartel
 - `p1eta=` — hora llegada HUD
+- `release_blocked:station` — RELEASE bloqueado (estación en ventana física)
 
 ---
 

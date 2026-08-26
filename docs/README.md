@@ -7,11 +7,17 @@
 | Documento | Para quién | Contenido |
 | --- | --- | --- |
 | [GUIA.md](GUIA.md) | Uso diario | `.bat`, calibración, autopilot, HUD horarios |
+| `validar_freno.bat` | Validación freno aire | Sesión guiada → `logs/brake_physics/*.csv` |
 | [HUD_TIMETABLE.md](HUD_TIMETABLE.md) | Servicios UK / paradas | `tsw_hud.db`, extractor, planning comercial |
 | [ARQUITECTURA.md](ARQUITECTURA.md) | Desarrollo | API TSW, módulos, UE4SS, latencia |
 | [DRIVERAID_API.md](DRIVERAID_API.md) | HTTPAPI / DriverAid | Catálogo nodos, estaciones, geo |
+| [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) | HTTPAPI completa | Índice dumps + prioridad física |
+| [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | Física tren | Masa, aire, esfuerzos, HUD |
+| [DRIVERINPUT_API.md](DRIVERINPUT_API.md) | Mandos cabina | PATCH `/set` palancas |
 | [DASTSC_PARITY.md](DASTSC_PARITY.md) | Frenado P1 | Paridad con Dastsc, B1–B3, pendientes |
-| [BRAKE_V2.md](BRAKE_V2.md) | Frenado activo | Arquitectura P1 v2, módulos, prioridad |
+| [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | Estudio cruzado | Tabla paso a paso TSW6 SVG ↔ Nexus V4 |
+| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | Runtime frenos | Secuencia 1→14 + coordinator P1 |
+| [BRAKE_V2.md](BRAKE_V2.md) | Frenado activo | Arquitectura P1 v2, ventana APPLY física, prioridad |
 | [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 / diesel NA | Layout multi-mando, fases 4–6 |
 | [ESTADO.md](ESTADO.md) | Tablero visual (Mermaid) qué está hecho y qué sigue |
 | [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / probe / foco de trabajo |

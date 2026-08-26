@@ -25,6 +25,8 @@ from tsw6.autopilot.tsw_keys import user32
 from tsw6.autopilot.tsw_ocr import TswOcr
 from tsw6.autopilot.distance_format import format_distance, format_distance_pair
 from tsw6.learning.learn_monitor import learn_progress_summary
+from tsw6.hud.hud_timetable import schedule_times_for_station
+from tsw6.telemetry.driver_aid_parser import resolve_display_next_stop
 from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource
 
 EnumWindowsProc = ctypes.WINFUNCTYPE(
@@ -57,6 +59,7 @@ class AutopilotConfig:
     no_control: bool = False
     manual: bool = False
     learn: bool = True
+    schedule_slack: bool = False
     stop_miles: Optional[float] = None
     loop_hz: float = 5.0
 
@@ -110,6 +113,7 @@ class AutopilotSnapshot:
     schedule_source: Optional[str] = None
     hud_timetable_id: Optional[int] = None
     learn_enabled: bool = False
+    schedule_slack_enabled: bool = False
     learn_profile: str = ""
     learn_done_cells: int = 0
     learn_total_cells: int = 0
@@ -162,6 +166,7 @@ class AutopilotEngine:
             self.conn.mode = "manual"
 
         self.decider = SpeedDecider(target_mph=config.target_mph)
+        self.decider.set_schedule_slack_enabled(config.schedule_slack)
         self.controller = HandleController()
         self.watchdog = SafetyWatchdog()
 
@@ -193,8 +198,13 @@ class AutopilotEngine:
         self._pause_diag_t = 0.0
         self._loop_fps = 0.0
         self._last_tick_ms = 0.0
+        self._last_sleep_ms = 0.0
+        self._heartbeat_wall_t = 0.0
+        self._heartbeat_tick_count = 0
+        self._loop_hz_real = 0.0
         self._control_skip_reason = "init"
         self._limit_fallback_logged = False
+        self._pressure_warn_logged = False
 
         if not config.no_control:
             self.conn.purge_ipc_on_start()
@@ -217,7 +227,10 @@ class AutopilotEngine:
         telem_log.addHandler(gh)
         if log_path:
             telem_log.addHandler(fh)
-            for _name in ("tsw.governor", "tsw.governor.v2", "tsw.controller"):
+            for _name in (
+                "tsw.governor", "tsw.governor.v2", "tsw.controller",
+                "tsw.physics", "tsw.learner",
+            ):
                 _lg = logging.getLogger(_name)
                 _lg.setLevel(logging.DEBUG)
                 if _name == "tsw.governor.v2":
@@ -303,6 +316,36 @@ class AutopilotEngine:
         if not self.config.no_control:
             self.conn.release_controls()
 
+    def _resolve_next_stop_snapshot(
+        self,
+        stations: list[dict],
+    ) -> tuple[Optional[str], Optional[float], Optional[str], Optional[str]]:
+        """Próxima parada para GUI — excluye servidas y enriquece horario HUD."""
+        exclude = self.decider.served_station_bases()
+        self.conn.set_station_exclude_bases(exclude)
+        hud_entries, hud_names = self.conn.hud_schedule_context()
+        nxt = resolve_display_next_stop(
+            stations,
+            exclude_bases=exclude,
+            hud_stop_names=hud_names,
+        )
+        if nxt is None:
+            return None, None, None, None
+        name = nxt.get("name")
+        dist = nxt.get("distance_m")
+        arr = nxt.get("arrival")
+        dep = nxt.get("departure")
+        if name and hud_entries and (arr is None or dep is None):
+            eta_arr, eta_dep = schedule_times_for_station(hud_entries, str(name))
+            arr = arr or eta_arr
+            dep = dep or eta_dep
+        return (
+            str(name) if name else None,
+            float(dist) if dist is not None else None,
+            arr,
+            dep,
+        )
+
     def tick(self) -> AutopilotSnapshot:
         """Un ciclo de control. Devuelve instantánea actualizada."""
         t0 = time.perf_counter()
@@ -359,12 +402,25 @@ class AutopilotEngine:
             )
             if self.config.learn or (self._last_state_handle is not None
                                     and self._last_state_handle <= 3):
+                brake_cyl = self.telem.get("brake_cyl_bar")
                 self.decider.feed_learner(
                     speed_mph=speed,
                     handle_notch=self._last_state_handle,
                     gradient_pct=self.telem.get("gradient_pct") or 0.0,
                     accel_ms2=api_accel,
+                    brake_cyl_bar=brake_cyl,
                 )
+                if (
+                    not self._pressure_warn_logged
+                    and self._last_state_handle is not None
+                    and self._last_state_handle <= 3
+                    and brake_cyl is None
+                ):
+                    self._pressure_warn_logged = True
+                    self._log.warning(
+                        "brake_cyl_bar ausente en probe — learner/fill-time "
+                        "sin presión (recarga TelemetryProbeMod / UE4SS)",
+                    )
 
         rain = self.telem.get("rain_intensity", 0.0) or 0.0
         self.decider.set_rain_intensity(rain)
@@ -424,6 +480,7 @@ class AutopilotEngine:
         fps = 1.0 / (sum(self.loop_times) / len(self.loop_times)) if self.loop_times else 0.0
         self._loop_fps = fps
         self._last_tick_ms = elapsed * 1000.0
+        self._heartbeat_tick_count += 1
 
         self._log_heartbeat()
         self._log_pause_diag()
@@ -441,7 +498,12 @@ class AutopilotEngine:
             self._log.info("Mandos vía SendCommand.txt (UE4SS IPC)")
 
         _stations = list(self.telem.get("stations") or [])
-        _nxt_stop = self.decider.scheduled_next_stop(_stations)
+        (
+            _nxt_name,
+            _nxt_dist,
+            _nxt_arr,
+            _nxt_dep,
+        ) = self._resolve_next_stop_snapshot(_stations)
 
         learn_info = self._learn_status()
 
@@ -474,22 +536,10 @@ class AutopilotEngine:
                 or self.telem.get("doors_dmi") is True
             ),
             stations=_stations,
-            next_stop_name=(
-                _nxt_stop.get("name") if _nxt_stop
-                else self.telem.get("next_stop_name")
-            ),
-            next_stop_distance_m=(
-                _nxt_stop.get("distance_m") if _nxt_stop
-                else self.telem.get("next_stop_distance_m")
-            ),
-            next_stop_arrival=(
-                _nxt_stop.get("arrival") if _nxt_stop
-                else self.telem.get("next_stop_arrival")
-            ),
-            next_stop_departure=(
-                _nxt_stop.get("departure") if _nxt_stop
-                else self.telem.get("next_stop_departure")
-            ),
+            next_stop_name=_nxt_name,
+            next_stop_distance_m=_nxt_dist,
+            next_stop_arrival=_nxt_arr,
+            next_stop_departure=_nxt_dep,
             speed_limits_ahead=list(self.telem.get("speed_limits_ahead") or []),
             hwnd=self.hwnd,
             ocr_stop_dist_m=ocr_dist,
@@ -514,6 +564,7 @@ class AutopilotEngine:
             schedule_source=self.telem.get("schedule_source"),
             hud_timetable_id=self.telem.get("hud_timetable_id"),
             learn_enabled=self.config.learn,
+            schedule_slack_enabled=self.config.schedule_slack,
             learn_profile=learn_info["profile"],
             learn_done_cells=learn_info["done_cells"],
             learn_total_cells=learn_info["total_cells"],
@@ -540,6 +591,15 @@ class AutopilotEngine:
             label,
             "todas las muescas" if enabled else "solo refinado en freno",
         )
+
+    def set_schedule_slack_enabled(self, enabled: bool) -> None:
+        """Holgura de horario en frenada de estación (coast por ETA)."""
+        if enabled == self.config.schedule_slack:
+            return
+        self.config.schedule_slack = enabled
+        self.decider.set_schedule_slack_enabled(enabled)
+        label = "activada" if enabled else "desactivada"
+        self._log.info("Holgura de horario %s", label)
 
     def learn_status(self) -> LearnStatus:
         """Estado del perfil / learner para la GUI."""
@@ -591,7 +651,9 @@ class AutopilotEngine:
 
     def sleep_remainder(self, elapsed: float) -> None:
         target_dt = 1.0 / self.config.loop_hz if self.conn.mode != "manual" else 1.0
-        time.sleep(max(0.0, target_dt - elapsed))
+        sleep_s = max(0.0, target_dt - elapsed)
+        self._last_sleep_ms = sleep_s * 1000.0
+        time.sleep(sleep_s)
 
     def _detect_vehicle(self) -> None:
         if self._vehicle_profiled or self.conn.mode not in ("ue4ss", "tsw_api"):
@@ -619,6 +681,7 @@ class AutopilotEngine:
             else:
                 self.decider.set_vehicle_profile(veh)
             self._log.info("Perfil de tren cargado: %s", veh)
+            self._log_learner_state("perfil cargado")
             self._vehicle_profiled = True
 
     def _log_searching_hint(self) -> None:
@@ -673,11 +736,38 @@ class AutopilotEngine:
             hint,
         )
 
+    def _learner_snapshot(self) -> tuple[str, str, float, int]:
+        """Presión cilindro, last_reason, fill_s y fill_n para logs."""
+        telem = self.telem
+        p_bar = telem.get("brake_cyl_bar")
+        p_txt = f"{float(p_bar):.2f}" if p_bar is not None else "—"
+        physics = self.decider._physics
+        learner = physics.learner
+        lrn = str(getattr(learner, "last_reason", "") or "—")
+        if len(lrn) > 40:
+            lrn = lrn[:37] + "..."
+        fill_s = float(getattr(physics, "brake_fill_s", 0.0))
+        fill_n = int(getattr(learner, "_brake_fill_n", 0))
+        return p_txt, lrn, fill_s, fill_n
+
+    def _log_learner_state(self, prefix: str) -> None:
+        p_txt, lrn, fill_s, fill_n = self._learner_snapshot()
+        self._log.info(
+            "%s — P=%s BAR  fill=%.2fs (n=%d)  lrn=%s",
+            prefix, p_txt, fill_s, fill_n, lrn,
+        )
+
     def _log_heartbeat(self) -> None:
         """Estado cada ~2 s visible en panel Depuración."""
         now = time.monotonic()
         if now - self._heartbeat_t < 2.0:
             return
+        if self._heartbeat_wall_t > 0:
+            dt = now - self._heartbeat_wall_t
+            if dt > 0:
+                self._loop_hz_real = self._heartbeat_tick_count / dt
+        self._heartbeat_tick_count = 0
+        self._heartbeat_wall_t = now
         self._heartbeat_t = now
         t = self.telem
         spd = t.get("speed_mph")
@@ -689,17 +779,36 @@ class AutopilotEngine:
         next_lim = t.get("next_limit_mph")
         telem_age = t.get("telemetry_age_ms")
         telem_src = t.get("telemetry_source") or self.conn.mode
+        telem_poll = t.get("telem_poll_hz")
+        if telem_poll is None:
+            telem_poll = self.conn.telem_poll_hz()
         skip = self._control_skip_reason
         if self.decider.paused:
             skip = "paused"
+        p_txt, lrn, fill_s, fill_n = self._learner_snapshot()
+        lever = t.get("lever_notch", t.get("handle_notch"))
+        hud = t.get("hud_notch")
+        cmd_st = self.conn.command_state()
+        cmd_q = cmd_st.queue_depth
+        ack_ms = cmd_st.last_ack_ms
+        last_id = cmd_st.cmd_id
+        target_n = cmd_st.target_notch
+        match = (
+            "Y" if target_n is not None and lever is not None
+            and int(lever) == int(target_n) else
+            "N" if target_n is not None else "—"
+        )
         self._log.info(
-            "heartbeat modo=%s  hz=%.1f  tick=%.0fms  tgt=%.0fHz  "
+            "heartbeat modo=%s  loop_hz=%.1f  work=%.0fms  sleep=%.0fms  tgt=%.0fHz  "
             "spd=%s  lim=%s  next_lim=%s  elim=%.1f  seq=%s  "
             "dist=%s  probe=%s  frozen=%s  mandos=%s  ctrl=%s  "
-            "p1on=%s  telem=%s  age=%s",
+            "p1on=%s  telem=%s  age=%s  telem_poll=%s  "
+            "cmd_q=%d id=%d ack=%.0fms match=%s lever=%s hud=%s  "
+            "P=%s  fill=%.2fs/%d  lrn=%s",
             self.conn.mode,
-            self._loop_fps,
+            self._loop_hz_real,
             self._last_tick_ms,
+            self._last_sleep_ms,
             self.config.loop_hz,
             f"{spd:.1f}" if spd is not None else "—",
             f"{lim:.0f}" if lim is not None else "—",
@@ -714,6 +823,17 @@ class AutopilotEngine:
             "Y" if self.decider.p1_active else "N",
             telem_src,
             f"{float(telem_age):.0f}ms" if telem_age is not None else "—",
+            f"{float(telem_poll):.1f}Hz" if telem_poll else "—",
+            cmd_q,
+            last_id,
+            ack_ms,
+            match,
+            str(lever) if lever is not None else "—",
+            str(hud) if hud is not None else "—",
+            p_txt,
+            fill_s,
+            fill_n,
+            lrn,
         )
 
     def _log_pause_state(self, label: str) -> None:
@@ -842,11 +962,12 @@ class AutopilotEngine:
             except (TypeError, ValueError):
                 pass
         wd_txt = override if override and override != action else "—"
+        p_txt, lrn, fill_s, fill_n = self._learner_snapshot()
         line = (
             "spd=%5.1f  lim=%4.1f  elim=%5.1f  notch=%-2s  thr=%d  action=%-11s  "
             "final=%-11s  wd=%-11s  p1=%-10s  ipc=%s  fsm=%-10s  stop=%-24s  "
             "next_lim=%s@%sm  parada=%s  gap=%s  p1dbg=%s  p1on=%s  %s  "
-            "sched=%s  arr=%s  dep=%s  ack=%s  grad=%s"
+            "sched=%s  arr=%s  dep=%s  ack=%s  grad=%s  P=%s  fill=%.2fs/%d  lrn=%s"
         )
         args = (
             speed, limit,
@@ -871,6 +992,10 @@ class AutopilotEngine:
             dep,
             "Y" if telem.get("ack_required") else "N",
             f"{telem.get('gradient_pct') or 0.0:+.1f}%",
+            p_txt,
+            fill_s,
+            fill_n,
+            lrn,
         )
         if self._log_cycle_n <= 5:
             self._log.info(line, *args)

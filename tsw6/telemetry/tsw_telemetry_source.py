@@ -42,7 +42,7 @@ from tsw6.telemetry.driver_aid_parser import (
     parse_gradient_pct,
     parse_passenger_door_api,
     parse_track_data_stations,
-    select_next_scheduled_stop,
+    resolve_display_next_stop,
     _prune_zero_distance_limits,
 )
 from tsw6.hud.hud_timetable import HudTimetableStore, schedule_times_for_station
@@ -56,6 +56,12 @@ from tsw6.telemetry.tsw_ipc_bus import (
     release_controls,
 )
 from tsw6.telemetry.tsw_fast_telemetry import FastControlReader
+from tsw6.telemetry.control_channel import (
+    AsyncCommandWriter,
+    CommandState,
+    TelemetryReader,
+    DEFAULT_TELEM_HZ,
+)
 from tsw6.telemetry.tsw_ue4ss_reader import (
     ProbeSnapshot,
     default_getdata_path,
@@ -187,6 +193,16 @@ def _telem_from_probe(
         parsed["ind_brake_value"] = float(snap.loco_brake)
     if snap.dyn_brake is not None:
         parsed["dyn_brake_value"] = float(snap.dyn_brake)
+    if snap.brake_cyl_bar is not None:
+        parsed["brake_cyl_bar"] = float(snap.brake_cyl_bar)
+    if snap.lever_notch is not None:
+        parsed["lever_notch"] = int(snap.lever_notch)
+    if snap.handle_notch is not None:
+        parsed["hud_notch"] = int(snap.handle_notch)
+    if snap.last_cmd_id is not None:
+        parsed["last_cmd_id"] = int(snap.last_cmd_id)
+    if snap.last_ack_ok is not None:
+        parsed["last_ack_ok"] = bool(snap.last_ack_ok)
     _attach_probe_doors(parsed, snap)
 
     return parsed
@@ -240,8 +256,11 @@ class TswTelemetrySource:
         self._doors_dmi: Optional[bool] = None
         self._player_geo: Optional[tuple[float, float]] = None
         self._service_name: Optional[str] = None
+        self._station_exclude_bases: set[str] = set()
         self._api_ok_cache: Optional[bool] = None
         self._api_ok_ts = 0.0
+        self._telem_reader: Optional[TelemetryReader] = None
+        self._cmd_writer: Optional[AsyncCommandWriter] = None
 
     def try_connect_ue4ss(self) -> bool:
         """Conecta por GetData.txt sin intentar HTTP (barato para 10 Hz)."""
@@ -252,6 +271,7 @@ class TswTelemetrySource:
             return False
         self.mode = "ue4ss"
         self.last_probe_info = f"UE4SS probe ({self._ue4ss_path})"
+        self._ensure_telem_reader()
         self._poll_ue4ss(snap)
         self._ensure_api_client(silent=True)
         return True
@@ -292,7 +312,49 @@ class TswTelemetrySource:
             )
         return "searching"
 
+    def _ensure_telem_reader(self) -> TelemetryReader:
+        if self._telem_reader is None:
+            self._telem_reader = TelemetryReader(
+                self._ue4ss_path, hz=DEFAULT_TELEM_HZ)
+            self._telem_reader.start()
+        return self._telem_reader
+
+    def _ensure_cmd_writer(self) -> AsyncCommandWriter:
+        if self._cmd_writer is None:
+            self._cmd_writer = AsyncCommandWriter()
+            self._cmd_writer.start()
+        return self._cmd_writer
+
+    def telem_poll_hz(self) -> float:
+        if self._telem_reader is not None:
+            return self._telem_reader.poll_hz()
+        return 0.0
+
+    def command_state(self) -> CommandState:
+        if self._cmd_writer is not None:
+            return self._cmd_writer.state()
+        return CommandState()
+
+    def enqueue_control_value(self, control: str, val: float) -> bool:
+        """Encola mando IPC sin bloquear el bucle de control."""
+        if not self.has_ipc_control():
+            return self.set_control_value(control, val)
+        cmd_id = self._ensure_cmd_writer().enqueue_control(control, val)
+        return cmd_id > 0
+
+    def shutdown_channels(self) -> None:
+        if self._cmd_writer is not None:
+            self._cmd_writer.stop()
+            self._cmd_writer = None
+        if self._telem_reader is not None:
+            self._telem_reader.stop()
+            self._telem_reader = None
+
     def _read_ue4ss_snapshot(self) -> Optional[ProbeSnapshot]:
+        if self._telem_reader is not None:
+            snap, _ = self._telem_reader.get_snapshot()
+            if snap is not None:
+                return snap
         path = self._ue4ss_path
         if not path.is_file():
             return None
@@ -594,9 +656,30 @@ class TswTelemetrySource:
             if d is not None:
                 entry["distance_m"] = max(0.0, float(d) - delta_m)
 
+    def set_station_exclude_bases(self, bases: Optional[set[str]]) -> None:
+        """Paradas ya servidas (FSM) — no mostrar como próxima en telemetría."""
+        self._station_exclude_bases = set(bases or set())
+
+    def hud_schedule_context(
+        self,
+    ) -> tuple[Optional[list], Optional[list[str]]]:
+        if not self._hud_match:
+            return None, None
+        return (
+            self._hud_match.get("entries"),
+            self._hud_match.get("stop_names"),
+        )
+
     def _attach_next_stop(self, parsed: dict[str, Any],
                           stations: list[dict[str, Any]]) -> None:
-        nxt = select_next_scheduled_stop(stations)
+        hud_names = None
+        if self._hud_match:
+            hud_names = self._hud_match.get("stop_names")
+        nxt = resolve_display_next_stop(
+            stations,
+            exclude_bases=self._station_exclude_bases,
+            hud_stop_names=hud_names,
+        )
         if nxt is None:
             for key in (
                 "next_stop",
@@ -890,10 +973,13 @@ class TswTelemetrySource:
                     planning[key] = probe_planning[key]
 
         age_ms = 0.0
-        try:
-            age_ms = max(0.0, (time.time() - self._ue4ss_path.stat().st_mtime) * 1000.0)
-        except OSError:
-            pass
+        if self._telem_reader is not None:
+            _, age_ms = self._telem_reader.get_snapshot()
+        else:
+            try:
+                age_ms = max(0.0, (time.time() - self._ue4ss_path.stat().st_mtime) * 1000.0)
+            except OSError:
+                pass
         probe_fresh = self._probe_fresh(age_ms)
 
         parsed = _telem_from_probe(
@@ -939,6 +1025,9 @@ class TswTelemetrySource:
             self._vehicle_name = snap.vehicle
 
         self._apply_door_state(parsed)
+        poll_hz = self.telem_poll_hz()
+        if poll_hz > 0:
+            parsed["telem_poll_hz"] = poll_hz
         with self._telem_lock:
             self._telem.update(parsed)
 
@@ -1069,10 +1158,11 @@ class TswTelemetrySource:
         return "none"
 
     def arm_ipc_controls(self) -> None:
-        """Habilita flag Lua y purga archivos huérfanos previos."""
+        """Habilita flag Lua, arranca escritor async y purga archivos huérfanos."""
         purge_lua_commands()
         if self.has_ipc_control():
             enable_lua_commands()
+            self._ensure_cmd_writer()
 
     def purge_ipc_on_start(self) -> None:
         """Limpia IPC huérfano al arrancar autopilot."""
@@ -1080,6 +1170,7 @@ class TswTelemetrySource:
 
     def release_controls(self) -> None:
         """Neutro + purga IPC al cerrar autopilot."""
+        self.shutdown_channels()
         if self.has_ipc_control():
             release_controls()
 
@@ -1129,9 +1220,14 @@ class TswTelemetrySource:
             if result.get("ok"):
                 return True
             err = result.get("error", "?")
-            _log.warning(
-                "IPC mandos falló (%s) %s=%.3f — %s",
-                err, name, val, result.get("ack") or result)
+            if err == "ack_timeout":
+                _log.debug(
+                    "IPC mandos sin ack (%s) %s=%.3f — %s",
+                    err, name, val, result.get("ack") or result)
+            else:
+                _log.warning(
+                    "IPC mandos falló (%s) %s=%.3f — %s",
+                    err, name, val, result.get("ack") or result)
 
         if not self._ensure_api_client(silent=True):
             return False

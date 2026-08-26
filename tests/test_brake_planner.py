@@ -3,10 +3,15 @@
 import pytest
 
 from tsw6.autopilot.control_actions import BRAKE, COAST
+from tsw6.braking.v2.physics import (
+    MPH_TO_MS,
+    apply_zone_margin_m,
+    brake_command_apply_zone_m,
+    braking_distance_m,
+    should_emit_brake_command,
+)
 from tsw6.braking.v2.planner import (
     UK_SERVICE_PHASES,
-    apply_zone_margin_m,
-    braking_distance_m,
     plan_brake,
     plan_for_approach_targets,
     plan_for_speed_limits,
@@ -30,6 +35,69 @@ class TestBrakingPhysics:
         low = apply_zone_margin_m(5.0, 200.0)
         high = apply_zone_margin_m(25.0, 200.0)
         assert high > low
+
+    def test_should_emit_uses_physics_zone_not_fixed_60m(self):
+        """60 mph: zona ~67 m; perfil a 65 m debe emitir aunque apply_now sea False."""
+        zone = brake_command_apply_zone_m(speed_mph=60.0, apply_at_remaining_m=200.0)
+        assert zone > 60.0
+        assert should_emit_brake_command(
+            apply_now=False,
+            dist_start=65.0,
+            speed_mph=60.0,
+            apply_at_remaining_m=200.0,
+        )
+        assert not should_emit_brake_command(
+            apply_now=False,
+            dist_start=zone + 5.0,
+            speed_mph=60.0,
+            apply_at_remaining_m=200.0,
+        )
+
+    def test_brake_command_zone_from_dist_start(self):
+        speed_mph = 52.0
+        distance_m = 329.0
+        dist_start = 41.0
+        apply_at = distance_m - dist_start
+        zone = brake_command_apply_zone_m(
+            speed_mph=speed_mph,
+            distance_to_target_m=distance_m,
+            dist_start=dist_start,
+        )
+        assert zone == apply_zone_margin_m(speed_mph * MPH_TO_MS, apply_at)
+        assert should_emit_brake_command(
+            apply_now=False,
+            dist_start=dist_start,
+            speed_mph=speed_mph,
+            distance_to_target_m=distance_m,
+        )
+
+    def test_symmetric_zone_rejects_far_late_plan(self):
+        """Plan «tarde» lejos del objetivo: no ventana de prioridad estación."""
+        from tsw6.braking.v2.physics import is_in_brake_action_window
+
+        zone = brake_command_apply_zone_m(speed_mph=55.0, apply_at_remaining_m=900.0)
+        assert not is_in_brake_action_window(
+            -500.0,
+            speed_mph=55.0,
+            apply_at_remaining_m=900.0,
+        )
+        assert -500.0 < -zone
+        # Pero sí emitir comando si aún dentro del envelope de frenado
+        assert should_emit_brake_command(
+            apply_now=True,
+            dist_start=-500.0,
+            speed_mph=55.0,
+            distance_to_target_m=400.0,
+            apply_at_remaining_m=900.0,
+        )
+
+    def test_is_in_apply_zone_symmetric(self):
+        from tsw6.braking.v2.physics import is_in_apply_zone
+
+        assert is_in_apply_zone(40.0, 65.0)
+        assert is_in_apply_zone(-40.0, 65.0)
+        assert not is_in_apply_zone(80.0, 65.0)
+        assert not is_in_apply_zone(-80.0, 65.0)
 
 
 class TestPlanBrake:
@@ -74,7 +142,15 @@ class TestGovernorAction:
         plan = plan_brake(
             speed_mph=55.0, distance_to_target_m=200.0, target_speed_mph=30.0)
         assert plan and plan.active_step
-        plan.active_step.apply_now = True
+        step = plan.active_step
+        # Dentro del envelope tarde: debe emitir BRAKE aunque fuera de ±zona
+        assert should_emit_brake_command(
+            apply_now=step.apply_now,
+            dist_start=step.dist_start,
+            speed_mph=55.0,
+            distance_to_target_m=plan.distance_to_target_m,
+            apply_at_remaining_m=step.apply_at_remaining_m,
+        )
         action, _ = plan_to_governor_action(
             plan, speed_mph=55.0, throttle_notch=0, effective_limit=60.0)
         assert action == BRAKE

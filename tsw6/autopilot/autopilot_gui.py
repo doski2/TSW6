@@ -129,6 +129,22 @@ class AutopilotApp:
             foreground="#666",
         ).pack(side=tk.LEFT, padx=8)
 
+        row4 = ttk.Frame(ctrl)
+        row4.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self.var_schedule_slack = tk.BooleanVar(
+            value=self.engine.config.schedule_slack)
+        ttk.Checkbutton(
+            row4,
+            text="Holgura de horario (coast por ETA)",
+            variable=self.var_schedule_slack,
+            command=self._toggle_schedule_slack,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            row4,
+            text="Desmarcado: frenar solo por distancia/física (recomendado en pruebas)",
+            foreground="#666",
+        ).pack(side=tk.LEFT, padx=8)
+
         mid = ttk.Frame(self.root)
         mid.pack(fill=tk.BOTH, expand=True, padx=_PADX, pady=_PADY)
 
@@ -303,6 +319,9 @@ class AutopilotApp:
 
     def _toggle_learn(self) -> None:
         self.engine.set_learn_enabled(bool(self.var_learn.get()))
+
+    def _toggle_schedule_slack(self) -> None:
+        self.engine.set_schedule_slack_enabled(bool(self.var_schedule_slack.get()))
 
     def _toggle_pause(self) -> None:
         paused = self.engine.toggle_pause()
@@ -479,7 +498,7 @@ class AutopilotApp:
     def _refresh_planning(self, s: AutopilotSnapshot) -> None:
         units = s.distance_units
         src = s.schedule_source or "—"
-        if s.next_stop_name and s.next_stop_distance_m is not None:
+        if s.next_stop_name:
             extra = ""
             if s.schedule_source == "hud_db" and s.hud_timetable_id:
                 extra = f"  [horario HUD #{s.hud_timetable_id}]"
@@ -493,10 +512,14 @@ class AutopilotApp:
                 if s.next_stop_departure:
                     parts.append(f"dep {s.next_stop_departure}")
                 sched = "  ·  " + "  ".join(parts)
+            dist_txt = (
+                format_distance(s.next_stop_distance_m, units)
+                if isinstance(s.next_stop_distance_m, (int, float))
+                else "—"
+            )
             self.lbl_next_stop.configure(
                 text=(f"Próxima parada: {s.next_stop_name}  @ "
-                      f"{format_distance(s.next_stop_distance_m, units)}"
-                      f"{sched}{extra}"))
+                      f"{dist_txt}{sched}{extra}"))
         elif s.stations:
             if s.schedule_source == "hud_db":
                 hint = "sin coincidencia TrackData ↔ horario HUD"
@@ -584,8 +607,12 @@ class AutopilotApp:
 
     def _refresh_learn(self, s: AutopilotSnapshot) -> None:
         mode = "ON" if s.learn_enabled else "OFF (solo freno)"
+        sched = "ON" if s.schedule_slack_enabled else "OFF"
         self.lbl_learn_profile.configure(
-            text=f"Perfil: {s.learn_profile or '—'}   ·   Auto-aprender: {mode}")
+            text=(
+                f"Perfil: {s.learn_profile or '—'}   ·   "
+                f"Auto-aprender: {mode}   ·   Holgura horario: {sched}"
+            ))
         self.lbl_learn_state.configure(text=f"Learner: {s.learn_reason or '—'}")
 
         total = s.learn_total_cells
@@ -680,6 +707,10 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
         parser.add_argument("--no-learn", dest="learn", action="store_false",
                             help="No actualizar perfil en vivo (por defecto: sí aprende)")
         parser.set_defaults(learn=True)
+        parser.add_argument("--schedule-slack", dest="schedule_slack",
+                            action="store_true",
+                            help="Activar holgura de horario en frenada (por defecto: off)")
+        parser.set_defaults(schedule_slack=False)
         parser.add_argument("--stop", type=float, default=None, metavar="MILLAS",
                             help="Distancia a próxima parada en millas")
         args = parser.parse_args()
@@ -688,6 +719,7 @@ def launch(config: Optional[AutopilotConfig] = None) -> None:
             no_control=args.no_control,
             manual=args.manual,
             learn=args.learn,
+            schedule_slack=args.schedule_slack,
             stop_miles=args.stop,
             loop_hz=_LOOP_HZ,
         )

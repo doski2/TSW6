@@ -466,6 +466,47 @@ def parse_track_data_stations(track: Any) -> list[dict[str, Any]]:
     return sorted(seen.values(), key=lambda x: x["distance_m"])
 
 
+def resolve_display_next_stop(
+    stations: Optional[list],
+    *,
+    exclude_bases: Optional[set[str]] = None,
+    hud_stop_names: Optional[list[str]] = None,
+    min_distance_m: float = 100.0,
+) -> Optional[dict[str, Any]]:
+    """
+    Próxima parada para GUI/P1, excluyendo andenes ya servidos.
+
+  Si TrackData aún no lista la siguiente, usa el orden del horario HUD.
+    """
+    nxt = select_next_scheduled_stop(
+        stations,
+        min_distance_m=min_distance_m,
+        exclude_bases=exclude_bases,
+    )
+    if nxt is not None:
+        return nxt
+    if not hud_stop_names:
+        return None
+    exclude = exclude_bases or set()
+    track_by_base: dict[str, dict[str, Any]] = {}
+    for st in stations or []:
+        base = station_base_name(str(st.get("name", "")))
+        if not base:
+            continue
+        prev = track_by_base.get(base)
+        dist = float(st.get("distance_m") or 0)
+        if prev is None or dist < float(prev.get("distance_m") or 0):
+            track_by_base[base] = dict(st)
+    for name in hud_stop_names:
+        base = station_base_name(name)
+        if not base or base in exclude:
+            continue
+        if base in track_by_base:
+            return track_by_base[base]
+        return {"name": name, "scheduled": True}
+    return None
+
+
 def select_next_scheduled_stop(
     stations: Optional[list],
     *,

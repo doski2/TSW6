@@ -16,6 +16,7 @@ from typing import Optional
 
 from tsw6.braking.v2.physics import (
     BrakePhysicsContext,
+    DEFAULT_BRAKE_FILL_S,
     braking_distance_mph,
     should_brake_for_target,
 )
@@ -44,6 +45,7 @@ class TrainPhysics:
         self.coast_decel_ms2  = COAST_DECEL_MS2
 
         self.brake_transition_s: float = BRAKE_TRANSITION_S
+        self.brake_fill_s: float = DEFAULT_BRAKE_FILL_S
 
         # Clima: factor de reducción de adherencia 0.0 (seco) … 1.0 (tormenta)
         self._rain_intensity: float = 0.0
@@ -66,17 +68,24 @@ class TrainPhysics:
             self.target_decel_ms2 = consts["TARGET_DECEL_MS2"]
         if "COAST_DECEL_MS2"  in consts:
             self.coast_decel_ms2  = consts["COAST_DECEL_MS2"]
+        if "BRAKE_FILL_S" in consts:
+            self.brake_fill_s = float(consts["BRAKE_FILL_S"])
         _log.info(
-            "Constantes físicas: MAX_DECEL=%.3f  TARGET_DECEL=%.3f  COAST=%.3f",
+            "Constantes físicas: MAX_DECEL=%.3f  TARGET_DECEL=%.3f  COAST=%.3f  FILL=%.2fs",
             self.max_decel_ms2, self.target_decel_ms2, self.coast_decel_ms2,
+            self.brake_fill_s,
         )
 
     def feed_learner(self, speed_mph: float, current_notch: int,
-                     grad_pct: float, accel_ms2: Optional[float]) -> None:
+                     grad_pct: float, accel_ms2: Optional[float],
+                     brake_cyl_bar: Optional[float] = None) -> None:
         """Alimenta el aprendiz online (layout combined)."""
         if isinstance(self.learner, FreightLearner):
             return
-        updated = self.learner.feed(speed_mph, current_notch, grad_pct, accel_ms2)
+        updated = self.learner.feed(
+            speed_mph, current_notch, grad_pct, accel_ms2,
+            brake_cyl_bar=brake_cyl_bar,
+        )
         if updated:
             _log.info("OnlineLearner actualizó constantes: %s", updated)
             self._apply_constants(updated)

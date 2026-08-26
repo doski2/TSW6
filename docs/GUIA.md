@@ -5,6 +5,8 @@
 | Actividad | TSW6 | UE4SS probe | `-HTTPAPI` |
 | --- | --- | --- | --- |
 | Calibrar (`aprender.bat`) | ✅ | ✅ recomendado | No |
+| Validar freno aire (`validar_freno.bat`) | ✅ | ✅ opcional | **Sí** (presión + effort) |
+| Laboratorio frenos GUI | `validar_freno.bat` opción 1 | Probe + HTTP | CSV `logs/brake_physics/` |
 | Monitor (`probe_ue4ss.bat`) | ✅ | ✅ | No |
 | Autopiloto (`iniciar_autopilot.bat`) | ✅ | ✅ recomendado | **Sí** (mandos HTTP fallback + **estaciones/horario HUD**) |
 | Horarios HUD (`preparar_db_hud.bat`) | ✅ | — | Recomendado (`PlayerInfo.geoLocation`) |
