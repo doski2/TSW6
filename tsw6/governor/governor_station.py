@@ -18,7 +18,12 @@ from tsw6.telemetry.driver_aid_parser import (
 )
 from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
 from tsw6.governor.governor_constants import (
-    STATION_APPROACH_M, STATION_STOPPED_MPH, STATION_DWELL_TIMEOUT_S,
+    STATION_STOPPED_MPH, STATION_DWELL_TIMEOUT_S,
+)
+from tsw6.braking.v2.physics import (
+    MPH_TO_MS,
+    apply_zone_margin_m,
+    brake_reaction_margin_m,
 )
 
 _log = logging.getLogger("tsw.station")
@@ -134,7 +139,11 @@ class StationFSM:
         # ── Transición None → APPROACHING / STOPPED ──────────────────────────
         if self.state is None and next_stop is not None:
             brake_needed = braking_dist_fn(speed_mph, 0.0)
-            if next_stop["distance_m"] <= brake_needed + STATION_APPROACH_M:
+            speed_ms = speed_mph * MPH_TO_MS
+            react_m = brake_reaction_margin_m(speed_ms)
+            approach_pad_m = react_m + apply_zone_margin_m(
+                speed_ms, brake_needed + react_m)
+            if next_stop["distance_m"] <= brake_needed + approach_pad_m:
                 _dep_base = (self._last_departed_name or "").split(",")[0].strip().lower()
                 _stn_base = next_stop["name"].split(",")[0].strip().lower()
                 _in_cooldown = (
@@ -174,7 +183,7 @@ class StationFSM:
         if self.state == "STOPPED":
             return self._handle_stopped(
                 speed_mph, doors_open, doors_dmi, ocr_stop_dist_m, ocr_task,
-                doors_telem=doors_telem)
+                doors_telem=doors_telem, next_stop=next_stop)
 
         # ── Estado: APPROACHING ──────────────────────────────────────────────
         if self.state == "APPROACHING":
@@ -184,7 +193,9 @@ class StationFSM:
                 braking_dist_fn, eff_max_decel, eff_k_stop,
                 doors_telem=doors_telem,
                 next_limit_mph=next_limit_mph,
-                distance_next_m=distance_next_m)
+                distance_next_m=distance_next_m,
+                stations=stations,
+            )
 
         return None, 0.0
 
@@ -247,7 +258,8 @@ class StationFSM:
     def _handle_stopped(self, speed_mph: float, doors_open: bool, doors_dmi: Optional[bool],
                         ocr_stop_dist_m: Optional[float],
                         ocr_task: Optional[str],
-                        *, doors_telem: Optional[bool] = None) -> Tuple[Optional[str], float]:
+                        *, doors_telem: Optional[bool] = None,
+                        next_stop: Optional[dict] = None) -> Tuple[Optional[str], float]:
         """Gestiona el estado STOPPED: puertas, dwell y transición a DEPARTING."""
         if self._handle_door_service_at_stop(
             speed_mph,
@@ -258,50 +270,40 @@ class StationFSM:
             ocr_task=ocr_task,
         ):
             return "HOLD", 0.0
-
-        effective_doors, _ocr_door_src = resolve_station_door_state(
-            doors_telem=doors_telem,
-            doors_dmi=doors_dmi,
-            doors_open=doors_open,
-            ocr_task=ocr_task,
-            ocr_stop_dist_m=ocr_stop_dist_m,
-        )
-
-        if effective_doors:
-            if not self._doors_opened:
-                _log.info("FSM: STOPPED puertas abiertas (src=%s)  (%s)",
-                          _ocr_door_src, self.name or "?")
-            self._doors_opened = True
-            _dwell_s = 3.0 if not self._we_stopped else 15.0
-            _dwell_label = " cold-start" if not self._we_stopped else " doors-stuck"
-            if time.time() - self._stopped_at >= _dwell_s:
-                _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s, src=%s)  (%s)",
-                          _dwell_s, _dwell_label, _ocr_door_src, self.name or "?")
-                self.state = "DEPARTING"
-                self._doors_opened = False
-        elif self._doors_opened and not effective_doors:
-            self._mark_current_stop_served()
-            _log.info("FSM: STOPPED → DEPARTING (src=%s)  (%s)",
-                      _ocr_door_src, self.name or "?")
-            self.state  = "DEPARTING"
-            self._doors_opened  = False
-        else:
-            if self._doors_opened:
-                dwell_s = 15.0
-                timeout_type = " doors-open-no-close"
-            else:
-                if doors_telem is None and doors_dmi is None:
-                    dwell_s = STATION_DWELL_TIMEOUT_S
-                    timeout_type = " no-door-data"
-                else:
-                    dwell_s = STATION_DWELL_TIMEOUT_S if self._we_stopped else 3.0
-                    timeout_type = "" if self._we_stopped else " cold-start"
+        # Timeout: probe sin dato (None) o cerrado todo el dwell (lua=0, nunca 1).
+        no_open_cycle = not self._doors_opened
+        no_sensor = doors_telem is None and doors_dmi is None
+        if no_open_cycle and (no_sensor or doors_telem is False):
+            dwell_s = STATION_DWELL_TIMEOUT_S
             if time.time() - self._stopped_at >= dwell_s:
-                _log.info("FSM: STOPPED → DEPARTING (timeout %.0fs%s)  (%s)",
-                          dwell_s, timeout_type, self.name or "?")
+                self._mark_current_stop_served()
+                _log.info(
+                    "FSM: STOPPED → DEPARTING (timeout %.0fs puertas lua=%s dmi=%s)  (%s)",
+                    dwell_s, doors_telem, doors_dmi, self.name or "?",
+                )
                 self.state = "DEPARTING"
                 self._doors_opened = False
         return "HOLD", 0.0
+
+    def _approaching_api_dist_m(
+        self,
+        next_stop: Optional[dict],
+        stations: Optional[list] = None,
+    ) -> float:
+        """Distancia al andén de la FSM, no al next_stop ya saltado (C.5)."""
+        if self.name:
+            tbase = station_base_name(self.name)
+            for st in stations or []:
+                name = st.get("name")
+                if name and station_base_name(str(name)) == tbase:
+                    return float(st.get("distance_m") or 0.0)
+            if next_stop:
+                nbase = station_base_name(str(next_stop.get("name") or ""))
+                if nbase != tbase:
+                    return 0.0
+        if next_stop:
+            return float(next_stop.get("distance_m") or 0.0)
+        return 0.0
 
     def _handle_approaching(self, speed_mph: float, limit_mph: float,
                             next_stop: Optional[dict], doors_open: bool,
@@ -312,9 +314,16 @@ class StationFSM:
                             *, doors_telem: Optional[bool] = None,
                             next_limit_mph: Optional[float] = None,
                             distance_next_m: Optional[float] = None,
+                            stations: Optional[list] = None,
                             ) -> Tuple[Optional[str], float]:
         """Gestiona el estado APPROACHING: calibración OCR, perfil cinemático y transición a STOPPED."""
-        api_dist = next_stop["distance_m"] if next_stop else 0.0
+        api_dist = self._approaching_api_dist_m(next_stop, stations)
+        next_is_other = False
+        if self.name and next_stop:
+            next_is_other = (
+                station_base_name(str(next_stop.get("name") or ""))
+                != station_base_name(self.name)
+            )
 
         if self._handle_door_service_at_stop(
             speed_mph,
@@ -362,7 +371,15 @@ class StationFSM:
         stop_window = max(50.0, plat_len / 2.0) if plat_len else 50.0
 
         # Transición APPROACHING → STOPPED
-        if speed_mph <= STATION_STOPPED_MPH and stop_dist_m < stop_window:
+        at_platform = (
+            speed_mph <= STATION_STOPPED_MPH
+            and (
+                stop_dist_m < stop_window
+                or next_is_other
+                or (self._we_stopped and stop_dist_m < 150.0)
+            )
+        )
+        if at_platform:
             _log.info("FSM: APPROACHING → STOPPED  '%s'  stop_dist=%.1fm",
                       self.name or "?", stop_dist_m)
             self.state               = "STOPPED"

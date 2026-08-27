@@ -1,6 +1,9 @@
 """
-TSW6 API Monitor - Lectura de telemetría en tiempo real
+TSW6 API Monitor - Lectura de telemetría en tiempo real + prueba de freno HTTP.
+
 Requiere: TSW6 corriendo con -HTTPAPI  |  pip install requests colorama
+
+Modos: monitor | test-brake | test-ipc | discover | snapshot | raw
 """
 
 from __future__ import annotations
@@ -29,8 +32,29 @@ except ImportError:
     class Style:
         BRIGHT = RESET_ALL = ""
 
-from tsw6.telemetry.tsw_api_client import TswApiClient, find_api_key, get_key_path
+from tsw6.telemetry.tsw_api_client import (
+    TswApiClient,
+    api_driver_input_path,
+    encode_control_path,
+    find_api_key,
+    get_key_path,
+)
+from tsw6.telemetry.tsw_command_bus import (
+    combined_notch_to_value,
+    dispatch_combined_notch,
+)
 from tsw6.telemetry.tsw_fast_telemetry import FastControlReader
+from tsw6.telemetry.tsw_ipc_bus import (
+    bridge_dir,
+    dispatch_ipc_combined_notch,
+    enable_lua_commands,
+    purge_lua_commands,
+)
+from tsw6.telemetry.tsw_ue4ss_reader import (
+    ProbeSnapshot,
+    default_getdata_path,
+    read_probe_file,
+)
 
 DRIVABLE = "CurrentDrivableActor"
 DEFAULT_INTERVAL = 0.15
@@ -382,6 +406,310 @@ def monitor_loop(client: TswApiClient, key_path: Path, interval: float = DEFAULT
         print(color("\n\nMonitor detenido.\n", Fore.YELLOW))
 
 
+def _fmt_patch_result(result: dict[str, Any]) -> str:
+    parts = [str(result.get("error") or ("ok" if result.get("ok") else "?"))]
+    if result.get("message"):
+        parts.append(f"msg={result['message']}")
+    if result.get("via"):
+        parts.append(f"via={result['via']}")
+    if result.get("hud_notch") is not None:
+        parts.append(f"hud={result['hud_notch']}")
+    if result.get("target_notch") is not None:
+        parts.append(f"tgt={result['target_notch']}")
+    return " ".join(parts)
+
+
+def _read_input_raw(client: TswApiClient, control: str) -> Any:
+    """GET crudo de InputValue (incluye Result/Message si la API falla)."""
+    api_path = api_driver_input_path(control)
+    encoded = encode_control_path(f"{api_path}.InputValue")
+    return client.get_json(f"/get/{encoded}")
+
+
+def test_brake(client: TswApiClient) -> int:
+    """
+    Prueba escritura HTTP del freno combinado UK (V2.3).
+
+    Misma ruta que el autopilot: dispatch_combined_notch → DriverInput.PowerBrakeHandle.
+    """
+    print(color("\n🧪 Prueba de freno HTTP (Class 323 / combined)\n", Fore.CYAN))
+    print("  Tren en cabina, master key ON, MCB freno ON.")
+    print("  Recomendado: parado o velocidad baja antes de pulsar Enter.\n")
+
+    if not client.probe():
+        print(color("  ✗ API no responde — arranca TSW6 con -HTTPAPI", Fore.RED))
+        return 1
+
+    # Calentar sesión HTTP (primera petición ~2 s en TSW)
+    _fetch_nodes(client, dict(FAST_HUD_READS))
+    hud0 = client.read_hud_combined_notch()
+    pbh_in = client.get_input_value("PowerBrakeHandle")
+    pbh_raw = _read_input_raw(client, "PowerBrakeHandle")
+    master = client.get_input_value("MasterKey")
+
+    print(color("  Estado inicial", Fore.WHITE))
+    print(f"    HUD muesca UK:     {hud0 if hud0 is not None else '?'}")
+    print(f"    PBH InputValue:    {pbh_in if pbh_in is not None else '?'}")
+    print(f"    MasterKey:         {master if master is not None else '?'}")
+    if isinstance(pbh_raw, dict) and pbh_raw.get("Result") != "Success":
+        print(color(f"    GET PBH raw:       {pbh_raw}", Fore.YELLOW))
+
+    try:
+        input(color("\n  Enter → enviar B1 (muesca 3)… ", Fore.GREEN))
+    except EOFError:
+        pass
+
+    target = 3
+    val = combined_notch_to_value(target)
+    print(color(f"\n  PATCH combined → muesca {target} (cmd={val:.3f})", Fore.CYAN))
+    result = dispatch_combined_notch(client, target, timeout=4.0)
+    print(f"    Resultado: {_fmt_patch_result(result)}")
+    if not result.get("ok") and result.get("body"):
+        print(f"    Body: {str(result.get('body'))[:200]}")
+
+    time.sleep(0.35)
+    hud1 = client.read_hud_combined_notch()
+    pbh1 = client.get_input_value("PowerBrakeHandle")
+    print(color("\n  Tras B1", Fore.WHITE))
+    print(f"    HUD muesca UK:     {hud1 if hud1 is not None else '?'}")
+    print(f"    PBH InputValue:    {pbh1 if pbh1 is not None else '?'}")
+
+    moved = (
+        hud0 is not None and hud1 is not None and int(hud1) != int(hud0)
+    )
+    on_target = hud1 is not None and abs(int(hud1) - int(target)) <= 1
+    patch_ok = bool(result.get("ok"))
+
+    if patch_ok and on_target and moved:
+        print(color("\n  ✓ PASS — PATCH ok y HUD en muesca objetivo", Fore.GREEN))
+        ok = True
+    elif on_target and not moved:
+        print(color(
+            f"\n  ✗ FAIL — HUD sigue en {hud1} (sin movimiento; PATCH no tuvo efecto)",
+            Fore.RED,
+        ))
+        ok = False
+    elif patch_ok:
+        print(color("\n  ~ WARN — PATCH ok pero HUD no confirma muesca", Fore.YELLOW))
+        ok = False
+    else:
+        print(color("\n  ✗ FAIL — PATCH rechazado o sin efecto", Fore.RED))
+        ok = False
+        if str(result.get("message") or "") == "Not Set":
+            print(color(
+                "    DriverInput no enlazado — HTTP no puede escribir la palanca.",
+                Fore.YELLOW,
+            ))
+        if isinstance(pbh_raw, dict) and "failed to return valid data" in str(
+            pbh_raw.get("Message", "")
+        ):
+            print(color(
+                "    El juego acepta mandos por teclas A/D (SendInput) — mismo path que jugador.",
+                Fore.CYAN,
+            ))
+
+    try:
+        input(color("\n  Enter → neutro (muesca 4)… ", Fore.GREEN))
+    except EOFError:
+        pass
+
+    neutral = 4
+    print(color(f"\n  PATCH → muesca {neutral} (neutro)", Fore.CYAN))
+    release = dispatch_combined_notch(client, neutral, timeout=4.0)
+    print(f"    Resultado: {_fmt_patch_result(release)}")
+    hud2 = client.read_hud_combined_notch()
+    print(f"    HUD final:         {hud2 if hud2 is not None else '?'}\n")
+    return 0 if ok else 1
+
+
+PROBE_STALE_S = 2.5
+IPC_TEST_ACK_TIMEOUT_S = 0.35
+IPC_TEST_LEVER_WAIT_S = 2.5
+
+
+def _probe_snapshot() -> Optional[ProbeSnapshot]:
+    return read_probe_file(default_getdata_path())
+
+
+def _probe_is_fresh(snap: Optional[ProbeSnapshot]) -> bool:
+    if snap is None or snap.seq is None or snap.speed_ms is None:
+        return False
+    path = default_getdata_path()
+    if not path.is_file():
+        return False
+    try:
+        return (time.time() - path.stat().st_mtime) <= PROBE_STALE_S
+    except OSError:
+        return False
+
+
+def _probe_lever(snap: Optional[ProbeSnapshot] = None) -> Optional[int]:
+    snap = snap if snap is not None else _probe_snapshot()
+    if snap is None:
+        return None
+    return snap.combined_handle_notch()
+
+
+def _wait_probe_lever(
+    target: int,
+    *,
+    timeout_s: float = IPC_TEST_LEVER_WAIT_S,
+) -> tuple[bool, Optional[int]]:
+    deadline = time.monotonic() + timeout_s
+    last: Optional[int] = None
+    while time.monotonic() < deadline:
+        snap = _probe_snapshot()
+        last = _probe_lever(snap)
+        if last is not None and abs(int(last) - int(target)) <= 1:
+            return True, last
+        time.sleep(0.05)
+    return False, last
+
+
+def _fmt_ipc_result(result: dict[str, Any]) -> str:
+    parts = [
+        "ok" if result.get("ok") else "FAIL",
+        f"err={result.get('error')}" if result.get("error") else "",
+        f"ack={result.get('ack_ms', 0):.0f}ms" if result.get("ack_ms") else "",
+        f"via={result.get('channel', 'ipc')}",
+    ]
+    ack = result.get("ack")
+    if isinstance(ack, dict) and ack.get("cmd_id") is not None:
+        parts.append(f"cmd_id={ack['cmd_id']}")
+    return " ".join(p for p in parts if p)
+
+
+def test_ipc() -> int:
+    """
+    Prueba mandos solo por IPC (SendCommand.txt → Lua → UE).
+
+    Sin HTTP ni teclado. Requiere probe UE4SS build ``n`` (sin SetCurrentNotchIndex).
+    """
+    getdata = default_getdata_path()
+    print(color("\n🧪 Prueba de freno IPC (Lua → UE, sin HTTP)\n", Fore.CYAN))
+    print("  Requisitos:")
+    print("    • TSW6 en cabina (master key ON, MCB freno ON)")
+    print("    • install_ue4ss_probe.bat  →  reiniciar TSW  →  F7 ON")
+    print(f"    • GetData activo: {getdata}")
+    print(f"    • Bridge IPC:     {bridge_dir()}\n")
+
+    purge_lua_commands()
+    snap = _probe_snapshot()
+    if not _probe_is_fresh(snap):
+        print(color(
+            "  ✗ Probe no activo — F7 ON en cabina o reinstala el mod (build 20260827n)",
+            Fore.RED,
+        ))
+        if snap is None:
+            print(f"    No se lee {getdata}")
+        else:
+            print(f"    seq={snap.seq}  age>{PROBE_STALE_S}s o línea incompleta")
+        return 1
+
+    lever0 = _probe_lever(snap)
+    print(color("  Estado inicial (GetData)", Fore.WHITE))
+    print(f"    lever_notch:       {lever0 if lever0 is not None else '?'}")
+    print(f"    seq:               {snap.seq if snap else '?'}")
+    print(f"    last_cmd_id:       {snap.last_cmd_id if snap else '?'}")
+    print(f"    last_ack_ok:       {snap.last_ack_ok if snap else '?'}")
+
+    try:
+        input(color("\n  Enter → enviar B1 vía IPC (muesca 3)… ", Fore.GREEN))
+    except EOFError:
+        pass
+
+    target = 3
+    cmd_id = 1
+    val = combined_notch_to_value(target)
+    enable_lua_commands()
+    print(color(
+        f"\n  IPC SendCommand → muesca {target} (cmd={val:.3f} id={cmd_id})",
+        Fore.CYAN,
+    ))
+    result = dispatch_ipc_combined_notch(
+        target,
+        cmd_id=cmd_id,
+        ack_timeout_s=IPC_TEST_ACK_TIMEOUT_S,
+    )
+    print(f"    Resultado:         {_fmt_ipc_result(result)}")
+
+    time.sleep(0.08)
+    snap1 = _probe_snapshot()
+    lever1 = _probe_lever(snap1)
+    on_target, lever_after = _wait_probe_lever(target)
+    if lever_after is not None:
+        lever1 = lever_after
+
+    print(color("\n  Tras B1 (GetData)", Fore.WHITE))
+    print(f"    lever_notch:       {lever1 if lever1 is not None else '?'}")
+    if snap1:
+        print(f"    last_cmd_id:       {snap1.last_cmd_id}")
+        print(f"    last_ack_ok:       {snap1.last_ack_ok}")
+
+    moved = (
+        lever0 is not None
+        and lever1 is not None
+        and int(lever1) != int(lever0)
+    )
+    ack_ok = bool(result.get("ok"))
+    at_target = lever1 is not None and abs(int(lever1) - int(target)) <= 1
+
+    if ack_ok and at_target and moved:
+        print(color("\n  ✓ PASS — ACK Lua ok y lever_notch en objetivo", Fore.GREEN))
+        ok = True
+    elif at_target and not moved:
+        print(color(
+            f"\n  ✗ FAIL — lever sigue en {lever1} (IPC no movió la palanca)",
+            Fore.RED,
+        ))
+        ok = False
+    elif ack_ok and not at_target:
+        print(color(
+            f"\n  ~ WARN — ACK ok pero lever={lever1} (objetivo {target})",
+            Fore.YELLOW,
+        ))
+        if not on_target:
+            print(color(
+                "    Revisa UE4SS.log: IPC write PBH / PBH write OK",
+                Fore.YELLOW,
+            ))
+        ok = False
+    else:
+        print(color("\n  ✗ FAIL — ACK Lua rechazado o timeout", Fore.RED))
+        err = str(result.get("error") or "")
+        if err == "lua_rejected":
+            print(color(
+                "    Lua no pudo escribir PowerBrakeHandle — F9 dump en cabina",
+                Fore.YELLOW,
+            ))
+        elif err == "ack_timeout":
+            print(color(
+                "    Sin ACK — ¿F7 ON? ¿flag TSW6ApplyCommands.flag?",
+                Fore.YELLOW,
+            ))
+        ok = False
+
+    try:
+        input(color("\n  Enter → neutro vía IPC (muesca 4)… ", Fore.GREEN))
+    except EOFError:
+        pass
+
+    neutral = 4
+    enable_lua_commands()
+    print(color(f"\n  IPC → muesca {neutral} (neutro)", Fore.CYAN))
+    release = dispatch_ipc_combined_notch(
+        neutral,
+        cmd_id=2,
+        ack_timeout_s=IPC_TEST_ACK_TIMEOUT_S,
+    )
+    print(f"    Resultado:         {_fmt_ipc_result(release)}")
+    _wait_probe_lever(neutral, timeout_s=1.5)
+    lever2 = _probe_lever()
+    print(f"    lever_notch final: {lever2 if lever2 is not None else '?'}\n")
+    purge_lua_commands()
+    return 0 if ok else 1
+
+
 def save_snapshot(client: TswApiClient, filename: str = "tsw_snapshot.json") -> dict[str, Any]:
     """Guarda una captura de telemetría en JSON."""
     data = collect_telemetry(client)
@@ -400,8 +728,11 @@ def _parse_args() -> tuple[str, float]:
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg in ("discover", "snapshot", "raw", "monitor"):
-            modo = arg
+        if arg in (
+            "discover", "snapshot", "raw", "monitor",
+            "test-brake", "test_brake", "test-ipc", "test_ipc",
+        ):
+            modo = arg.replace("_", "-")
         elif arg in ("--interval", "-i"):
             i += 1
             if i < len(args):
@@ -417,6 +748,11 @@ if __name__ == "__main__":
     print(color("  TSW6 API MONITOR  |  API externa Dovetail", Fore.CYAN))
     print(color("═" * 60 + "\n", Fore.CYAN))
 
+    modo, interval = _parse_args()
+
+    if modo == "test-ipc":
+        sys.exit(test_ipc())
+
     key = find_api_key()
     key_path = get_key_path()
     if not key or key_path is None:
@@ -428,7 +764,6 @@ if __name__ == "__main__":
     print(color(f"  ✓ Key: {key[:10]}...{key[-5:]}", Fore.GREEN))
 
     client = TswApiClient(key, timeout=4.0)
-    modo, interval = _parse_args()
 
     if modo == "discover":
         datos = discover_endpoints(client)
@@ -449,6 +784,9 @@ if __name__ == "__main__":
                 time.sleep(interval)
         except KeyboardInterrupt:
             pass
+
+    elif modo == "test-brake":
+        sys.exit(test_brake(client))
 
     else:
         monitor_loop(client, key_path, interval=interval)

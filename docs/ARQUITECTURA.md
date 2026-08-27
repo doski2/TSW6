@@ -42,11 +42,11 @@ Detalle frenado P1: [BRAKE_V2.md](BRAKE_V2.md). Paridad Dastsc:
 | 2 límites adelante | ✅ `GetData.txt` | ✅ `DriverAid.Data` |
 | Estaciones / horario | No | ✅ `TrackData` + `tsw_hud.db` |
 | `PlayerInfo.geoLocation` | No | ✅ match horario HUD |
-| Escribir mandos | ✅ `SendCommand.txt` | ✅ PATCH (fallback) |
+| Escribir mandos | ✅ `SendCommand.txt` → Lua UE4SS (sin HTTP) | ✅ PATCH (fallback Python) |
 
 **Calibración** (`aprender.bat`): solo lectura → UE4SS basta.
-**Autopiloto mandos:** IPC (sin `-HTTPAPI`). IPC es **más fiable** que teclado: notch absoluto en un
-ciclo; teclado solo como fallback (pulso corto 120 ms).
+**Autopiloto mandos:** IPC → Lua UE4SS (canal principal). HTTP PATCH solo fallback en Python
+(`tsw_command_bus.py`); el mod Lua **nunca** usa HTTP — ver [CANAL_CONTROL.md](CANAL_CONTROL.md#lua-probe--http-api).
 **Autopiloto paradas HUD:** `-HTTPAPI` + `tsw_hud.db`.
 
 ---
@@ -106,6 +106,10 @@ Lectura crítica (velocidad) en UE4SS; HTTP para planning lento.
 
 Mandos permitidos: `PowerBrakeHandle`, `AutomaticBrake`, `IndependentBrake`, `DynamicBrake`.
 
+**Lua probe:** resolución de mandos por UObject en cabina (`main.lua`); Class 323 escribe
+`PowerBrakeHandle.InputValue` en eje -1..1. Detalle canal IPC y separación HTTP:
+[CANAL_CONTROL.md](CANAL_CONTROL.md#lua-probe--http-api).
+
 ---
 
 ## Roadmap UE4SS
@@ -148,3 +152,4 @@ Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 | 2026-08-23 | HUD timetable: filtro paradas, `car_stop_signs`, merge `hud_geo` |
 | 2026-08-24 | P1 v2 en autopilot (`BrakeCoordinatorV2`); todo frenado en `braking/v2/` |
 | 2026-08-24 | Consolidación v2 — eliminado `archive/braking_v1/` |
+| 2026-08-27 | Lua probe: mandos vía `InputValue` eje (Class 323); documentado Lua ≠ HTTP |

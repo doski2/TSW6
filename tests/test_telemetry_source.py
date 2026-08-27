@@ -2,10 +2,62 @@
 
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource, _power_to_handle_notch
 from tsw6.telemetry.tsw_ue4ss_reader import ProbeSnapshot
+
+
+def test_maybe_upgrade_from_tsw_api_when_fresh(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=15 speed_ms=8.0 power=0 handle_notch=4 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "tsw_api"
+    conn._ue4ss_path = getdata
+    conn._telem = {"speed_mph": 10.0}
+    with patch.object(conn, "_ensure_api_client", return_value=True):
+        with patch.object(conn, "_kick_planning_refresh"):
+            assert conn.maybe_upgrade_to_ue4ss()
+    assert conn.mode == "ue4ss"
+    assert conn._telem_reader is not None
+
+
+def test_get_telemetry_upgrades_from_tsw_api(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=16 speed_ms=9.0 power=1 handle_notch=5 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "tsw_api"
+    conn._ue4ss_path = getdata
+    conn._vehicle_name = "Class323"
+    conn._telem = {"speed_mph": 5.0, "handle_notch": 4}
+    with patch.object(conn, "_ensure_api_client", return_value=True):
+        with patch.object(conn, "_kick_planning_refresh"):
+            telem = conn.get_telemetry()
+    assert conn.mode == "ue4ss"
+    assert telem["handle_notch"] == 5
+
+
+def test_probe_status_hints(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    conn = TswTelemetrySource()
+    conn._ue4ss_path = getdata
+    conn.mode = "tsw_api"
+    st = conn.probe_status()
+    assert st["live"] is False
+    assert "F7" in st["hint"]
+
+    getdata.write_text("seq=1 speed_ms=1.0 vehicle=x\n", encoding="utf-8")
+    conn.mode = "ue4ss"
+    st2 = conn.probe_status()
+    assert st2["live"] is True
+    assert "PROBE OK" in st2["hint"]
 
 
 def test_power_to_handle_notch_neutral():
@@ -348,6 +400,51 @@ def test_probe_no_double_count_when_seq_advances():
         parsed, planning_b, probe_seq=2,
     )
     assert abs(parsed["distance_next_m"] - 975.0) < 0.1
+
+
+def test_probe_flat_limit_uses_python_odometry():
+    """C.3a: seq avanza, cartel cm fijo, tren en marcha → dist baja (no 2495 fijo)."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 2495.8,
+        "speed_limits_ahead": [{"limit_mph": 55.0, "distance_m": 2495.8}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 56.0, "odo_m": 100.0, "speed_ms": 25.0},
+        planning,
+        probe_seq=10,
+    )
+    conn._planning_dist_last_t = time.monotonic() - 1.0
+    parsed: dict[str, Any] = {"speed_mph": 56.0, "odo_m": 125.0, "speed_ms": 25.0}
+    conn._apply_probe_planning(parsed, planning, probe_seq=11)
+    assert parsed.get("probe_stale") is True
+    assert parsed["probe_dist_limit_m"] == 2495.8
+    assert parsed["distance_next_m"] < 2480.0
+    assert parsed["distance_next_m"] > 2460.0
+
+
+def test_probe_parked_does_not_resync_limit_to_raw():
+    """C.3d: spd=0 no vuelve a 2495.8 m del probe."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 2495.8,
+        "speed_limits_ahead": [{"limit_mph": 55.0, "distance_m": 2495.8}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 56.0, "odo_m": 100.0, "speed_ms": 25.0},
+        planning,
+        probe_seq=10,
+    )
+    conn._planning_dist["distance_next_m"] = 40.0
+    ahead = conn._planning_dist.get("speed_limits_ahead") or []
+    if ahead:
+        ahead[0]["distance_m"] = 40.0
+    parsed: dict[str, Any] = {"speed_mph": 0.0, "odo_m": 200.0, "speed_ms": 0.0}
+    conn._apply_probe_planning(parsed, planning, probe_seq=11)
+    assert parsed["distance_next_m"] == 40.0
+    assert parsed.get("probe_stale") is True
+    ahead = parsed.get("speed_limits_ahead") or []
+    assert ahead and ahead[0]["distance_m"] == parsed["distance_next_m"]
 
 
 def test_probe_holds_distance_when_stopped_and_probe_decreases():

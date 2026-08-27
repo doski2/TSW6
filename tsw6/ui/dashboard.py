@@ -207,8 +207,13 @@ def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
     # Estado de parada en estación + puertas
     _sstate    = gov.station_state
     _sname     = gov.station_name
-    _doors_open = telem.get("doors_open", False)
-    _door_str  = (f"  {Fore.RED}{Style.BRIGHT}🚪 PUERTAS ABIERTAS{Style.RESET_ALL}"
+    _lua = telem.get("doors_telem")
+    _dmi = telem.get("doors_dmi")
+    _doors_open = _lua is True or _dmi is True or bool(telem.get("doors_open"))
+    _lua_txt = "1" if _lua is True else ("0" if _lua is False else "—")
+    _dmi_txt = "1" if _dmi is True else ("0" if _dmi is False else "—")
+    _door_str  = (f"  {Fore.RED}{Style.BRIGHT}🚪 PUERTAS ABIERTAS"
+                  f"  lua={_lua_txt} dmi={_dmi_txt}{Style.RESET_ALL}"
                   if _doors_open else "")
     if _sstate == "APPROACHING":
         _st_dist  = (_stations[0]["distance_m"] if _stations else 0)
@@ -228,12 +233,14 @@ def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
         if _doors_open:
             line_station_state = (
                 f"  {Fore.RED}{Style.BRIGHT}■ EN ANDÉN: {_sname or '?'}"
-                f"  ⏸ esperando cierre de puertas{Style.RESET_ALL}\033[K"
+                f"  ⏸ puertas abiertas lua={_lua_txt} dmi={_dmi_txt}"
+                f"{Style.RESET_ALL}\033[K"
             )
         else:
             line_station_state = (
-                f"  {Fore.GREEN}{Style.BRIGHT}■ EN ANDÉN: {_sname or '?'}"
-                f"  puertas cerradas — saliendo...{Style.RESET_ALL}\033[K"
+                f"  {Fore.YELLOW}{Style.BRIGHT}■ EN ANDÉN: {_sname or '?'}"
+                f"  lua={_lua_txt} dmi={_dmi_txt}"
+                f"  (salida al cerrar tras abrir){Style.RESET_ALL}\033[K"
             )
     elif _sstate == "DEPARTING":
         line_station_state = (

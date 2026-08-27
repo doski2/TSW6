@@ -5,6 +5,7 @@ physics.py — Física única de frenado (Dastsc physics.ts + márgenes TSW6).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -110,6 +111,33 @@ def braking_distance_mph(
         ctx=c,
         apply_margin=apply_margin,
     )
+
+
+def kinematic_horizon_m(
+    speed_mph: float,
+    target_speed_mph: float,
+    *,
+    decel_ms2: Optional[float] = None,
+    ctx: Optional[BrakePhysicsContext] = None,
+    apply_margin: bool = True,
+    reaction_base_s: Optional[float] = None,
+) -> float:
+    """
+    Distancia a la que hay que actuar: ``s = (v²−u²)/2a`` + reacción + zona apply.
+    """
+    speed_ms = speed_mph * MPH_TO_MS
+    bd = braking_distance_mph(
+        speed_mph,
+        target_speed_mph,
+        decel_ms2=decel_ms2,
+        ctx=ctx,
+        apply_margin=apply_margin,
+    )
+    if not math.isfinite(bd):
+        return 0.0
+    react = brake_reaction_margin_m(speed_ms, reaction_base_s=reaction_base_s)
+    apply_at = bd + react
+    return apply_at + apply_zone_margin_m(speed_ms, apply_at)
 
 
 def decel_for_notch(

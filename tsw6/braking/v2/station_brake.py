@@ -45,11 +45,20 @@ def evaluate_station_brake(
         schedule_slack_enabled=schedule_slack_enabled,
         brake_fill_s=brake_fill_s,
     )
-    if plan is None or plan.active_step is None:
+    if plan is None:
         return None
-
     step = plan.active_step
-    if not is_in_brake_action_window(
+    if step is not None and not step.apply_now and not is_in_brake_action_window(
+        step.dist_start,
+        speed_mph=speed_mph,
+        distance_to_target_m=plan.distance_to_target_m,
+        apply_at_remaining_m=step.apply_at_remaining_m,
+    ):
+        late = [s for s in plan.steps if s.apply_now and s.dist_start <= 0]
+        step = late[-1] if late else None
+    if step is None:
+        return None
+    if not step.apply_now and not is_in_brake_action_window(
         step.dist_start,
         speed_mph=speed_mph,
         distance_to_target_m=plan.distance_to_target_m,

@@ -35,10 +35,11 @@ class TestTswApiClient(unittest.TestCase):
 
         out = self.client.set_value("PowerBrakeHandle", 0.25)
         self.assertTrue(out["ok"])
-        self.assertEqual(out["path"], "PowerBrakeHandle")
+        self.assertEqual(out["path"], "DriverInput.PowerBrakeHandle")
         self.assertEqual(out["value"], 0.25)
         call_url = self.session.patch.call_args[0][0]
-        self.assertIn("/set/PowerBrakeHandle.Value", call_url)
+        self.assertIn("/set/DriverInput.PowerBrakeHandle.Value", call_url)
+        self.assertEqual(out["path"], "DriverInput.PowerBrakeHandle")
         self.assertEqual(
             self.session.patch.call_args[1]["headers"]["DTGCommKey"],
             "test-key-abc",

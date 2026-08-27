@@ -27,9 +27,11 @@ from typing import Optional
 
 from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
 from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+from tsw6.telemetry.driver_aid_parser import station_base_name
 from tsw6.autopilot.control_actions import (
-    BRAKE, BRAKE_FAST, COAST, HOLD, PAUSED,
+    BRAKE, BRAKE_FAST, COAST, HOLD, PAUSED, RELEASE,
 )
+from tsw6.braking.v2.command import release_brake_command
 from tsw6.governor.governor_physics import TrainPhysics
 from tsw6.governor.governor_station import StationFSM
 from tsw6.autopilot.train_state import TrainState
@@ -249,18 +251,59 @@ class SpeedDecider:
     def _ocr_used(self) -> bool:
         return self._fsm._ocr_used
 
-    @staticmethod
+    def _p1_station_target(self, state: TrainState) -> Optional[str]:
+        """Andén de la FSM en APPROACHING; no el next_stop ya saltado (C.2)."""
+        fsm_state = self._fsm.state or state.station_state
+        if fsm_state == "APPROACHING":
+            return self._fsm.name or state.station_name or state.next_stop_name
+        return state.next_stop_name or self._fsm.name or state.station_name
+
+    def _p1_station_distance(
+        self,
+        state: TrainState,
+        stations: Optional[list],
+    ) -> Optional[float]:
+        target = self._p1_station_target(state)
+        if stations and target:
+            tbase = station_base_name(target)
+            for st in stations:
+                name = st.get("name")
+                if not name:
+                    continue
+                if name == target or station_base_name(str(name)) == tbase:
+                    d = st.get("distance_m")
+                    if d is not None:
+                        return float(d)
+        if (
+            target
+            and state.next_stop_name
+            and station_base_name(target) != station_base_name(state.next_stop_name)
+        ):
+            return None
+        return state.next_stop_distance_m
+
     def _p1_should_run(
+        self,
         state: TrainState,
         speed_mph: float,
         stations: Optional[list],
     ) -> bool:
         """
-        P1 activo salvo en APPROACHING/DEPARTING lento — salvo cartel agrupado
-        con la estación (Dastsc: frenar al 55 antes del andén).
+        P1 activo salvo APPROACHING/DEPARTING lento — salvo cartel agrupado
+        con la estación, o palanca aún en freno (C.2: no reset @10 mph con B1).
         """
-        fsm_state = state.station_state
+        fsm_state = self._fsm.state or state.station_state
+        if fsm_state == "STOPPED":
+            return False
         if fsm_state not in ("APPROACHING", "DEPARTING"):
+            return True
+        if state.brake_active:
+            return True
+        if (
+            fsm_state == "APPROACHING"
+            and self._p1_was_active
+            and speed_mph <= 12.0
+        ):
             return True
         if speed_mph > 10.0:
             return True
@@ -269,13 +312,7 @@ class SpeedDecider:
 
         dist_lim = state.distance_next_m
         lim = state.next_limit_mph
-        dist_stn = state.next_stop_distance_m
-        if dist_stn is None and stations:
-            target_name = state.station_name or state.next_stop_name
-            for st in stations:
-                if target_name and st.get("name") == target_name:
-                    dist_stn = st.get("distance_m")
-                    break
+        dist_stn = self._p1_station_distance(state, stations)
         if (
             dist_lim is not None
             and dist_stn is not None
@@ -337,12 +374,23 @@ class SpeedDecider:
         )
 
         if action_override is not None:
+            if self._fsm.state == "DEPARTING" and state.brake_active:
+                rel = release_brake_command(at_target=True)
+                self._braking.reset()
+                self._braking.last_brake_command = rel
+                self._p1_was_active = False
+                self.effective_limit = 0.0
+                self.last_action = RELEASE
+                return RELEASE
+            if self._fsm.state == "STOPPED":
+                self._braking.reset()
+                self._p1_was_active = False
             self.effective_limit = eff_limit_override or 0.0
             self.last_action = action_override
             return action_override
 
         # Salida de andén: liberar freno residual
-        if state.station_state == "DEPARTING" and speed < 25.0 and state.brake_active:
+        if self._fsm.state == "DEPARTING" and speed < 25.0 and state.brake_active:
             self.effective_limit = limit
             self.last_action = COAST
             return COAST
@@ -384,23 +432,30 @@ class SpeedDecider:
             state, speed, stations_list,
         )
         if not _p1_active:
+            if self._p1_was_active and state.brake_active:
+                _log.info(
+                    "P1 reset → RELEASE fsm=%s spd=%.1f stop=%s",
+                    self._fsm.state or state.station_state,
+                    speed,
+                    self._fsm.name or state.station_name or state.next_stop_name or "—",
+                )
+                rel = release_brake_command(at_target=True)
+                self._braking.reset()
+                self._braking.last_brake_command = rel
+                self._p1_was_active = False
+                self.effective_limit = effective_limit
+                self.last_action = RELEASE
+                return RELEASE
             if self._p1_was_active:
                 _log.info(
                     "P1 reset fsm=%s spd=%.1f stop=%s",
-                    state.station_state,
+                    self._fsm.state or state.station_state,
                     speed,
-                    state.next_stop_name or self._fsm.name or "—",
+                    self._fsm.name or state.station_name or state.next_stop_name or "—",
                 )
             self._braking.reset()
         else:
-            _station_dist = state.next_stop_distance_m
-            if _station_dist is None and stations_list:
-                _target = self._fsm.name or state.next_stop_name
-                if _target:
-                    for st in stations_list:
-                        if st.get("name") == _target:
-                            _station_dist = st.get("distance_m")
-                            break
+            _station_dist = self._p1_station_distance(state, stations_list)
             p1_action, effective_limit = self._braking.evaluate(
                 speed_mph          = speed,
                 next_limit_mph     = state.next_limit_mph,
@@ -414,7 +469,7 @@ class SpeedDecider:
                 predict_decel      = self._physics.predict_brake_decel_ms2,
                 handle_notch       = state.handle_notch,
                 station_distance_m = _station_dist,
-                station_name     = state.next_stop_name or self._fsm.name,
+                station_name     = self._p1_station_target(state),
                 station_eta      = state.next_stop_arrival,
                 brake_transition_s = self._physics.brake_transition_s,
                 brake_fill_s       = self._physics.brake_fill_s,

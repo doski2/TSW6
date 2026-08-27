@@ -13,11 +13,11 @@ from __future__ import annotations
 from typing import Optional
 
 from tsw6.braking.v2.cluster import (
-    UNIFIED_STATION_LIMIT_APPROACH_M,
-    sequential_limit_stop_feasible,
+    is_unified_limit_station_stop,
+    should_delay_unified_station_plan,
     targets_are_clustered,
 )
-from tsw6.braking.v2.physics import TARGET_CLUSTER_GAP_M, is_in_brake_action_window
+from tsw6.braking.v2.physics import TARGET_CLUSTER_GAP_M
 from tsw6.braking.v2.types import BrakeTargetKind, BrakeTargetResult
 
 _URGENCY_TIE_M = 5.0
@@ -50,15 +50,13 @@ def limit_redundant_for_station(
         return False
     if speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
         return False
-    if not sequential_limit_stop_feasible(
+    return not should_delay_unified_station_plan(
+        speed_mph=speed_mph,
         limit_mph=limit_mph,
         limit_dist_m=limit_dist_m,
         station_dist_m=station_dist_m,
         gradient_pct=gradient_pct,
-    ):
-        # Parada unificada: solo «soltar» cartel cerca del poste, no a 1 km.
-        return limit_dist_m <= UNIFIED_STATION_LIMIT_APPROACH_M
-    return limit_dist_m <= UNIFIED_STATION_LIMIT_APPROACH_M
+    )
 
 
 def signal_behind_station(
@@ -78,15 +76,12 @@ def station_plan_actionable(
     *,
     speed_mph: float = 0.0,
 ) -> bool:
-    """True si el plan de estación está en ventana de aplicación (no «tarde» a km)."""
+    """True si el paso de estación ya venció (no la ventana gorda de B1)."""
+    del speed_mph
     for c in pool:
         if c.target_kind != "STATION":
             continue
-        if is_in_brake_action_window(
-            c.dist_start,
-            speed_mph=speed_mph,
-            distance_to_target_m=c.distance_m,
-        ):
+        if c.dist_start <= 0:
             return True
     return False
 
@@ -126,7 +121,7 @@ def _filter_pool(
         and targets_are_clustered(limit_dist_m, station_dist_m)
     ):
         actionable_station = station_plan_actionable(out, speed_mph=speed_mph)
-        unified = not sequential_limit_stop_feasible(
+        unified = is_unified_limit_station_stop(
             limit_mph=limit_mph,
             limit_dist_m=limit_dist_m,
             station_dist_m=station_dist_m,
@@ -140,10 +135,9 @@ def _filter_pool(
             gradient_pct=gradient_pct,
         )
         if unified:
-            if speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
-                # Aún por encima del cartel: fase límite antes que parada unificada.
-                out = [c for c in out if c.target_kind != "STATION"]
-            elif actionable_station:
+            # Mientras el cartel sigue por delante, el 55 marca el APPLY.
+            # dist_start de estación es negativo desde 800 m (B1) y no debe ganar.
+            if limit_dist_m <= 8.0:
                 out = [c for c in out if c.target_kind != "SPEED_LIMIT"]
         elif speed_mph > limit_mph + _LIMIT_SPEED_MARGIN_MPH:
             # Dos fases: cartel primero si aún por encima del límite.

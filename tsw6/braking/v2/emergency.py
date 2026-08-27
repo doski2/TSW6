@@ -25,10 +25,7 @@ from tsw6.autopilot.control_actions import BRAKE, EMERGENCY
 from tsw6.governor.governor_constants import (
     EMERGENCY_BRAKE_HANDLE,
     EMERGENCY_BRAKE_MAX_DIST_M,
-    P1_CRITICO_DIST,
     P1_CRITICO_MPH,
-    P1_EMERGENCIA_DIST,
-    P1_EMERGENCIA_MPH,
     SERVICE_MIN_HANDLE,
 )
 
@@ -102,7 +99,7 @@ def check_p1_emergency(
         accel_ms2=accel_ms2,
     )
 
-    if urgent_dist_m <= P1_CRITICO_DIST and exceso_mph > P1_CRITICO_MPH:
+    if urgent_dist_m <= bd * 0.25 and exceso_mph > P1_CRITICO_MPH:
         _log.critical(
             "P1v2 CRITICO %s spd=%.1f dist=%.0fm exceso=%.1f",
             target_kind,
@@ -125,9 +122,7 @@ def check_p1_emergency(
         action = EMERGENCY if notch == EMERGENCY_BRAKE_HANDLE else BRAKE
         return action, 0.0, cmd
 
-    if (exceso_mph > 0 and urgent_dist_m <= bd * 0.5) or (
-        urgent_dist_m <= P1_EMERGENCIA_DIST and exceso_mph > P1_EMERGENCIA_MPH
-    ):
+    if exceso_mph > 0 and urgent_dist_m <= bd * 0.5:
         _log.warning(
             "P1v2 EMERGENCIA %s spd=%.1f dist=%.0fm bd=%.0fm exceso=%.1f",
             target_kind,

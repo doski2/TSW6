@@ -155,16 +155,19 @@ class ProbeSnapshot:
         )
 
     def has_limit_planning(self) -> bool:
-        return self.dist_limit_cm is not None and self.next_limit_ms is not None
+        return (
+            (self.dist_limit_cm is not None and self.next_limit_ms is not None)
+            or (self.dist_limit2_cm is not None and self.next_limit2_ms is not None)
+        )
 
     def planning_dict(self) -> dict[str, Any]:
         """Planning P1 desde campos probe (reutiliza driver_aid_parser)."""
         if not self.has_limit_planning():
             return {}
-        data: dict[str, Any] = {
-            "distanceToNextSpeedLimit": self.dist_limit_cm,
-            "nextSpeedLimit": {"value": self.next_limit_ms},
-        }
+        data: dict[str, Any] = {}
+        if self.dist_limit_cm is not None and self.next_limit_ms is not None:
+            data["distanceToNextSpeedLimit"] = self.dist_limit_cm
+            data["nextSpeedLimit"] = {"value": self.next_limit_ms}
         if self.dist_limit2_cm is not None and self.next_limit2_ms is not None:
             data["nextSpeedLimits"] = [{
                 "distanceToNextSpeedLimit": self.dist_limit2_cm,
@@ -222,7 +225,11 @@ def read_probe_file(path: Path) -> Optional[ProbeSnapshot]:
     line = read_probe_raw_line(path)
     if not line:
         return None
-    return ProbeSnapshot.from_dict(parse_probe_line(line))
+    parsed = parse_probe_line(line)
+    # Truncado entre open("w") y write en Lua: línea incompleta → reintentar poll
+    if parsed.get("seq") is None or parsed.get("speed_ms") is None:
+        return None
+    return ProbeSnapshot.from_dict(parsed)
 
 
 from tsw6.paths import LOGS_DIR

@@ -190,7 +190,9 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
   baje `distance_next_m` (misma idea que hold en Lua).
 
 - `planning_hold=True` (autopilot pausado): congela distancias overlay.
-- **No usa odometría Python** para límites si vienen del probe — solo cm del DriverAid.
+- Si el **cm del cartel no cambia** vs último raw y el tren se mueve: odometría Python
+  (`probe_stale`); no resync a 2495 m en cada `seq` (C.3a, `CANAL_CONTROL.md`).
+- Si el cm **sí cambia**: resync DriverAid (sin doble resta).
 
 #### Cómo lo consume el autopilot
 
@@ -385,7 +387,7 @@ Leyenda de tipos (como FlowPlan):
 
 | ID | Tarjeta | Qué comprobar | Log / señal |
 | --- | --- | --- | --- |
-| **E1** | Validar in-game frenado v2 | 2R17 Cross-City, cartel 60 + andén | `uni=Y`, `gap=`, `p1eta=`, RELEASE @55 |
+| **E1** | Validar in-game frenado v2 | 2R17 Cross-City, cartel 55 + andén | `uni=Y`, `p1tgt=SPEED_LIMIT` al APPLY; no RELEASE en cartel |
 | **C1** | Telemetría señal → P1 | `signal_brake.py` hoy stub | `distanceToSignal`, aspecto DANGER en `TrainState` |
 | **C2** | Distancia tablón fina | OCR/GPS cada tick | `station_brake` / coordinador |
 

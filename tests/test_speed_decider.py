@@ -13,7 +13,7 @@ from typing import Any, Optional
 import pytest
 
 from tsw6.autopilot.control_actions import (
-    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
+    BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED, RELEASE,
 )
 from tsw6.autopilot.train_state import TrainState, build_train_state
 from tsw6.autopilot.speed_decider import SpeedDecider
@@ -222,6 +222,112 @@ class TestP1V2Integration:
         d.decide(s)
         assert isinstance(d._braking, BrakeCoordinatorV2)
         assert d._braking.last_debug == ""
+
+    def test_p1_stays_active_approaching_with_brake_handle(self):
+        """C.2: B1 a 10 mph no hace P1 reset (log Four Oaks)."""
+        d = _decider()
+        s = _state(
+            speed_mph=10.0,
+            handle_notch=3,
+            station_state="APPROACHING",
+            station_name="Four Oaks, andén 2",
+            next_stop_name="Sutton Coldfield, andén 2",
+            next_stop_distance_m=2261.0,
+            next_limit_mph=55.0,
+            distance_next_m=2495.8,
+        )
+        d.decide(s)
+        assert d.p1_active is True
+
+    def test_p1_station_distance_uses_fsm_not_jumped_next_stop(self):
+        d = _decider()
+        d._fsm.state = "APPROACHING"
+        d._fsm.name = "Four Oaks, andén 2"
+        s = _state(
+            station_state="APPROACHING",
+            station_name="Four Oaks, andén 2",
+            next_stop_name="Sutton Coldfield, andén 2",
+            next_stop_distance_m=2261.0,
+            stations=(
+                {"name": "Four Oaks, andén 2", "distance_m": 110.0},
+                {"name": "Sutton Coldfield, andén 2", "distance_m": 2261.0},
+            ),
+        )
+        stns = list(s.stations) if s.stations else []
+        assert d._p1_station_target(s) == "Four Oaks, andén 2"
+        assert d._p1_station_distance(s, stns) == 110.0
+
+    def test_p1_hold_when_stopped_at_platform_until_doors(self):
+        """Parado en andén: HOLD con B1; RELEASE al cerrar puertas (Lua)."""
+        d = _decider()
+        d._p1_was_active = True
+        s = _state(
+            speed_mph=0.0,
+            handle_notch=3,
+            station_state="APPROACHING",
+            station_name="Four Oaks, andén 2",
+            stations=(
+                {"name": "Four Oaks, andén 2", "distance_m": 101.0,
+                 "scheduled": True, "platform_length_m": 100.0},
+            ),
+        )
+        d._fsm.state = "APPROACHING"
+        d._fsm.name = "Four Oaks, andén 2"
+        d._fsm._we_stopped = True
+        action = d.decide(s)
+        assert d._fsm.state == "STOPPED"
+        assert action == HOLD
+
+    def test_p1_idle_when_stopped_neutral(self):
+        """STOPPED con palanca en neutro: no RELEASE (no pelear tracción)."""
+        d = _decider()
+        d._fsm.state = "STOPPED"
+        d._fsm.name = "Four Oaks, andén 2"
+        d._fsm._stopped_at = time.time()
+        s = _state(
+            speed_mph=0.0,
+            handle_notch=4,
+            station_state="STOPPED",
+            station_name="Four Oaks, andén 2",
+            stations=(
+                {"name": "Sutton Coldfield, andén 2", "distance_m": 2191.0,
+                 "scheduled": True},
+            ),
+        )
+        action = d.decide(s)
+        assert action == HOLD
+        assert d.brake_command is None
+
+    def test_release_on_lua_door_close_while_braked(self):
+        """Cierre PassengerDoor: DEPARTING y RELEASE (no dwell a tiempo)."""
+        d = _decider()
+        d._fsm.state = "STOPPED"
+        d._fsm.name = "Four Oaks, andén 2"
+        d._fsm._stopped_at = time.time()
+        d._fsm._we_stopped = True
+        stations = (
+            {"name": "Four Oaks, andén 2", "distance_m": 8.0,
+             "scheduled": True, "platform_length_m": 100.0},
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2191.0,
+             "scheduled": True, "platform_length_m": 100.0},
+        )
+        open_act = d.decide(_state(
+            speed_mph=0.0, handle_notch=0, station_state="STOPPED",
+            station_name="Four Oaks, andén 2", stations=stations,
+            doors_telem=True, doors_dmi=None,
+        ))
+        assert d._fsm.state == "STOPPED"
+        assert open_act == HOLD
+        action = d.decide(_state(
+            speed_mph=0.0, handle_notch=0, station_state="STOPPED",
+            station_name="Four Oaks, andén 2", stations=stations,
+            doors_telem=False, doors_dmi=None,
+        ))
+        assert d._fsm.state == "DEPARTING"
+        assert action == RELEASE
+        nxt = d._fsm.select_next_stop(list(stations))
+        assert nxt is not None
+        assert "Sutton" in nxt["name"]
 
     def test_p1_passes_station_eta_to_coordinator(self):
         from unittest.mock import patch

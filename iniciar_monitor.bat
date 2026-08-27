@@ -36,13 +36,17 @@ echo    TSW en cabina antes de continuar.
 echo  ============================================================
 echo.
 echo  Modos:
-echo    monitor   - Dashboard en tiempo real (defecto)
-echo    discover  - Endpoints y datos
-echo    snapshot  - Captura JSON
-echo    raw       - JSON continuo
+echo    monitor     - Dashboard en tiempo real (defecto)
+echo    test-brake  - Prueba PATCH freno HTTP (DriverInput)
+echo    test-ipc    - Prueba IPC SendCommand -^> Lua -^> UE (sin HTTP)
+echo    discover    - Endpoints y datos
+echo    snapshot    - Captura JSON
+echo    raw         - JSON continuo
 echo.
 set /p MODO="  Modo [monitor]: "
 if "%MODO%"=="" set MODO=monitor
 
 %PY% tsw_monitor.py %MODO%
+if errorlevel 1 if /I "%MODO%"=="test-brake" exit /b 1
+if errorlevel 1 if /I "%MODO%"=="test-ipc" exit /b 1
 pause

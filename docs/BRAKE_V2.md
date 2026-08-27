@@ -69,19 +69,25 @@ Antes del plan activo: `resolve_release_command` y `check_p1_emergency`.
 
 ---
 
-## Prioridad (resumen)
+## Parada unificada (2026-08-27)
 
-1. **Distancia en vía** — el objetivo más cercano por delante gana salvo reglas de cluster.
-2. **Cluster cartel + andén (≤350 m)** — si no cabe frenar al cartel y parar después → **parada
+Una sola regla en `cluster.py` (`is_unified_limit_station_stop`): cartel antes del andén,
+gap ≤ 350 m, y **no** cabe frenar a v_límite, soltar y luego parar.
 
-   unificada** (solo estación).
+| Qué | Quién | No hacer |
+| --- | --- | --- |
+| **Cuándo** APPLY | Plan **SPEED_LIMIT** (horizonte del 55) | APPLY de estación a 800 m (ventana gorda B1→0) |
+| **Hasta dónde** | Plan **STATION** (v→0 en andén) | Soltar en el cartel (`RELEASE @55`) |
+| Sustituir cartel por estación | Solo si dist al cartel **≤ 8 m** | Si `dist_start` de B1 estación es negativo desde lejos |
+| RELEASE unificado | Bloqueado si el cartel sigue delante; **sí** si ya pasado y `station_dist > 1.2 × horizonte(v→0)` | Bloquear siempre (`sin_plan_activo` + B1) |
 
-3. **RELEASE en cartel** — en parada unificada, soltar a ~velocidad del cartel y coast hacia andén
+Logs: `p1tgt=SPEED_LIMIT` cerca del 55; `uni=Y`; no `STATION/B1` a ~800 m.
 
-   (`should_delay_unified_station_plan`).
+### Prioridad (resto)
 
-4. **Cartel redundante** — si `speed ≤ limit + 1.5 mph` → gana estación.
-5. **Señal detrás del andén** (≤50 m o mismo cluster) → descartar señal.
+1. **Distancia en vía** — el objetivo más cercano por delante, salvo cluster.
+2. **Dos fases** (sí cabe parar tras el cartel) → cartel primero; estación en coast (`should_delay_unified_station_plan`).
+3. **Señal detrás del andén** (≤50 m o mismo cluster) → descartar señal.
 
 Constantes: `TARGET_CLUSTER_GAP_M = 350`, `STATION_STOPPED_MPH = 1.5`,
 `LIMIT_RELEASE_MAX_OVER_MPH = 0.5`.

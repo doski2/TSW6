@@ -32,7 +32,7 @@ class TestFSMTransitions(unittest.TestCase):
 
     def test_none_to_approaching(self):
         """Entra en APPROACHING cuando hay estación cercana."""
-        stations = [{"name": "Test Station", "distance_m": 300.0,
+        stations = [{"name": "Test Station", "distance_m": 200.0,
                      "platform_length_m": 100.0}]
         action, lim = self.fsm.update_state_transitions(
             speed_mph=40.0, limit_mph=60.0, stations=stations,
@@ -105,6 +105,43 @@ class TestFSMTransitions(unittest.TestCase):
         self.assertIsNotNone(nxt)
         if nxt is not None:
             self.assertIn("Sutton", nxt["name"])
+
+    def test_approaching_stopped_when_next_stop_is_other_station(self):
+        """C.5: telemetría ya muestra Sutton; FSM sigue Four Oaks y spd=0 → STOPPED."""
+        self.fsm.state = "APPROACHING"
+        self.fsm.name = "Four Oaks, andén 2"
+        stations = [
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2125.0,
+             "scheduled": True, "platform_length_m": 100.0},
+        ]
+        action, lim = self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "STOPPED")
+        self.assertEqual(action, "HOLD")
+
+    def test_approaching_stopped_within_150m_when_parked(self):
+        """C.5: parado a ~100 m (next_stop saltó en HUD) → STOPPED, no elim=10."""
+        self.fsm.state = "APPROACHING"
+        self.fsm.name = "Four Oaks, andén 2"
+        self.fsm._we_stopped = True
+        stations = [
+            {"name": "Four Oaks, andén 2", "distance_m": 101.0,
+             "scheduled": True, "platform_length_m": 100.0},
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2261.0,
+             "scheduled": True},
+        ]
+        action, lim = self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "STOPPED")
+        self.assertEqual(lim, 0.0)
 
     def test_stopped_dmi_open_when_telem_closed(self):
         """DMI abierto cuenta aunque la telemetría de cabina diga cerrado."""
@@ -191,6 +228,57 @@ class TestFSMTransitions(unittest.TestCase):
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(action, "HOLD")
+
+
+    def test_stopped_departs_on_lua_door_close(self):
+        """Probe doors_telem 1→0: DEPARTING y Four Oaks servida (siguiente en planner)."""
+        self.fsm.state = "STOPPED"
+        self.fsm.name = "Four Oaks, andén 2"
+        self.fsm._stopped_at = time.time()
+        self.fsm._we_stopped = True
+        stations = [
+            {"name": "Four Oaks, andén 2", "distance_m": 8.0,
+             "scheduled": True, "platform_length_m": 100.0},
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2191.0,
+             "scheduled": True, "platform_length_m": 100.0},
+        ]
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=True,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "STOPPED")
+        self.assertTrue(self.fsm._doors_opened)
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertIn("four oaks", self.fsm._served_bases)
+        nxt = self.fsm.select_next_stop(stations)
+        self.assertIsNotNone(nxt)
+        if nxt is not None:
+            self.assertIn("Sutton", nxt["name"])
+
+    def test_stopped_timeout_when_lua_stuck_closed(self):
+        """lua=0 todo el dwell (nunca 1) → DEPARTING al timeout, no quedarse en STOPPED."""
+        self.fsm.state = "STOPPED"
+        self.fsm.name = "Four Oaks, andén 2"
+        self.fsm._doors_opened = False
+        self.fsm._stopped_at = time.time() - 46.0
+        self.fsm._we_stopped = True
+        stations = [{"name": "Four Oaks, andén 2", "distance_m": 8.0,
+                     "platform_length_m": 100.0}]
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "DEPARTING")
 
 
 class TestCooldown(unittest.TestCase):

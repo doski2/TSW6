@@ -222,19 +222,20 @@ class TestClusteredLimitStation:
         assert result.chain.phase == 2
 
     def test_delays_station_at_limit_speed_until_near_sign(self):
-        """55 mph, cartel a 700 m, andén a 987 m — coast hasta ~200 m del cartel."""
-        limits = [{"limit_mph": 55.0, "distance_m": 700.0}]
+        """Dos fases: ya a 30 mph, coast hasta horizonte de parada."""
+        limits = [{"limit_mph": 30.0, "distance_m": 500.0}]
         assert should_delay_unified_station_plan(
-            speed_mph=55.0,
-            limit_mph=55.0,
-            limit_dist_m=700.0,
-            station_dist_m=987.0,
+            speed_mph=30.0,
+            limit_mph=30.0,
+            limit_dist_m=500.0,
+            station_dist_m=820.0,
+            base_decel=0.8,
         ) is True
         far = plan_for_approach_targets(
-            55.0, limits, 987.0, 60.0, 0.0, 0.8, station_name="Four Oaks")
+            30.0, limits, 820.0, 60.0, 0.0, 0.8, station_name="Alden")
         assert far is None
         near = plan_for_approach_targets(
-            55.0, limits, 487.0, 60.0, 0.0, 0.8, station_name="Four Oaks")
+            30.0, limits, 350.0, 60.0, 0.0, 0.8, station_name="Alden")
         assert near is not None
         assert near.active.target_kind == "STATION"
 
@@ -261,7 +262,8 @@ class TestClusteredLimitStation:
         assert tgt is not None
         assert tgt["limit_mph"] == 25.0
 
-    def test_select_urgent_drops_station_when_merged(self):
+    def test_select_urgent_keeps_limit_when_unified_until_station_due(self):
+        """60→55, andén a +300 m: gap corto → timing del cartel hasta que estación venza."""
         limit_plan = plan_brake(
             speed_mph=60.0, distance_to_target_m=500.0, target_speed_mph=55.0)
         station_plan = plan_brake(
@@ -272,6 +274,23 @@ class TestClusteredLimitStation:
             [limit_plan, station_plan],
             limit_dist_m=500.0,
             station_dist_m=800.0,
+            limit_mph=55.0,
+        )
+        assert selected is not None
+        assert selected.target_kind == "SPEED_LIMIT"
+
+    def test_select_urgent_drops_station_when_two_phase(self):
+        limit_plan = plan_brake(
+            speed_mph=60.0, distance_to_target_m=500.0, target_speed_mph=30.0)
+        station_plan = plan_brake(
+            speed_mph=60.0, distance_to_target_m=820.0, target_speed_mph=0.0,
+            target_kind="STATION")
+        assert limit_plan and station_plan
+        selected = select_urgent_brake_plan(
+            [limit_plan, station_plan],
+            limit_dist_m=500.0,
+            station_dist_m=820.0,
+            limit_mph=30.0,
         )
         assert selected is not None
         assert selected.target_kind == "SPEED_LIMIT"

@@ -54,9 +54,14 @@ Detalle pasos 1–3: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-1-2-3-lect
 ```text
 ```
 
-**Parada unificada** (ej. cartel 60 mph + andén cerca): frena al cartel, **RELEASE @55**, coast
-hasta andén.
-Ver `coordinator.py` → `_should_block_limit_release()` y `cluster.py`.
+**Parada unificada** (cartel 55 + andén ≤350 m y no cabe 55→soltar→0):
+
+- El **cartel marca cuándo** APPLY (mientras dist al cartel > 8 m).
+- El **andén marca v→0**; no se suelta en el cartel.
+- Tras pasar el cartel, sí RELEASE si sobra distancia al andén (evita B1 eterno).
+
+Código: `cluster.py`, `priority.py`, `coordinator.py`. Detalle:
+[BRAKE_V2.md](BRAKE_V2.md#parada-unificada-2026-08-27).
 
 **Ventana APPLY (2026-08-26):** metros dinámicos vía `physics.apply_zone_margin_m` — sustituye
 60 m fijo, histeresis 80/30 m y contención 150 m. RELEASE bloqueado si estación en ventana
@@ -94,6 +99,8 @@ En `logs/autopilot_*.log`:
 - `uni=Y` — parada unificada cartel+andén
 - `gap=` — distancia estación − distancia cartel
 - `p1eta=` — hora llegada HUD
+- `lua=` / `dmi=` — puertas probe / DMI (`1` abierto). GUI: `cerradas lua=0 dmi=—` si el Class 323 no publica `PassengerDoor_*` en el coche de cabina
+- `next_lim=55@0.0m` — cartel ya pasado; DriverAid no ha dado el siguiente (probe `dist_limit_cm` a menudo congelado ~2496 m)
 - `release_blocked:station` — RELEASE bloqueado (estación en ventana física)
 
 ---

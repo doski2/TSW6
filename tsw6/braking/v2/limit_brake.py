@@ -24,7 +24,6 @@ from tsw6.braking.v2.physics import (
     brake_reaction_margin_m,
     braking_distance_mph,
     is_in_apply_zone,
-    reaction_margin_m,
 )
 from tsw6.braking.v2.command import (
     LIMIT_COAST_BAND_MPH,
@@ -43,7 +42,6 @@ _DEFAULT_DECEL_FRAC = {3: 0.33, 2: 0.55, 1: 0.80}
 _LIMIT_REACTION_S = 1.5
 _PLANNING_DECEL_AVG_WEIGHT = 0.65
 # Distancia al cartel: contención solo en ventana de aplicación (no 60→55 a km).
-_CONTAIN_NEAR_SPEED_OVER_MPH = 1.2
 
 
 def _downhill_contain_trigger_over_mph(gradient_pct: float) -> float:
@@ -82,9 +80,18 @@ class LimitBrakeState:
         self.committed_phase = None
 
 
+_PHASE_BY_HANDLE = {3: "B1", 2: "B2", 1: "B3"}
+_ONE_STRONGER = {3: 2, 2: 1, 1: 1}
+_ONE_WEAKER = {1: 2, 2: 3, 3: 3}
+
+
 def _service_notch_strength(handle: int) -> int:
     """Mayor = freno más fuerte (B3=3 … B1=1)."""
     return {3: 1, 2: 2, 1: 3}.get(handle, 4)
+
+
+def _phase_for_handle(handle: int) -> str:
+    return _PHASE_BY_HANDLE.get(handle, "B1")
 
 
 def _apply_notch_hysteresis(
@@ -99,30 +106,35 @@ def _apply_notch_hysteresis(
     limit_mph: float,
 ) -> tuple[int, str]:
     """
-    Mantiene la muesca comprometida: escala a freno más fuerte si hace falta;
-    baja B3→B2→B1 si ya hay margen o se alcanzó el cartel.
+    Muesca de menos a más (B1→B2→B3) y de más a menos (B3→B2→B1).
+    Un escalón por tick: no saltar a B3 de golpe.
     """
     prev = state.committed_handle
+    in_window = apply_now or is_in_apply_zone(dist_start, apply_zone_m)
     if prev is None:
-        if apply_now or is_in_apply_zone(dist_start, apply_zone_m):
-            state.committed_handle = handle
-            state.committed_phase = phase
+        if in_window:
+            start = 3
+            state.committed_handle = start
+            state.committed_phase = _phase_for_handle(start)
+            return start, state.committed_phase
         return handle, phase
 
     prev_s = _service_notch_strength(prev)
     new_s = _service_notch_strength(handle)
     if new_s > prev_s:
-        state.committed_handle = handle
-        state.committed_phase = phase
-        return handle, phase
+        stepped = _ONE_STRONGER[prev]
+        state.committed_handle = stepped
+        state.committed_phase = _phase_for_handle(stepped)
+        return stepped, state.committed_phase
 
     if new_s < prev_s:
         at_target = speed_mph <= limit_mph + LIMIT_SCORING_MAX_OVER_MPH
         room_to_weaken = dist_start > apply_zone_m and not apply_now
         if at_target or room_to_weaken:
-            state.committed_handle = handle
-            state.committed_phase = phase
-            return handle, phase
+            stepped = _ONE_WEAKER[prev]
+            state.committed_handle = stepped
+            state.committed_phase = _phase_for_handle(stepped)
+            return stepped, state.committed_phase
 
     return prev, state.committed_phase or phase
 
@@ -190,6 +202,35 @@ def latch_limit_target(
     return latch
 
 
+def _containment_apply_horizon_m(
+    speed_mph: float,
+    limit_mph: float,
+    gradient_pct: float,
+) -> float:
+    """
+    Distancia al cartel donde ya hay que actuar (B1).
+
+    ``s = (v² − u²) / (2 a_B1)`` más margen de reacción (fill) más zona de
+    aplicación (2.5 s de marcha o 12 % del tramo de apply). Misma física que
+    el plan de aproximación; no hay tope en metros fijos.
+    """
+    speed_ms = speed_mph * MPH_TO_MS
+    ctx = BrakePhysicsContext(gradient_pct=gradient_pct)
+    b1_decel = DEFAULT_MAX_BRAKE_DECEL * _DEFAULT_DECEL_FRAC[3]
+    bd = braking_distance_mph(
+        speed_mph,
+        limit_mph,
+        decel_ms2=b1_decel,
+        ctx=ctx,
+        apply_margin=False,
+    )
+    if bd != bd or bd == float("inf"):
+        return 0.0
+    react = brake_reaction_margin_m(speed_ms, reaction_base_s=_LIMIT_REACTION_S)
+    apply_at = bd + react
+    return apply_at + apply_zone_margin_m(speed_ms, apply_at)
+
+
 def _try_downhill_containment(
     state: LimitBrakeState,
     *,
@@ -213,9 +254,7 @@ def _try_downhill_containment(
 
     over = speed_mph - limit_mph
     speed_ms = speed_mph * MPH_TO_MS
-    near_speed = speed_mph <= limit_mph + _CONTAIN_NEAR_SPEED_OVER_MPH
-    near_sign = distance_m <= apply_zone_margin_m(speed_ms, distance_m)
-    if not (near_speed or near_sign):
+    if distance_m > _containment_apply_horizon_m(speed_mph, limit_mph, gradient_pct):
         return None
 
     if over > LIMIT_SCORING_MAX_OVER_MPH + 1.5:
@@ -253,26 +292,45 @@ def _try_downhill_containment(
     )
 
 
+def _refresh_latch_physics(
+    latch: LimitBrakeLatch,
+    *,
+    speed_mph: float,
+    gradient_pct: float,
+    accel_ms2: Optional[float],
+    base_decel: float,
+    predict_decel: Optional[PredictDecelFn],
+    brake_fill_s: float,
+) -> None:
+    """Cada tick: a, pendiente y reacción con la velocidad actual (no el primer 55)."""
+    latch.gradient_pct = gradient_pct
+    latch.accel_ms2 = accel_ms2
+    latch.latched_speed_mph = speed_mph
+    latch.reaction_margin_m = brake_reaction_margin_m(
+        speed_mph * MPH_TO_MS,
+        brake_fill_s=brake_fill_s,
+        reaction_base_s=_LIMIT_REACTION_S,
+    )
+    for handle, _ in SERVICE_HANDLES_WEAK_TO_STRONG:
+        latch.decel_by_handle[handle] = _decel_for_handle(
+            handle, speed_mph, gradient_pct, base_decel, predict_decel)
+
+
 def _pick_weakest_sufficient_notch(
     *,
     speed_mph: float,
     distance_m: float,
     latch: LimitBrakeLatch,
-    downhill: bool,
 ) -> tuple[int, str, float, bool]:
-    """Devuelve (handle, phase, dist_start, apply_now) — muesca débil que baste."""
+    """B1→B3: muesca más débil cuya s(perfil)+reacción cabe en la distancia."""
     ctx = BrakePhysicsContext(
         gradient_pct=latch.gradient_pct,
         current_accel_ms2=latch.accel_ms2,
     )
     speed_ms = speed_mph * MPH_TO_MS
 
-    handles = list(SERVICE_HANDLES_WEAK_TO_STRONG)
-    if downhill:
-        handles = list(reversed(handles))
-
     evaluated: list[tuple[int, str, float, float, bool]] = []
-    for handle, phase in handles:
+    for handle, phase in SERVICE_HANDLES_WEAK_TO_STRONG:
         decel = latch.decel_by_handle[handle]
         bd = braking_distance_mph(
             speed_mph,
@@ -289,13 +347,6 @@ def _pick_weakest_sufficient_notch(
 
     if not evaluated:
         return SERVICE_HANDLES_WEAK_TO_STRONG[-1][0], "B3", float("inf"), False
-
-    if downhill:
-        for handle, phase, dist_start, _zone, apply_now in evaluated:
-            if apply_now:
-                return handle, phase, dist_start, True
-        handle, phase, dist_start, _zone, apply_now = evaluated[0]
-        return handle, phase, dist_start, apply_now
 
     late = [row for row in evaluated if row[2] < 0]
     if late:
@@ -337,7 +388,6 @@ def evaluate_limit_brake(
         state.reset()
         return None
 
-    downhill = gradient_pct < DOWNHILL_LIMIT_GRADIENT_PCT
     contain = _try_downhill_containment(
         state,
         speed_mph=speed_mph,
@@ -381,11 +431,20 @@ def evaluate_limit_brake(
     if latch is None:
         return None
 
+    _refresh_latch_physics(
+        latch,
+        speed_mph=speed_mph,
+        gradient_pct=gradient_pct,
+        accel_ms2=accel_ms2,
+        base_decel=base_decel,
+        predict_decel=predict_decel,
+        brake_fill_s=brake_fill_s,
+    )
+
     handle, phase, dist_start, apply_now = _pick_weakest_sufficient_notch(
         speed_mph=speed_mph,
         distance_m=distance_m,
         latch=latch,
-        downhill=downhill,
     )
     apply_at = max(0.0, distance_m - dist_start)
     apply_zone_m = apply_zone_margin_m(speed_mph * MPH_TO_MS, apply_at)

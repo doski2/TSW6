@@ -90,7 +90,7 @@ class TestCoordinatorRelease:
 
 class TestCoordinatorUnifiedStop:
     def test_releases_at_limit_speed_in_unified_cluster(self):
-        """60→55 con andén cercano: soltar en cartel y coast hacia andén."""
+        """Gap corto: no soltar en el 55; seguir hacia el andén."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -101,9 +101,7 @@ class TestCoordinatorUnifiedStop:
             handle_notch=2,
             station_distance_m=550.0,
         )
-        assert action == "RELEASE"
-        assert coord.last_brake_command is not None
-        assert coord.last_brake_command.kind == "RELEASE"
+        assert action != "RELEASE"
 
     def test_blocks_release_while_above_limit_in_unified_cluster(self):
         """Parada unificada: no soltar si aún se supera el cartel."""
@@ -189,8 +187,8 @@ class TestCoordinatorUnifiedStop:
         assert coord.last_target.target_kind == "SPEED_LIMIT"
         assert "unified" in coord.last_debug
 
-    def test_unified_overspeed_brakes_to_limit_when_station_far(self):
-        """58 mph con cartel 55 en zona y andén sin plan activo → APPLY, no sin_plan."""
+    def test_unified_overspeed_brakes_to_station_when_gap_short(self):
+        """58 mph, cartel 280 m, andén 530 m: el 55 marca el APPLY; no B1 de andén."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -208,8 +206,8 @@ class TestCoordinatorUnifiedStop:
         assert coord.last_brake_command.kind == "APPLY"
         assert coord.last_debug != "sin_plan_activo"
 
-    def test_unified_overspeed_60_brakes_to_limit_not_late_station(self):
-        """60 mph, cartel 400 m, andén 550 m: no dejar ganar estación con plan tardío."""
+    def test_unified_overspeed_60_uses_limit_timing(self):
+        """60 mph, cartel 400 m, andén 550 m: APPLY del 55, no B1 a ~800 m."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -243,7 +241,7 @@ class TestCoordinatorUnifiedStop:
 
 class TestCoordinatorStationReleaseBlock:
     def test_no_release_oscillation_during_station_approach(self):
-        """B1 contención @55 no debe soltar si estación en ventana de aplicación."""
+        """B1 @55: no soltar mientras el cartel sigue por delante."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -253,17 +251,28 @@ class TestCoordinatorStationReleaseBlock:
             effective_limit=60.0,
             gradient_pct=-0.5,
             handle_notch=3,
-            station_distance_m=800.0,
+            station_distance_m=400.0,
             station_name="Sutton Coldfield",
         )
         assert action != "RELEASE"
-        assert coord.last_target is not None
-        assert coord.last_target.target_kind == "STATION"
-        assert coord.last_brake_command is not None
-        assert coord.last_brake_command.kind == "APPLY"
+
+    def test_release_when_unified_overbraked_after_sign(self):
+        """Tras el 55, B1 con holgura al andén: soltar (evita parar 130 m corto)."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=26.0,
+            next_limit_mph=55.0,
+            distance_next_m=5.0,
+            effective_limit=55.0,
+            handle_notch=3,
+            station_distance_m=272.0,
+            station_name="Four Oaks",
+        )
+        assert action == "RELEASE"
 
     def test_release_allowed_when_station_far(self):
-        """55 mph en cartel con andén lejos (plan no accionable): soltar contención."""
+        """55 mph, andén fuera de cluster: soltar el cartel (no unificado)."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -273,7 +282,7 @@ class TestCoordinatorStationReleaseBlock:
             effective_limit=60.0,
             gradient_pct=0.0,
             handle_notch=3,
-            station_distance_m=987.0,
+            station_distance_m=1500.0,
             station_name="Four Oaks",
         )
         assert action == "RELEASE"

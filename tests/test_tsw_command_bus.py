@@ -53,12 +53,26 @@ class TestClampAndNotch(unittest.TestCase):
 class TestDispatchBrake(unittest.TestCase):
     def setUp(self):
         self.client = MagicMock()
+        self.client.set_input_value.return_value = {
+            "ok": True, "path": "PowerBrakeHandle", "value": -0.5,
+        }
         self.client.set_value.return_value = {"ok": True, "path": "PowerBrakeHandle", "value": 0.25}
+        self.client.get_input_value.return_value = None
+        self.client.read_hud_combined_notch.return_value = 2
 
     def test_dispatch_combined_brake(self):
         result = dispatch_brake(self.client, "combined_brake", 0.25)
         self.assertTrue(result["ok"])
         self.assertEqual(result["path"], "PowerBrakeHandle")
+        self.client.set_input_value.assert_called_once_with(
+            "PowerBrakeHandle", -0.5, timeout=None)
+        self.client.set_value.assert_not_called()
+
+    def test_dispatch_combined_brake_falls_back_to_value(self):
+        self.client.set_input_value.return_value = {"ok": False}
+        self.client.read_hud_combined_notch.return_value = 2
+        result = dispatch_brake(self.client, "combined_brake", 0.25)
+        self.assertTrue(result["ok"])
         self.client.set_value.assert_called_once_with(
             "PowerBrakeHandle", 0.25, timeout=None)
 
@@ -76,8 +90,8 @@ class TestDispatchBrake(unittest.TestCase):
     def test_dispatch_combined_notch_shortcut(self):
         result = dispatch_combined_notch(self.client, 2)  # freno B2 ≈ 0.25
         self.assertTrue(result["ok"])
-        self.client.set_value.assert_called_once_with(
-            "PowerBrakeHandle", 0.25, timeout=None)
+        self.client.set_input_value.assert_called_once_with(
+            "PowerBrakeHandle", -0.5, timeout=None)
 
     def test_dispatch_clamps_high_value(self):
         dispatch_brake(self.client, "AutomaticBrake", 9.0)

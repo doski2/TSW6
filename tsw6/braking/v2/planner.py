@@ -37,7 +37,7 @@ from tsw6.braking.v2.plan import (
     profile_cap_from_plan,
 )
 from tsw6.braking.v2.cluster import (
-    UNIFIED_STATION_LIMIT_APPROACH_M,
+    is_unified_limit_station_stop,
     sequential_limit_stop_feasible,
     should_delay_unified_station_plan,
     should_merge_limit_and_station_plans,
@@ -948,13 +948,10 @@ def select_urgent_brake_plan(
     *,
     limit_dist_m: Optional[float] = None,
     station_dist_m: Optional[float] = None,
+    limit_mph: Optional[float] = None,
+    gradient_pct: float = 0.0,
 ) -> Optional[BrakePlan]:
-    """
-    Puerto de ``selectUrgentBrakePlan`` (Dastsc).
-
-    Si hay cartel de límite agrupado con la estación y el cartel va primero,
-    descarta el plan STATION y deja que P1 frene solo al límite intermedio.
-    """
+    """Elige plan urgente. Unificado (gap corto) → estación; dos fases → cartel."""
     if not plans:
         return None
     pool = list(plans)
@@ -963,17 +960,46 @@ def select_urgent_brake_plan(
         and station_dist_m is not None
         and limit_dist_m > 0
         and station_dist_m > 0
+        and should_merge_limit_and_station_plans(limit_dist_m, station_dist_m)
     ):
         has_limit = any(p.target_kind == "SPEED_LIMIT" for p in pool)
         has_station = any(p.target_kind == "STATION" for p in pool)
-        if (
-            has_limit
-            and has_station
-            and should_merge_limit_and_station_plans(limit_dist_m, station_dist_m)
-        ):
-            pool = [p for p in pool if p.target_kind != "STATION"]
+        if has_limit and has_station:
+            unified = (
+                limit_mph is not None
+                and is_unified_limit_station_stop(
+                    limit_mph=limit_mph,
+                    limit_dist_m=limit_dist_m,
+                    station_dist_m=station_dist_m,
+                    gradient_pct=gradient_pct,
+                )
+            )
+            if unified:
+                if limit_dist_m <= 8.0:
+                    pool = [p for p in pool if p.target_kind != "SPEED_LIMIT"]
+            elif limit_mph is not None and sequential_limit_stop_feasible(
+                limit_mph=limit_mph,
+                limit_dist_m=limit_dist_m,
+                station_dist_m=station_dist_m,
+                gradient_pct=gradient_pct,
+            ):
+                pool = [p for p in pool if p.target_kind != "STATION"]
     if len(pool) == 1:
         return pool[0]
+    if (
+        limit_dist_m is not None
+        and limit_dist_m > 8.0
+        and limit_mph is not None
+        and any(p.target_kind == "SPEED_LIMIT" for p in pool)
+        and any(p.target_kind == "STATION" for p in pool)
+        and is_unified_limit_station_stop(
+            limit_mph=limit_mph,
+            limit_dist_m=limit_dist_m,
+            station_dist_m=station_dist_m or 0.0,
+            gradient_pct=gradient_pct,
+        )
+    ):
+        return next(p for p in pool if p.target_kind == "SPEED_LIMIT")
     return min(pool, key=brake_plan_urgency)
 
 
@@ -1161,6 +1187,8 @@ def plan_for_approach_targets(
             candidates,
             limit_dist_m=limit_dist_m,
             station_dist_m=station_distance_m,
+            limit_mph=limit_mph,
+            gradient_pct=gradient_pct,
         )
         if active is plan_station and plan_limit:
             follow_up = None

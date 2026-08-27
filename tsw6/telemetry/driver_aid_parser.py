@@ -57,7 +57,7 @@ def _prune_zero_distance_limits(
     limits: list[dict[str, float]],
 ) -> list[dict[str, float]]:
     """Quita límites ya alcanzados (distancia 0 en cartel)."""
-    while limits and limits[0].get("distance_m", 0) <= 1.0:
+    while limits and limits[0].get("distance_m", 0) <= 8.0:
         limits.pop(0)
     return limits
 

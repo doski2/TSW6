@@ -11,17 +11,22 @@ from typing import Optional, Tuple
 from tsw6.braking.v2.command import (
     BrakeCommand,
     BrakeReleaseState,
-    LIMIT_RELEASE_MAX_OVER_MPH,
     governor_action_for_command,
     is_brake_applied,
+    release_brake_command,
     resolve_release_command,
 )
-from tsw6.braking.v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
+from tsw6.braking.v2.physics import (
+    DEFAULT_BRAKE_FILL_S,
+    DEFAULT_MAX_BRAKE_DECEL,
+    BrakePhysicsContext,
+    decel_for_notch,
+    kinematic_horizon_m,
+)
 from tsw6.braking.v2.plan import BrakePlan
 from tsw6.braking.v2.cluster import (
-    sequential_limit_stop_feasible,
+    is_unified_limit_station_stop,
     should_delay_unified_station_plan,
-    should_merge_limit_and_station_plans,
 )
 from tsw6.braking.v2.emergency import check_p1_emergency, is_red_signal_aspect
 from tsw6.braking.v2.limit_brake import LimitBrakeState, evaluate_limit_brake
@@ -193,9 +198,7 @@ class BrakeCoordinatorV2:
             stn_dist = station_distance_m
             if stn_dist is None or stn_dist <= 0 or _dn is None or _nl is None:
                 return False
-            if not should_merge_limit_and_station_plans(_dn, stn_dist):
-                return False
-            return not sequential_limit_stop_feasible(
+            return is_unified_limit_station_stop(
                 limit_mph=float(_nl),
                 limit_dist_m=float(_dn),
                 station_dist_m=stn_dist,
@@ -231,16 +234,30 @@ class BrakeCoordinatorV2:
                 station_r = None
 
         def _should_block_limit_release() -> bool:
+            """Unificado: no soltar en el cartel; sí si sobra distancia a 0 (B1 eterno)."""
             if not _unified_stop_active():
                 return False
             if speed_mph <= STATION_STOPPED_MPH + 1.0:
+                return True
+            extra_room = False
+            if station_distance_m is not None and station_distance_m > 0:
+                ctx = BrakePhysicsContext(
+                    base_decel_ms2=base_decel,
+                    gradient_pct=grad,
+                )
+                horizon = kinematic_horizon_m(
+                    speed_mph,
+                    0.0,
+                    decel_ms2=decel_for_notch(0.80, base_decel, grad),
+                    ctx=ctx,
+                    apply_margin=True,
+                )
+                extra_room = station_distance_m > horizon * 1.2
+            past_sign = _dn is None or float(_dn) <= 8.0
+            if extra_room and past_sign:
                 return False
-            # Cartel cumplido: soltar y coast cartel→andén (no frenar hasta parada).
-            if (
-                _nl is not None
-                and speed_mph <= float(_nl) + LIMIT_RELEASE_MAX_OVER_MPH
-            ):
-                return False
+            if _dn is not None and float(_dn) > 8.0:
+                return True
             return True
 
         def _station_braking_takes_priority() -> bool:
@@ -249,6 +266,8 @@ class BrakeCoordinatorV2:
             return station_plan_actionable([station_r], speed_mph=speed_mph)
 
         def _should_block_release(plan: Optional[BrakePlan] = None) -> bool:
+            if _unified_stop_active() and not _should_block_limit_release():
+                return False
             if plan is not None and plan.target_kind == "STATION":
                 return True
             if _station_braking_takes_priority():
@@ -275,6 +294,12 @@ class BrakeCoordinatorV2:
                 gradient_pct=grad,
                 plan=plan,
             )
+            if (
+                rel is None
+                and _unified_stop_active()
+                and not _should_block_limit_release()
+            ):
+                rel = release_brake_command(at_target=True)
             if rel is None:
                 return None
             self.last_brake_command = rel
@@ -374,6 +399,10 @@ class BrakeCoordinatorV2:
             candidates.append(signal_r)
 
         if not candidates:
+            if is_brake_applied(handle_notch):
+                rel_idle = _attempt_release()
+                if rel_idle is not None:
+                    return rel_idle
             if speed_mph <= STATION_STOPPED_MPH + 1.0:
                 self._unified_stop_latched = False
             self.last_debug = "sin_plan_activo"

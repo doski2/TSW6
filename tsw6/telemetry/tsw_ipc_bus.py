@@ -34,6 +34,53 @@ SEND_COMMAND_FILENAME = "SendCommand.txt"
 APPLY_FLAG_FILENAME = "TSW6ApplyCommands.flag"
 SEND_ACK_FILENAME = "SendCommandAck.txt"
 
+ACK_TIMEOUT_MIN_S = 0.05
+ACK_TIMEOUT_MAX_S = 0.12
+DEFAULT_FRAME_BUDGET = 3.5
+DEFAULT_ASSUMED_FPS = 55.0
+
+
+def adaptive_ack_timeout_s(
+    recent_ack_ms: Optional[list[float]] = None,
+    *,
+    assumed_fps: float = DEFAULT_ASSUMED_FPS,
+    frame_budget: float = DEFAULT_FRAME_BUDGET,
+) -> float:
+    """Timeout ACK adaptativo: 2–4 frames @ FPS + margen sobre p95 reciente."""
+    fps = max(30.0, min(120.0, float(assumed_fps)))
+    frame_s = frame_budget / fps
+    timeout = frame_s
+    samples = list(recent_ack_ms or [])
+    if samples:
+        ordered = sorted(samples[-20:])
+        idx = max(0, int(len(ordered) * 0.95) - 1)
+        p95 = ordered[idx]
+        timeout = max(timeout, (p95 * 1.5) / 1000.0)
+    return max(ACK_TIMEOUT_MIN_S, min(ACK_TIMEOUT_MAX_S, timeout))
+
+
+def parse_send_ack_line(line: str) -> Optional[dict[str, Any]]:
+    """Parsea ACK Lua: ``path:value:ok`` o ``path:value:ok:cmd_id``."""
+    parts = line.strip().split(":")
+    if len(parts) < 3:
+        return None
+    cmd_id: Optional[int] = None
+    if len(parts) >= 4 and parts[-1].strip().isdigit():
+        cmd_id = int(parts[-1].strip())
+        status = parts[-2].strip().lower()
+        val = float(parts[-3])
+        name = ":".join(parts[:-3])
+    else:
+        status = parts[-1].strip().lower()
+        val = float(parts[-2])
+        name = ":".join(parts[:-2])
+    return {
+        "name": name,
+        "value": val,
+        "ok": status == "ok",
+        "cmd_id": cmd_id,
+    }
+
 
 def bridge_dir() -> Path:
     temp = os.environ.get("TEMP") or os.environ.get("TMP") or "."
@@ -102,44 +149,38 @@ def wait_send_ack(
     *,
     expected_path: Optional[str] = None,
     expected_value: Optional[float] = None,
+    expected_cmd_id: Optional[int] = None,
     value_tol: float = 0.0005,
 ) -> Optional[dict[str, Any]]:
     """Espera SendCommandAck.txt escrito por Lua tras aplicar el mando."""
     path = send_ack_path()
-    cmd_path = send_command_path()
     deadline = time.monotonic() + max(0.02, float(timeout_s))
     while time.monotonic() < deadline:
         try:
-            if not cmd_path.is_file():
-                return {
-                    "name": expected_path or "",
-                    "value": expected_value or 0.0,
-                    "ok": True,
-                    "optimistic": True,
-                    "consumed": True,
-                }
             if path.is_file():
                 line = path.read_text(encoding="utf-8").strip()
                 if line:
-                    parts = line.split(":")
-                    if len(parts) >= 3:
-                        status = parts[-1].strip().lower()
-                        val = float(parts[-2])
-                        name = ":".join(parts[:-2])
-                        if expected_path and name != expected_path:
-                            time.sleep(0.008)
-                            continue
-                        if (
-                            expected_value is not None
-                            and abs(val - expected_value) > value_tol
-                        ):
-                            time.sleep(0.008)
-                            continue
-                        return {
-                            "name": name,
-                            "value": val,
-                            "ok": status == "ok",
-                        }
+                    ack = parse_send_ack_line(line)
+                    if ack is None:
+                        time.sleep(0.008)
+                        continue
+                    if expected_path and ack["name"] != expected_path:
+                        time.sleep(0.008)
+                        continue
+                    if (
+                        expected_value is not None
+                        and abs(float(ack["value"]) - expected_value) > value_tol
+                    ):
+                        time.sleep(0.008)
+                        continue
+                    if (
+                        expected_cmd_id is not None
+                        and ack.get("cmd_id") is not None
+                        and int(ack["cmd_id"]) != int(expected_cmd_id)
+                    ):
+                        time.sleep(0.008)
+                        continue
+                    return ack
         except (OSError, ValueError):
             pass
         time.sleep(0.008)
@@ -195,7 +236,6 @@ def write_send_command_with_ack(
                 "ack_ms": 0.0}
     clamped = clamp_brake_value(path_name, value)
     _clear_send_ack()
-    cmd_path = send_command_path()
     if not write_send_command(control, clamped, schema, cmd_id=cmd_id):
         return {"ok": False, "error": "write_failed", "control": control,
                 "path": path_name, "value": clamped, "ack_ms": 0.0}
@@ -203,24 +243,10 @@ def write_send_command_with_ack(
         ack_timeout_s,
         expected_path=path_name,
         expected_value=clamped,
+        expected_cmd_id=cmd_id,
     )
     ack_ms = (time.perf_counter() - t0) * 1000.0
     if ack is None:
-        if not cmd_path.is_file():
-            return {
-                "ok": True,
-                "control": control,
-                "path": path_name,
-                "value": clamped,
-                "channel": "ipc",
-                "ack_ms": ack_ms,
-                "ack": {
-                    "name": path_name,
-                    "value": clamped,
-                    "ok": True,
-                    "optimistic": True,
-                },
-            }
         return {"ok": False, "error": "ack_timeout", "control": control,
                 "path": path_name, "value": clamped, "ack_ms": ack_ms}
     if not ack.get("ok"):
@@ -245,6 +271,7 @@ def dispatch_ipc_brake(
     *,
     wait_ack: bool = True,
     cmd_id: Optional[int] = None,
+    ack_timeout_s: float = 0.12,
 ) -> dict[str, Any]:
     """Valida y escribe un mando de freno al bridge IPC."""
     key = str(control or "").strip()
@@ -258,7 +285,10 @@ def dispatch_ipc_brake(
     clamped = clamp_brake_value(path_name, value)
     if wait_ack:
         return write_send_command_with_ack(
-            control, clamped, schema, cmd_id=cmd_id)
+            control, clamped, schema,
+            ack_timeout_s=ack_timeout_s,
+            cmd_id=cmd_id,
+        )
     if not write_send_command(control, clamped, schema, cmd_id=cmd_id):
         return {"ok": False, "error": "write_failed", "control": control}
     return {
@@ -275,12 +305,14 @@ def dispatch_ipc_combined_notch(
     schema: Optional[dict] = None,
     *,
     cmd_id: Optional[int] = None,
+    ack_timeout_s: float = 0.12,
 ) -> dict[str, Any]:
     return dispatch_ipc_brake(
         "combined_brake",
         combined_notch_to_value(notch),
         schema,
         cmd_id=cmd_id,
+        ack_timeout_s=ack_timeout_s,
     )
 
 

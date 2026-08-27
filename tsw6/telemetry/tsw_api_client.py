@@ -20,6 +20,7 @@ import requests
 _log = logging.getLogger("tsw.api")
 
 TSW_API_BASE = "http://localhost:31270"
+HUD_POWER_PATH = "CurrentDrivableActor.Function.HUD_GetPowerHandle"
 
 KEY_PATHS: tuple[Path, ...] = (
     Path.home() / "Documents/My Games/TrainSimWorld6/Saved/Config/CommAPIKey.txt",
@@ -47,11 +48,49 @@ def get_key_path() -> Optional[Path]:
 
 def encode_control_path(path: str) -> str:
     """
-    Codifica ruta de nodo API (p. ej. PowerBrakeHandle, VirtualRailDriver.Auto Brake).
+    Codifica ruta de nodo API (p. ej. DriverInput.PowerBrakeHandle).
     Conserva '.' como separador; espacios → %20.
     """
     parts = str(path).strip().split(".")
     return ".".join(quote(part, safe="") for part in parts if part)
+
+
+def api_driver_input_path(control_path: str) -> str:
+    """Prefijo DriverInput para PATCH/GET de mandos de cabina."""
+    path = str(control_path or "").strip()
+    if not path:
+        return path
+    if path.startswith("DriverInput."):
+        return path
+    return f"DriverInput.{path}"
+
+
+def _parse_patch_response(
+    response: requests.Response,
+    api_path: str,
+    value: float,
+) -> dict[str, Any]:
+    if response.status_code != 200:
+        return {
+            "ok": False,
+            "error": "http_error",
+            "status": response.status_code,
+            "path": api_path,
+            "body": (response.text or "")[:300],
+        }
+    try:
+        data = response.json()
+        if isinstance(data, dict) and data.get("Result") == "Error":
+            return {
+                "ok": False,
+                "error": "api_error",
+                "path": api_path,
+                "message": str(data.get("Message") or data.get("message") or ""),
+                "body": (response.text or "")[:300],
+            }
+    except (ValueError, TypeError):
+        pass
+    return {"ok": True, "path": api_path, "value": value}
 
 
 class TswApiClient:
@@ -136,7 +175,8 @@ class TswApiClient:
 
     def get_value(self, control_path: str) -> Optional[float]:
         """Lee {control_path}.Value vía GET /get/..."""
-        encoded = encode_control_path(control_path)
+        api_path = api_driver_input_path(control_path)
+        encoded = encode_control_path(api_path)
         data = self.get_json(f"/get/{encoded}.Value")
         if data is None:
             return None
@@ -151,13 +191,45 @@ class TswApiClient:
                         pass
         return None
 
+    def get_input_value(self, control_path: str) -> Optional[float]:
+        """Lee {control_path}.InputValue (eje -1..1 en Class 323)."""
+        api_path = api_driver_input_path(control_path)
+        encoded = encode_control_path(api_path)
+        data = self.get_json(f"/get/{encoded}.InputValue")
+        if data is None:
+            return None
+        if isinstance(data, (int, float)):
+            return float(data)
+        if isinstance(data, dict):
+            for key in ("value", "Value", "val"):
+                if key in data and data[key] is not None:
+                    try:
+                        return float(data[key])
+                    except (TypeError, ValueError):
+                        pass
+        return None
+
+    def read_hud_combined_notch(self) -> Optional[int]:
+        """HUD_GetPowerHandle → muesca UK 0–8."""
+        from tsw6.telemetry.tsw_ue4ss_reader import power_to_combined_notch
+
+        values = self.get_node(HUD_POWER_PATH)
+        if not values or "Power" not in values:
+            return None
+        try:
+            power = float(values["Power"])
+        except (TypeError, ValueError):
+            return None
+        return power_to_combined_notch(power, bool(values.get("IsNegative", False)))
+
     def set_value(self, control_path: str, value: float,
                   timeout: Optional[float] = None) -> dict[str, Any]:
         """
         PATCH /set/{path}.Value?Value={n}
         Devuelve {ok: bool, ...} sin lanzar excepciones de red.
         """
-        encoded = encode_control_path(control_path)
+        api_path = api_driver_input_path(control_path)
+        encoded = encode_control_path(api_path)
         url = f"{self.base_url}/set/{encoded}.Value"
         req_timeout = self.timeout if timeout is None else timeout
         try:
@@ -167,19 +239,34 @@ class TswApiClient:
                 params={"Value": value},
                 timeout=req_timeout,
             )
-            if r.status_code == 200:
-                return {"ok": True, "path": control_path, "value": value}
-            return {
-                "ok": False,
-                "error": "http_error",
-                "status": r.status_code,
-                "path": control_path,
-                "body": (r.text or "")[:300],
-            }
+            return _parse_patch_response(r, api_path, value)
         except requests.exceptions.ConnectionError:
-            return {"ok": False, "error": "connection_refused", "path": control_path}
+            return {"ok": False, "error": "connection_refused", "path": api_path}
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "path": control_path}
+            return {"ok": False, "error": str(exc), "path": api_path}
+
+    def set_input_value(self, control_path: str, value: float,
+                        timeout: Optional[float] = None) -> dict[str, Any]:
+        """
+        PATCH /set/{path}.InputValue?Value={n}
+        Eje -1..1 en PowerBrakeHandle (Class 323 UK).
+        """
+        api_path = api_driver_input_path(control_path)
+        encoded = encode_control_path(api_path)
+        url = f"{self.base_url}/set/{encoded}.InputValue"
+        req_timeout = self.timeout if timeout is None else timeout
+        try:
+            r = self._session.patch(
+                url,
+                headers=self._headers(),
+                params={"Value": value},
+                timeout=req_timeout,
+            )
+            return _parse_patch_response(r, api_path, value)
+        except requests.exceptions.ConnectionError:
+            return {"ok": False, "error": "connection_refused", "path": api_path}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "path": api_path}
 
     def subscribe_path(self, subscription_id: int, node_endpoint: str) -> bool:
         """

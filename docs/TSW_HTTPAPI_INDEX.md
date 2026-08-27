@@ -59,14 +59,12 @@ Orden sugerido tras la validación:
 Comando rápido de prueba (juego con `-HTTPAPI`):
 
 ```bat
+iniciar_monitor.bat
+  test-brake
 ```
 
-Sesión GUI (opción 1) o guiada consola. CSV detallado en `logs/brake_physics/` + informe de calidad.
-
-Comando manual puntual:
-
-```bat
-```
+Prueba PATCH `PowerBrakeHandle` (mismo path que autopilot). Lectura física: `validar_freno.bat`
+(opción 1). CSV en `logs/brake_physics/`.
 
 Nada de lo anterior **sustituye** DriverAid para planning; **complementa** `physics.py` y el
 learner.

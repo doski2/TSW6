@@ -16,7 +16,8 @@ Puertas
 
 Planning de distancias
 ----------------------
-- **Límites** (probe): resync cada ``seq`` nuevo; sin odometría Python.
+- **Límites** (probe): resync si ``dist_limit`` cambia; si el cm está plano y el tren
+  se mueve (C.3a), odometría Python como las estaciones (``probe_stale``).
 - **Límites** (HTTP): ``_tick_planning_distances`` entre polls.
 - **Estaciones** (HTTP): ``_tick_station_distances`` solo en overlay (no duplicar con límites).
 
@@ -47,7 +48,7 @@ from tsw6.telemetry.driver_aid_parser import (
 )
 from tsw6.hud.hud_timetable import HudTimetableStore, schedule_times_for_station
 from tsw6.telemetry.tsw_api_client import TswApiClient, client_from_key_file
-from tsw6.telemetry.tsw_command_bus import combined_value_to_notch, dispatch_brake, dispatch_combined_notch
+from tsw6.telemetry.tsw_command_bus import combined_value_to_notch
 from tsw6.telemetry.tsw_ipc_bus import (
     dispatch_ipc_brake,
     dispatch_ipc_combined_notch,
@@ -62,6 +63,11 @@ from tsw6.telemetry.control_channel import (
     TelemetryReader,
     DEFAULT_TELEM_HZ,
 )
+from tsw6.telemetry.channel_diagnostics import (
+    channel_stats_from_state,
+    probe_mod_flags,
+    probe_mod_label,
+)
 from tsw6.telemetry.tsw_ue4ss_reader import (
     ProbeSnapshot,
     default_getdata_path,
@@ -74,6 +80,8 @@ _log = logging.getLogger("tsw.telemetry")
 DRIVABLE = "CurrentDrivableActor"
 MS_TO_MPH = 2.236936
 MPH_TO_MS = 0.44704
+# Probe «plano»: DriverAid no bajó el cartel (sesión 2495.8 m fija).
+PROBE_LIMIT_FLAT_M = 0.5
 SLOW_EVERY = 30
 PLANNING_MIN_INTERVAL_S = 2.0
 CONTROL_API_TIMEOUT = 0.35
@@ -244,6 +252,8 @@ class TswTelemetrySource:
         self._diag_last_probe_dist: Optional[float] = None
         self._motion_last_probe_dist: Optional[float] = None
         self._motion_probe_dist_since = 0.0
+        self._motion_last_speed_ms: Optional[float] = None
+        self._motion_speed_since = 0.0
         self._motion_last_odo_m: Optional[float] = None
         self._motion_odo_since = 0.0
         self._motion_frozen = False
@@ -259,8 +269,47 @@ class TswTelemetrySource:
         self._station_exclude_bases: set[str] = set()
         self._api_ok_cache: Optional[bool] = None
         self._api_ok_ts = 0.0
+        self._driver_input_dead = False
         self._telem_reader: Optional[TelemetryReader] = None
         self._cmd_writer: Optional[AsyncCommandWriter] = None
+
+    def probe_getdata_fresh(self) -> bool:
+        """True si GetData.txt existe y se actualizó hace poco (F7 activo)."""
+        return _ue4ss_is_fresh(self._ue4ss_path)
+
+    def maybe_upgrade_to_ue4ss(self) -> bool:
+        """Pasa de ``tsw_api``/``searching`` a ``ue4ss`` si el probe está activo."""
+        if self.mode in ("ue4ss", "manual"):
+            return False
+        prev = self.mode
+        if not self.try_connect_ue4ss():
+            return False
+        return prev != "ue4ss"
+
+    def probe_status(self) -> dict[str, Any]:
+        """Estado del probe para GUI (F7 / GetData.txt)."""
+        fresh = self.probe_getdata_fresh()
+        if self.mode == "ue4ss":
+            return {"live": True, "fresh": fresh, "hint": "PROBE OK (F7)"}
+        if fresh:
+            return {
+                "live": False,
+                "fresh": True,
+                "hint": "GetData activo — reconectando…",
+            }
+        if self.mode == "tsw_api":
+            return {
+                "live": False,
+                "fresh": False,
+                "hint": "HTTP ~2s — pulsa F7 en cabina",
+            }
+        if not self._ue4ss_path.is_file():
+            return {
+                "live": False,
+                "fresh": False,
+                "hint": "Sin GetData.txt — install_ue4ss_probe.bat",
+            }
+        return {"live": False, "fresh": False, "hint": "F7 OFF en cabina"}
 
     def try_connect_ue4ss(self) -> bool:
         """Conecta por GetData.txt sin intentar HTTP (barato para 10 Hz)."""
@@ -321,7 +370,9 @@ class TswTelemetrySource:
 
     def _ensure_cmd_writer(self) -> AsyncCommandWriter:
         if self._cmd_writer is None:
-            self._cmd_writer = AsyncCommandWriter()
+            self._cmd_writer = AsyncCommandWriter(
+                on_ipc_fail=lambda err: self._mark_driver_input_dead(f"IPC {err}"),
+            )
             self._cmd_writer.start()
         return self._cmd_writer
 
@@ -334,6 +385,24 @@ class TswTelemetrySource:
         if self._cmd_writer is not None:
             return self._cmd_writer.state()
         return CommandState()
+
+    def channel_report(self) -> dict[str, Any]:
+        """Estadísticas IPC + mod probe para logs de autopilot."""
+        flags = probe_mod_flags(self._telem)
+        if self._cmd_writer is not None:
+            st, acks, enqueued = self._cmd_writer.session_stats()
+            stats = channel_stats_from_state(st, acks)
+            stats["enqueued"] = enqueued
+        else:
+            stats = channel_stats_from_state(CommandState(), [])
+            stats["enqueued"] = 0
+        return {
+            "getdata": str(self._ue4ss_path),
+            "mod": probe_mod_label(flags),
+            "mod_flags": flags,
+            "telem_poll_hz": self.telem_poll_hz(),
+            **stats,
+        }
 
     def enqueue_control_value(self, control: str, val: float) -> bool:
         """Encola mando IPC sin bloquear el bucle de control."""
@@ -370,8 +439,9 @@ class TswTelemetrySource:
         self,
         probe_dist_m: Optional[float],
         odo_m: Optional[float] = None,
+        speed_ms: Optional[float] = None,
     ) -> bool:
-        """True si el tren no avanza (odómetro API o distancia probe congelada)."""
+        """True si el tren no avanza (odómetro o velocidad; no dist. al límite)."""
         now = time.monotonic()
         prev = self._motion_frozen
 
@@ -385,29 +455,33 @@ class TswTelemetrySource:
                 self._motion_frozen = False
             else:
                 self._motion_frozen = (now - self._motion_odo_since) > 0.25
+        elif speed_ms is not None:
+            if self._motion_last_speed_ms is None:
+                self._motion_last_speed_ms = speed_ms
+                self._motion_speed_since = now
+                self._motion_frozen = False
+            elif abs(speed_ms - self._motion_last_speed_ms) > 0.08:
+                self._motion_last_speed_ms = speed_ms
+                self._motion_speed_since = now
+                self._motion_frozen = False
+            else:
+                self._motion_frozen = (
+                    speed_ms > 0.5
+                    and (now - self._motion_speed_since) > 0.35
+                )
         elif probe_dist_m is None:
             self._motion_frozen = False
-            if self._motion_frozen != prev:
-                _log.info("juego EN MOVIMIENTO  (sin dato dist/odo)")
-            return self._motion_frozen
         else:
-            if self._motion_last_probe_dist is None:
-                self._motion_last_probe_dist = probe_dist_m
-                self._motion_probe_dist_since = now
-                self._motion_frozen = False
-            elif abs(probe_dist_m - self._motion_last_probe_dist) < 0.5:
-                self._motion_frozen = (now - self._motion_probe_dist_since) > 0.30
-            else:
-                self._motion_last_probe_dist = probe_dist_m
-                self._motion_probe_dist_since = now
-                self._motion_frozen = False
+            # dist_limit al cartel: no usar para detectar pausa del juego
+            self._motion_frozen = False
 
         if self._motion_frozen != prev:
             _log.info(
-                "juego %s  probe_dist=%s  odo_m=%s",
+                "juego %s  probe_dist=%s  odo_m=%s  speed_ms=%s",
                 "CONGELADO" if self._motion_frozen else "EN MOVIMIENTO",
                 f"{probe_dist_m:.1f}m" if probe_dist_m is not None else "—",
                 f"{odo_m:.1f}" if odo_m is not None else "—",
+                f"{speed_ms:.2f}" if speed_ms is not None else "—",
             )
         return self._motion_frozen
 
@@ -639,6 +713,37 @@ class TswTelemetrySource:
             d = entry.get("distance_m")
             if d is not None:
                 entry["distance_m"] = max(0.0, float(d) - delta_m)
+        self._refresh_speed_limit_heads()
+
+    def _refresh_speed_limit_heads(self) -> None:
+        """Tras odometría: quitar cartel ya pasado y subir el 2.º de Lua."""
+        limits = _prune_zero_distance_limits(
+            [dict(e) for e in (self._planning_dist.get("speed_limits_ahead") or [])]
+        )
+        self._planning_dist["speed_limits_ahead"] = limits
+        if not limits:
+            self._planning_dist["distance_next_m"] = None
+            self._planning_dist["distance_next_2_m"] = None
+            return
+        self._planning_dist["distance_next_m"] = limits[0].get("distance_m")
+        self._planning_dist["distance_next_2_m"] = (
+            limits[1].get("distance_m") if len(limits) > 1 else None
+        )
+
+    def _merge_probe_second_limit(self, probe_planning: dict[str, Any]) -> None:
+        """El cm del 1.er cartel está plano; igual hay 2.º en GetData."""
+        lim2 = probe_planning.get("next_limit_2_mph")
+        d2 = probe_planning.get("distance_next_2_m")
+        if lim2 is None or d2 is None or float(d2) <= 8.0:
+            return
+        limits = self._planning_dist.get("speed_limits_ahead") or []
+        entry = {"limit_mph": float(lim2), "distance_m": float(d2)}
+        if len(limits) < 2:
+            limits.append(entry)
+        else:
+            limits[1] = entry
+        self._planning_dist["speed_limits_ahead"] = limits
+        self._refresh_speed_limit_heads()
 
     def _tick_station_distances(self, speed_mph: float) -> None:
         """Odometría solo para estaciones HTTP entre polls (~2 s)."""
@@ -799,6 +904,13 @@ class TswTelemetrySource:
             return
         self._sync_planning_snapshot(source, probe_seq)
 
+    def _probe_limit_flat(self, new_dist: Optional[float]) -> bool:
+        """True si el cm del cartel no se ha movido vs último raw (no vs odo)."""
+        last_raw = self._planning_probe_dist
+        if new_dist is None or last_raw is None:
+            return False
+        return abs(float(new_dist) - float(last_raw)) <= PROBE_LIMIT_FLAT_M
+
     def _apply_probe_planning(
         self,
         parsed: dict[str, Any],
@@ -806,20 +918,24 @@ class TswTelemetrySource:
         *,
         probe_seq: Optional[int],
     ) -> None:
-        """Distancias desde probe: solo DriverAid (cm→m); sin odometría Python."""
+        """Límites: cm DriverAid si cambian; odo Python si el probe está plano (C.3a)."""
         with self._planning_lock:
             speed = float(parsed.get("speed_mph") or 0.0)
             probe_raw_dist = probe_planning.get("distance_next_m")
             odo_m = parsed.get("odo_m")
-            motion_frozen = self._update_probe_motion_frozen(probe_raw_dist, odo_m)
+            speed_ms = parsed.get("speed_ms")
+            motion_frozen = self._update_probe_motion_frozen(
+                probe_raw_dist, odo_m, speed_ms)
             if self._planning_hold:
                 motion_frozen = True
             parsed["probe_motion_frozen"] = motion_frozen
             parsed["planning_hold"] = self._planning_hold
+            probe_stale = False
             if probe_raw_dist is not None:
                 parsed["probe_dist_limit_m"] = float(probe_raw_dist)
 
             if self._planning_hold and self._planning_dist:
+                parsed["probe_stale"] = False
                 self._overlay_planning_distances(parsed)
                 return
 
@@ -837,13 +953,33 @@ class TswTelemetrySource:
             if not self._planning_dist:
                 self._sync_planning_snapshot(probe_planning, probe_seq)
             elif seq_changed:
-                self._sync_planning_if_not_frozen_decrease(
-                    probe_planning,
-                    probe_seq,
-                    motion_frozen=motion_frozen,
-                    speed_mph=speed,
-                )
+                moving = (not motion_frozen) and speed >= 0.3
+                parked = (not moving) and speed < 0.5
+                if (
+                    moving
+                    and probe_raw_dist is not None
+                    and self._probe_limit_flat(probe_raw_dist)
+                ):
+                    self._advance_probe_seq(probe_seq)
+                    self._planning_probe_dist = float(probe_raw_dist)
+                    self._tick_planning_distances(speed)
+                    self._merge_probe_second_limit(probe_planning)
+                    probe_stale = True
+                elif parked and self._planning_dist.get("distance_next_m") is not None:
+                    # C.3d: parado — no volver a 2495 m del probe.
+                    self._advance_probe_seq(probe_seq)
+                    if probe_raw_dist is not None:
+                        self._planning_probe_dist = float(probe_raw_dist)
+                    probe_stale = True
+                else:
+                    self._sync_planning_if_not_frozen_decrease(
+                        probe_planning,
+                        probe_seq,
+                        motion_frozen=motion_frozen,
+                        speed_mph=speed,
+                    )
 
+            parsed["probe_stale"] = probe_stale
             if stations:
                 self._planning_dist["stations"] = [dict(s) for s in stations]
             self._overlay_planning_distances(parsed)
@@ -1028,6 +1164,12 @@ class TswTelemetrySource:
         poll_hz = self.telem_poll_hz()
         if poll_hz > 0:
             parsed["telem_poll_hz"] = poll_hz
+        if self._cmd_writer is not None:
+            self._cmd_writer.update_telem_correlation(
+                snap.last_cmd_id,
+                snap.last_ack_ok,
+                snap.lever_notch,
+            )
         with self._telem_lock:
             self._telem.update(parsed)
 
@@ -1113,6 +1255,9 @@ class TswTelemetrySource:
         if self.mode == "searching":
             return {}
 
+        if self.mode == "tsw_api":
+            self.maybe_upgrade_to_ue4ss()
+
         if self.mode == "ue4ss":
             self._poll_ue4ss()
             # Si el probe deja de actualizar, intentar HTTPAPI una vez.
@@ -1139,23 +1284,27 @@ class TswTelemetrySource:
         return self.mode == "ue4ss"
 
     def has_control_api(self) -> bool:
-        """True si hay canal de escritura (IPC Lua o HTTPAPI)."""
-        if self.has_ipc_control():
-            return True
-        now = time.monotonic()
-        if self._api_ok_cache is not None and now - self._api_ok_ts < 10.0:
-            return self._api_ok_cache
-        self._api_ok_cache = self._ensure_api_client(silent=True)
-        self._api_ok_ts = now
-        return self._api_ok_cache
+        """True si hay canal de escritura de palanca (solo IPC Lua)."""
+        return self.has_ipc_control()
 
     def control_channel(self) -> str:
-        """Canal activo para mandos: ipc, http o none."""
+        """Canal activo para mandos: ipc o none (HTTP no se usa para palanca)."""
         if self.has_ipc_control():
             return "ipc"
-        if self._ensure_api_client(silent=True):
-            return "http"
         return "none"
+
+    def prefer_keyboard_actuator(self) -> bool:
+        """True si Lua no mueve la palanca — usar teclas A/D (SendInput)."""
+        return self._driver_input_dead
+
+    def _mark_driver_input_dead(self, reason: str) -> None:
+        if self._driver_input_dead:
+            return
+        self._driver_input_dead = True
+        _log.warning(
+            "Lua no mueve palanca (%s) — mandos vía teclado A/D (TSW en primer plano)",
+            reason,
+        )
 
     def arm_ipc_controls(self) -> None:
         """Habilita flag Lua, arranca escritor async y purga archivos huérfanos."""
@@ -1208,49 +1357,28 @@ class TswTelemetrySource:
         return self._vehicle_name
 
     def set_control_value(self, control: str, val: float) -> bool:
-        """Escritura de mandos vía IPC Lua (preferido) o HTTPAPI."""
+        """Escritura de mandos solo vía IPC Lua. Sin HTTP."""
         name = str(control or "").strip()
-
-        if self.has_ipc_control():
-            if name == "PowerBrakeHandle":
-                result = dispatch_ipc_combined_notch(
-                    combined_value_to_notch(val))
-            else:
-                result = dispatch_ipc_brake(name, val)
-            if result.get("ok"):
-                return True
-            err = result.get("error", "?")
-            if err == "ack_timeout":
-                _log.debug(
-                    "IPC mandos sin ack (%s) %s=%.3f — %s",
-                    err, name, val, result.get("ack") or result)
-            else:
-                _log.warning(
-                    "IPC mandos falló (%s) %s=%.3f — %s",
-                    err, name, val, result.get("ack") or result)
-
-        if not self._ensure_api_client(silent=True):
+        if not self.has_ipc_control():
             return False
-        if not self._api_lock.acquire(blocking=False):
-            _log.debug("set_control_value: API ocupada, reintentar próximo ciclo")
-            return False
-        try:
-            client = self._client
-            if client is None:
-                return False
-            if name == "PowerBrakeHandle":
-                notch = combined_value_to_notch(val)
-                result = dispatch_combined_notch(
-                    client, notch, timeout=CONTROL_API_TIMEOUT)
-            else:
-                result = dispatch_brake(
-                    client, name, val, timeout=CONTROL_API_TIMEOUT)
-            ok = bool(result.get("ok"))
-            if not ok:
-                _log.debug("set_control_value HTTP falló: %s", result)
-            return ok
-        finally:
-            self._api_lock.release()
+        if name == "PowerBrakeHandle":
+            result = dispatch_ipc_combined_notch(
+                combined_value_to_notch(val))
+        else:
+            result = dispatch_ipc_brake(name, val)
+        if result.get("ok"):
+            return True
+        err = str(result.get("error") or "?")
+        if err == "ack_timeout":
+            _log.debug(
+                "IPC mandos sin ack (%s) %s=%.3f — %s",
+                err, name, val, result.get("ack") or result)
+        else:
+            _log.warning(
+                "IPC mandos falló (%s) %s=%.3f — %s",
+                err, name, val, result.get("ack") or result)
+            self._mark_driver_input_dead(f"IPC {err}")
+        return False
 
 
 # Alias para migración gradual de imports

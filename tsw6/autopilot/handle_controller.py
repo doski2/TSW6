@@ -7,7 +7,7 @@ Dos clases en este módulo:
   HandleController
     - Recibe (action, TrainState, conn, hwnd) y envía un paso de control
     - USA state.handle_notch como fuente de verdad (nunca un contador interno)
-    - IPC preferido siempre (notch absoluto); teclado solo si IPC falla
+    - IPC preferido: un paso de muesca; teclado solo si IPC falla
     - Detecta interferencia externa y suprime COAST durante 1.5s
     - Sin stuck-detection ni force_neutral automáticos
 
@@ -93,11 +93,77 @@ class HandleController:
         # Para force_neutral / reset_neutral
         self._last_sync_t: float = 0.0
 
-    # ── RPC helpers ───────────────────────────────────────────────────────
+        # Métricas de sesión (logs CANAL_CONTROL)
+        self._metrics_ipc_async: int = 0
+        self._metrics_ipc_sync: int = 0
+        self._metrics_keyboard: int = 0
+        self._metrics_p1_rejected: int = 0
+
+        # Teclado: no repetir KEY hasta que GetData refleje el paso (evita 4→3→2)
+        self._key_wait_from: Optional[int] = None
+        self._key_wait_deadline: float = 0.0
+
+    def _prefer_keyboard(self, conn: Optional[object]) -> bool:
+        return bool(
+            getattr(conn, "prefer_keyboard_actuator", lambda: False)()
+        )
+
+    def _command_interval(
+        self,
+        conn: Optional[object],
+        use_rpc: bool,
+        default: float,
+    ) -> float:
+        if self._prefer_keyboard(conn):
+            return CONTROL_INTERVAL_BRAKE
+        if use_rpc:
+            return CONTROL_INTERVAL_RPC
+        return default
+
+    def _keyboard_waiting(self, current: int) -> bool:
+        """True si ya pulsamos KEY y la telemetría aún no cambió de muesca."""
+        if self._key_wait_from is None:
+            return False
+        if current != self._key_wait_from:
+            self._key_wait_from = None
+            self._key_wait_deadline = 0.0
+            return False
+        if time.time() > self._key_wait_deadline:
+            _log.debug(
+                "KEY espera telemetría timeout notch=%d — permitir reintento",
+                current,
+            )
+            self._key_wait_from = None
+            self._key_wait_deadline = 0.0
+            return False
+        return True
+
+    def _clear_keyboard_wait(self) -> None:
+        self._key_wait_from = None
+        self._key_wait_deadline = 0.0
+
+    def session_metrics(self) -> dict[str, int]:
+        return {
+            "ipc_async": self._metrics_ipc_async,
+            "ipc_sync": self._metrics_ipc_sync,
+            "keyboard": self._metrics_keyboard,
+            "p1_rejected": self._metrics_p1_rejected,
+        }
+
+    def _use_async_ipc(self, conn: Optional[object]) -> bool:
+        """True si hay cola IPC async (Fase A/B) — sin penalización global."""
+        if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
+            return False
+        return callable(getattr(conn, "enqueue_control_value", None))
 
     def _use_rpc(self, conn: Optional[object]) -> bool:
         """True si IPC Lua o HTTPAPI disponible y no penalizado."""
         if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
+            return False
+        if self._use_async_ipc(conn):
+            has_api = getattr(conn, "has_control_api", None)
+            if callable(has_api):
+                return bool(has_api())
             return False
         if self._rpc_disabled_until > time.time():
             return False
@@ -165,6 +231,29 @@ class HandleController:
 
     # ── Ejecución ─────────────────────────────────────────────────────────
 
+    def _keyboard_notch_step(
+        self,
+        hwnd: int,
+        new_notch: int,
+        current: int,
+        label: str,
+    ) -> bool:
+        if self._keyboard_waiting(current):
+            return False
+
+        step = current + (1 if new_notch > current else -1)
+        key = VK_A if new_notch > current else VK_D
+        hold_ms = KEY_TAP_MS if abs(step - current) == 1 else KEY_HOLD_MS
+        send_key(hwnd, key, hold_ms=hold_ms)
+        self._metrics_keyboard += 1
+        self._key_wait_from = current
+        self._key_wait_deadline = time.time() + 1.2
+        _log.info(
+            "KEY  %-11s  notch %d→%d  (obj=%d  %s  %dms  fallback)",
+            label, current, step, new_notch,
+            "A" if new_notch > current else "D", hold_ms)
+        return True
+
     def _apply_combined_notch(
         self,
         conn: Optional[object],
@@ -173,57 +262,69 @@ class HandleController:
         current: int,
         *,
         label: str,
+        ipc_only: bool = False,
     ) -> bool:
-        """Escribe ``new_notch`` (0–8): IPC absoluto primero; teclado A/D si falla."""
+        """Escribe un paso hacia ``new_notch`` (0–8): IPC Class 323; teclado si no ``ipc_only``."""
         new_notch = max(0, min(_MAX_NOTCH, int(new_notch)))
         if new_notch == current:
             return False
+        step = current + (1 if new_notch > current else -1)
+        step = max(0, min(_MAX_NOTCH, step))
+
+        prefer_key = self._prefer_keyboard(conn)
+        if prefer_key and hwnd is not None:
+            return self._keyboard_notch_step(hwnd, new_notch, current, label)
 
         now = time.time()
         if (
             self._use_rpc(conn)
-            and self._last_ipc_notch == new_notch
+            and self._last_ipc_notch == step
             and now - self._last_ipc_notch_t < 0.40
-            and current != new_notch
+            and current != step
         ):
             return False
 
         if self._use_rpc(conn):
-            val = new_notch / float(_MAX_NOTCH)
+            val = step / float(_MAX_NOTCH)
             enqueue_fn = getattr(conn, "enqueue_control_value", None)
             if callable(enqueue_fn):
                 if enqueue_fn("PowerBrakeHandle", val):
-                    self._last_ipc_notch = new_notch
+                    self._metrics_ipc_async += 1
+                    self._last_ipc_notch = step
                     self._last_ipc_notch_t = time.time()
                     _log.info(
-                        "IPC  %-11s  notch %d→%d  (val=%.3f  async)",
-                        label, current, new_notch, val)
+                        "IPC  %-11s  notch %d→%d  (obj=%d  val=%.3f  async)",
+                        label, current, step, new_notch, val)
                     return True
                 _log.warning(
                     "IPC cola llena %s notch %d→%d",
-                    label, current, new_notch)
-                return False
-            if self._try_rpc(conn, "PowerBrakeHandle", val):
-                self._last_ipc_notch = new_notch
+                    label, current, step)
+                if ipc_only:
+                    self._metrics_p1_rejected += 1
+                    return False
+            elif self._try_rpc(conn, "PowerBrakeHandle", val):
+                self._metrics_ipc_sync += 1
+                self._last_ipc_notch = step
                 self._last_ipc_notch_t = time.time()
                 _log.info(
-                    "IPC  %-11s  notch %d→%d  (val=%.3f)",
-                    label, current, new_notch, val)
+                    "IPC  %-11s  notch %d→%d  (obj=%d  val=%.3f)",
+                    label, current, step, new_notch, val)
                 return True
-            _log.warning(
-                "IPC falló %s notch %d→%d — probando teclado",
+            else:
+                _log.warning(
+                    "IPC falló %s notch %d→%d%s",
+                    label, current, step,
+                    "" if ipc_only else " — probando teclado")
+
+        if ipc_only:
+            self._metrics_p1_rejected += 1
+            _log.error(
+                "P1 sin IPC %s notch %d→%d — sin fallback teclado",
                 label, current, new_notch)
+            return False
 
         if hwnd is not None:
-            step = current + (1 if new_notch > current else -1)
-            key = VK_A if new_notch > current else VK_D
-            hold_ms = KEY_TAP_MS if abs(step - current) == 1 else KEY_HOLD_MS
-            send_key(hwnd, key, hold_ms=hold_ms)
-            _log.info(
-                "KEY  %-11s  notch %d→%d  (obj=%d  %s  %dms  fallback)",
-                label, current, step, new_notch,
-                "A" if new_notch > current else "D", hold_ms)
-            return True
+            return self._keyboard_notch_step(hwnd, new_notch, current, label)
 
         _log.warning("execute: sin IPC ni hwnd — no se puede enviar %s", label)
         return False
@@ -247,8 +348,8 @@ class HandleController:
 
         # ── Dastsc P1: notch del plan (antes de HOLD — action puede ser HOLD) ─
         if brake_command is not None and brake_command.target_notch is not None:
-            interval = (CONTROL_INTERVAL_RPC if use_rpc
-                        else CONTROL_INTERVAL_BRAKE)
+            interval = self._command_interval(
+                conn, use_rpc, CONTROL_INTERVAL_BRAKE)
             if now - self._last_control < interval:
                 return False
             current = state.handle_notch
@@ -261,7 +362,7 @@ class HandleController:
             elif brake_command.kind == "APPLY" and target is not None:
                 target = clamp_brake_handle(target, brake_command.distance_m)
             if self._apply_combined_notch(
-                    conn, hwnd, target, current, label=label):
+                    conn, hwnd, target, current, label=label, ipc_only=True):
                 self._last_control = now
                 return True
             return False
@@ -269,8 +370,11 @@ class HandleController:
         if action in (HOLD, PAUSED):
             return False
 
-        interval = (CONTROL_INTERVAL_RPC if use_rpc
-                    else self._INTERVALS.get(action, CONTROL_INTERVAL))
+        interval = self._command_interval(
+            conn,
+            use_rpc,
+            self._INTERVALS.get(action, CONTROL_INTERVAL),
+        )
         if now - self._last_control < interval:
             return False
 
@@ -299,20 +403,7 @@ class HandleController:
         if target == current:
             return False
 
-        if use_rpc:
-            new_notch = target
-            if brake_command is None and action == COAST and current > _NOTCH_NEUTRAL:
-                eff = (state.target_mph if state.target_mph > 0
-                       else state.limit_mph)
-                overshoot = state.speed_mph - eff
-                if overshoot > 8:
-                    new_notch = max(_NOTCH_NEUTRAL, current - 3)
-                elif overshoot > 3:
-                    new_notch = max(_NOTCH_NEUTRAL, current - 2)
-                else:
-                    new_notch = current - 1
-        else:
-            new_notch = current + (1 if target > current else -1)
+        new_notch = current + (1 if target > current else -1)
 
         if self._apply_combined_notch(
                 conn, hwnd, new_notch, current, label=action):
@@ -341,6 +432,7 @@ class HandleController:
             _log.warning("force_neutral: sin hwnd, no se puede sincronizar")
             return
 
+        self._clear_keyboard_wait()
         _log.warning("force_neutral: sincronizando handle físicamente (~5s)...")
         pause = KEY_HOLD_MS / 1000.0 + 0.10
         # Bajar hasta el límite (máx freno: 0) partiendo de cualquier posición
@@ -373,6 +465,7 @@ class HandleController:
         if hwnd is None:
             _log.warning("reset_neutral: sin IPC ni hwnd")
             return
+        self._clear_keyboard_wait()
         pause = KEY_HOLD_MS / 1000.0 + 0.05
         pos = current_handle
         while pos > _NOTCH_NEUTRAL:

@@ -58,8 +58,8 @@ class AutopilotApp:
         self._control_error: Optional[str] = None
 
         root.title("TSW6 — Autopilot")
-        root.geometry("900x780")
-        root.minsize(720, 600)
+        root.geometry("900x820")
+        root.minsize(720, 680)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         style = ttk.Style()
@@ -72,12 +72,36 @@ class AutopilotApp:
         self._schedule_ui_refresh()
 
     def _build_ui(self) -> None:
+        # Barra inferior primero (side=BOTTOM) para que no la empuje el notebook.
+        bottom = ttk.LabelFrame(self.root, text="Acción")
+        bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=_PADX, pady=_PADY)
+
+        action_row = ttk.Frame(bottom)
+        action_row.pack(fill=tk.X, padx=8, pady=(6, 2))
+        self.lbl_action_main = ttk.Label(
+            action_row, text="—", font=("Segoe UI", 18, "bold"), width=14)
+        self.lbl_action_main.pack(side=tk.LEFT, anchor=tk.NW)
+        detail_col = ttk.Frame(action_row)
+        detail_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(12, 0))
+        self.lbl_action_detail = ttk.Label(
+            detail_col, text="—", font=("Consolas", 10), justify=tk.LEFT)
+        self.lbl_action_detail.pack(anchor=tk.W, fill=tk.X)
+        self.lbl_action_cmd = ttk.Label(
+            detail_col, text="", font=("Consolas", 9), foreground="#555")
+        self.lbl_action_cmd.pack(anchor=tk.W, fill=tk.X)
+        self.lbl_fps = ttk.Label(
+            bottom, text="", font=("Consolas", 9), foreground="#666")
+        self.lbl_fps.pack(anchor=tk.W, padx=8, pady=(0, 6))
+
         top = ttk.Frame(self.root)
         top.pack(fill=tk.X, padx=_PADX, pady=_PADY)
 
         self.lbl_title = ttk.Label(
             top, text="TSW6 Autopilot", font=("Segoe UI", 13, "bold"))
         self.lbl_title.pack(anchor=tk.W)
+        self.lbl_probe = ttk.Label(
+            top, text="● Probe", font=("Segoe UI", 10, "bold"), foreground="#c33")
+        self.lbl_probe.pack(anchor=tk.W)
         self.lbl_conn = ttk.Label(top, text="Conectando…", foreground="#a60")
         self.lbl_conn.pack(anchor=tk.W)
         self.lbl_vehicle = ttk.Label(top, text="", foreground="#555")
@@ -167,13 +191,13 @@ class AutopilotApp:
         self.notebook.add(tab_learn, text="Aprendizaje")
         self._build_learn_tab(tab_learn)
 
-        bottom = ttk.LabelFrame(self.root, text="Acción")
-        bottom.pack(fill=tk.X, padx=_PADX, pady=_PADY)
-        self.lbl_action = ttk.Label(
-            bottom, text="—", font=("Consolas", 14, "bold"))
-        self.lbl_action.pack(anchor=tk.W, padx=8, pady=6)
-        self.lbl_fps = ttk.Label(bottom, text="", foreground="#666")
-        self.lbl_fps.pack(anchor=tk.W, padx=8, pady=(0, 6))
+        self.root.bind("<Configure>", self._on_root_configure)
+
+    def _on_root_configure(self, event: tk.Event) -> None:
+        if event.widget is not self.root:
+            return
+        wrap = max(320, event.width - 220)
+        self.lbl_action_detail.configure(wraplength=wrap)
 
     def _build_live_tab(self, parent: ttk.Frame) -> None:
         grid = ttk.Frame(parent)
@@ -190,7 +214,7 @@ class AutopilotApp:
             "Aceleración",
             "Gradiente",
             "Estación FSM",
-            "Puertas",
+            "lua / dmi",
             "Supervisión",
             "Lluvia",
         ):
@@ -391,7 +415,22 @@ class AutopilotApp:
             "searching": "Buscando conexión…",
         }
         mode = mode_labels.get(s.conn_mode, s.conn_mode)
-        col = "#2a7" if s.conn_mode in ("ue4ss", "tsw_api") else "#a60"
+        if s.probe_live:
+            probe_txt = "● PROBE F7 ON — canal rápido (~20 Hz)"
+            probe_col = "#2a7"
+        elif s.conn_mode == "tsw_api":
+            probe_txt = f"● {s.probe_hint or 'F7 OFF — HTTP lento (~2s)'}"
+            probe_col = "#c80"
+        elif s.probe_hint:
+            probe_txt = f"● {s.probe_hint}"
+            probe_col = "#c33"
+        else:
+            probe_txt = "● Sin probe — pulsa F7 en cabina"
+            probe_col = "#c33"
+        self.lbl_probe.configure(text=probe_txt, foreground=probe_col)
+
+        col = "#2a7" if s.conn_mode == "ue4ss" else (
+            "#c80" if s.conn_mode == "tsw_api" else "#a60")
         ch = s.control_channel
         if ch == "ipc":
             ctrl_txt = "Mandos: SendCommand ✓"
@@ -425,7 +464,7 @@ class AutopilotApp:
         self.lbl_next_limit.configure(
             text=self._format_limit_ahead(
                 s.next_limit_mph, s.distance_next_m, s.speed_mph,
-                probe_dist_m=s.probe_dist_limit_m, units=s.distance_units))
+                units=s.distance_units))
         self.lbl_next_limit_2.configure(
             text=self._format_limit_ahead(
                 s.next_limit_2_mph, s.distance_next_2_m, s.speed_mph,
@@ -447,7 +486,11 @@ class AutopilotApp:
         elif s.next_stop_name:
             fsm += f" → próx: {s.next_stop_name}"
         self.lbl_fsm.configure(text=fsm)
-        self.lbl_doors.configure(text="ABIERTAS" if s.doors_open else "cerradas")
+        lua = s.doors_telem
+        dmi = s.doors_dmi
+        lua_txt = "1" if lua is True else ("0" if lua is False else "—")
+        dmi_txt = "1" if dmi is True else ("0" if dmi is False else "—")
+        self.lbl_doors.configure(text=f"lua={lua_txt}  dmi={dmi_txt}")
         self.lbl_ack.configure(text=s.supervision or "—")
         self.lbl_rain.configure(text=f"{s.rain_intensity:.2f}")
 
@@ -466,14 +509,20 @@ class AutopilotApp:
             color = "#c33"
         extra = ""
         if s.override:
-            extra = f"  (override: {s.override})"
+            extra = f"override: {s.override}"
         notch_txt = ""
         if s.brake_target_notch is not None:
-            notch_txt = f"  →N{s.brake_target_notch}"
-        self.lbl_action.configure(
-            text=f"{action}{notch_txt}{extra}  ← decider: {s.action}"
-                 f"  {'[cmd OK]' if s.last_cmd_sent else '[sin cmd]'}",
-            foreground=color)
+            notch_txt = f" → N{s.brake_target_notch}"
+        main_txt = f"{action}{notch_txt}"
+        detail_parts = [f"decider: {s.action}"]
+        if extra:
+            detail_parts.append(extra)
+        self.lbl_action_main.configure(text=main_txt, foreground=color)
+        self.lbl_action_detail.configure(
+            text="   ·   ".join(detail_parts))
+        self.lbl_action_cmd.configure(
+            text="Mando enviado ✓" if s.last_cmd_sent else "Sin mando en este tick",
+            foreground="#2a7" if s.last_cmd_sent else "#888")
         self.lbl_fps.configure(
             text=(
                 f"{s.fps:.1f} Hz"
@@ -651,6 +700,8 @@ class AutopilotApp:
             probe_dist_m: Optional[float] = None,
             units: str = "uk_imperial") -> str:
         if mph is None or dist_m is None:
+            return "—"
+        if dist_m <= 8.0:
             return "—"
         extra = ""
         if speed_mph is not None and mph < speed_mph - 0.5:

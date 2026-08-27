@@ -33,6 +33,15 @@ class TestUe4ssReader(unittest.TestCase):
         self.assertEqual(power_to_combined_notch(-3), 1)
         self.assertEqual(power_to_combined_notch(2), 6)
 
+    def test_parse_doors_telem(self) -> None:
+        data = parse_probe_line(
+            "seq=2224 speed_ms=0 doors_open=1 doors_telem=1 vehicle=Class323"
+        )
+        self.assertTrue(data["doors_telem"])
+        self.assertTrue(data["doors_open"])
+        snap = ProbeSnapshot.from_dict(data)
+        self.assertTrue(snap.doors_telem)
+
     def test_parse_handle_notch(self) -> None:
         data = parse_probe_line("seq=1 handle_notch=4 power=0 vehicle=Class323")
         self.assertEqual(data["handle_notch"], 4)
@@ -57,6 +66,17 @@ class TestUe4ssReader(unittest.TestCase):
         self.assertAlmostEqual(planning["distance_next_m"], 199.9, places=1)
         self.assertAlmostEqual(planning["next_limit_mph"], 20.0, places=1)
         self.assertAlmostEqual(planning["distance_next_2_m"], 246.7, places=1)
+
+    def test_planning_dict_promotes_second_when_first_at_zero(self) -> None:
+        snap = ProbeSnapshot.from_dict({
+            "dist_limit_cm": 0.0,
+            "next_limit_ms": 24.5872,
+            "dist_limit2_cm": 40000.0,
+            "next_limit2_ms": 20.1168,
+        })
+        planning = snap.planning_dict()
+        self.assertGreater(planning["distance_next_m"], 300.0)
+        self.assertAlmostEqual(planning["next_limit_mph"], 45.0, places=0)
 
     def test_to_telemetry_dict(self) -> None:
         snap = ProbeSnapshot.from_dict(

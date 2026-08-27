@@ -108,6 +108,12 @@ def combined_notch_to_value(notch: int) -> float:
     return n / float(_COMBINED_NOTCH_MAX)
 
 
+def combined_notch_to_axis(notch: int) -> float:
+    """Muesca handle UK 0–8 → eje InputValue -1..1 (neutro en 0)."""
+    n = max(0, min(_COMBINED_NOTCH_MAX, int(notch)))
+    return (n - 4) / 4.0
+
+
 def combined_value_to_notch(value: float) -> int:
     """Valor API → muesca entera más cercana."""
     v = _clamp(value, 0.0, 1.0)
@@ -142,7 +148,37 @@ def dispatch_brake(
         return {"ok": False, "error": "command_not_allowed", "control": control, "path": path}
 
     clamped = clamp_brake_value(path, value)
-    result = client.set_value(path, clamped, timeout=timeout)
+    if path == "PowerBrakeHandle":
+        target_notch = combined_value_to_notch(clamped)
+        axis = combined_notch_to_axis(target_notch)
+        result: dict[str, Any] = {"ok": False, "error": "no_attempt", "path": path}
+        for via, attempt in (
+            ("input", lambda: client.set_input_value(path, axis, timeout=timeout)),
+            ("value", lambda: client.set_value(path, clamped, timeout=timeout)),
+        ):
+            attempt_result = attempt()
+            if not attempt_result.get("ok"):
+                result = attempt_result
+                continue
+            hud = client.read_hud_combined_notch()
+            if hud is not None and abs(int(hud) - int(target_notch)) <= 1:
+                result = attempt_result
+                result["via"] = via
+                result["hud_notch"] = int(hud)
+                result["target_notch"] = int(target_notch)
+                break
+            result = {
+                "ok": False,
+                "error": "hud_no_effect",
+                "path": path,
+                "value": clamped,
+                "axis": axis,
+                "via": via,
+                "hud_notch": hud,
+                "target_notch": int(target_notch),
+            }
+    else:
+        result = client.set_value(path, clamped, timeout=timeout)
     result["control"] = control
     result["path"] = path
     if result.get("ok"):

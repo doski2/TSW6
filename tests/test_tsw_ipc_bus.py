@@ -39,6 +39,19 @@ class TestIpcBus(unittest.TestCase):
         line = format_send_command_line("combined_brake", 0.25)
         self.assertEqual(line, "PowerBrakeHandle:0.2500")
 
+    def test_format_line_with_cmd_id(self):
+        line = format_send_command_line("combined_brake", 0.25, cmd_id=42)
+        self.assertEqual(line, "PowerBrakeHandle:0.2500:42")
+
+    def test_parse_ack_with_cmd_id(self):
+        from tsw6.telemetry.tsw_ipc_bus import parse_send_ack_line
+
+        ack = parse_send_ack_line("PowerBrakeHandle:0.3750:ok:7")
+        self.assertIsNotNone(ack)
+        assert ack is not None
+        self.assertTrue(ack["ok"])
+        self.assertEqual(ack["cmd_id"], 7)
+
     def test_write_and_flag(self):
         self.assertTrue(write_send_command("PowerBrakeHandle", 0.5))
         bridge = self._bridge()
@@ -81,37 +94,48 @@ class TestIpcBus(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(send_ack_path().is_file())
 
-    def test_optimistic_success_when_command_consumed(self):
+    def test_lua_rejected_on_fail_ack(self):
+        with mock.patch(
+            "tsw6.telemetry.tsw_ipc_bus.wait_send_ack",
+            return_value={
+                "name": "PowerBrakeHandle",
+                "value": 0.25,
+                "ok": False,
+                "cmd_id": 3,
+            },
+        ):
+            result = write_send_command_with_ack("combined_brake", 0.25, cmd_id=3)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "lua_rejected")
+
+    def test_timeout_when_command_consumed_without_ack(self):
         with mock.patch(
             "tsw6.telemetry.tsw_ipc_bus.write_send_command", return_value=True,
         ):
             with mock.patch(
                 "tsw6.telemetry.tsw_ipc_bus.wait_send_ack", return_value=None,
             ):
-                with mock.patch(
-                    "tsw6.telemetry.tsw_ipc_bus.send_command_path",
-                ) as mock_cmd_path:
-                    mock_cmd_path.return_value.is_file.return_value = False
-                    result = write_send_command_with_ack("combined_brake", 0.25)
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["ack"].get("optimistic"))
+                result = write_send_command_with_ack("combined_brake", 0.25)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "ack_timeout")
 
-    def test_wait_ack_optimistic_when_send_file_consumed(self):
+    def test_wait_ack_reads_fail_after_command_consumed(self):
         from tsw6.telemetry.tsw_ipc_bus import wait_send_ack
 
-        with mock.patch("tsw6.telemetry.tsw_ipc_bus.send_command_path") as mock_cmd:
-            mock_cmd.return_value.is_file.side_effect = [True, False]
-            with mock.patch("tsw6.telemetry.tsw_ipc_bus.send_ack_path") as mock_ack:
-                mock_ack.return_value.is_file.return_value = False
-                ack = wait_send_ack(
-                    0.12,
-                    expected_path="PowerBrakeHandle",
-                    expected_value=0.375,
-                )
+        bridge = self._bridge()
+        bridge.mkdir(parents=True, exist_ok=True)
+        (bridge / SEND_ACK_FILENAME).write_text(
+            "PowerBrakeHandle:0.3750:fail:5\n", encoding="utf-8")
+        ack = wait_send_ack(
+            0.05,
+            expected_path="PowerBrakeHandle",
+            expected_value=0.375,
+            expected_cmd_id=5,
+        )
         self.assertIsNotNone(ack)
         assert ack is not None
-        self.assertTrue(ack.get("optimistic"))
-        self.assertTrue(ack.get("consumed"))
+        self.assertFalse(ack["ok"])
+        self.assertEqual(ack["cmd_id"], 5)
 
     def test_purge_removes_files(self):
         enable_lua_commands()

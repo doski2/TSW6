@@ -28,6 +28,14 @@ from tsw6.learning.learn_monitor import learn_progress_summary
 from tsw6.hud.hud_timetable import schedule_times_for_station
 from tsw6.telemetry.driver_aid_parser import resolve_display_next_stop
 from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource
+from tsw6.telemetry.control_channel import DEFAULT_TELEM_HZ
+from tsw6.telemetry.channel_diagnostics import (
+    ControllerMetrics,
+    LoopMetrics,
+    acceptance_verdict,
+    probe_mod_flags,
+    probe_mod_label,
+)
 
 EnumWindowsProc = ctypes.WINFUNCTYPE(
     ctypes.c_bool, ctypes.c_int, ctypes.POINTER(ctypes.c_int))
@@ -90,6 +98,8 @@ class AutopilotSnapshot:
     vehicle_name: Optional[str] = None
     ack_required: bool = False
     doors_open: bool = False
+    doors_telem: Optional[bool] = None
+    doors_dmi: Optional[bool] = None
     stations: list = field(default_factory=list)
     next_stop_name: Optional[str] = None
     next_stop_distance_m: Optional[float] = None
@@ -106,6 +116,8 @@ class AutopilotSnapshot:
     last_cmd_sent: bool = False
     probe_seq: Optional[int] = None
     probe_age_ms: Optional[float] = None
+    probe_live: bool = False
+    probe_hint: str = ""
     probe_dist_limit_m: Optional[float] = None
     distance_units: str = "uk_imperial"
     brake_phase: Optional[str] = None
@@ -205,6 +217,10 @@ class AutopilotEngine:
         self._control_skip_reason = "init"
         self._limit_fallback_logged = False
         self._pressure_warn_logged = False
+        self._probe_mod_logged = False
+        self._channel_summary_t = 0.0
+        self._loop_metrics = LoopMetrics()
+        self._session_log_path: Optional[Path] = log_path
 
         if not config.no_control:
             self.conn.purge_ipc_on_start()
@@ -212,6 +228,7 @@ class AutopilotEngine:
         self._log_buffer: Deque[str] = deque(maxlen=80)
         self._log = logging.getLogger("tsw.autopilot")
         if log_path:
+            self._log.info("Log sesión: %s", log_path)
             fh = logging.FileHandler(log_path, encoding="utf-8")
             fh.setFormatter(logging.Formatter(
                 "%(asctime)s.%(msecs)03d [%(name)-14s] %(levelname)-7s %(message)s",
@@ -229,7 +246,7 @@ class AutopilotEngine:
             telem_log.addHandler(fh)
             for _name in (
                 "tsw.governor", "tsw.governor.v2", "tsw.controller",
-                "tsw.physics", "tsw.learner",
+                "tsw.physics", "tsw.learner", "tsw.telemetry.channel",
             ):
                 _lg = logging.getLogger(_name)
                 _lg.setLevel(logging.DEBUG)
@@ -241,6 +258,12 @@ class AutopilotEngine:
         self._probe_lock = threading.Lock()
         with self._probe_lock:
             mode = self.conn.connect_fast()
+        self._log.info(
+            "Autopilot iniciado  tgt=%.0fHz  control=%s  learn=%s",
+            self.config.loop_hz,
+            "off" if self.config.no_control else "on",
+            "on" if self.config.learn else "off",
+        )
         self._log.info(
             "Conexión inicial: modo=%s — %s",
             mode, self.conn.last_probe_info)
@@ -259,6 +282,9 @@ class AutopilotEngine:
             with self._probe_lock:
                 if self.conn.mode == "searching":
                     self.conn.probe()
+                elif self.conn.mode == "tsw_api":
+                    if self.conn.maybe_upgrade_to_ue4ss():
+                        self._on_ue4ss_upgraded()
 
     def pause(self) -> None:
         if not self.decider.paused:
@@ -313,6 +339,7 @@ class AutopilotEngine:
     def stop(self) -> None:
         self._running = False
         self.ocr.stop()
+        self._log_session_summary("fin sesión")
         if not self.config.no_control:
             self.conn.release_controls()
 
@@ -363,7 +390,10 @@ class AutopilotEngine:
                 if new:
                     self.telem = new
         else:
+            prev_mode = self.conn.mode
             new = self.conn.get_telemetry()
+            if prev_mode == "tsw_api" and self.conn.mode == "ue4ss":
+                self._on_ue4ss_upgraded()
             if new:
                 self.telem = new
 
@@ -481,8 +511,10 @@ class AutopilotEngine:
         self._loop_fps = fps
         self._last_tick_ms = elapsed * 1000.0
         self._heartbeat_tick_count += 1
+        self._loop_metrics.record_tick(self._last_tick_ms, self._loop_hz_real)
 
         self._log_heartbeat()
+        self._log_channel_summary()
         self._log_pause_diag()
 
         now = time.monotonic()
@@ -495,6 +527,8 @@ class AutopilotEngine:
                 and self.conn.has_ipc_control()):
             self.conn.arm_ipc_controls()
             self._ipc_armed = True
+            self._log.info(
+                "Canal IPC armado (async writer + TelemetryReader 20Hz)")
             self._log.info("Mandos vía SendCommand.txt (UE4SS IPC)")
 
         _stations = list(self.telem.get("stations") or [])
@@ -506,6 +540,7 @@ class AutopilotEngine:
         ) = self._resolve_next_stop_snapshot(_stations)
 
         learn_info = self._learn_status()
+        probe_st = self.conn.probe_status()
 
         self.snapshot = AutopilotSnapshot(
             speed_mph=speed,
@@ -535,6 +570,8 @@ class AutopilotEngine:
                 or bool(self.telem.get("doors_open"))
                 or self.telem.get("doors_dmi") is True
             ),
+            doors_telem=self.telem.get("doors_telem"),
+            doors_dmi=self.telem.get("doors_dmi"),
             stations=_stations,
             next_stop_name=_nxt_name,
             next_stop_distance_m=_nxt_dist,
@@ -551,6 +588,8 @@ class AutopilotEngine:
             last_cmd_sent=cmd_sent,
             probe_seq=self.telem.get("probe_seq"),
             probe_age_ms=self.telem.get("telemetry_age_ms"),
+            probe_live=bool(probe_st.get("live")),
+            probe_hint=str(probe_st.get("hint") or ""),
             probe_dist_limit_m=self.telem.get("probe_dist_limit_m"),
             distance_units=str(self.telem.get("distance_units") or "uk_imperial"),
             brake_phase=(
@@ -684,6 +723,15 @@ class AutopilotEngine:
             self._log_learner_state("perfil cargado")
             self._vehicle_profiled = True
 
+    def _on_ue4ss_upgraded(self) -> None:
+        """Probe F7 disponible tras arrancar en HTTP — canal rápido + IPC."""
+        self._probe_mod_logged = False
+        self._log.info(
+            "Probe UE4SS activo — cambio HTTP → UE4SS (~%d Hz telemetría)",
+            int(DEFAULT_TELEM_HZ),
+        )
+        self._log_probe_mod()
+
     def _log_searching_hint(self) -> None:
         if self.conn.mode != "searching":
             return
@@ -708,6 +756,7 @@ class AutopilotEngine:
         limit = self.telem.get("limit_mph")
         if speed is not None and limit is not None:
             self._telem_ready_logged = True
+            self._log_probe_mod()
             self._log.info(
                 "Telemetría lista: modo=%s  spd=%.1f  lim=%.0f  notch=%s  mandos=%s",
                 self.conn.mode,
@@ -793,17 +842,28 @@ class AutopilotEngine:
         ack_ms = cmd_st.last_ack_ms
         last_id = cmd_st.cmd_id
         target_n = cmd_st.target_notch
+        confirmed = (
+            "Y" if cmd_st.confirmed_cmd_id == last_id and last_id > 0 else
+            "N" if last_id > 0 else "—"
+        )
         match = (
+            "Y" if cmd_st.reached_notch else
             "Y" if target_n is not None and lever is not None
             and int(lever) == int(target_n) else
             "N" if target_n is not None else "—"
         )
+        ipc_err = cmd_st.last_error or "—"
+        had_cmd = last_id > 0 or cmd_q > 0
+        self._loop_metrics.record_heartbeat(
+            cf=confirmed, match=match, had_cmd=had_cmd)
         self._log.info(
             "heartbeat modo=%s  loop_hz=%.1f  work=%.0fms  sleep=%.0fms  tgt=%.0fHz  "
-            "spd=%s  lim=%s  next_lim=%s  elim=%.1f  seq=%s  "
-            "dist=%s  probe=%s  frozen=%s  mandos=%s  ctrl=%s  "
+            "spd=%s  lim=%s  next_lim=%s  lim2=%s  elim=%.1f  seq=%s  "
+            "dist=%s  probe=%s  frozen=%s  stale=%s  mandos=%s  ctrl=%s  "
             "p1on=%s  telem=%s  age=%s  telem_poll=%s  "
-            "cmd_q=%d id=%d ack=%.0fms match=%s lever=%s hud=%s  "
+            "lua=%s dmi=%s  "
+            "cmd_q=%d id=%d cf=%s ack=%.0fms ret=%d err=%s via=%s match=%s "
+            "lever=%s hud=%s  "
             "P=%s  fill=%.2fs/%d  lrn=%s",
             self.conn.mode,
             self._loop_hz_real,
@@ -813,20 +873,33 @@ class AutopilotEngine:
             f"{spd:.1f}" if spd is not None else "—",
             f"{lim:.0f}" if lim is not None else "—",
             f"{next_lim:.0f}" if next_lim is not None else "—",
+            (
+                f"{t.get('next_limit_2_mph'):.0f}"
+                if t.get("next_limit_2_mph") is not None else "—"
+            ),
             self.decider.effective_limit,
             t.get("probe_seq", "?"),
             format_distance(dist, units) if dist is not None else "—",
             format_distance(probe_dist, units) if probe_dist is not None else "—",
             "Y" if frozen else "N",
+            "Y" if t.get("probe_stale") else "N",
             self.conn.control_channel(),
             skip,
             "Y" if self.decider.p1_active else "N",
             telem_src,
             f"{float(telem_age):.0f}ms" if telem_age is not None else "—",
             f"{float(telem_poll):.1f}Hz" if telem_poll else "—",
+            "1" if t.get("doors_telem") is True else (
+                "0" if t.get("doors_telem") is False else "—"),
+            "1" if t.get("doors_dmi") is True else (
+                "0" if t.get("doors_dmi") is False else "—"),
             cmd_q,
             last_id,
+            confirmed,
             ack_ms,
+            cmd_st.retries,
+            ipc_err,
+            cmd_st.last_via or "—",
             match,
             str(lever) if lever is not None else "—",
             str(hud) if hud is not None else "—",
@@ -835,6 +908,139 @@ class AutopilotEngine:
             fill_n,
             lrn,
         )
+
+    def _log_probe_mod(self) -> None:
+        if self._probe_mod_logged or self.conn.mode != "ue4ss":
+            return
+        self._probe_mod_logged = True
+        flags = probe_mod_flags(self.telem)
+        rep = self.conn.channel_report()
+        self._log.info(
+            "Probe mod: %s  getdata=%s  "
+            "lever=%s  last_cmd_id=%s  last_ack_ok=%s  brake_cyl=%s",
+            probe_mod_label(flags),
+            rep.get("getdata", "?"),
+            self.telem.get("lever_notch", "—"),
+            self.telem.get("last_cmd_id", "—"),
+            self.telem.get("last_ack_ok", "—"),
+            self.telem.get("brake_cyl_bar", "—"),
+        )
+        if not flags.get("lever_notch") or not flags.get("last_cmd_id"):
+            self._log.warning(
+                "Mod Lua antiguo — ejecuta install_ue4ss_probe.bat y reinicia TSW6")
+
+    def _log_channel_summary(self) -> None:
+        """Resumen canal cada ~10 s (criterios CANAL_CONTROL)."""
+        now = time.monotonic()
+        if now - self._channel_summary_t < 10.0:
+            return
+        self._channel_summary_t = now
+        if self.conn.mode not in ("ue4ss", "tsw_api"):
+            return
+        rep = self.conn.channel_report()
+        ctrl = self.controller.session_metrics()
+        lm = self._loop_metrics
+        verdict = acceptance_verdict(
+            loop=lm,
+            channel=rep,
+            controller=ControllerMetrics(**ctrl),
+            telem_poll_hz=float(rep.get("telem_poll_hz") or 0.0),
+            mod_flags=rep.get("mod_flags") or probe_mod_flags(self.telem),
+        )
+        self._log.info(
+            "canal [%s]  ipc_ok=%d/%d (%.0f%%)  http_ok=%d  via=%s  ack_p95=%.0fms  "
+            "enq=%d ret=%d drop=%d err=%s  "
+            "async=%d KEY=%d p1rej=%d  "
+            "ticks=%d work_max=%.0fms slow=%d  "
+            "loop_hz=%.1f-%.1f  telem_poll=%.1fHz  mod=%s",
+            verdict,
+            int(rep.get("ipc_ok", 0)),
+            int(rep.get("cmd_total", 0)),
+            float(rep.get("ack_ok_pct", 0.0)),
+            int(rep.get("http_ok", 0)),
+            rep.get("last_via", "—"),
+            float(rep.get("ack_p95_ms", 0.0)),
+            int(rep.get("enqueued", 0)),
+            int(rep.get("retries", 0)),
+            int(rep.get("drops", 0)),
+            rep.get("last_error", "—"),
+            ctrl.get("ipc_async", 0),
+            ctrl.get("keyboard", 0),
+            ctrl.get("p1_rejected", 0),
+            lm.ticks,
+            lm.work_max_ms,
+            lm.work_over_150,
+            lm.loop_hz_min if lm.loop_hz_min < 999 else 0.0,
+            lm.loop_hz_max,
+            float(rep.get("telem_poll_hz") or 0.0),
+            rep.get("mod", "?"),
+        )
+
+    def _log_session_summary(self, label: str) -> None:
+        """Resumen al cerrar — una línea con veredicto PASS/WARN/FAIL."""
+        rep = self.conn.channel_report()
+        ctrl = self.controller.session_metrics()
+        lm = self._loop_metrics
+        flags = rep.get("mod_flags") or probe_mod_flags(self.telem)
+        verdict = acceptance_verdict(
+            loop=lm,
+            channel=rep,
+            controller=ControllerMetrics(**ctrl),
+            telem_poll_hz=float(rep.get("telem_poll_hz") or 0.0),
+            mod_flags=flags,
+        )
+        cf_total = lm.heartbeats_cf_y + lm.heartbeats_cf_n
+        cf_pct = (
+            100.0 * lm.heartbeats_cf_y / cf_total if cf_total else 0.0
+        )
+        self._log.info(
+            "═══ SESIÓN CANAL %s [%s] ═══  log=%s",
+            label.upper(), verdict,
+            self._session_log_path or "—",
+        )
+        self._log.info(
+            "  bucle: ticks=%d  loop_hz=%.1f-%.1f  work_max=%.0fms  "
+            "slow(>150ms)=%d",
+            lm.ticks,
+            lm.loop_hz_min if lm.loop_hz_min < 999 else 0.0,
+            lm.loop_hz_max,
+            lm.work_max_ms,
+            lm.work_over_150,
+        )
+        self._log.info(
+            "  mandos: ipc_ok=%d  http_ok=%d  total_ok=%d/%d (%.0f%%)  "
+            "ack_p95=%.0fms  enqueued=%d  "
+            "retries=%d  drops=%d  último_via=%s  último_err=%s",
+            int(rep.get("ipc_ok", 0)),
+            int(rep.get("http_ok", 0)),
+            int(rep.get("cmd_ok", 0)),
+            int(rep.get("cmd_total", 0)),
+            float(rep.get("ack_ok_pct", 0.0)),
+            float(rep.get("ack_p95_ms", 0.0)),
+            int(rep.get("enqueued", 0)),
+            int(rep.get("retries", 0)),
+            int(rep.get("drops", 0)),
+            rep.get("last_via", "—"),
+            rep.get("last_error", "—"),
+        )
+        self._log.info(
+            "  mandos: async=%d  sync=%d  KEY=%d  p1_rejected=%d  "
+            "cf_hb=%.0f%%  match_hb=%d  mod=%s",
+            ctrl.get("ipc_async", 0),
+            ctrl.get("ipc_sync", 0),
+            ctrl.get("keyboard", 0),
+            ctrl.get("p1_rejected", 0),
+            cf_pct,
+            lm.heartbeats_match_y,
+            rep.get("mod", "?"),
+        )
+        if verdict == "FAIL":
+            self._log.warning(
+                "Canal FAIL — revisar install_ue4ss_probe.bat, F7, "
+                "y líneas IPC async en este log")
+        elif verdict == "WARN":
+            self._log.warning(
+                "Canal WARN — ver líneas 'canal [...]' y IPC async en el log")
 
     def _log_pause_state(self, label: str) -> None:
         """Línea inmediata al pulsar Pausar/Reanudar (visible en panel Depuración)."""
@@ -966,7 +1172,7 @@ class AutopilotEngine:
         line = (
             "spd=%5.1f  lim=%4.1f  elim=%5.1f  notch=%-2s  thr=%d  action=%-11s  "
             "final=%-11s  wd=%-11s  p1=%-10s  ipc=%s  fsm=%-10s  stop=%-24s  "
-            "next_lim=%s@%sm  parada=%s  gap=%s  p1dbg=%s  p1on=%s  %s  "
+            "next_lim=%s@%sm  lim2=%s@%sm  parada=%s  gap=%s  p1dbg=%s  p1on=%s  %s  "
             "sched=%s  arr=%s  dep=%s  ack=%s  grad=%s  P=%s  fill=%.2fs/%d  lrn=%s"
         )
         args = (
@@ -982,6 +1188,8 @@ class AutopilotEngine:
             self.decider.station_name or "-",
             f"{telem.get('next_limit_mph', '?')}",
             f"{telem.get('distance_next_m', '?')}",
+            f"{telem.get('next_limit_2_mph') or '—'}",
+            f"{telem.get('distance_next_2_m') if telem.get('distance_next_2_m') is not None else '—'}",
             parada,
             gap_txt,
             self.decider.p1_debug or "—",

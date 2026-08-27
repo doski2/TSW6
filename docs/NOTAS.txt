@@ -13,5 +13,10 @@ estudiado documento estado:
  1.3 cameraMode insertar y probar mas adelante
  2. y la parte fisica del juego que datos podemos optener?
  3. debemos usar proximo limite mas fiable o añadir otro para mas seguridad respaldo?
- 4. porque lua va lento podemos mejorar la velocidad?
+ 4. reviar distancia proximo limite
  5. falta añadir fuerza en lua
+ 6. numerar los md para poder segui un orden de tareas
+ 7. falta solo probar ipc+lua con fix ultimo de lua 
+ 8.debemos de documentar dichas reglas para recordar que es lo se implementado y de que manera tener mas control. 
+ tratas de mejoras y no añadir mas lineas inecesarias ver como funcionana las actuales y pulir/mejorar las reglas utiliza documento ya exsistente? -El archivo que utilizas en 
+ Cursor para darle instrucciones globales a la IA sobre tu proyecto se llama .cursorrules

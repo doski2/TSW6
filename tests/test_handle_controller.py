@@ -267,7 +267,7 @@ class TestSafetyWatchdog:
 
 
 class TestDastscDirectNotch:
-    def test_ipc_applies_absolute_notch_from_brake_command(self):
+    def test_ipc_applies_one_step_toward_brake_command(self):
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
@@ -283,7 +283,7 @@ class TestDastscDirectNotch:
         conn.set_control_value.assert_called_once()
         args = conn.set_control_value.call_args[0]
         assert args[0] == "PowerBrakeHandle"
-        assert abs(args[1] - 0.25) < 0.01
+        assert abs(args[1] - 0.375) < 0.01
 
     def test_apply_uses_ipc_with_hwnd_when_available(self):
         from tsw6.braking.v2.command import BrakeCommand
@@ -302,7 +302,7 @@ class TestDastscDirectNotch:
             assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
             mock_key.assert_not_called()
             conn.set_control_value.assert_called_once()
-            assert abs(conn.set_control_value.call_args[0][1] - 0.25) < 0.01
+            assert abs(conn.set_control_value.call_args[0][1] - 0.375) < 0.01
 
     def test_apply_uses_async_enqueue_when_available(self):
         from tsw6.braking.v2.command import BrakeCommand
@@ -319,9 +319,10 @@ class TestDastscDirectNotch:
 
         assert c.execute("BRAKE", s, conn, None, brake_command=cmd) is True
         conn.enqueue_control_value.assert_called_once()
-        assert abs(conn.enqueue_control_value.call_args[0][1] - 0.25) < 0.01
+        assert abs(conn.enqueue_control_value.call_args[0][1] - 0.375) < 0.01
 
-    def test_apply_falls_back_to_keyboard_when_ipc_fails(self):
+    def test_apply_p1_no_keyboard_when_ipc_fails(self):
+        """P1 (BrakeCommand): sin fallback teclado — Fase B."""
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
@@ -335,7 +336,22 @@ class TestDastscDirectNotch:
         hwnd = MagicMock()
 
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
-            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is False
+            mock_key.assert_not_called()
+
+    def test_legacy_path_falls_back_to_keyboard_when_ipc_fails(self):
+        """Acciones legacy (sin BrakeCommand) sí pueden usar teclado."""
+        c = _fresh()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = False
+
+        s = _state(handle_notch=6)
+        hwnd = MagicMock()
+
+        with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
+            assert c.execute("COAST", s, conn, hwnd) is True
             mock_key.assert_called_once()
 
     def test_release_uses_ipc_to_neutral_even_with_hwnd(self):
@@ -361,10 +377,58 @@ class TestDastscDirectNotch:
         from tsw6.braking.v2.command import BrakeCommand
 
         c = _fresh()
+        conn = MagicMock(spec=["mode", "has_control_api", "set_control_value"])
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.set_control_value.return_value = True
         cmd = BrakeCommand(kind="APPLY", target_notch=2, phase="B2")
         s = _state(handle_notch=5)
         hwnd = MagicMock()
 
         with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
-            assert c.execute("HOLD", s, None, hwnd, brake_command=cmd) is True
+            assert c.execute("HOLD", s, conn, hwnd, brake_command=cmd) is True
+            mock_key.assert_not_called()
+            conn.set_control_value.assert_called_once()
+
+
+class TestKeyboardTelemetryWait:
+    def test_no_second_key_until_notch_changes(self):
+        from tsw6.braking.v2.command import BrakeCommand
+
+        c = _fresh()
+        conn = MagicMock(spec=["prefer_keyboard_actuator"])
+        conn.prefer_keyboard_actuator.return_value = True
+        hwnd = MagicMock()
+        cmd = BrakeCommand(kind="APPLY", target_notch=3, phase="B1")
+        s = _state(handle_notch=4)
+
+        with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is False
             mock_key.assert_called_once()
+
+            s2 = _state(handle_notch=3)
+            c._last_control = 0.0
+            assert c.execute("BRAKE", s2, conn, hwnd, brake_command=cmd) is False
+            mock_key.assert_called_once()
+
+    def test_p1_uses_keyboard_when_driver_input_dead(self):
+        from tsw6.braking.v2.command import BrakeCommand
+        from tsw6.autopilot.tsw_keys import KEY_TAP_MS
+
+        c = _fresh()
+        conn = MagicMock(
+            spec=["mode", "has_control_api", "enqueue_control_value",
+                  "prefer_keyboard_actuator"])
+        conn.mode = "ue4ss"
+        conn.has_control_api.return_value = True
+        conn.prefer_keyboard_actuator.return_value = True
+        hwnd = MagicMock()
+        cmd = BrakeCommand(kind="APPLY", target_notch=3, phase="B1")
+        s = _state(handle_notch=4)
+
+        with patch("tsw6.autopilot.handle_controller.send_key") as mock_key:
+            from tsw6.autopilot.handle_controller import VK_D
+            assert c.execute("BRAKE", s, conn, hwnd, brake_command=cmd) is True
+            mock_key.assert_called_once_with(hwnd, VK_D, hold_ms=KEY_TAP_MS)
+            conn.enqueue_control_value.assert_not_called()

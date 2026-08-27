@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-control_channel.py — Fase A: telemetría y mandos desacoplados del bucle de control.
+control_channel.py — Fase A/B: telemetría y mandos desacoplados del bucle de control.
 
 TelemetryReader: hilo que lee GetData.txt a ~20 Hz.
-AsyncCommandWriter: cola IPC; ACK en hilo aparte (el tick nunca espera).
+AsyncCommandWriter: cola IPC; ACK + reintentos en hilo aparte (el tick nunca espera).
 """
 
 from __future__ import annotations
@@ -14,9 +14,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from tsw6.telemetry.tsw_ipc_bus import (
+    adaptive_ack_timeout_s,
     dispatch_ipc_brake,
     dispatch_ipc_combined_notch,
     enable_lua_commands,
@@ -28,6 +29,8 @@ _log = logging.getLogger("tsw.telemetry.channel")
 DEFAULT_TELEM_HZ = 20.0
 DEFAULT_ACK_TIMEOUT_S = 0.12
 _MAX_QUEUE = 8
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_S = 0.025
 
 
 @dataclass
@@ -43,6 +46,16 @@ class CommandState:
     last_ack_ms: float = 0.0
     last_error: str = ""
     drops: int = 0
+    retries: int = 0
+    failures: int = 0
+    successes: int = 0
+    confirmed_cmd_id: Optional[int] = None
+    telem_cmd_id: Optional[int] = None
+    reached_notch: bool = False
+    ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S
+    last_via: str = ""  # "ipc" | "http" | ""
+    ipc_ok: int = 0
+    http_ok: int = 0
 
 
 @dataclass
@@ -51,6 +64,7 @@ class _CmdItem:
     control: str
     value: float
     notch: Optional[int] = None
+    attempt: int = 0
 
 
 @dataclass
@@ -141,7 +155,7 @@ class TelemetryReader:
 
 
 class AsyncCommandWriter:
-    """Cola de mandos IPC; procesa ACK fuera del hilo de control."""
+    """Cola de mandos IPC; procesa ACK y reintentos fuera del hilo de control."""
 
     def __init__(
         self,
@@ -149,10 +163,16 @@ class AsyncCommandWriter:
         schema: Optional[dict] = None,
         ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S,
         max_queue: int = _MAX_QUEUE,
+        max_attempts: int = _MAX_ATTEMPTS,
+        http_fallback: Optional[Callable[[str, float], bool]] = None,
+        on_ipc_fail: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._schema = schema
-        self._ack_timeout_s = ack_timeout_s
+        self._base_ack_timeout_s = ack_timeout_s
         self._max_queue = max(1, int(max_queue))
+        self._max_attempts = max(1, int(max_attempts))
+        self._http_fallback = http_fallback
+        self._on_ipc_fail = on_ipc_fail
         self._q: queue.Queue[Optional[_CmdItem]] = queue.Queue(maxsize=self._max_queue)
         self._lock = threading.Lock()
         self._state = CommandState()
@@ -162,6 +182,8 @@ class AsyncCommandWriter:
         self._thread: Optional[threading.Thread] = None
         self._last_enqueued_notch: Optional[int] = None
         self._last_enqueued_t = 0.0
+        self._recent_acks: list[float] = []
+        self._enqueued = 0
 
     def start(self) -> None:
         enable_lua_commands()
@@ -185,7 +207,7 @@ class AsyncCommandWriter:
             self._thread.join(timeout=2.0)
             self._thread = None
 
-    def state(self) -> CommandState:
+    def session_stats(self) -> tuple[CommandState, list[float], int]:
         with self._lock:
             st = CommandState(
                 cmd_id=self._state.cmd_id,
@@ -197,8 +219,45 @@ class AsyncCommandWriter:
                 last_ack_ms=self._state.last_ack_ms,
                 last_error=self._state.last_error,
                 drops=self._state.drops,
+                retries=self._state.retries,
+                failures=self._state.failures,
+                successes=self._state.successes,
+                confirmed_cmd_id=self._state.confirmed_cmd_id,
+                telem_cmd_id=self._state.telem_cmd_id,
+                reached_notch=self._state.reached_notch,
+                ack_timeout_s=self._state.ack_timeout_s,
+                last_via=self._state.last_via,
+                ipc_ok=self._state.ipc_ok,
+                http_ok=self._state.http_ok,
             )
+            return st, list(self._recent_acks), self._enqueued
+
+    def state(self) -> CommandState:
+        st, _, _ = self.session_stats()
         return st
+
+    def update_telem_correlation(
+        self,
+        telem_cmd_id: Optional[int],
+        telem_ack_ok: Optional[bool],
+        lever_notch: Optional[int],
+    ) -> None:
+        """Correlaciona GetData (last_cmd_id) con el último mando encolado."""
+        with self._lock:
+            self._state.telem_cmd_id = telem_cmd_id
+            if (
+                telem_cmd_id is not None
+                and telem_ack_ok
+                and telem_cmd_id == self._state.cmd_id
+            ):
+                self._state.confirmed_cmd_id = telem_cmd_id
+            if (
+                lever_notch is not None
+                and self._state.target_notch is not None
+            ):
+                self._state.reached_notch = (
+                    int(lever_notch) == int(self._state.target_notch)
+                )
 
     def enqueue_combined_notch(self, notch: int) -> int:
         """Encola muesca absoluta 0–8. Devuelve cmd_id (>0) o 0 si se descarta."""
@@ -230,6 +289,7 @@ class AsyncCommandWriter:
         self._last_enqueued_notch = notch
         self._last_enqueued_t = now
         with self._lock:
+            self._enqueued += 1
             self._state.cmd_id = cmd_id
             self._state.target_notch = notch
             self._state.pending = True
@@ -253,17 +313,25 @@ class AsyncCommandWriter:
                 self._state.drops += 1
             return 0
         with self._lock:
+            self._enqueued += 1
             self._state.cmd_id = cmd_id
             self._state.target_notch = None
             self._state.pending = True
         return cmd_id
 
+    def _ack_timeout(self) -> float:
+        return adaptive_ack_timeout_s(self._recent_acks)
+
     def _dispatch(self, item: _CmdItem) -> dict[str, Any]:
+        timeout = self._ack_timeout()
+        with self._lock:
+            self._state.ack_timeout_s = timeout
         if item.control == "combined_brake" and item.notch is not None:
             return dispatch_ipc_combined_notch(
                 item.notch,
                 self._schema,
                 cmd_id=item.cmd_id,
+                ack_timeout_s=timeout,
             )
         return dispatch_ipc_brake(
             item.control,
@@ -271,7 +339,79 @@ class AsyncCommandWriter:
             self._schema,
             wait_ack=True,
             cmd_id=item.cmd_id,
+            ack_timeout_s=timeout,
         )
+
+    def _record_result(self, item: _CmdItem, result: dict[str, Any]) -> None:
+        ok = bool(result.get("ok"))
+        err = str(result.get("error") or "")
+        ack_ms = float(result.get("ack_ms") or 0.0)
+        with self._lock:
+            self._state.inflight = False
+            self._state.pending = self._q.qsize() > 0
+            self._state.last_ok = ok
+            self._state.last_ack_ms = ack_ms
+            self._state.last_error = err if not ok else ""
+            if ok:
+                self._state.successes += 1
+                self._state.last_via = "ipc"
+                self._state.ipc_ok += 1
+                self._recent_acks.append(ack_ms)
+                if len(self._recent_acks) > 40:
+                    self._recent_acks.pop(0)
+            else:
+                self._state.failures += 1
+        if not ok:
+            _log.warning(
+                "IPC async id=%d notch=%s intento=%d/%d falló (%s) ack=%.0fms",
+                item.cmd_id,
+                item.notch,
+                item.attempt + 1,
+                self._max_attempts,
+                err or "?",
+                ack_ms,
+            )
+            if self._http_fallback is not None:
+                ctrl = item.control
+                val = float(item.value)
+                if item.notch is not None:
+                    from tsw6.telemetry.tsw_command_bus import combined_notch_to_value
+
+                    ctrl = "PowerBrakeHandle"
+                    val = combined_notch_to_value(item.notch)
+                try:
+                    if self._http_fallback(ctrl, val):
+                        with self._lock:
+                            self._state.successes += 1
+                            self._state.last_ok = True
+                            self._state.last_error = ""
+                            self._state.last_via = "http"
+                            self._state.http_ok += 1
+                            self._state.failures -= 1
+                        _log.info(
+                            "HTTP fallback OK id=%d control=%s val=%.3f via=http",
+                            item.cmd_id, ctrl, val)
+                        return
+                except Exception as exc:
+                    _log.debug("HTTP fallback error id=%d: %s", item.cmd_id, exc)
+                if self._on_ipc_fail is not None:
+                    try:
+                        self._on_ipc_fail(err or "ipc_fail")
+                    except Exception:
+                        pass
+            elif self._on_ipc_fail is not None:
+                try:
+                    self._on_ipc_fail(err or "ipc_fail")
+                except Exception:
+                    pass
+        else:
+            _log.info(
+                "IPC ok id=%d notch=%s ack=%.0fms timeout=%.0fms via=ipc",
+                item.cmd_id,
+                item.notch,
+                ack_ms,
+                self._ack_timeout() * 1000.0,
+            )
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -286,32 +426,17 @@ class AsyncCommandWriter:
             with self._lock:
                 self._state.inflight = True
 
-            result = self._dispatch(item)
-            ok = bool(result.get("ok"))
-            err = str(result.get("error") or "")
-            ack_ms = float(result.get("ack_ms") or 0.0)
+            result: dict[str, Any] = {"ok": False, "error": "no_attempt"}
+            for attempt in range(self._max_attempts):
+                item.attempt = attempt
+                if attempt > 0:
+                    with self._lock:
+                        self._state.retries += 1
+                    time.sleep(_RETRY_BACKOFF_S * attempt)
+                result = self._dispatch(item)
+                if result.get("ok"):
+                    break
 
-            with self._lock:
-                self._state.inflight = False
-                self._state.pending = self._q.qsize() > 0
-                self._state.last_ok = ok
-                self._state.last_ack_ms = ack_ms
-                self._state.last_error = err if not ok else ""
-                if not ok:
-                    _log.warning(
-                        "IPC async id=%d notch=%s falló (%s) ack=%.0fms",
-                        item.cmd_id,
-                        item.notch,
-                        err or "?",
-                        ack_ms,
-                    )
-                else:
-                    _log.debug(
-                        "IPC async id=%d notch=%s ok ack=%.0fms",
-                        item.cmd_id,
-                        item.notch,
-                        ack_ms,
-                    )
-
+            self._record_result(item, result)
             self._inflight = None
             self._q.task_done()
