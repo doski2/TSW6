@@ -117,7 +117,7 @@ Tabla en `tsw_hud.db` con la **posición GPS del tablón de parada** en cada and
 | Uso | Detalle |
 | --- | --- |
 | **Planning** | Si TrackData trae andenes incorrectos, distancia haversine tren → tablón (`source: hud_geo`). |
-| **Frenado** | 🔄 El tablón marca dónde debe quedar el tren parado; P1 aún no frena exactamente ahí (falta OCR/GPS cada tick). |
+| **Frenado** | 🔄 El tablón marca dónde debe quedar el tren parado; P1 usa distancia HUD, no OCR cada tick. |
 
 No es cartel de velocidad ni semáforo: es el **punto de parada comercial** del horario en el mundo.
 

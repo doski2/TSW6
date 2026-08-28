@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from tsw6.governor.governor_constants import NOTCH_MAX, NOTCH_NEUTRAL
 from tsw6.telemetry.tsw_api_client import TswApiClient
 
 # Rutas TSW permitidas para escritura de freno (V2)
@@ -47,8 +48,8 @@ DEFAULT_TSW_PATHS: dict[str, str] = {
 }
 
 # Handle UK 0–8 → IPC cmd 0.0–1.0 (misma escala que HandleController / SendCommand)
-_COMBINED_NOTCH_MAX = 8
-_NEUTRAL_NOTCH = 4
+_COMBINED_NOTCH_MAX = NOTCH_MAX
+_NEUTRAL_NOTCH = NOTCH_NEUTRAL
 
 # PowerBrakeHandle.InputValue (Class 323). Peldaños de
 # LiahMartens/tsw-controller-app shared-profiles/class323.tswprofile

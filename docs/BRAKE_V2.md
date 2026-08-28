@@ -13,7 +13,7 @@ Todo el código de frenado está en **`tsw6/braking/v2/`** (sin `archive/braking
 | `v2/coordinator.py` | Un tick P1: RELEASE, emergencias, prioridad, latch unificado |
 | `v2/policy.py` | Dónde: cluster 350 m, parada unificada, qué objetivo gana |
 | `v2/objectives.py` | Cómo: andén (`station_plan`), señal stub, emergencia |
-| `v2/station_plan.py` | Perfil parada HUD: B1–B3 a 0, ETA, sin OCR |
+| `v2/station_plan.py` | Perfil parada HUD: B1–B3 a 0, ETA |
 | `v2/limit_brake.py` | Cartel de velocidad (perfil + física latched) |
 | `v2/command.py` | `BrakeTargetResult`, APPLY / RELEASE, anti-rebrake |
 | `v2/plan.py` | Tipos `BrakePlan`, `BrakePlanStep` |
@@ -92,7 +92,8 @@ Logs: `p1cmd=RELEASE` tras el 55; `p1tgt=STATION` cerca del andén; `uni=Y`.
 3. **Señal detrás del andén** (≤50 m o mismo cluster) → descartar señal.
 
 Constantes: `TARGET_CLUSTER_GAP_M = 350`, `STATION_STOPPED_MPH = 1.5`,
-`LIMIT_RELEASE_MAX_OVER_MPH = 0.4`, `LIMIT_SCORING_MAX_OVER_MPH = 0.9`.
+`LIMIT_RELEASE_MAX_OVER_MPH = 0.4`, `LIMIT_SCORING_MAX_OVER_MPH = 0.9`,
+`LIMIT_OVER_ACTIVE_MPH = 0.5`.
 
 ---
 
@@ -128,7 +129,7 @@ Propiedades usadas por GUI: `last_brake_command`, `last_debug` (`p1_debug`).
 | Tema | Estado |
 | --- | --- |
 | Telemetría señal DANGER → `evaluate_signal_brake` | Stub |
-| OCR distancia tablón en coordinador | No integrado |
+| Distancia tablón fina (OCR/GPS) en P1 | No: P1 usa HUD; FSM usa Lua/DMI; `_needs_ocr()` = False |
 | `station_eta` en coordinator (horario) | ✅ vía `TrainState.next_stop_arrival` |
 | Tests P1 integración | `test_brake_v2.py`, `test_brake_coordinator.py`, `test_speed_decider.py` |
 
@@ -139,4 +140,5 @@ Propiedades usadas por GUI: `last_brake_command`, `last_debug` (`p1_debug`).
 ```bat
 ```
 
-Física/policy: `tests/test_brake_planner.py`. Estación: `tests/test_brake_station.py`.
+Física/policy: `tests/test_brake_planner.py`. Andén P1: `tests/test_brake_station.py`.
+FSM comercial: `tests/test_station_fsm.py` (Lua abrir/cerrar).

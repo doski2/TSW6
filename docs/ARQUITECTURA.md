@@ -23,8 +23,8 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de 
 | `tsw6/autopilot/speed_decider.py` | FSM → P1 v2 → HOLD |
 | `tsw6/autopilot/handle_controller.py` | Ejecución notch + SafetyWatchdog |
 | `tsw6/governor/governor_physics.py` | Física tren, learner, distancias |
-| `tsw6/governor/governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
-| `tsw6/braking/v2/` | **Frenado P1** — physics, command, coordinator |
+| `tsw6/governor/governor_station.py` | FSM comercial: puertas Lua/DMI, no OCR |
+| `tsw6/braking/v2/` | **Frenado P1** — coordinator, policy, objectives, station_plan, limit_brake, command |
 | `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz + GUI |
 | `archive/railbridge/` | Companion SSE — **no usar** |
 

@@ -4,6 +4,7 @@ test_station_fsm.py — Tests para la FSM de estación (governor_station.py).
 
 Verifica:
   - Transiciones None → APPROACHING → STOPPED → DEPARTING → None
+  - Puertas Lua/DMI (abrir → STOPPED; cerrar → DEPARTING)
   - Cooldown post-salida
   - Selección de parada manual
 """
@@ -37,7 +38,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=40.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "APPROACHING")
@@ -52,7 +52,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=0.3, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -70,7 +69,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
@@ -87,7 +85,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=True,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5,
         )
@@ -95,7 +92,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5,
         )
@@ -117,7 +113,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -137,7 +132,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -156,7 +150,6 @@ class TestFSMTransitions(unittest.TestCase):
             speed_mph=0.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=True,
             doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -172,7 +165,6 @@ class TestFSMTransitions(unittest.TestCase):
         action, lim = self.fsm.update_state_transitions(
             speed_mph=30.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertIsNone(self.fsm.state)
@@ -188,7 +180,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertIn("station a", self.fsm._served_bases)
@@ -224,14 +215,13 @@ class TestFSMTransitions(unittest.TestCase):
         action, _ = self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=True,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(action, "HOLD")
 
 
     def test_stopped_departs_on_lua_door_close(self):
-        """Probe doors_telem 1→0: DEPARTING y Four Oaks servida (siguiente en planner)."""
+        """Probe doors_telem 1→0: DEPARTING y Four Oaks servida (siguiente parada HUD)."""
         self.fsm.state = "STOPPED"
         self.fsm.name = "Four Oaks, andén 2"
         self.fsm._stopped_at = time.time()
@@ -245,7 +235,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=True,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -253,7 +242,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
@@ -263,22 +251,21 @@ class TestFSMTransitions(unittest.TestCase):
         if nxt is not None:
             self.assertIn("Sutton", nxt["name"])
 
-    def test_stopped_timeout_when_lua_stuck_closed(self):
-        """lua=0 todo el dwell (nunca 1) → DEPARTING al timeout, no quedarse en STOPPED."""
+    def test_stopped_waits_for_lua_door_cycle(self):
+        """lua=0 parado: se espera abrir/cerrar, no hay timeout de dwell."""
         self.fsm.state = "STOPPED"
         self.fsm.name = "Four Oaks, andén 2"
         self.fsm._doors_opened = False
-        self.fsm._stopped_at = time.time() - 46.0
+        self.fsm._stopped_at = time.time() - 90.0
         self.fsm._we_stopped = True
         stations = [{"name": "Four Oaks, andén 2", "distance_m": 8.0,
                      "platform_length_m": 100.0}]
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
-        self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertEqual(self.fsm.state, "STOPPED")
 
     def test_approaching_stopped_when_hud_frozen_far(self):
         """HUD Four Oaks @ ~2 km y spd=0: creep → STOPPED (andén real)."""
@@ -291,7 +278,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertTrue(self.fsm._creep_to_station)
@@ -299,7 +285,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=0.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "STOPPED")
@@ -318,7 +303,6 @@ class TestFSMTransitions(unittest.TestCase):
         self.fsm.update_state_transitions(
             speed_mph=8.0, limit_mph=55.0, stations=stations,
             doors_open=False, doors_dmi=None, doors_telem=False,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
@@ -338,7 +322,6 @@ class TestCooldown(unittest.TestCase):
         fsm.update_state_transitions(
             speed_mph=40.0, limit_mph=60.0, stations=stations,
             doors_open=False, doors_dmi=None,
-            ocr_stop_dist_m=None, ocr_task=None,
             braking_dist_fn=_braking_dist_fn,
             eff_max_decel=0.9, eff_k_stop=2.5)
         # Should NOT enter APPROACHING due to cooldown

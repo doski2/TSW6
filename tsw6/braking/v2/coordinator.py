@@ -9,6 +9,8 @@ import logging
 from typing import Optional, Tuple
 
 from tsw6.braking.v2.command import (
+    LIMIT_OVER_ACTIVE_MPH,
+    LIMIT_RELEASE_MAX_OVER_MPH,
     BrakeCommand,
     BrakeReleaseState,
     BrakeTargetResult,
@@ -58,7 +60,7 @@ def _resolve_limit_objective(
     if limits_queue:
         nl = limits_queue[0].get("limit_mph", nl)
         dn = limits_queue[0].get("distance_m", dn)
-    if speed_mph > effective_limit + 0.5:
+    if speed_mph > effective_limit + LIMIT_OVER_ACTIVE_MPH:
         next_inactive = (
             nl is None
             or dn is None
@@ -85,6 +87,7 @@ class BrakeCoordinatorV2:
         self._log_limit_dist_m: Optional[float] = None
         self._log_station_eta: Optional[str] = None
         self._schedule_slack_enabled: bool = False
+        self._last_p1_apply_log: Optional[tuple] = None
 
     def reset(self) -> None:
         self._limit_state.reset()
@@ -96,6 +99,7 @@ class BrakeCoordinatorV2:
         self._log_station_dist_m = None
         self._log_limit_dist_m = None
         self._log_station_eta = None
+        self._last_p1_apply_log = None
 
     @property
     def unified_stop_latched(self) -> bool:
@@ -292,10 +296,17 @@ class BrakeCoordinatorV2:
                 gradient_pct=grad,
                 plan=plan,
             )
+            # uni=Y no puede saltarse el techo del cartel (55.9 vs 55+0.4).
+            posted = float(_nl) if _nl is not None else None
+            at_posted = (
+                posted is not None
+                and speed_mph <= posted + LIMIT_RELEASE_MAX_OVER_MPH
+            )
             if (
                 rel is None
                 and _unified_stop_active()
                 and not _should_block_limit_release()
+                and at_posted
             ):
                 rel = release_brake_command(at_target=True)
             if rel is None:
@@ -305,6 +316,11 @@ class BrakeCoordinatorV2:
                 plan is None or plan.target_kind == "SPEED_LIMIT"
             ):
                 self._release.latch(_nl)
+            if self.last_debug != "RELEASE→NEU":
+                _log.info(
+                    "P1 RELEASE → NEU  spd=%.1f  handle=%d",
+                    speed_mph, handle_notch,
+                )
             self.last_debug = "RELEASE→NEU"
             return "RELEASE", effective_limit
 
@@ -318,7 +334,7 @@ class BrakeCoordinatorV2:
                 _nl is None
                 or _dn is None
                 or _nl < P1_MIN_NEXT_LIMIT_MPH
-                or _nl > effective_limit + 0.5
+                or _nl > effective_limit + LIMIT_OVER_ACTIVE_MPH
             )
         ):
             self.last_debug = "sin_objetivo_v2"
@@ -479,15 +495,19 @@ class BrakeCoordinatorV2:
         )
         if unified:
             self.last_debug += " unified"
-        _log.info(
-            "P1v2 %s %s dist=%.0fm distStart=%.0fm → %s notch=%s",
-            active.target_kind,
-            active.phase,
-            active.distance_m,
-            active.dist_start,
-            cmd.display_action(),
-            cmd.target_notch,
-        )
+        apply_sig = (
+            active.target_kind, active.phase, cmd.kind, cmd.target_notch)
+        if apply_sig != self._last_p1_apply_log:
+            self._last_p1_apply_log = apply_sig
+            _log.info(
+                "P1v2 %s %s dist=%.0fm distStart=%.0fm → %s notch=%s",
+                active.target_kind,
+                active.phase,
+                active.distance_m,
+                active.dist_start,
+                cmd.display_action(),
+                cmd.target_notch,
+            )
 
         action = governor_action_for_command(cmd)
         if speed_mph <= STATION_STOPPED_MPH + 1.0:

@@ -1,7 +1,7 @@
 # Canal de control — plan de fases
 
 Documento de arquitectura para corregir el cuello de botella IPC/mandos antes de
-retomar trabajo en P1, learner o planner.
+retomar trabajo en P1 o learner.
 
 **Última revisión:** 2026-08-28 — **A acordado** (A1 código; medir work); hitch carga OK; B.8 canal PASS  
 **Relacionado:** [FLUJO_FRENOS.md](FLUJO_FRENOS.md) · [ESTADO.md](ESTADO.md) ·
@@ -125,7 +125,7 @@ Este bloque (**V2**) es **cómo viaja** lo que **ya** está en `GetData.txt` (ve
 | --- | --- | --- | --- |
 | **Lim2** | 2.º cambio de velocidad (no el cartel que ya frena P1) | HTTP `nextSpeedLimits[]`; Lua no lee el TArray en tick (hitch) | Hace falta **otro campo** y una regla P1; un pipe más rápido no inventa el 2.º float |
 | **C1 señales** | Distancia + aspecto DANGER → `evaluate_signal_brake` (hoy stub) | DriverAid HTTP; probe aún no | Cablear telemetría nueva a `TrainState` |
-| **C2 GPS/OCR andén** | Distancia fina al tablón (parada en andén) | HTTP markers / OCR; no el IPC de palanca | Coordinador estación, no Hz del puente |
+| **C2 GPS andén** | Distancia fina al tablón (P1) | HTTP markers / HUD; OCR **no** en FSM | Coordinador P1, no Hz del puente |
 
 Cadena de producto: **E1** (validar frenado v2 in-game) → **C1** → **C2**. Mezclar lim2/señales en SHM retrasaría E1. C4 en ESTADO es el 2.º límite en log, **después**.
 
@@ -746,7 +746,7 @@ Lo que **aún no** está disponible, no es fiable, o no se registra en el log de
 
 | Dato / comportamiento | Estado |
 | --- | --- |
-| `reached_notch` bloquea FSM P1 | No — planner puede avanzar sin esperar palanca |
+| `reached_notch` bloquea FSM P1 | No — P1 puede avanzar sin esperar palanca |
 | RELEASE STATION | Solo si plan vivo y `spd≤~2`; P1 muere antes (`_p1_should_run`) |
 | `_p1_should_run` @ APPROACHING ≤10 mph | ~~Corta P1 salvo cluster~~ C.2: si `brake_active` P1 sigue |
 | Ventanas `sin_plan_activo` | Siguen con cartel plano / plan caído |

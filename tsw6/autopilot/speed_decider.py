@@ -15,7 +15,7 @@ Separación de responsabilidades:
 
 Estado interno permitido:
   - TrainPhysics (acelerómetro, learner)
-  - StationFSM (máquina de estados de paradas)
+  - StationFSM (paradas comerciales: puertas Lua / DMI)
   - BrakeCoordinatorV2 (límite / estación / señal + emergencias P1)
 
 No hay seguimiento de notch interno. Toda la posición del handle se lee
@@ -31,7 +31,7 @@ from tsw6.telemetry.driver_aid_parser import station_base_name
 from tsw6.autopilot.control_actions import (
     BRAKE, BRAKE_FAST, COAST, HOLD, PAUSED, RELEASE,
 )
-from tsw6.braking.v2.command import release_brake_command
+from tsw6.braking.v2.command import LIMIT_OVER_ACTIVE_MPH, release_brake_command
 from tsw6.governor.governor_physics import TrainPhysics
 from tsw6.governor.governor_station import StationFSM
 from tsw6.autopilot.train_state import TrainState
@@ -247,10 +247,6 @@ class SpeedDecider:
     def _min_stop_dist(self) -> Optional[float]:
         return self._fsm._min_stop_dist
 
-    @property
-    def _ocr_used(self) -> bool:
-        return self._fsm._ocr_used
-
     def _p1_station_target(self, state: TrainState) -> Optional[str]:
         """Andén de la FSM en APPROACHING; no el next_stop ya saltado (C.2)."""
         fsm_state = self._fsm.state or state.station_state
@@ -319,10 +315,16 @@ class SpeedDecider:
             and lim is not None
             and should_merge_limit_and_station_plans(dist_lim, dist_stn)
             and dist_lim > 50
-            and speed_mph > lim + 0.5
+            and speed_mph > lim + LIMIT_OVER_ACTIVE_MPH
         ):
             return True
         return False
+
+    def _mark_p1_off_debug(self) -> None:
+        st = self._fsm.state
+        if st is None and self._last_state is not None:
+            st = self._last_state.station_state
+        self._braking.last_debug = f"p1off:{st}" if st else "p1off"
 
     # ── Decisión principal ────────────────────────────────────────────────
 
@@ -364,8 +366,6 @@ class SpeedDecider:
             doors_open      = state.doors_open,
             doors_dmi       = state.doors_dmi,
             doors_telem     = state.doors_telem,
-            ocr_stop_dist_m = state.ocr_stop_dist_m,
-            ocr_task        = state.ocr_task,
             braking_dist_fn = self._physics.braking_distance,
             eff_max_decel   = self._physics.eff_max_decel,
             eff_k_stop      = self._physics.eff_k_stop,
@@ -378,12 +378,14 @@ class SpeedDecider:
                 rel = release_brake_command(at_target=True)
                 self._braking.reset()
                 self._braking.last_brake_command = rel
+                self._mark_p1_off_debug()
                 self._p1_was_active = False
                 self.effective_limit = 0.0
                 self.last_action = RELEASE
                 return RELEASE
             if self._fsm.state == "STOPPED":
                 self._braking.reset()
+                self._mark_p1_off_debug()
                 self._p1_was_active = False
             self.effective_limit = eff_limit_override or 0.0
             self.last_action = action_override
@@ -442,6 +444,7 @@ class SpeedDecider:
                 rel = release_brake_command(at_target=True)
                 self._braking.reset()
                 self._braking.last_brake_command = rel
+                self._mark_p1_off_debug()
                 self._p1_was_active = False
                 self.effective_limit = effective_limit
                 self.last_action = RELEASE
@@ -454,6 +457,7 @@ class SpeedDecider:
                     self._fsm.name or state.station_name or state.next_stop_name or "—",
                 )
             self._braking.reset()
+            self._mark_p1_off_debug()
         else:
             _station_dist = self._p1_station_distance(state, stations_list)
             p1_action, effective_limit = self._braking.evaluate(

@@ -151,8 +151,8 @@ def build_train_state(
     Construye TrainState a partir del dict de telemetría crudo del juego.
 
     Los campos que no provienen del stream SSE (aceleración calculada,
-    estado FSM, OCR) se pasan como keyword arguments separados porque
-    su origen es distinto.
+    estado FSM; OCR opcional y no usado por la FSM) se pasan como
+    keyword arguments separados porque su origen es distinto.
 
     Convierte listas a tuples para mantener la inmutabilidad de frozen=True.
     """

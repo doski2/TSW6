@@ -13,7 +13,7 @@ Se abre en Cursor, GitHub o cualquier visor que renderice Mermaid.
 [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md)
 (Dastsc: `C:\Users\doski\Dastsc\docs\FLUJO_FRENOS_V4.md`)
 
-Última revisión: **2026-08-26** · **Estudio activo:** pasos **7–14** del
+Última revisión: **2026-08-28** · **Estudio activo:** pasos **7–14** del
 [árbol cronológico](assets/esqueleto_flujo_cronologico.svg) (numeración = círculos del SVG)
 
 ---
@@ -74,7 +74,7 @@ manual + dump DriverAid al log UE4SS.
 | `odo_m` | `Simulation.Axle_1_1.TotalDistanceTravelled_M` | Detectar tren parado (hold distancias) |
 | `vehicle` | `actor:GetClass():GetFName()` | Layout UK combined vs freight |
 | `doors_open` / `doors_telem` | componentes `PassengerDoor_*` | FSM estación |
-| `doors_dmi` | mensajes DMI en DriverAid | Informativo; FSM prioriza `doors_telem` |
+| `doors_dmi` | mensajes DMI en DriverAid | FSM: abierto si telem **o** DMI |
 | `seq` | contador Lua incremental | Saber si hay línea nueva (resync planning) |
 
 **Lógica extra en Lua (importante para entender distancias):**
@@ -152,7 +152,7 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
 | Gradiente | Probe `gradient_pct` | `DriverAid.Data` en `_poll_slow` |
 | Distancia 1.º/2.º límite | Probe (`planning_dict`) | Odometría Python entre polls HTTP |
 | Estaciones comerciales | — | `DriverAid.TrackData` + `hud_timetable.py` / `tsw_hud.db` |
-| Puertas (FSM) | Probe `doors_telem` | `PassengerDoor_*` vía API |
+| Puertas (FSM) | Probe `doors_telem` + DMI `doors_dmi` | `PassengerDoor_*` vía API |
 | `next_stop`, `arr`/`dep` | — | HUD DB + filtro horario |
 
 #### `_telem_from_probe()` — campos que salen del probe (no negociables)
@@ -287,6 +287,8 @@ Campos clave para P1:
 | 5 | **P1** | `_p1_should_run()` | `BrakeCoordinatorV2.evaluate()` → `HOLD`/`COAST`/`RELEASE` + IPC |
 | 6 | Sin plan | P1 devuelve `None` | **`HOLD`** (conductor o watchdog) |
 
+FSM: abrir Lua/DMI → `STOPPED`; cerrar → `DEPARTING`. OCR de tablón no entra. Heartbeat: `lua=` / `dmi=`.
+
 **Código eliminado (auditoría 2026-08-25):** no queda `_decide_p2`, `p2_overspeed_brake_command`,
 `P2_LIMIT_BRAKE_THRESHOLD` ni tests P2. Comentarios en `governor_constants` actualizados.
 
@@ -402,7 +404,7 @@ Leyenda de tipos (como FlowPlan):
 | **E1** | Validar in-game frenado v2 | 2R17 Cross-City, cartel 55 + andén | `uni=Y`, `p1tgt=SPEED_LIMIT` al APPLY; no RELEASE en cartel |
 | **V2** | Canal A1 (tick más barato) | Medir `work` &lt; 25 ms in-game | `autopilot_perf.bat`; SHM no ahora |
 | **C1** | Telemetría señal → P1 | `evaluate_signal_brake` hoy stub | `distanceToSignal`, aspecto DANGER en `TrainState` |
-| **C2** | Distancia tablón fina | OCR/GPS cada tick | `objectives` / coordinador |
+| **C2** | Distancia tablón fina (P1) | GPS/HUD cada tick; OCR **no** en FSM | `objectives` / coordinador |
 
 ### ⏸️ Después
 

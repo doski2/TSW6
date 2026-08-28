@@ -28,6 +28,7 @@
 | Horario HUD paradas | `hud_timetable.py` + BD release | Paradas, distancias, **arr/dep en GUI** (validado) |
 | Gradiente en probe | `gradient_pct` en GetData.txt | Class 323 validado |
 | **Ventana APPLY física** | `v2/physics.py` | Sustituye 60/80/30/150 m fijos; ver [BRAKE_V2.md](BRAKE_V2.md) |
+| **FSM puertas Lua/DMI** | `governor_station.py` | OCR no entra; salida por ciclo abrir/cerrar |
 
 ### 🎯 Hacer ahora (impacto paridad Dastsc)
 
@@ -35,7 +36,7 @@
 | --- | --- | --- |
 | 1 | **Validar in-game** frenado v2 (2R17 Cross-City) cartel+andén + RELEASE @55 | Confirmar fix unified; log `gap=`, `uni=Y`, `p1eta=` |
 | 2 | **Telemetría señal** (`distanceToSignal`, aspecto DANGER) → `TrainState` + P1 | `evaluate_signal_brake` es stub |
-| 3 | **Distancia tablón** OCR/GPS cada tick → `objectives` / coordinador | Parada andén menos precisa que Dastsc |
+| 3 | **Distancia tablón** GPS/HUD cada tick → P1 (`objectives`) | Parada andén menos precisa que Dastsc; **no** es la FSM (esa usa Lua/DMI) |
 | 4 | **Contención cartel en bajada** (`limit_brake` + `uni=Y`) | Mantener plan P1 cerca del límite con `gradient_pct < -0.3‰`; retirado 2026-08-26 |
 
 ### ⏸️ Después (no bloquean MVP UK)
@@ -62,7 +63,9 @@ distancia:
 1. Parado (`spd ≤ STATION_STOPPED_MPH`) + puertas abiertas → `STOPPED` (si venía de `APPROACHING`)
 2. Puertas cerradas tras haber abierto → `DEPARTING` + `served_bases` (siguiente parada en GUI)
 
-Log esperado: `FSM: puertas abiertas`, `FSM: … → DEPARTING (puertas cerradas, servida)`.
+Log esperado: `FSM: puertas abiertas (src=lua|dmi|…)`,
+`FSM: … → DEPARTING (puertas cerradas, servida, src=…)`.
+Heartbeat: `lua=` / `dmi=` (no OCR). Check-in: `salida spd=… sin ciclo puertas` si arranca sin abrir.
 
 ---
 
@@ -85,7 +88,8 @@ Línea de ciclo (cada ~2 s en DEBUG tras los 5 primeros INFO):
 
 | Campo | Significado |
 | --- | --- |
-| `p1dbg` | Estado interno P1: `v2 SPEED_LIMIT B1`, `RELEASE→NEU`, `sin_plan_activo`, `release_blocked:…`, `perfil activo` |
+| `p1dbg` | Estado interno P1: `v2 SPEED_LIMIT B1`, `RELEASE→NEU`, `sin_plan_activo`, `release_blocked:…`, `p1off:STOPPED` |
+| `fsm=` | Heartbeat y ciclo: APPROACHING / STOPPED / DEPARTING |
 | `p1tgt` / `p1d` / `p1ds` | Objetivo activo, distancia en vía, **distStart** (m hasta inicio de frenada; APPLY en ±zona física) |
 | `p1apply` | `Y` = APPLY este ciclo |
 | `p1cmd` / `p1r` | APPLY / RELEASE + razón |
@@ -97,7 +101,7 @@ Línea de ciclo (cada ~2 s en DEBUG tras los 5 primeros INFO):
 | `wd=` | Watchdog override (p. ej. `BRAKE_FAST`) si distinto de `action` |
 | `arr` / `dep` / `sched` | Horario HUD próxima parada |
 
-Logger detallado: `[tsw.governor.v2] P1v2 …` en cada APPLY (cada ~100 ms).
+Logger detallado: `[tsw.governor.v2] P1v2 …` **al cambiar** fase/notch (no cada tick).
 
 ### Qué mirar in-game
 
@@ -108,12 +112,13 @@ Logger detallado: `[tsw.governor.v2] P1v2 …` en cada APPLY (cada ~100 ms).
 | 60→55 + andén cercano | `uni=Y`, `gap=<350m`, RELEASE al llegar a ~55 (`p1dbg=RELEASE→NEU`) |
 | Coast con horario | `p1eta=8:18`, B2 más tarde si vas adelantado al `arr` |
 | Freno atascado | `notch=3` + `p1dbg=sin_plan_activo` sin `RELEASE→NEU` → bug |
+| P1 apagado en andén | heartbeat `p1on=N fsm=STOPPED` · ciclo `p1dbg=p1off:STOPPED` |
 
 ### Pendiente P1 v2 (código)
 
 - [ ] `signal_distance_m` / `signal_aspect` en `TrainState` y `SpeedDecider.evaluate()`
 - [ ] `station_traveled_m` / `station_anchor_m` (OCR Dastsc; TSW no los cablea)
-- [ ] OCR distancia tablón → `objectives` / coordinador
+- [ ] Distancia tablón fina → P1 `objectives` (HUD/GPS; OCR **no** en FSM)
 - [ ] **Contención en bajada** — plan de cartel activo a velocidad del límite si `gradient_pct <
 
   -0.3‰` (evitar `sin_plan_activo` por gravedad); retirado a petición 2026-08-26, reimplementar con
@@ -536,7 +541,7 @@ Detalle: `handle_controller.py` (`prefer_absolute` en RELEASE/COAST_THROTTLE) ·
 
    `evaluate_signal_brake`.
 
-3. **Tablón OCR/GPS** — cablear distancia fina a `objectives` / coordinador.
+3. **Tablón GPS/HUD** — distancia fina a P1 (`objectives`); FSM sigue en Lua/DMI.
 4. **Sesión A4** — estabilidad probe 10+ min (cuando 1–3 OK).
 5. **SD40-2** — probe freight + [FREIGHT_NA.md](FREIGHT_NA.md) (después de UK cerrado).
 

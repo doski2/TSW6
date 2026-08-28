@@ -221,7 +221,7 @@ class TestP1V2Integration:
         )
         d.decide(s)
         assert isinstance(d._braking, BrakeCoordinatorV2)
-        assert d._braking.last_debug == ""
+        assert d._braking.last_debug == "p1off:APPROACHING"
 
     def test_p1_stays_active_approaching_with_brake_handle(self):
         """C.2: B1 a 10 mph no hace P1 reset (log Four Oaks)."""
@@ -297,6 +297,7 @@ class TestP1V2Integration:
         action = d.decide(s)
         assert action == HOLD
         assert d.brake_command is None
+        assert d.p1_debug == "p1off:STOPPED"
 
     def test_release_on_lua_door_close_while_braked(self):
         """Cierre PassengerDoor: DEPARTING y RELEASE (no dwell a tiempo)."""

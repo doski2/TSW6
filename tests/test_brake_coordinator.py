@@ -134,6 +134,23 @@ class TestCoordinatorUnifiedStop:
         )
         assert action != "RELEASE"
 
+    def test_no_unified_force_release_while_0_9_over_posted(self):
+        """Sesión 17:25:05 — 55.9 vs cartel 55, B1 puesto, andén aún lejos: no soltar."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=55.9,
+            next_limit_mph=55.0,
+            distance_next_m=435.0,
+            effective_limit=60.0,
+            handle_notch=3,
+            station_distance_m=699.0,
+            station_name="Four Oaks",
+        )
+        assert action != "RELEASE"
+        if coord.last_brake_command is not None:
+            assert coord.last_brake_command.kind != "RELEASE"
+
     def test_delays_station_brake_at_limit_speed_unified(self):
         """55 mph, cartel lejos: coast sin re-aplicar B1 de estación."""
         coord = _coord()

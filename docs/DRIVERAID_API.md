@@ -269,7 +269,7 @@ DriverAid:
 | Distancia de frenado | Velocidad + perfil + `gradient_pct` | **Sí** (gradiente) |
 | Saber cuándo bajar límite | `speed_limit_ms` + probe / `nextSpeedLimits` | Parcial |
 | Parar en andén (qué parada) | `tsw_hud.db` + `TrackData.markers` | ✅ con HUD DB |
-| Distancia al tablón | `car_stop_signs` en HUD DB | ✅ planning · 🔄 frenado FSM |
+| Distancia al tablón | `car_stop_signs` en HUD DB | ✅ planning · 🔄 P1 (HUD, no OCR) |
 
 ---
 

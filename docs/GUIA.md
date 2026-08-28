@@ -92,8 +92,8 @@ paradas programadas con horario HUD (`currentServiceName` + `geoLocation`).
 `CurrentDrivableActor/PassengerDoor_FL.Function.GetCurrentInputValue`
 (`ReturnValue > 0` → abierta).
 
-La FSM de estación (`governor_station.py`) usa primero `doors_telem`; solo si falta
-recurre a DMI u OCR.
+La FSM de estación (`governor_station.py`) usa **Lua** `doors_telem` y DMI
+`doors_dmi` (abrir → STOPPED; cerrar → DEPARTING). OCR de tablón **no** entra en la FSM.
 
 Clave API (planning HTTP): `Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt`.
 

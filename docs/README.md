@@ -37,8 +37,8 @@
 | `autopilot_core.py` | Bucle de control ~20 Hz |
 | `autopilot_gui.py` | GUI tkinter (Estado / Planning / Depuración) |
 | `speed_decider.py` | Decisiones velocidad/freno + FSM estación |
-| `braking/v2/` | **Frenado P1** — physics, command, coordinator |
-| `governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
+| `braking/v2/` | **Frenado P1** — policy, station_plan, limit_brake, command, coordinator |
+| `governor_station.py` | FSM paradas (Lua/DMI abrir/cerrar) |
 | `handle_controller.py` | Ejecución mandos |
 | `distance_format.py` | Distancias uk_imperial / metric en GUI |
 | `learn_monitor.py` | Calibración guiada |

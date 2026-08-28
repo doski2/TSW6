@@ -103,7 +103,7 @@ Para no desincronizar la paridad al comparar:
 
 #### TSW6 → Dastsc
 
-- FSM estación UK (puertas, creep) — parcial en Dastsc vía OCR.
+- FSM estación UK (puertas Lua/DMI, creep) — Dastsc usa OCR de andén; TSW no.
 - Parada unificada cartel+andén (`_should_block_limit_release`).
 - GUI “Acción” compacta (B2→N2) — referencia UX, no arquitectura.
 

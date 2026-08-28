@@ -61,12 +61,12 @@
 
   <!-- GESTION -->
   <rect x="40" y="422" width="280" height="168" rx="10" fill="#fff" stroke="#c05621" stroke-width="2"/>
-  <text x="180" y="442" text-anchor="middle" font-size="11" font-weight="700" fill="#c05621">Gestion  -  4 archivos</text>
+  <text x="180" y="442" text-anchor="middle" font-size="11" font-weight="700" fill="#c05621">Gestion  -  4 papeles distintos</text>
   <line x1="52" y1="448" x2="308" y2="448" stroke="#fbd38d"/>
 
   <rect x="58" y="458" width="244" height="28" rx="5" fill="#fffaf0" stroke="#ecc94b"/>
   <text x="180" y="476" text-anchor="middle" font-size="10">governor_constants.py</text>
-  <rect x="58" y="492" width="244" height="28" rx="5" fill="#fffaf0" stroke="#ecc94b"/>
+  <rect x="58" y="492" width="244" height="28" rx="5" fill="#fffaf0" stroke="#ed8936" stroke-width="1.5"/>
   <text x="180" y="510" text-anchor="middle" font-size="10" font-weight="600">speed_decider.py</text>
   <rect x="58" y="526" width="244" height="28" rx="5" fill="#fffaf0" stroke="#ecc94b"/>
   <text x="180" y="544" text-anchor="middle" font-size="10">governor_physics.py</text>

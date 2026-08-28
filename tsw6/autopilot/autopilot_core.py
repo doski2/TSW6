@@ -3,7 +3,7 @@
 autopilot_core.py — Motor del autopilot (bucle de control sin UI).
 
 Expone AutopilotEngine.tick() para consola o GUI. La lógica de decisión
-permanece en SpeedDecider; aquí solo orquesta telemetría, OCR y mandos.
+permanece en SpeedDecider; aquí orquesta telemetría, FSM, P1 y mandos.
 """
 
 from __future__ import annotations
@@ -697,11 +697,7 @@ class AutopilotEngine:
         return result
 
     def _needs_ocr(self) -> bool:
-        if self.decider.station_state in ("APPROACHING", "STOPPED", "DEPARTING"):
-            return True
-        for st in (self.telem.get("stations") or [])[:1]:
-            if st.get("distance_m", 99999) < 1500:
-                return True
+        """OCR de tablón no entra en la FSM; puertas van por Lua/DMI."""
         return False
 
     def sleep_remainder(self, elapsed: float) -> None:
@@ -876,7 +872,7 @@ class AutopilotEngine:
             "heartbeat modo=%s  loop_hz=%.1f  work=%.0fms  sleep=%.0fms  tgt=%.0fHz  "
             "spd=%s  lim=%s  next_lim=%s  lim2=%s  elim=%.1f  seq=%s  "
             "dist=%s  probe=%s  frozen=%s  stale=%s  mandos=%s  ctrl=%s  "
-            "p1on=%s  telem=%s  age=%s  telem_poll=%s  "
+            "p1on=%s  fsm=%s  telem=%s  age=%s  telem_poll=%s  "
             "lua=%s dmi=%s  "
             "cmd_q=%d id=%d cf=%s ack=%.0fms ret=%d err=%s via=%s match=%s "
             "lever=%s hud=%s  "
@@ -902,6 +898,7 @@ class AutopilotEngine:
             self.conn.control_channel(),
             skip,
             "Y" if self.decider.p1_active else "N",
+            self.decider.station_state or "—",
             telem_src,
             f"{float(telem_age):.0f}ms" if telem_age is not None else "—",
             f"{float(telem_poll):.1f}Hz" if telem_poll else "—",

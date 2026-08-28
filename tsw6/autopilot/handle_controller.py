@@ -35,6 +35,8 @@ from tsw6.governor.governor_constants import (
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_FAST,
     CONTROL_INTERVAL_RPC,
     EMERGENCY_BRAKE_HANDLE,
+    NOTCH_MAX,
+    NOTCH_NEUTRAL,
     SERVICE_MAX_BRAKE,
 )
 from tsw6.autopilot.tsw_keys import VK_A, VK_D, KEY_HOLD_MS, KEY_TAP_MS, send_key
@@ -43,9 +45,8 @@ from tsw6.autopilot.train_state import TrainState
 
 _log = logging.getLogger("tsw.controller")
 
-# Handle neutro y límites
-_NOTCH_NEUTRAL     = 4
-_MAX_NOTCH         = 8
+_NOTCH_NEUTRAL     = NOTCH_NEUTRAL
+_MAX_NOTCH         = NOTCH_MAX
 _BRAKE_MIN_HANDLE  = _NOTCH_NEUTRAL - SERVICE_MAX_BRAKE   # = 1 (servicio)
 _GRACE_AFTER_EXT   = 1.5   # segundos de supresión de COAST tras subida externa
 _RPC_MAX_RETRIES   = 3     # reintentos por mando antes de contar fallo

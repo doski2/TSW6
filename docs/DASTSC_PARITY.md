@@ -77,7 +77,7 @@ Ver [FLUJO_FRENOS.md](FLUJO_FRENOS.md) · [ESTADO.md](ESTADO.md)
 | Pieza | Notas |
 | --- | --- |
 | SafetyWatchdog exceso persistente | Teclado BRAKE_FAST |
-| FSM estación UK (puertas, OCR, creep) | Más maduro en TSW |
+| FSM estación UK (puertas Lua/DMI, creep) | Más maduro en TSW; OCR no entra en FSM |
 | Marcador freno DMI advisory | |
 | Solo-frenado (sin ACCELERATE auto) | |
 | GUI Acción `B2 →N2` en barra | Referencia UX |

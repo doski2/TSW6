@@ -19,6 +19,7 @@ from tsw6.autopilot.control_actions import COAST, EMERGENCY, HOLD, RELEASE
 from tsw6.governor.governor_constants import (
     EMERGENCY_BRAKE_HANDLE,
     EMERGENCY_BRAKE_MAX_DIST_M,
+    NOTCH_NEUTRAL,
     SERVICE_MIN_HANDLE,
 )
 
@@ -26,10 +27,11 @@ _log = logging.getLogger("tsw.governor")
 
 BrakeCommandKind = Literal["APPLY", "RELEASE", "COAST_THROTTLE"]
 
-NEUTRAL_NOTCH = 4
+NEUTRAL_NOTCH = NOTCH_NEUTRAL
 RELEASE_MARGIN_MPH = 2.0          # parada en andén (spd muy baja)
 # TSW penaliza si spd > límite + 1 mph; techo operativo del autopilot.
 LIMIT_SCORING_MAX_OVER_MPH = 0.9
+LIMIT_OVER_ACTIVE_MPH = 0.5       # ya por encima del límite publicado (cola / P1)
 LIMIT_RELEASE_MAX_OVER_MPH = 0.4  # cartel: soltar si spd <= target + esto
 LIMIT_COAST_BAND_MPH = 0.25       # bajada: coast si spd <= limit + esto
 LIMIT_CONTAIN_ESCALATE_OVER_MPH = 0.65  # B2 si repunte cerca del techo
@@ -312,7 +314,7 @@ class BrakeReleaseState:
             return False
         if is_downhill_limit_approach(gradient_pct, distance_next_m):
             return False
-        if speed_mph > effective_limit + 0.5:
+        if speed_mph > effective_limit + LIMIT_OVER_ACTIVE_MPH:
             return False
         if next_limit_mph is None:
             return False
@@ -341,7 +343,7 @@ def resolve_release_command(
             return None
         cmd = release_brake_command(at_target=True)
         if cmd:
-            _log.info(
+            _log.debug(
                 "P1 RELEASE  spd=%.1f  target=PARADA  handle=%d  dist=%.0fm",
                 speed_mph,
                 handle_notch,
@@ -352,7 +354,7 @@ def resolve_release_command(
     if next_limit_mph is None:
         return None
 
-    if speed_mph > effective_limit + 0.5:
+    if speed_mph > effective_limit + LIMIT_OVER_ACTIVE_MPH:
         return None
 
     target = target_speed_mph(plan, next_limit_mph, effective_limit)
@@ -365,7 +367,7 @@ def resolve_release_command(
 
     cmd = release_brake_command(at_target=True)
     if cmd:
-        _log.info(
+        _log.debug(
             "P1 RELEASE  spd=%.1f  target=%.1f  handle=%d  next=%s",
             speed_mph,
             target,

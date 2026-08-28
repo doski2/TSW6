@@ -61,7 +61,6 @@ CRITICAL_DECEL_THRESHOLD = 0.3  # m/s²: si effective_decel < este valor → for
 # ── Paradas en estación ───────────────────────────────────────────────────────
 
 STATION_STOPPED_MPH    = 1.5   # por debajo de esto = tren parado
-STATION_DWELL_TIMEOUT_S = 45   # segundos máx. en STOPPED sin datos de puertas → partir
 
 # Perfil de frenado para paradas en andén:
 # v_límite = _K_STOP * sqrt(distancia_m)  [en mph]
@@ -72,6 +71,7 @@ _K_STOP = math.sqrt(2.0 * MAX_DECEL_MS2 / SAFETY_MARGIN) / 0.44704
 # (Liah class323.tswprofile); 4 neutro; 5–8 tracción 0.25..1.
 
 NOTCH_NEUTRAL = 4   # posición central del handle combinado (neutro)
+NOTCH_MAX = 8       # tracción máxima (misma escala IPC 0–8)
 
 NOTCH_LABELS: dict[int, str] = {
     0: "FRENO TOTAL",

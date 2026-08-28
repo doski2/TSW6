@@ -37,6 +37,7 @@ Constantes (`command.py` / `policy.py`):
 
 - `LIMIT_RELEASE_MAX_OVER_MPH = 0.4` — soltar el cartel
 - `LIMIT_SCORING_MAX_OVER_MPH = 0.9` — APPLY por exceso
+- `LIMIT_OVER_ACTIVE_MPH = 0.5` — ya por encima del límite publicado (cola / P1)
 - `HORIZON_SLACK_M = 25` — no B1 de andén hasta horizonte de **servicio** (decel 100 %, no B1 a 1,1 km)
 - `TARGET_CLUSTER_GAP_M = 350` — cartel y andén “juntos”
 - `uni=Y` — gap corto: no cabe 55 → soltar → parar en el hueco; el cartel marca el toque, el andén el v→0 **cuando entra horizonte**
@@ -189,7 +190,9 @@ Si ves B1 desde 650 m hasta parado: el escalón 1 no ganó (andén ya “dentro�
 | --- | --- |
 | `tsw6/braking/v2/coordinator.py` | Orquestación; escala 1–6 |
 | `tsw6/braking/v2/command.py` | `command_from_target` (único APPLY/RELEASE/COAST) |
-| `tsw6/braking/v2/policy.py` | Unificado, defer horizonte, qué candidato gana |
+| `tsw6/braking/v2/policy.py` | Cluster, defer horizonte, qué candidato gana |
+| `tsw6/braking/v2/station_plan.py` | Perfil andén HUD (no IPC) |
+| `tsw6/governor/governor_station.py` | FSM: Lua/DMI abrir/cerrar |
 | `tsw6/autopilot/handle_controller.py` | Ejecuta notch |
 | `tsw6/telemetry/tsw_ipc_bus.py` | IPC |
 | `docs/assets/flujo_frenos_p1.dot` | Grafo Graphviz |
