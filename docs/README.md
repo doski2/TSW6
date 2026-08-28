@@ -13,12 +13,13 @@
 | [DRIVERAID_API.md](DRIVERAID_API.md) | HTTPAPI / DriverAid | Catálogo nodos, estaciones, geo |
 | [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) | HTTPAPI completa | Índice dumps + prioridad física |
 | [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | Física tren | Masa, aire, esfuerzos, HUD |
-| [DRIVERINPUT_API.md](DRIVERINPUT_API.md) | Mandos cabina | PATCH `/set` palancas |
+| [DRIVERINPUT_API.md](DRIVERINPUT_API.md) | Mandos cabina | IPC + peldaños 323; perfiles Liah (`shared-profiles`) |
 | [DASTSC_PARITY.md](DASTSC_PARITY.md) | Frenado P1 | Paridad con Dastsc, B1–B3, pendientes |
 | [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | Estudio cruzado | Tabla paso a paso TSW6 SVG ↔ Nexus V4 |
-| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | Runtime frenos | Secuencia 1→14 + coordinator P1 |
+| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | Runtime frenos | Prioridad P1, Graphviz `.dot`, ciclo 1→14 |
 | [BRAKE_V2.md](BRAKE_V2.md) | Frenado activo | Arquitectura P1 v2, ventana APPLY física, prioridad |
 | [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 / diesel NA | Layout multi-mando, fases 4–6 |
+| [CANAL_CONTROL.md](CANAL_CONTROL.md) | IPC mandos + **plan debate rendimiento/v2 canal** |
 | [ESTADO.md](ESTADO.md) | Tablero visual (Mermaid) qué está hecho y qué sigue |
 | [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / probe / foco de trabajo |
 | [NOTAS.txt](NOTAS.txt) | Personal | Recordatorios de pruebas |
@@ -36,7 +37,7 @@
 | `autopilot_core.py` | Bucle de control ~20 Hz |
 | `autopilot_gui.py` | GUI tkinter (Estado / Planning / Depuración) |
 | `speed_decider.py` | Decisiones velocidad/freno + FSM estación |
-| `braking/v2/` | **Frenado P1** — physics, command, planner, coordinator |
+| `braking/v2/` | **Frenado P1** — physics, command, coordinator |
 | `governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
 | `handle_controller.py` | Ejecución mandos |
 | `distance_format.py` | Distancias uk_imperial / metric en GUI |

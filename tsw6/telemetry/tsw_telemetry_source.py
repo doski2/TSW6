@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """
-tsw_telemetry_source.py — Telemetría TSW (UE4SS in-process + HTTPAPI fallback).
+tsw_telemetry_source.py — Telemetría TSW (solo probe UE4SS / Lua).
 
 Fuentes (prioridad)
 -------------------
 1. **UE4SS probe** (~17–20 Hz): ``GetData.txt`` — velocidad, mandos, límites, puertas.
-2. **HTTPAPI** (fallback / planning lento): DriverAid, estaciones HUD, puertas si el probe
-   no las expone.
+2. **HTTPAPI** (opcional): estaciones HUD / horario. **No** es fuente de
+   velocidad, mandos, límites ni desnivel.
 
 Puertas
 -------
-- ``doors_telem``: estado físico ``PassengerDoor_*`` (probe o HTTPAPI).
-- ``doors_dmi``: mensajes DMI ``dmi-doors-open/closed`` (solo informativo).
-- La FSM de estación prioriza ``doors_telem`` sobre DMI.
+- Solo probe Lua (``GetData.txt``): ``doors_telem`` palancas, ``doors_dmi`` DMI.
+- ``doors_open``: derivado en ``_apply_door_state``. HTTP no lee ni escribe puertas.
 
 Planning de distancias
 ----------------------
-- **Límites** (probe): resync si ``dist_limit`` cambia; si el cm está plano y el tren
-  se mueve (C.3a), odometría Python como las estaciones (``probe_stale``).
-- **Límites** (HTTP): ``_tick_planning_distances`` entre polls.
-- **Estaciones** (HTTP): ``_tick_station_distances`` solo en overlay (no duplicar con límites).
+- **Límites y desnivel:** solo probe Lua. HTTP no rellena carteles ni ``gradient_pct``.
+  Odometría Python si el cm del probe está plano y el tren se mueve.
+- **Estaciones** (HTTP): ``DriverAid.TrackData`` + ``_tick_station_distances``.
 
 Escritura de mandos: ``SendCommand.txt`` (IPC Lua) o ``tsw_command_bus`` (HTTP).
 """
@@ -39,11 +37,10 @@ from tsw6.telemetry.driver_aid_parser import (
     filter_stations_by_service,
     filter_stations_by_stop_names,
     load_service_timetable,
-    parse_driver_aid_planning,
-    parse_gradient_pct,
-    parse_passenger_door_api,
     parse_track_data_stations,
     resolve_display_next_stop,
+    _collapse_same_limit_entries,
+    _merge_limit_entry,
     _prune_zero_distance_limits,
 )
 from tsw6.hud.hud_timetable import HudTimetableStore, schedule_times_for_station
@@ -56,7 +53,6 @@ from tsw6.telemetry.tsw_ipc_bus import (
     purge_lua_commands,
     release_controls,
 )
-from tsw6.telemetry.tsw_fast_telemetry import FastControlReader
 from tsw6.telemetry.control_channel import (
     AsyncCommandWriter,
     CommandState,
@@ -77,45 +73,16 @@ from tsw6.telemetry.tsw_ue4ss_reader import (
 
 _log = logging.getLogger("tsw.telemetry")
 
-DRIVABLE = "CurrentDrivableActor"
 MS_TO_MPH = 2.236936
 MPH_TO_MS = 0.44704
 # Probe «plano»: DriverAid no bajó el cartel (sesión 2495.8 m fija).
 PROBE_LIMIT_FLAT_M = 0.5
 SLOW_EVERY = 30
 PLANNING_MIN_INTERVAL_S = 2.0
-CONTROL_API_TIMEOUT = 0.35
 PLANNING_READ_TIMEOUT = 1.0
 UE4SS_STALE_S = 0.75
-
-_SLOW_READS: dict[str, str] = {
-    "object_class": f"{DRIVABLE}.ObjectClass",
-    "max_speed": f"{DRIVABLE}.Function.HUD_GetMaxPermittedSpeed",
-    "loco_brake": f"{DRIVABLE}.Function.HUD_GetLocomotiveBrakeHandle",
-    "dyn_brake": f"{DRIVABLE}.Function.HUD_GetElectricBrakeHandle",
-    "driver_aid": "DriverAid.Data",
-    "track_data": "DriverAid.TrackData",
-}
-
-_DOOR_API_PATHS: tuple[str, ...] = (
-    f"{DRIVABLE}/PassengerDoor_FL.Function.GetCurrentInputValue",
-    f"{DRIVABLE}/PassengerDoor_FR.Function.GetCurrentInputValue",
-    f"{DRIVABLE}/PassengerDoor_FL.Function.GetCurrentOutputValue",
-    f"{DRIVABLE}/PassengerDoor_FR.Function.GetCurrentOutputValue",
-    f"{DRIVABLE}/PassengerDoor_BL.Function.GetCurrentInputValue",
-    f"{DRIVABLE}/PassengerDoor_BR.Function.GetCurrentInputValue",
-    "CurrentFormation/0/Door_PassengerDoor_FL.Function.GetCurrentOutputValue",
-    "CurrentFormation/0/Door_PassengerDoor_FR.Function.GetCurrentOutputValue",
-    "CurrentFormation/1/Door_PassengerDoor_FL.Function.GetCurrentOutputValue",
-    "CurrentFormation/1/Door_PassengerDoor_FR.Function.GetCurrentOutputValue",
-    "CurrentFormation/1/Door_PassengerDoor_BL.Function.GetCurrentOutputValue",
-    "CurrentFormation/1/Door_PassengerDoor_BR.Function.GetCurrentOutputValue",
-)
-
-
-def _parse_gradient_pct(node: Any) -> Optional[float]:
-    """Alias para tests; ver driver_aid_parser.parse_gradient_pct."""
-    return parse_gradient_pct(node)
+# Hitch seq 1→2 ~2,7 s (GetDriverAid nativo). Menú/cierre: ReceiveTick para.
+UE4SS_LOST_S = 3.5
 
 
 def _power_to_handle_notch(
@@ -141,15 +108,6 @@ def _ue4ss_is_fresh(path: Path) -> bool:
         return False
 
 
-def _fetch_door_telemetry(
-    client: TswApiClient,
-    timeout: float,
-) -> Optional[bool]:
-    """Puertas físicas vía HTTPAPI (PassengerDoor_*)."""
-    nodes = [client.get_node(path, timeout=timeout) for path in _DOOR_API_PATHS]
-    return parse_passenger_door_api(*nodes)
-
-
 def _attach_probe_doors(parsed: dict[str, Any], snap: ProbeSnapshot) -> None:
     """Copia puertas del probe; ``doors_open`` lo resuelve ``_apply_door_state``."""
     if snap.doors_telem is not None:
@@ -163,7 +121,6 @@ def _attach_probe_doors(parsed: dict[str, Any], snap: ProbeSnapshot) -> None:
 def _telem_from_probe(
     snap: ProbeSnapshot,
     age_ms: float = 0.0,
-    gradient_fallback: Optional[float] = None,
 ) -> dict[str, Any]:
     """Telemetría base desde probe — velocidad directa, sin caché ni planning.
 
@@ -176,9 +133,7 @@ def _telem_from_probe(
         handle = 4
 
     grad = snap.gradient_pct
-    if gradient_fallback is not None:
-        grad = gradient_fallback
-    elif grad is None:
+    if grad is None:
         grad = 0.0
 
     parsed: dict[str, Any] = {
@@ -220,17 +175,19 @@ class TswTelemetrySource:
     """
     Fuente de telemetría compatible con el antiguo ``TswConnection``.
 
-    ``mode`` puede ser: ``ue4ss``, ``tsw_api``, ``manual``, ``searching``.
+    ``mode``: ``ue4ss``, ``manual``, ``searching``.
     """
 
     def __init__(self) -> None:
         self.mode = "searching"
         self.last_probe_info = "No probado aún"
         self._client: Optional[TswApiClient] = None
-        self._reader: Optional[FastControlReader] = None
         self._telem: dict[str, Any] = {}
         self._telem_lock = threading.Lock()
         self._vehicle_name: Optional[str] = None
+        self._layout_for_vehicle: Optional[str] = None
+        self._cached_layout = "combined"
+        self._cached_units = "uk_imperial"
         self._poll_tick = 0
         self._slow: dict[str, Any] = {}
         self._ue4ss_path = _ue4ss_path()
@@ -278,7 +235,7 @@ class TswTelemetrySource:
         return _ue4ss_is_fresh(self._ue4ss_path)
 
     def maybe_upgrade_to_ue4ss(self) -> bool:
-        """Pasa de ``tsw_api``/``searching`` a ``ue4ss`` si el probe está activo."""
+        """Pasa de ``searching`` a ``ue4ss`` si el probe está activo."""
         if self.mode in ("ue4ss", "manual"):
             return False
         prev = self.mode
@@ -290,18 +247,18 @@ class TswTelemetrySource:
         """Estado del probe para GUI (F7 / GetData.txt)."""
         fresh = self.probe_getdata_fresh()
         if self.mode == "ue4ss":
-            return {"live": True, "fresh": fresh, "hint": "PROBE OK (F7)"}
+            if fresh:
+                return {"live": True, "fresh": True, "hint": "PROBE OK (F7)"}
+            return {
+                "live": False,
+                "fresh": False,
+                "hint": "GetData congelado — juego cerrado o F7 off",
+            }
         if fresh:
             return {
                 "live": False,
                 "fresh": True,
                 "hint": "GetData activo — reconectando…",
-            }
-        if self.mode == "tsw_api":
-            return {
-                "live": False,
-                "fresh": False,
-                "hint": "HTTP ~2s — pulsa F7 en cabina",
             }
         if not self._ue4ss_path.is_file():
             return {
@@ -341,23 +298,18 @@ class TswTelemetrySource:
         return "searching"
 
     def probe(self) -> str:
-        """Detecta UE4SS (GetData.txt) o HTTPAPI."""
+        """Detecta el probe UE4SS (GetData.txt). Sin fallback HTTP de telemetría."""
         if self.try_connect_ue4ss():
             return "ue4ss"
-
-        if self._ensure_api_client(silent=False):
-            self.mode = "tsw_api"
-            self._poll()
-            return "tsw_api"
 
         self.mode = "searching"
         if not self._ue4ss_path.is_file():
             self.last_probe_info = (
-                "Sin UE4SS ni HTTPAPI — instala TelemetryProbeMod o arranca con -HTTPAPI"
+                "Sin GetData.txt — install_ue4ss_probe.bat + F7 en cabina"
             )
         else:
             self.last_probe_info = (
-                f"GetData.txt sin actualizar (> {UE4SS_STALE_S:.1f}s) y HTTPAPI no responde"
+                f"GetData.txt sin actualizar (> {UE4SS_STALE_S:.1f}s) — F7 en cabina"
             )
         return "searching"
 
@@ -410,6 +362,17 @@ class TswTelemetrySource:
             return self.set_control_value(control, val)
         cmd_id = self._ensure_cmd_writer().enqueue_control(control, val)
         return cmd_id > 0
+
+    def _drop_ue4ss(self, reason: str) -> None:
+        """Probe dejó de escribir: no seguir como si el tren estuviera vivo."""
+        if self.mode != "ue4ss":
+            return
+        self.mode = "searching"
+        self.last_probe_info = reason
+        if self._telem_reader is not None:
+            self._telem_reader.stop()
+            self._telem_reader = None
+        _log.info("%s", reason)
 
     def shutdown_channels(self) -> None:
         if self._cmd_writer is not None:
@@ -550,11 +513,8 @@ class TswTelemetrySource:
         self._planning_hold = hold
 
     def _ensure_api_client(self, silent: bool = False) -> bool:
-        """HTTP API para escritura de mandos (y fallback de lectura)."""
+        """HTTP API solo para estaciones HUD (no telemetría ni mandos)."""
         if self._client is not None:
-            if self._reader is None:
-                self._reader = FastControlReader(self._client)
-                self._reader.setup()
             return True
 
         client = client_from_key_file()
@@ -572,16 +532,6 @@ class TswTelemetrySource:
             return False
 
         self._client = client
-        if self._reader is None:
-            self._reader = FastControlReader(client)
-            self._reader.setup()
-
-        if self.mode != "ue4ss":
-            meta = info.get("Meta") or {}
-            self.last_probe_info = (
-                f"TSW API v{meta.get('APIVersion', '?')} "
-                f"(build {meta.get('GameBuildNumber', '?')})"
-            )
         return True
 
     def _apply_station_filter(
@@ -633,7 +583,7 @@ class TswTelemetrySource:
         self._player_geo = (lat, lng)
 
     def _poll_driver_aid_planning(self) -> dict[str, Any]:
-        """DriverAid.Data + TrackData (en hilo aparte) para P1 y paradas."""
+        """TrackData + PlayerInfo (hilo aparte) para paradas HUD."""
         if not self._ensure_api_client(silent=True):
             return {}
         if not self._api_lock.acquire(blocking=True, timeout=2.5):
@@ -644,12 +594,6 @@ class TswTelemetrySource:
                 return {}
 
             out: dict[str, Any] = {}
-            data = client.get_node("DriverAid.Data",
-                                   timeout=PLANNING_READ_TIMEOUT)
-            if data is not None:
-                self._slow["driver_aid"] = data
-                out.update(parse_driver_aid_planning(data))
-
             track = client.get_node("DriverAid.TrackData",
                                     timeout=PLANNING_READ_TIMEOUT)
             if track is not None:
@@ -670,9 +614,6 @@ class TswTelemetrySource:
                 svc = out.get("service_name") or self._service_name
                 out["stations"] = self._apply_station_filter(
                     out["stations"], svc)
-            doors = _fetch_door_telemetry(client, PLANNING_READ_TIMEOUT)
-            if doors is not None:
-                out["doors_telem"] = doors
             return out
         finally:
             self._api_lock.release()
@@ -736,12 +677,11 @@ class TswTelemetrySource:
         d2 = probe_planning.get("distance_next_2_m")
         if lim2 is None or d2 is None or float(d2) <= 8.0:
             return
-        limits = self._planning_dist.get("speed_limits_ahead") or []
-        entry = {"limit_mph": float(lim2), "distance_m": float(d2)}
-        if len(limits) < 2:
-            limits.append(entry)
-        else:
-            limits[1] = entry
+        limits = list(self._planning_dist.get("speed_limits_ahead") or [])
+        _merge_limit_entry(limits, float(d2), float(lim2))
+        limits.sort(key=lambda x: x["distance_m"])
+        limits = _prune_zero_distance_limits(limits)
+        limits = _collapse_same_limit_entries(limits)
         self._planning_dist["speed_limits_ahead"] = limits
         self._refresh_speed_limit_heads()
 
@@ -821,7 +761,13 @@ class TswTelemetrySource:
         pd = self._planning_dist
         if not pd:
             return
-        if not self._planning_hold:
+        age_ms = parsed.get("telemetry_age_ms")
+        probe_live = age_ms is None or self._probe_fresh(float(age_ms))
+        if (
+            not self._planning_hold
+            and not parsed.get("probe_motion_frozen")
+            and probe_live
+        ):
             self._tick_station_distances(float(parsed.get("speed_mph") or 0.0))
         if pd.get("distance_next_m") is not None:
             parsed["distance_next_m"] = pd["distance_next_m"]
@@ -924,8 +870,14 @@ class TswTelemetrySource:
             probe_raw_dist = probe_planning.get("distance_next_m")
             odo_m = parsed.get("odo_m")
             speed_ms = parsed.get("speed_ms")
+            prev_odo = self._motion_last_odo_m
             motion_frozen = self._update_probe_motion_frozen(
                 probe_raw_dist, odo_m, speed_ms)
+            odo_moved = (
+                odo_m is not None
+                and prev_odo is not None
+                and abs(float(odo_m) - float(prev_odo)) > 0.05
+            )
             if self._planning_hold:
                 motion_frozen = True
             parsed["probe_motion_frozen"] = motion_frozen
@@ -957,6 +909,7 @@ class TswTelemetrySource:
                 parked = (not moving) and speed < 0.5
                 if (
                     moving
+                    and odo_moved
                     and probe_raw_dist is not None
                     and self._probe_limit_flat(probe_raw_dist)
                 ):
@@ -1014,13 +967,23 @@ class TswTelemetrySource:
 
     def _merge_planning(self, parsed: dict[str, Any],
                         planning: dict[str, Any],
-                        probe_gradient: Optional[float] = None) -> None:
-        """Fusiona planning HTTP; el gradiente del probe tiene prioridad."""
-        if probe_gradient is not None:
-            planning = {k: v for k, v in planning.items() if k != "gradient_pct"}
+                        skip_limit_keys: bool = False) -> None:
+        """Fusiona estaciones HTTP; no pisa puertas, desnivel ni límites del probe."""
+        skip = {
+            "doors_telem", "doors_open", "doors_dmi", "gradient_pct",
+        }
+        if skip_limit_keys:
+            skip.update((
+                "speed_limits_ahead",
+                "next_limit_mph",
+                "distance_next_m",
+                "next_limit_2_mph",
+                "distance_next_2_m",
+            ))
         for key, val in planning.items():
-            if val is not None:
-                parsed[key] = val
+            if val is None or key in skip:
+                continue
+            parsed[key] = val
         svc = planning.get("service_name")
         if svc:
             self._service_name = str(svc)
@@ -1064,30 +1027,28 @@ class TswTelemetrySource:
         else:
             parsed["schedule_source"] = "trackdata"
 
-    def _poll_slow(self) -> None:
-        if self._client is None:
-            return
-        if not self._api_lock.acquire(blocking=False):
-            return
-        try:
-            client = self._client
-            if client is None:
-                return
-            for name, path in _SLOW_READS.items():
-                node = client.get_node(path)
-                if node is not None:
-                    self._slow[name] = node
-            doors = _fetch_door_telemetry(client, CONTROL_API_TIMEOUT)
-            if doors is not None:
-                self._slow["doors_telem"] = doors
-        finally:
-            self._api_lock.release()
-
     def _poll_ue4ss(self, snap: Optional[ProbeSnapshot] = None) -> None:
         if snap is None:
             snap = self._read_ue4ss_snapshot()
         if snap is None:
             self._maybe_diag_log(None)
+            return
+
+        age_ms = 0.0
+        if self._telem_reader is not None:
+            _, age_ms = self._telem_reader.get_snapshot()
+        else:
+            try:
+                age_ms = max(
+                    0.0,
+                    (time.time() - self._ue4ss_path.stat().st_mtime) * 1000.0,
+                )
+            except OSError:
+                pass
+        if age_ms > UE4SS_LOST_S * 1000.0:
+            self._drop_ue4ss(
+                f"GetData parado ({age_ms / 1000.0:.1f}s) — juego cerrado o F7 off"
+            )
             return
 
         self._poll_tick += 1
@@ -1108,28 +1069,17 @@ class TswTelemetrySource:
                 if key in probe_planning:
                     planning[key] = probe_planning[key]
 
-        age_ms = 0.0
-        if self._telem_reader is not None:
-            _, age_ms = self._telem_reader.get_snapshot()
-        else:
-            try:
-                age_ms = max(0.0, (time.time() - self._ue4ss_path.stat().st_mtime) * 1000.0)
-            except OSError:
-                pass
         probe_fresh = self._probe_fresh(age_ms)
 
-        parsed = _telem_from_probe(
-            snap,
-            age_ms=age_ms,
-            gradient_fallback=planning.get("gradient_pct")
-            if snap.gradient_pct is None else None,
-        )
+        parsed = _telem_from_probe(snap, age_ms=age_ms)
         parsed["probe_seq"] = snap.seq
         if snap.odo_m is not None:
             parsed["odo_m"] = float(snap.odo_m)
-        self._merge_planning(parsed, planning, probe_gradient=snap.gradient_pct)
-        if parsed.get("doors_telem") is None and planning.get("doors_telem") is not None:
-            parsed["doors_telem"] = bool(planning["doors_telem"])
+        self._merge_planning(
+            parsed,
+            planning,
+            skip_limit_keys=True,
+        )
 
         has_probe_dist = bool(probe_planning)
         if has_probe_dist:
@@ -1173,107 +1123,33 @@ class TswTelemetrySource:
         with self._telem_lock:
             self._telem.update(parsed)
 
-    def _poll(self) -> None:
-        if self._reader is None:
-            return
-
-        self._poll_tick += 1
-        slow_tick = self._poll_tick == 1 or self._poll_tick % SLOW_EVERY == 0
-        if slow_tick:
-            self._poll_slow()
-
-        snap = self._reader.read()
-        if snap.speed_ms is None:
-            return
-
-        parsed: dict[str, Any] = {
-            "speed_mph": snap.speed_ms * MS_TO_MPH,
-            "accel_mps2": snap.accel_ms2,
-            "handle_notch": _power_to_handle_notch(snap.power, snap.power_negative),
-            "supervision": "csm",
-            "ack_required": False,
-            "gradient_pct": 0.0,
-            "rain_intensity": 0.0,
-            "telemetry_source": snap.source,
-            "telemetry_age_ms": snap.age_ms,
-        }
-
-        if snap.train_brake is not None:
-            parsed["train_brake_value"] = float(snap.train_brake)
-
-        max_node = self._slow.get("max_speed") or {}
-        if max_node.get("IsActive") and max_node.get("MaxSpeed (ms)") is not None:
-            parsed["limit_mph"] = float(max_node["MaxSpeed (ms)"]) * MS_TO_MPH
-
-        loco = self._slow.get("loco_brake") or {}
-        if loco.get("HandlePosition") is not None:
-            parsed["ind_brake_value"] = float(loco["HandlePosition"])
-            parsed["ind_brake_active"] = bool(loco.get("IsActive", False))
-
-        dyn = self._slow.get("dyn_brake") or {}
-        if dyn.get("HandlePosition") is not None:
-            parsed["dyn_brake_value"] = float(dyn["HandlePosition"])
-            parsed["dyn_brake_active"] = bool(dyn.get("IsActive", False))
-
-        obj = self._slow.get("object_class") or {}
-        if obj.get("ObjectClass"):
-            self._vehicle_name = str(obj["ObjectClass"])
-
-        planning: dict[str, Any] = {}
-        da = self._slow.get("driver_aid")
-        if da:
-            planning.update(parse_driver_aid_planning(da))
-        td = self._slow.get("track_data")
-        if td:
-            stations = parse_track_data_stations(td)
-            if stations:
-                planning["stations"] = self._apply_station_filter(
-                    stations, self._service_name)
-        if slow_tick and planning:
-            planning_source = planning
-        else:
-            planning_source = None
-        doors_telem = self._slow.get("doors_telem")
-        if doors_telem is not None:
-            parsed["doors_telem"] = bool(doors_telem)
-        self._merge_planning(parsed, planning)
-        self._apply_planning_distances(
-            parsed,
-            source=planning_source,
-            probe_fresh=True,
-            interpolate=True,
-        )
-        self._apply_door_state(parsed)
-
-        with self._telem_lock:
-            self._telem.update(parsed)
-
     def get_telemetry(self) -> dict[str, Any]:
-        """Último snapshot (refresca según fuente activa)."""
+        """Último snapshot (solo probe Lua)."""
         if self.mode == "manual":
             return {}
-        if self.mode == "searching":
-            return {}
 
-        if self.mode == "tsw_api":
+        if self.mode != "ue4ss":
             self.maybe_upgrade_to_ue4ss()
 
-        if self.mode == "ue4ss":
-            self._poll_ue4ss()
-            # Si el probe deja de actualizar, intentar HTTPAPI una vez.
-            if not self._telem and self._ensure_api_client(silent=True):
-                self.mode = "tsw_api"
-                self._poll()
-        else:
-            self._poll()
+        if self.mode != "ue4ss":
+            return {}
+
+        self._poll_ue4ss()
+        if self.mode != "ue4ss":
+            return {}
 
         with self._telem_lock:
             out = dict(self._telem)
         vehicle = self.get_vehicle_name()
-        layout = detect_control_layout(vehicle)
+        key = vehicle or ""
+        if key != self._layout_for_vehicle:
+            self._layout_for_vehicle = key
+            self._cached_layout = detect_control_layout(vehicle)
+            self._cached_units = infer_distance_units(
+                vehicle, self._cached_layout)
         out["vehicle_name"] = vehicle
-        out["control_layout"] = layout
-        out["distance_units"] = infer_distance_units(vehicle, layout)
+        out["control_layout"] = self._cached_layout
+        out["distance_units"] = self._cached_units
         stations = out.get("stations")
         if stations:
             self._attach_next_stop(out, stations)

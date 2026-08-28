@@ -1,19 +1,20 @@
 -- TelemetryProbeMod — telemetría + mandos IPC
 -- Python escribe SendCommand.txt · Lua lee mandos y escribe GetData.txt + SendCommandAck.txt
--- F7 on/off probe · F8 volcar línea al log · F9 dump controles cabina
-local PROBE_BUILD = "20260828a"
+-- F7 on/off probe · F8 volcar línea al log · F9 dump controles (no en el tick)
+-- Nombres de palanca: DRIVERINPUT_API.md / perfiles loco, no FindAllOf cada frame.
+local PROBE_BUILD = "20260828q"
 local PROBE_AUTO_START = true  -- probe ON al cargar escenario; F7 apaga/enciende
 
 local UEHelpers = require("UEHelpers")
 
-print("[TelemetryProbe] Mod loaded\n")
+print("[TelemetryProbe] Mod loaded " .. PROBE_BUILD .. "\n")
 
 local HOOK_PATH = "/Game/Core/Player/TS2DefaultPlayerController.TS2DefaultPlayerController_C:ReceiveTick"
 local WRITE_INTERVAL_S = 0.05  -- ~20 Hz
 local LOG_INTERVAL_S = 2.0
 local IPC_POLL_INTERVAL_S = 0.05  -- ~20 Hz (no leer disco cada frame)
 local COMMANDS_ARMED_TTL_S = 0.25
--- SetCurrentNotchIndex / SetInputValue() crashean UE4SS en Class 323 — solo asignar propiedades.
+-- SetCurrentNotchIndex / SetInputValue() crashean UE4SS. SetCurrentInputValue (Liah) es fallback.
 local SAFE_LEVER_WRITE = true
 -- false = Lua escribe InputValue en UE (canal IPC principal). true = ACK :fail: y HTTP en Python.
 local IPC_DELEGATE_HTTP = false
@@ -24,22 +25,18 @@ local bridgeDirLogged = false
 local seq = 0
 local lastWriteClock = 0
 local lastLogClock = 0
+local perfWrites = 0
+local perfWorkS = 0
 local hooked = false
 local hookPre, hookPost
 local debugDumped = false
+local limitsLogged = false
 local driver_input_dumped = false
 local pbh_ufn_dumped = false
 local pbh_setter_names = nil  -- UFunctions del lever aptas para ProcessEvent (una vez)
 
--- Planning: no bajar distancias si el tren no avanzó (odómetro / pausa ESC).
-local last_odo_m = nil
-local last_actor_pos = nil
-local held_dist_limit_cm = nil
-local held_next_limit_ms = nil
-local held_dist_limit2_cm = nil
-local held_next_limit2_ms = nil
-local MOVE_THRESH_CM2 = 2500
-local ODO_MOVE_THRESH_M = 0.05
+-- Planning: distancias = DriverAid. No hold Lua: odo/actor no se mueven
+-- (GetActorLocation/odo muertos) y Python C.3a restaba HUD×dt (probe_raw fijo).
 
 local SEND_COMMAND_FILE = "SendCommand.txt"
 local APPLY_FLAG_FILE = "TSW6ApplyCommands.flag"
@@ -51,7 +48,6 @@ local last_cmd_id = 0
 local last_ack_ok = false
 local commands_armed_cache = false
 local commands_armed_checked_at = 0
-local last_ipc_poll_clock = 0
 local read_hud_lever_notch = nil  -- definido tras helpers HUD
 local control_path_logged = {}
 local pbh_write_strategy = nil
@@ -211,11 +207,32 @@ local function clamp_num(v, lo, hi)
     return v
 end
 
-local function cmd_value_to_input(control_name, value)
-    if control_name == "IndependentBrake" then
-        return clamp_num(value, -1.0, 1.0)
+local function cmd_value_to_notch(cmd_val)
+    if type(cmd_val) ~= "number" then return nil end
+    return math.max(0, math.min(8, math.floor(cmd_val * 8.0 + 0.5)))
+end
+
+-- InputValue Class 323 (Liah class323.tswprofile). Índice 1 = notch 0.
+local PBH_INPUT_BY_NOTCH = { -1.0, -0.6, -0.4, -0.2, 0.0, 0.25, 0.5, 0.75, 1.0 }
+
+local function notch_to_axis(notch)
+    if type(notch) ~= "number" then return nil end
+    local n = math.max(0, math.min(8, math.floor(notch + 0.5)))
+    return PBH_INPUT_BY_NOTCH[n + 1]
+end
+
+local function axis_value_to_notch(axis_val)
+    if type(axis_val) ~= "number" then return nil end
+    local best_i = 0
+    local best_d = math.abs(axis_val - PBH_INPUT_BY_NOTCH[1])
+    for i = 1, 9 do
+        local d = math.abs(axis_val - PBH_INPUT_BY_NOTCH[i])
+        if d < best_d then
+            best_d = d
+            best_i = i - 1
+        end
     end
-    return (clamp_num(value, 0.0, 1.0) - 0.5) * 2.0
+    return best_i
 end
 
 local function lever_input_value(control_name, cmd_value)
@@ -224,7 +241,11 @@ local function lever_input_value(control_name, cmd_value)
     if control_name == "IndependentBrake" then
         return clamp_num(num, -1.0, 1.0)
     end
-    -- IPC 0..1 (notch/8) → eje -1..1 (neutro @ 0.5)
+    if control_name == "PowerBrakeHandle" then
+        local notch = cmd_value_to_notch(num)
+        if notch == nil then return nil end
+        return notch_to_axis(notch)
+    end
     return (clamp_num(num, 0.0, 1.0) - 0.5) * 2.0
 end
 
@@ -438,7 +459,7 @@ local function collect_control_candidates(name, controller)
         for _, child_name in ipairs(names) do
             append_control_candidate(candidates, seen, try_child(parent, child_name))
         end
-        append_levers_from_actor_pairs(parent, names, candidates, seen)
+        -- No pairs(actor): recorre todo el UObject y congela ReceiveTick.
     end
     if drivable then
         try_parent(drivable)
@@ -472,27 +493,17 @@ local function find_control(name, controller)
     if cached ~= nil then
         control_cache[name] = nil
     end
+    local direct = get_direct_actor_lever(name, controller)
+    if direct then
+        control_cache[name] = direct
+        return direct
+    end
     local candidates = collect_control_candidates(name, controller)
     if #candidates == 0 then
         return nil
     end
+    control_cache[name] = candidates[1]
     return candidates[1]
-end
-
-local function cmd_value_to_notch(cmd_val)
-    if type(cmd_val) ~= "number" then return nil end
-    return math.max(0, math.min(8, math.floor(cmd_val * 8.0 + 0.5)))
-end
-
--- Muesca UK 0..8 → eje InputValue (-1 freno .. 0 neutro .. +1 tracción).
-local function notch_to_axis(notch)
-    if type(notch) ~= "number" then return nil end
-    return clamp_num((notch - 4) / 4.0, -1.0, 1.0)
-end
-
-local function axis_value_to_notch(axis_val)
-    if type(axis_val) ~= "number" then return nil end
-    return math.max(0, math.min(8, 4 + math.floor(axis_val * 4.0 + 0.5)))
 end
 
 local function read_control_scalar(ctrl)
@@ -573,15 +584,20 @@ end
 
 local function container_len(arr)
     if arr == nil then return nil end
+    local t = type(arr)
+    if t == "table" then
+        local n = #arr
+        if type(n) == "number" and n > 0 and n <= 16 then return n end
+        return nil
+    end
+    -- No usar # sobre userdata UE: puede devolver un N enorme y congelar el tick.
     local n
     pcall(function() n = arr:GetArrayNum() end)
-    if type(n) == "number" then return n end
+    if type(n) == "number" and n > 0 and n <= 16 then return n end
     pcall(function() n = arr:Num() end)
-    if type(n) == "number" then return n end
+    if type(n) == "number" and n > 0 and n <= 16 then return n end
     pcall(function() n = arr:GetNumElements() end)
-    if type(n) == "number" then return n end
-    pcall(function() n = #arr end)
-    if type(n) == "number" then return n end
+    if type(n) == "number" and n > 0 and n <= 16 then return n end
     return nil
 end
 
@@ -594,14 +610,30 @@ local function read_index(arr, i)
     return nil
 end
 
+-- TArray convertido a tabla Lua (1-based). ForEach/Get(0..8)/pairs en
+-- UScriptStruct tiran ReceiveTick (seq 1→2 ~2.7 s).
+local function foreach_container(arr, fn)
+    if arr == nil then return end
+    local kind = type(arr)
+    if kind ~= "table" and kind ~= "userdata" then return end
+    for i = 1, 8 do
+        local item
+        pcall(function() item = arr[i] end)
+        if item == nil then return end
+        if fn(item) == false then return end
+    end
+end
+
+-- UE4SS: `n ~= v` / `v > 0` entre number y UScriptStruct tira
+-- "attempt to compare number with UScriptStruct" (pcall de DriverAid entero).
 local function unwrap_number(v, depth)
     depth = depth or 0
-    if v == nil or depth > 5 then return nil end
+    if v == nil or type(depth) ~= "number" or depth > 5 then return nil end
     if type(v) == "number" then return v end
     local n
     pcall(function() n = v:get() end)
     if type(n) == "number" then return n end
-    if n ~= nil and n ~= v then
+    if n ~= nil and type(n) ~= "number" then
         local inner = unwrap_number(n, depth + 1)
         if inner ~= nil then return inner end
     end
@@ -680,7 +712,7 @@ local function struct_notch_id(el)
     return nil
 end
 
--- Una vez: ValueMap / Notches del IrregularLever (eje real por muesca).
+-- Una vez (F9): Notches.InputValue. El 323 ya está en PBH_INPUT_BY_NOTCH.
 local function dump_pbh_valuemap(ctrl)
     if pbh_map_dumped or not ctrl_is_valid(ctrl) then
         return
@@ -727,29 +759,7 @@ local function dump_pbh_valuemap(ctrl)
             end
         end
     end)
-    pcall(function()
-        local vm = ctrl.ValueMap
-        print(string.format("[TelemetryProbe] PBH ValueMap type=%s\n", type(vm)))
-        if vm ~= nil and type(vm.ForEach) == "function" then
-            local i = 0
-            vm:ForEach(function(k, v)
-                i = i + 1
-                if i > 16 then return end
-                dump_struct_numbers(v, "ValueMap[" .. tostring(k) .. "]")
-            end)
-        else
-            local len = container_len(vm)
-            print(string.format("[TelemetryProbe] PBH ValueMap len=%s\n", tostring(len)))
-            local maxn = len or 12
-            if maxn > 16 then maxn = 16 end
-            for i = 0, maxn do
-                local el = read_index(vm, i)
-                if el ~= nil then
-                    dump_struct_numbers(el, "ValueMap[" .. tostring(i) .. "]")
-                end
-            end
-        end
-    end)
+    -- ValueMap es potencia HUD (−4…4), no InputValue; no volcar (ruido).
     local count = 0
     for _ in pairs(axis_by) do count = count + 1 end
     if count > 0 then
@@ -1215,7 +1225,6 @@ local function safe_assign_lever_prop(ctrl, prop, val)
 end
 
 local function write_pbh_one_step(ctrl, num, controller)
-    dump_pbh_valuemap(ctrl)
     local dest = cmd_value_to_notch(num)
     local hud_before = read_hud_lever_notch and read_hud_lever_notch(controller)
     if dest == nil then
@@ -1241,22 +1250,14 @@ local function write_pbh_one_step(ctrl, num, controller)
     end
     -- SetCurrentOutputValue espera potencia HUD (muesca-4), no InputValue −1…1.
     local out_val = step - 4
-    local axes = { { out_val, "out" } }
-    if #axes == 0 then
-        return false, "bad_axis"
-    end
     local hud_after = hud_before
-    for _, pair in ipairs(axes) do
-        local axis, label = pair[1], pair[2]
-        local okc, why = call_bound(ctrl.SetCurrentOutputValue, { axis })
-        hud_after = read_hud_lever_notch and read_hud_lever_notch(controller)
-        print(string.format(
-            "[TelemetryProbe] IPC SetCurrentOutputValue %s step=%s axis=%.4f dest=%s → %s hud %s->%s\n",
-            label, tostring(step), axis, tostring(dest), tostring(why),
-            tostring(hud_before), tostring(hud_after)))
-        if not okc then
-            return false, why or "call_fail"
-        end
+    local okc, why = call_bound(ctrl.SetCurrentOutputValue, { out_val })
+    hud_after = read_hud_lever_notch and read_hud_lever_notch(controller)
+    print(string.format(
+        "[TelemetryProbe] IPC SetCurrentOutputValue step=%s axis=%.4f dest=%s → %s hud %s->%s\n",
+        tostring(step), out_val, tostring(dest), tostring(why),
+        tostring(hud_before), tostring(hud_after)))
+    if okc then
         if hud_before == nil then
             pbh_write_strategy = "SetCurrentOutputValue"
             return true, "SetCurrentOutputValue"
@@ -1264,13 +1265,47 @@ local function write_pbh_one_step(ctrl, num, controller)
         if hud_step_ack(hud_before, hud_after, dest, step) then
             pbh_write_strategy = "SetCurrentOutputValue"
             print(string.format(
-                "[TelemetryProbe] PBH write OK via SetCurrentOutputValue %s hud %s->%s step=%s dest=%s\n",
-                label, tostring(hud_before), tostring(hud_after), tostring(step), tostring(dest)))
+                "[TelemetryProbe] PBH write OK via SetCurrentOutputValue hud %s->%s step=%s dest=%s\n",
+                tostring(hud_before), tostring(hud_after), tostring(step), tostring(dest)))
             return true, "SetCurrentOutputValue"
         end
         if hud_after ~= nil and hud_after ~= hud_before then
             return false, "away"
         end
+    end
+    -- Liah dllmain: BeginChangingVHID + SetCurrentInputValue (peldaños −0.6…1). No SetInputValue().
+    local in_val = notch_to_axis(step)
+    if in_val == nil then
+        return false, "no_effect"
+    end
+    if controller then
+        try_call_colon(controller, "BeginChangingVHIDComponent", ctrl)
+    end
+    okc, why = call_bound(ctrl.SetCurrentInputValue, { in_val })
+    hud_after = read_hud_lever_notch and read_hud_lever_notch(controller)
+    print(string.format(
+        "[TelemetryProbe] IPC VHID SetCurrentInputValue step=%s in=%.4f dest=%s → %s hud %s->%s\n",
+        tostring(step), in_val, tostring(dest), tostring(why),
+        tostring(hud_before), tostring(hud_after)))
+    if okc and hud_before == nil then
+        pbh_write_strategy = "SetCurrentInputValue"
+        if controller then
+            try_call_colon(controller, "EndUsingVHIDComponent", ctrl)
+        end
+        return true, "SetCurrentInputValue"
+    end
+    if okc and hud_step_ack(hud_before, hud_after, dest, step) then
+        pbh_write_strategy = "SetCurrentInputValue"
+        if controller then
+            try_call_colon(controller, "EndUsingVHIDComponent", ctrl)
+        end
+        print(string.format(
+            "[TelemetryProbe] PBH write OK via VHID SetCurrentInputValue hud %s->%s step=%s dest=%s\n",
+            tostring(hud_before), tostring(hud_after), tostring(step), tostring(dest)))
+        return true, "SetCurrentInputValue"
+    end
+    if hud_after ~= nil and hud_after ~= hud_before then
+        return false, "away"
     end
     return false, "no_effect"
 end
@@ -1287,18 +1322,9 @@ local function write_lever_control(name, ctrl, num, input_val, controller)
     local axis_from_notch = target and notch_to_axis(target)
     local strategies = {}
     if name == "PowerBrakeHandle" then
-        -- Class 323: IrregularLeverComponent → InputValue eje, no Value 0..1.
-        if target ~= nil and type(ctrl.SetCurrentNotchIndex) == "function" then
-            table.insert(strategies, {"_SetNotch", target})
-        end
-        if type(ctrl.SetInputValue) == "function" and axis_from_notch ~= nil then
-            table.insert(strategies, {"_SetInputValue", axis_from_notch})
-        end
+        -- Sin SAFE: no SetInputValue/SetNotch (crash). Un eje = Liah.
         if axis_from_notch ~= nil then
             table.insert(strategies, {"InputValue", axis_from_notch})
-        end
-        if input_val ~= nil then
-            table.insert(strategies, {"InputValue", input_val})
         end
     else
         if type(ctrl.SetInputValue) == "function" then
@@ -1503,9 +1529,6 @@ local function apply_control_value(name, value, controller, cmd_id)
     end
     if #candidates == 0 then
         print("[TelemetryProbe] WARN control not found (scoped): " .. name .. "\n")
-        if name == "PowerBrakeHandle" then
-            dump_driver_input_inventory(controller, "no_candidates")
-        end
         if cmd_id then last_cmd_id = cmd_id end
         last_ack_ok = false
         write_send_ack(name, num, false, cmd_id)
@@ -1617,16 +1640,21 @@ local function out_val(t, ...)
 end
 
 local function is_valid_num(v)
-    return type(v) == "number" and v == v and v > 0 and v < SENTINEL * 0.99
+    if type(v) ~= "number" or v ~= v then return false end
+    local ok, good = pcall(function()
+        return v > 0 and v < SENTINEL * 0.99
+    end)
+    return ok and good == true
 end
 
 local function scalar_ms(node)
-    if type(node) == "number" then
-        return is_valid_num(node) and node or nil
+    local n = unwrap_number(node)
+    if type(n) == "number" then
+        return is_valid_num(n) and n or nil
     end
     if type(node) == "table" then
         local v = out_val(node, "value", "Value")
-        return v and is_valid_num(v) and v or nil
+        return is_valid_num(v) and v or nil
     end
     return nil
 end
@@ -1706,59 +1734,27 @@ local function door_state_from_id(id)
 end
 
 local function scan_door_messages(msgs)
-    if type(msgs) ~= "table" then return nil end
-    local function check_one(m)
-        if type(m) ~= "table" then return nil end
-        return door_state_from_id(m.id or m.Id or m.messageId or m.MessageId)
-    end
-    for _, m in ipairs(msgs) do
-        local st = check_one(m)
-        if st ~= nil then return st end
-    end
-    for _, m in pairs(msgs) do
-        local st = check_one(m)
-        if st ~= nil then return st end
-    end
-    return nil
+    if msgs == nil then return nil end
+    local found = nil
+    foreach_container(msgs, function(m)
+        local id
+        pcall(function()
+            id = m.id or m.Id or m.messageId or m.MessageId
+        end)
+        found = door_state_from_id(id)
+        if found ~= nil then return false end
+    end)
+    return found
 end
 
 local function read_door_component_value(door_comp)
     if not door_comp or not door_comp.IsValid or not door_comp:IsValid() then
         return nil
     end
-    -- UE4SS: GetCurrentInputValue devuelve float directo (sin tabla out-param).
-    local ok, v = pcall(function()
-        return door_comp:GetCurrentInputValue()
-    end)
+    local ok, v = pcall(function() return door_comp.CurrentInputValue end)
     if ok and type(v) == "number" then return v end
-    if ok and type(v) == "table" then
-        local n = out_val(v, "ReturnValue")
-        if type(n) == "number" then return n end
-    end
-    local result = {}
-    ok = pcall(function()
-        door_comp.GetCurrentInputValue(door_comp, result)
-    end)
-    if ok then
-        local n = out_val(result, "ReturnValue")
-        if type(n) == "number" then return n end
-    end
-    ok, v = pcall(function()
-        return door_comp:GetCurrentOutputValue()
-    end)
+    ok, v = pcall(function() return door_comp:GetCurrentInputValue() end)
     if ok and type(v) == "number" then return v end
-    if ok and type(v) == "table" then
-        local n = out_val(v, "ReturnValue")
-        if type(n) == "number" then return n end
-    end
-    result = {}
-    ok = pcall(function()
-        door_comp.GetCurrentOutputValue(door_comp, result)
-    end)
-    if ok then
-        local n = out_val(result, "ReturnValue")
-        if type(n) == "number" then return n end
-    end
     return nil
 end
 
@@ -1769,6 +1765,7 @@ local DOOR_COMPONENT_NAMES = {
 }
 
 local function read_passenger_doors(actor)
+    local any_open = false
     local any_read = false
     for _, name in ipairs(DOOR_COMPONENT_NAMES) do
         local ok, door = pcall(function() return actor[name] end)
@@ -1777,10 +1774,13 @@ local function read_passenger_doors(actor)
             if v ~= nil then
                 any_read = true
                 if v > 0.0 then
-                    return true
+                    any_open = true
                 end
             end
         end
+    end
+    if any_open then
+        return true
     end
     if any_read then
         return false
@@ -1790,10 +1790,7 @@ end
 
 local function extract_doors_dmi(driverAid)
     if type(driverAid) ~= "table" then return nil end
-    for _, key in ipairs({"Messages", "messages", "AppMessages", "app_messages"}) do
-        local st = scan_door_messages(driverAid[key])
-        if st ~= nil then return st end
-    end
+    -- No recorrer Messages (TArray) cada tick: Find/Get en ReceiveTick tira el juego.
     local facts = driverAid.Facts or driverAid.facts
     if type(facts) == "table" then
         local raw = facts.doors_open or facts.doorsOpen or facts.DoorsOpen
@@ -1826,95 +1823,38 @@ local function dump_driver_aid(driverAid)
     print("[TelemetryProbe] DriverAid dump: " .. table.concat(parts, " | ") .. "\n")
 end
 
-local function collect_limit_entries(driverAid)
-    local entries = {}
-    local dist_cm = driverAid.distanceToNextSpeedLimit or driverAid.DistanceToNextSpeedLimit
-    local next_ms = scalar_ms(driverAid.nextSpeedLimit or driverAid.NextSpeedLimit)
-    if is_valid_num(dist_cm) and next_ms then
-        table.insert(entries, { dist_cm = dist_cm, limit_ms = next_ms })
+local function pick_float(...)
+    for i = 1, select("#", ...) do
+        local n = unwrap_number(select(i, ...))
+        if type(n) == "number" then return n end
     end
-    local arr = driverAid.nextSpeedLimits or driverAid.NextSpeedLimits
-    if type(arr) ~= "table" then
-        return entries
-    end
-    local items = {}
-    for _, item in ipairs(arr) do
-        table.insert(items, item)
-    end
-    if #items == 0 then
-        for _, item in pairs(arr) do
-            if type(item) == "table" then
-                table.insert(items, item)
-            end
-        end
-    end
-    for _, item in ipairs(items) do
-        local d = item.distanceToNextSpeedLimit or item.DistanceToNextSpeedLimit
-        local ms = scalar_ms(item.value or item.Value)
-        if is_valid_num(d) and ms then
-            table.insert(entries, { dist_cm = d, limit_ms = ms })
-        end
-    end
-    return entries
+    return nil
 end
 
-local function dedupe_limits(entries)
-    table.sort(entries, function(a, b) return a.dist_cm < b.dist_cm end)
-    local out = {}
-    for _, e in ipairs(entries) do
-        local dup = false
-        for _, prev in ipairs(out) do
-            if math.abs(prev.dist_cm - e.dist_cm) <= 800 then
-                dup = true
-                break
-            end
-        end
-        if not dup then
-            table.insert(out, e)
-        end
-    end
-    return out
-end
-
+-- Un cartel: escalares del padre. NextSpeedLimits[] es UScriptStruct sin floats
+-- en el tick (lim2 aparcado; docs/DRIVERAID_API.md).
 local function extract_speed_limits(driverAid)
-    local out = dedupe_limits(collect_limit_entries(driverAid))
-    local planning = {}
-    if out[1] then
-        planning.dist_limit_cm = out[1].dist_cm
-        planning.next_limit_ms = out[1].limit_ms
+    local dist_cm = pick_float(
+        driverAid.DistanceToNextSpeedLimit,
+        driverAid.distanceToNextSpeedLimit)
+    local limit_ms = scalar_ms(driverAid.nextSpeedLimit or driverAid.NextSpeedLimit)
+    if not is_valid_num(dist_cm) or not limit_ms then
+        return {}
     end
-    if out[2] then
-        planning.dist_limit2_cm = out[2].dist_cm
-        planning.next_limit2_ms = out[2].limit_ms
+    if dist_cm <= 0 then
+        return {}
     end
-    -- En cartel (dist=0): usar el siguiente de la cola.
-    if planning.dist_limit_cm and planning.dist_limit_cm <= 0 then
-        planning.dist_limit_cm = nil
-        planning.next_limit_ms = nil
-        if out[2] then
-            planning.dist_limit_cm = out[2].dist_cm
-            planning.next_limit_ms = out[2].limit_ms
-            planning.dist_limit2_cm = out[3] and out[3].dist_cm or nil
-            planning.next_limit2_ms = out[3] and out[3].limit_ms or nil
-        end
-    end
-    return planning
+    return { dist_limit_cm = dist_cm, next_limit_ms = limit_ms }
 end
 
 local function extract_gradient(driverAid)
     if type(driverAid) ~= "table" then return nil end
-    local g = driverAid.gradient or driverAid.Gradient
-    if type(g) == "number" then return g end
-    if type(g) == "table" then
-        return out_val(g, "Value", "value")
-    end
-    for k, v in pairs(driverAid) do
-        if type(k) == "string" and string.find(string.lower(k), "grad", 1, true) then
-            if type(v) == "number" then return v end
-            if type(v) == "table" then
-                local nested = out_val(v, "Value", "value")
-                if nested ~= nil then return nested end
-            end
+    for _, key in ipairs({"gradient", "Gradient", "gradient_percent"}) do
+        local g = driverAid[key]
+        if type(g) == "number" then return g end
+        if type(g) == "table" then
+            local nested = out_val(g, "Value", "value")
+            if nested ~= nil then return nested end
         end
     end
     return nil
@@ -1968,55 +1908,6 @@ local function read_brake_cylinder_bar(actor)
     return nil
 end
 
-local function actor_moved_since_last(actor)
-    local ok, loc = pcall(function() return actor:K2_GetActorLocation() end)
-    if not ok or not loc then return true end
-    if not last_actor_pos then
-        last_actor_pos = { x = loc.X, y = loc.Y, z = loc.Z }
-        return true
-    end
-    local dx = loc.X - last_actor_pos.x
-    local dy = loc.Y - last_actor_pos.y
-    local dz = loc.Z - last_actor_pos.z
-    last_actor_pos = { x = loc.X, y = loc.Y, z = loc.Z }
-    return (dx * dx + dy * dy + dz * dz) > MOVE_THRESH_CM2
-end
-
-local function train_moved_since_last(actor)
-    local odo = read_odometer_m(actor)
-    if odo ~= nil then
-        if last_odo_m == nil then
-            last_odo_m = odo
-            return true
-        end
-        local moved = math.abs(odo - last_odo_m) > ODO_MOVE_THRESH_M
-        last_odo_m = odo
-        return moved
-    end
-    return actor_moved_since_last(actor)
-end
-
-local function hold_planning_if_stationary(sample, actor)
-    if sample.dist_limit_cm == nil and sample.dist_limit2_cm == nil then return end
-    local moving = train_moved_since_last(actor)
-    if sample.speed_ms ~= nil and math.abs(sample.speed_ms) > 0.4 then
-        moving = true
-    end
-    if moving then
-        held_dist_limit_cm = sample.dist_limit_cm
-        held_next_limit_ms = sample.next_limit_ms
-        held_dist_limit2_cm = sample.dist_limit2_cm
-        held_next_limit2_ms = sample.next_limit2_ms
-        return
-    end
-    if held_dist_limit_cm then
-        sample.dist_limit_cm = held_dist_limit_cm
-        sample.next_limit_ms = held_next_limit_ms
-        sample.dist_limit2_cm = held_dist_limit2_cm
-        sample.next_limit2_ms = held_next_limit2_ms
-    end
-end
-
 local function read_vehicle_class(actor)
     local classObj = actor:GetClass()
     if classObj and classObj:IsValid() then
@@ -2033,7 +1924,7 @@ local function fmt_num(v)
 end
 
 local PLANNING_FIELDS = {
-    "dist_limit_cm", "next_limit_ms", "dist_limit2_cm", "next_limit2_ms", "odo_m",
+    "dist_limit_cm", "next_limit_ms", "odo_m",
 }
 
 local function build_line(sample)
@@ -2060,9 +1951,6 @@ local function build_line(sample)
         if sample[key] ~= nil then
             table.insert(parts, key .. "=" .. fmt_num(sample[key]))
         end
-    end
-    if sample.doors_open ~= nil then
-        table.insert(parts, "doors_open=" .. (sample.doors_open and "1" or "0"))
     end
     if sample.doors_telem ~= nil then
         table.insert(parts, "doors_telem=" .. (sample.doors_telem and "1" or "0"))
@@ -2112,9 +2000,13 @@ local function apply_driver_aid(sample, controller, debug_driver_aid, actor)
     if type(planning) == "table" then
         sample.dist_limit_cm = planning.dist_limit_cm
         sample.next_limit_ms = planning.next_limit_ms
-        sample.dist_limit2_cm = planning.dist_limit2_cm
-        sample.next_limit2_ms = planning.next_limit2_ms
-        hold_planning_if_stationary(sample, actor)
+        if not limitsLogged then
+            limitsLogged = true
+            print(string.format(
+                "[TelemetryProbe] limit dist_cm=%s next_ms=%s\n",
+                tostring(planning.dist_limit_cm),
+                tostring(planning.next_limit_ms)))
+        end
     end
 end
 
@@ -2156,7 +2048,6 @@ local function collect_sample(controller, debug_driver_aid)
     local doors_telem = safe_read("doors_telem", function() return read_passenger_doors(actor) end)
     if doors_telem ~= nil then
         sample.doors_telem = doors_telem
-        sample.doors_open = doors_telem
     end
     apply_driver_aid(sample, controller, debug_driver_aid, actor)
     sample.vehicle = safe_read("vehicle", function() return read_vehicle_class(actor) end) or "?"
@@ -2181,15 +2072,31 @@ local function maybe_write(controller, force)
     if not force and (now - lastWriteClock) < WRITE_INTERVAL_S then return end
 
     seq = seq + 1
+    local t0 = os.clock()
     local sample, err = collect_sample(controller, force)
     if err == "no_drivable" then return end
 
     local line = build_line(sample)
     write_line(line)
+    perfWrites = perfWrites + 1
+    perfWorkS = perfWorkS + (os.clock() - t0)
     lastWriteClock = now
 
     if force or (now - lastLogClock) >= LOG_INTERVAL_S then
+        local span = now - lastLogClock
+        if lastLogClock <= 0 then span = LOG_INTERVAL_S end
+        local avg_ms = 0
+        if perfWrites > 0 then
+            avg_ms = (perfWorkS / perfWrites) * 1000
+        end
+        local hz = 0
+        if span > 0.001 then hz = perfWrites / span end
         print("[TelemetryProbe] " .. line .. "\n")
+        print(string.format(
+            "[TelemetryProbe] perf writes=%d avg_ms=%.2f hz=%.1f span=%.2fs\n",
+            perfWrites, avg_ms, hz, span))
+        perfWrites = 0
+        perfWorkS = 0
         lastLogClock = now
     end
 end
@@ -2221,14 +2128,11 @@ local function reset_session_state()
     seq = 0
     lastWriteClock = 0
     lastLogClock = 0
+    perfWrites = 0
+    perfWorkS = 0
     last_ipc_poll_clock = 0
-    last_odo_m = nil
-    last_actor_pos = nil
-    held_dist_limit_cm = nil
-    held_next_limit_ms = nil
-    held_dist_limit2_cm = nil
-    held_next_limit2_ms = nil
     debugDumped = false
+    limitsLogged = false
     driver_input_dumped = false
 end
 
@@ -2238,15 +2142,17 @@ RegisterInitGameStatePreHook(function()
     reset_session_state()
 end)
 
+local lastF7Clock = 0
+
 local function set_probe_enabled(on)
     probeEnabled = on == true
     print("[TelemetryProbe] " .. (probeEnabled and "ENABLED" or "DISABLED") .. "\n")
     if probeEnabled then
         clear_control_lookup_cache()
         register_hook()
-    else
-        unregister_hook()
     end
+    -- F7 OFF: el hook sigue, ReceiveTick sale al instante. UnregisterHook cada
+    -- pulsación (UE4SS dispara F7 al pulsar y al soltar) tira el framerate.
 end
 
 RegisterInitGameStatePostHook(function()
@@ -2263,6 +2169,11 @@ end)
 
 RegisterKeyBind(Key.F7, {}, function()
     ExecuteInGameThread(function()
+        local now = os.clock()
+        if (now - lastF7Clock) < 0.35 then
+            return
+        end
+        lastF7Clock = now
         set_probe_enabled(not probeEnabled)
     end)
 end)

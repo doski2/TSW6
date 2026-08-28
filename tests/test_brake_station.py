@@ -1,14 +1,13 @@
-"""Tests de frenada en estación (puerto Dastsc stationBrake / planBrake STATION)."""
+"""Tests de frenada en estación (station_plan — HUD / ETA TSW)."""
 
 from datetime import datetime
 
 import pytest
 
-from tsw6.braking.v2.planner import (
+from tsw6.braking.v2.plan import BrakePlanStep
+from tsw6.braking.v2.station_plan import (
     DEFAULT_STATION_CFG,
-    BrakePlanStep,
     StationBrakeConfig,
-    plan_brake,
     plan_brake_for_station,
     plan_station_final_stop,
     plan_station_service_brake,
@@ -52,23 +51,18 @@ class TestScheduleReactionScale:
         assert b2_early.dist_start == b2_plain.dist_start
 
     def test_hud_arrival_hhmmss_parses(self):
-        from tsw6.braking.v2.planner import normalize_station_eta, parse_eta_minutes
+        from tsw6.braking.v2.station_plan import normalize_station_eta, parse_eta_minutes
 
         assert normalize_station_eta("08:18:00") == "8:18"
         assert parse_eta_minutes("08:18:00") == 8 * 60 + 18
 
 class TestStationServiceBrake:
-    def test_shorter_reaction_than_speed_limit(self):
+    def test_has_three_service_notches(self):
         station = plan_station_service_brake(
             speed_mph=44.7, station_distance_m=800.0)
-        limit = plan_brake(
-            speed_mph=44.7,
-            distance_to_target_m=800.0,
-            target_speed_mph=0.0,
-            target_kind="SPEED_LIMIT",
-        )
-        assert station is not None and limit is not None
-        assert station.reaction_margin_m < limit.reaction_margin_m
+        assert station is not None
+        assert {s.notch for s in station.steps} == {"B1", "B2", "B3"}
+        assert station.reaction_margin_m > 0
 
     def test_previews_b2_when_early_vs_schedule(self):
         now = datetime(2026, 8, 1, 14, 30, 0)

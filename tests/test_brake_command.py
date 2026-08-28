@@ -1,38 +1,42 @@
 #!/usr/bin/env python3
-"""Tests brake_command.py — paridad ejecución Dastsc."""
+"""Tests brake_command.py — APPLY / RELEASE / COAST vía plan sintético P1."""
 
 from tsw6.braking.v2.command import (
     BrakeCommand,
     governor_action_for_command,
     plan_to_brake_command,
 )
-from tsw6.braking.v2.plan import BrakePlan, BrakePlanStep
-from tsw6.braking.v2.planner import plan_brake
+from tsw6.braking.v2.plan import BrakePlan, BrakePlanStep, TargetKind
 
 
-def _plan_with_step(*, apply_now: bool = True, dist_start: float = 10.0):
-    plan = plan_brake(
-        speed_mph=55.0,
-        distance_to_target_m=800.0,
-        target_speed_mph=50.0,
-        gradient_pct=0.0,
-        base_decel=0.8,
-    )
-    assert plan is not None
-    step = plan.active_step
-    assert step is not None
-    plan.active_step = BrakePlanStep(
-        notch=step.notch,
-        handle_notch=step.handle_notch,
-        phase=step.phase,
-        distance_m=step.distance_m,
-        apply_at_remaining_m=step.apply_at_remaining_m,
+def _plan(
+    *,
+    target_kind: TargetKind = "SPEED_LIMIT",
+    target_speed_mph: float = 50.0,
+    distance_m: float = 800.0,
+    apply_now: bool = True,
+    dist_start: float = 10.0,
+    notch: str = "B1",
+    handle_notch: int = 3,
+) -> BrakePlan:
+    step = BrakePlanStep(
+        notch=notch,
+        handle_notch=handle_notch,
+        phase="1",
+        distance_m=200.0,
+        apply_at_remaining_m=distance_m - dist_start,
         dist_start=dist_start,
-        meters_until_action_m=step.meters_until_action_m,
+        meters_until_action_m=max(0.0, dist_start),
         apply_now=apply_now,
-        using_learned=step.using_learned,
     )
-    return plan
+    return BrakePlan(
+        target_kind=target_kind,
+        distance_to_target_m=distance_m,
+        target_speed_mph=target_speed_mph,
+        reaction_margin_m=40.0,
+        steps=[step],
+        active_step=step,
+    )
 
 
 def test_governor_action_for_command_apply_is_hold():
@@ -46,7 +50,7 @@ def test_governor_action_for_command_release():
 
 
 def test_plan_to_brake_command_apply_b1():
-    plan = _plan_with_step()
+    plan = _plan()
     cmd, _ = plan_to_brake_command(
         plan,
         speed_mph=55.0,
@@ -56,14 +60,12 @@ def test_plan_to_brake_command_apply_b1():
     )
     assert cmd is not None
     assert cmd.kind == "APPLY"
-    assert cmd.phase in ("B1", "B2", "B3")
-    step = plan.active_step
-    assert step is not None
-    assert cmd.target_notch == step.handle_notch
+    assert cmd.phase == "B1"
+    assert cmd.target_notch == 3
 
 
 def test_plan_to_brake_command_coast_when_throttle():
-    plan = _plan_with_step()
+    plan = _plan()
     cmd, _ = plan_to_brake_command(
         plan,
         speed_mph=55.0,
@@ -90,7 +92,7 @@ def test_clamp_brake_handle_service_only_far():
 
 
 def test_plan_releases_when_at_limit_target():
-    plan = _plan_with_step(dist_start=-80.0)
+    plan = _plan(dist_start=-80.0, target_speed_mph=50.0)
     cmd, _ = plan_to_brake_command(
         plan,
         speed_mph=51.0,
@@ -103,16 +105,15 @@ def test_plan_releases_when_at_limit_target():
 
 
 def test_station_plan_releases_when_stopped():
-    plan = plan_brake(
-        speed_mph=2.0,
-        distance_to_target_m=30.0,
-        target_speed_mph=0.0,
+    plan = _plan(
         target_kind="STATION",
+        target_speed_mph=0.0,
+        distance_m=30.0,
+        apply_now=True,
+        dist_start=0.0,
+        notch="B2",
+        handle_notch=2,
     )
-    assert plan is not None
-    step = plan.active_step
-    assert step is not None
-    step.apply_now = True
     cmd, _ = plan_to_brake_command(
         plan,
         speed_mph=1.0,

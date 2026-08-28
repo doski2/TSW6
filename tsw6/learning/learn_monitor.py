@@ -644,15 +644,15 @@ def main() -> None:
 
     # Conexión vía API HTTP TSW (sin RailBridge).
     conn = TswTelemetrySource()
-    print("Buscando TSW6 (UE4SS probe o HTTPAPI)…")
+    print("Buscando TSW6 (UE4SS probe)…")
     for _ in range(30):
         conn.probe()
-        if conn.mode in ("ue4ss", "tsw_api"):
+        if conn.mode == "ue4ss":
             break
         time.sleep(1.0)
-    if conn.mode not in ("ue4ss", "tsw_api"):
+    if conn.mode != "ue4ss":
         print("ERROR: No se pudo conectar a TSW6.")
-        print("       ¿TelemetryProbeMod activo o TSW6 con -HTTPAPI (en cabina)?")
+        print("       ¿TelemetryProbeMod activo y F7 en cabina?")
         sys.exit(1)
     print(f"Conectado: {conn.last_probe_info}")
 

@@ -152,13 +152,13 @@ class HandleController:
 
     def _use_async_ipc(self, conn: Optional[object]) -> bool:
         """True si hay cola IPC async (Fase A/B) — sin penalización global."""
-        if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
+        if conn is None or getattr(conn, "mode", None) != "ue4ss":
             return False
         return callable(getattr(conn, "enqueue_control_value", None))
 
     def _use_rpc(self, conn: Optional[object]) -> bool:
-        """True si IPC Lua o HTTPAPI disponible y no penalizado."""
-        if conn is None or getattr(conn, "mode", None) not in ("tsw_api", "ue4ss"):
+        """True si IPC Lua disponible y no penalizado."""
+        if conn is None or getattr(conn, "mode", None) != "ue4ss":
             return False
         if self._use_async_ipc(conn):
             has_api = getattr(conn, "has_control_api", None)

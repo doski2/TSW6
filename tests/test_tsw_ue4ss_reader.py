@@ -5,6 +5,7 @@ from pathlib import Path
 from tsw6.telemetry.tsw_ue4ss_reader import (
     ProbeSnapshot,
     SessionLogger,
+    decode_probe_raw,
     parse_probe_line,
     power_to_combined_notch,
 )
@@ -66,6 +67,7 @@ class TestUe4ssReader(unittest.TestCase):
         self.assertAlmostEqual(planning["distance_next_m"], 199.9, places=1)
         self.assertAlmostEqual(planning["next_limit_mph"], 20.0, places=1)
         self.assertAlmostEqual(planning["distance_next_2_m"], 246.7, places=1)
+        self.assertEqual(len(planning["speed_limits_ahead"]), 2)
 
     def test_planning_dict_promotes_second_when_first_at_zero(self) -> None:
         snap = ProbeSnapshot.from_dict({
@@ -110,6 +112,11 @@ class TestUe4ssReader(unittest.TestCase):
             self.assertIn("Class323", text)
             self.assertIn("# muestras: 1", text)
             self.assertIn("# raw: seq=10", text)
+
+    def test_decode_probe_raw_last_line(self) -> None:
+        raw = decode_probe_raw(b"seq=1 speed_ms=1\nseq=2 speed_ms=2.5\n")
+        self.assertEqual(raw, "seq=2 speed_ms=2.5")
+        self.assertIsNone(decode_probe_raw(b""))
 
 
 if __name__ == "__main__":

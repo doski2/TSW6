@@ -90,7 +90,7 @@ class TestCoordinatorRelease:
 
 class TestCoordinatorUnifiedStop:
     def test_releases_at_limit_speed_in_unified_cluster(self):
-        """Gap corto: no soltar en el 55; seguir hacia el andén."""
+        """54 mph, 550 m al andén: aún fuera del horizonte de servicio → soltar el 55."""
         coord = _coord()
         action, _ = _eval(
             coord,
@@ -101,7 +101,24 @@ class TestCoordinatorUnifiedStop:
             handle_notch=2,
             station_distance_m=550.0,
         )
-        assert action != "RELEASE"
+        assert action == "RELEASE"
+
+    def test_release_after_limit_tap_before_station_horizon(self):
+        """Tras B1 al 55, andén aún fuera del horizonte 80%: soltar a neutro."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=55.2,
+            next_limit_mph=55.0,
+            distance_next_m=429.0,
+            effective_limit=60.0,
+            handle_notch=3,
+            station_distance_m=684.0,
+            station_name="Four Oaks",
+        )
+        assert action == "RELEASE"
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "RELEASE"
 
     def test_blocks_release_while_above_limit_in_unified_cluster(self):
         """Parada unificada: no soltar si aún se supera el cartel."""

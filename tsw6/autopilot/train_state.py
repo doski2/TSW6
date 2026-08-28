@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tsw6.braking.v2.planner import normalize_station_eta
+from tsw6.braking.v2.station_plan import normalize_station_eta
 from tsw6.learning.control_layout import detect_control_layout
 
 

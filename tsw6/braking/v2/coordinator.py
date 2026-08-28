@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-coordinator.py — Orquestación P1 v2 (un módulo por objetivo + prioridad).
+coordinator.py — Un tick P1: policy + objetivos + limit_brake → BrakeCommand.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 from tsw6.braking.v2.command import (
     BrakeCommand,
     BrakeReleaseState,
+    BrakeTargetResult,
     governor_action_for_command,
     is_brake_applied,
     release_brake_command,
@@ -19,21 +20,22 @@ from tsw6.braking.v2.command import (
 from tsw6.braking.v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
-    BrakePhysicsContext,
-    decel_for_notch,
-    kinematic_horizon_m,
 )
 from tsw6.braking.v2.plan import BrakePlan
-from tsw6.braking.v2.cluster import (
-    is_unified_limit_station_stop,
-    should_delay_unified_station_plan,
-)
-from tsw6.braking.v2.emergency import check_p1_emergency, is_red_signal_aspect
 from tsw6.braking.v2.limit_brake import LimitBrakeState, evaluate_limit_brake
-from tsw6.braking.v2.priority import select_urgent_target, station_plan_actionable
-from tsw6.braking.v2.signal_brake import evaluate_signal_brake
-from tsw6.braking.v2.station_brake import evaluate_station_brake
-from tsw6.braking.v2.types import BrakeTargetResult
+from tsw6.braking.v2.objectives import (
+    check_p1_emergency,
+    evaluate_signal_brake,
+    evaluate_station_brake,
+    is_red_signal_aspect,
+)
+from tsw6.braking.v2.policy import (
+    is_unified_limit_station_stop,
+    select_urgent_target,
+    should_defer_station_brake,
+    should_delay_unified_station_plan,
+    station_plan_actionable,
+)
 from tsw6.governor.governor_constants import P1_MIN_NEXT_LIMIT_MPH, STATION_STOPPED_MPH
 
 _log = logging.getLogger("tsw.governor.v2")
@@ -163,8 +165,12 @@ class BrakeCoordinatorV2:
         signal_aspect: Optional[str] = None,
     ) -> Tuple[Optional[str], float]:
         """
-        Returns:
-            (action_override, effective_limit) — compatible con SpeedDecider.
+        Flujo P1 (un tick):
+        1. RELEASE si el cartel está hecho y el andén aún no entra en horizonte.
+        2. Emergencia andén/señal.
+        3. Candidatos: cartel / estación (si no diferida) / señal.
+        4. Prioridad en vía.
+        5. ``command_from_target`` → IPC.
         """
         del station_name  # reservado OCR / nombre tablón
 
@@ -225,40 +231,32 @@ class BrakeCoordinatorV2:
                 schedule_slack_enabled=self._schedule_slack_enabled,
                 brake_fill_s=brake_fill_s,
             )
-            if unified and should_delay_unified_station_plan(
+            if should_defer_station_brake(
+                speed_mph=speed_mph,
+                station_dist_m=station_distance_m,
+                gradient_pct=grad,
+                base_decel=base_decel,
+            ) or should_delay_unified_station_plan(
                 speed_mph=speed_mph,
                 limit_mph=_nl,
                 limit_dist_m=_dn,
                 station_dist_m=station_distance_m,
+                gradient_pct=grad,
+                base_decel=base_decel,
             ):
                 station_r = None
 
         def _should_block_limit_release() -> bool:
-            """Unificado: no soltar en el cartel; sí si sobra distancia a 0 (B1 eterno)."""
             if not _unified_stop_active():
                 return False
             if speed_mph <= STATION_STOPPED_MPH + 1.0:
                 return True
-            extra_room = False
-            if station_distance_m is not None and station_distance_m > 0:
-                ctx = BrakePhysicsContext(
-                    base_decel_ms2=base_decel,
-                    gradient_pct=grad,
-                )
-                horizon = kinematic_horizon_m(
-                    speed_mph,
-                    0.0,
-                    decel_ms2=decel_for_notch(0.80, base_decel, grad),
-                    ctx=ctx,
-                    apply_margin=True,
-                )
-                extra_room = station_distance_m > horizon * 1.2
-            past_sign = _dn is None or float(_dn) <= 8.0
-            if extra_room and past_sign:
-                return False
-            if _dn is not None and float(_dn) > 8.0:
-                return True
-            return True
+            return not should_defer_station_brake(
+                speed_mph=speed_mph,
+                station_dist_m=station_distance_m,
+                gradient_pct=grad,
+                base_decel=base_decel,
+            )
 
         def _station_braking_takes_priority() -> bool:
             if station_r is None:
@@ -462,12 +460,17 @@ class BrakeCoordinatorV2:
             current_notch=handle_notch,
             speed_mph=speed_mph,
         )
-        if cmd is None:
-            self.last_debug = f"{active.target_kind} perfil activo"
+
+        def _capped_limit() -> float:
             eff = min(effective_limit, active.target_speed_mph or effective_limit)
             if unified and _dn is not None and _nl is not None:
-                eff = min(eff, float(_nl))
-            return "HOLD", eff
+                return min(eff, float(_nl))
+            return eff
+
+        if cmd is None:
+            self.last_debug = f"{active.target_kind} perfil activo"
+            self.last_brake_command = None
+            return "HOLD", _capped_limit()
 
         self.last_brake_command = cmd
         self.last_debug = (
@@ -487,9 +490,6 @@ class BrakeCoordinatorV2:
         )
 
         action = governor_action_for_command(cmd)
-        eff = min(effective_limit, active.target_speed_mph or effective_limit)
-        if unified and _dn is not None and _nl is not None:
-            eff = min(eff, float(_nl))
         if speed_mph <= STATION_STOPPED_MPH + 1.0:
             self._unified_stop_latched = False
-        return action, eff
+        return action, _capped_limit()

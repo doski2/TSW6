@@ -1,0 +1,196 @@
+<svg width="670pt" height="598pt" viewBox="0.00 0.00 670.00 598.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 594.4)">
+<title>P1</title>
+<polygon fill="white" stroke="none" points="-4,4 -4,-594.4 666.44,-594.4 666.44,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_prio</title>
+<path fill="none" stroke="#1a5276" d="M20,-61C20,-61 415,-61 415,-61 421,-61 427,-67 427,-73 427,-73 427,-517.4 427,-517.4 427,-523.4 421,-529.4 415,-529.4 415,-529.4 20,-529.4 20,-529.4 14,-529.4 8,-523.4 8,-517.4 8,-517.4 8,-73 8,-73 8,-67 14,-61 20,-61"/>
+<text xml:space="preserve" text-anchor="middle" x="217.5" y="-514.6" font-family="Segoe UI" font-size="12.00">Prioridad (primera que gane, el resto no actúa)</text>
+</g>
+<!-- tick -->
+<g id="node1" class="node">
+<title>tick</title>
+<ellipse fill="#d6eaf8" stroke="#333333" cx="239" cy="-572.4" rx="138.39" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="239" y="-569.1" font-family="Segoe UI" font-size="11.00">SpeedDecider → BrakeCoordinatorV2.evaluate</text>
+</g>
+<!-- r0 -->
+<g id="node2" class="node">
+<title>r0</title>
+<path fill="#d5f5e3" stroke="#333333" d="M336.11,-499C336.11,-499 141.89,-499 141.89,-499 135.89,-499 129.89,-493 129.89,-487 129.89,-487 129.89,-475 129.89,-475 129.89,-469 135.89,-463 141.89,-463 141.89,-463 336.11,-463 336.11,-463 342.11,-463 348.11,-469 348.11,-475 348.11,-475 348.11,-487 348.11,-487 348.11,-493 342.11,-499 336.11,-499"/>
+<text xml:space="preserve" text-anchor="middle" x="239" y="-484.3" font-family="Segoe UI" font-size="11.00">¿Freno aplicado y objetivo hecho?</text>
+<text xml:space="preserve" text-anchor="middle" x="239" y="-471.1" font-family="Segoe UI" font-size="11.00">spd ≤ límite+0.4  y  andén &gt; horizonte+25 m</text>
+</g>
+<!-- tick&#45;&gt;r0 -->
+<g id="edge1" class="edge">
+<title>tick-&gt;r0</title>
+<path fill="none" stroke="#444444" d="M239,-553.9C239,-553.9 239,-510.98 239,-510.98"/>
+<polygon fill="#444444" stroke="#444444" points="242.5,-510.98 239,-500.98 235.5,-510.98 242.5,-510.98"/>
+</g>
+<!-- rel -->
+<g id="node3" class="node">
+<title>rel</title>
+<path fill="#abebc6" stroke="#333333" d="M408.17,-407.17C408.17,-407.17 390.47,-415.23 390.47,-415.23 385.01,-417.71 373.54,-420.2 367.54,-420.2 367.54,-420.2 312.46,-420.2 312.46,-420.2 306.46,-420.2 294.99,-417.71 289.53,-415.23 289.53,-415.23 271.83,-407.17 271.83,-407.17 266.37,-404.69 266.37,-399.71 271.83,-397.23 271.83,-397.23 289.53,-389.17 289.53,-389.17 294.99,-386.69 306.46,-384.2 312.46,-384.2 312.46,-384.2 367.54,-384.2 367.54,-384.2 373.54,-384.2 385.01,-386.69 390.47,-389.17 390.47,-389.17 408.17,-397.23 408.17,-397.23 413.63,-399.71 413.63,-404.69 408.17,-407.17"/>
+<text xml:space="preserve" text-anchor="middle" x="340" y="-398.9" font-family="Segoe UI" font-size="11.00">RELEASE → notch 4</text>
+</g>
+<!-- r0&#45;&gt;rel -->
+<g id="edge2" class="edge">
+<title>r0-&gt;rel</title>
+<path fill="none" stroke="#444444" d="M304.51,-462.72C304.51,-462.72 304.51,-432.16 304.51,-432.16"/>
+<polygon fill="#444444" stroke="#444444" points="308.01,-432.16 304.51,-422.16 301.01,-432.16 308.01,-432.16"/>
+<text xml:space="preserve" text-anchor="middle" x="288" y="-438.9" font-family="Segoe UI" font-size="9.00">sí</text>
+</g>
+<!-- e0 -->
+<g id="node4" class="node">
+<title>e0</title>
+<path fill="#fadbd8" stroke="#333333" d="M224.25,-420.2C224.25,-420.2 113.75,-420.2 113.75,-420.2 107.75,-420.2 101.75,-414.2 101.75,-408.2 101.75,-408.2 101.75,-396.2 101.75,-396.2 101.75,-390.2 107.75,-384.2 113.75,-384.2 113.75,-384.2 224.25,-384.2 224.25,-384.2 230.25,-384.2 236.25,-390.2 236.25,-396.2 236.25,-396.2 236.25,-408.2 236.25,-408.2 236.25,-414.2 230.25,-420.2 224.25,-420.2"/>
+<text xml:space="preserve" text-anchor="middle" x="169" y="-398.9" font-family="Segoe UI" font-size="11.00">¿Andén/señal roja crítica?</text>
+</g>
+<!-- r0&#45;&gt;e0 -->
+<g id="edge3" class="edge">
+<title>r0-&gt;e0</title>
+<path fill="none" stroke="#444444" d="M183.07,-462.72C183.07,-462.72 183.07,-432.16 183.07,-432.16"/>
+<polygon fill="#444444" stroke="#444444" points="186.57,-432.16 183.07,-422.16 179.57,-432.16 186.57,-432.16"/>
+<text xml:space="preserve" text-anchor="middle" x="198.5" y="-438.9" font-family="Segoe UI" font-size="9.00">no</text>
+</g>
+<!-- ipc -->
+<g id="node13" class="node">
+<title>ipc</title>
+<ellipse fill="#d6eaf8" stroke="#333333" cx="504" cy="-18" rx="158.44" ry="18"/>
+<text xml:space="preserve" text-anchor="middle" x="504" y="-14.7" font-family="Segoe UI" font-size="11.00">HandleController → SendCommand.txt → Lua palanca</text>
+</g>
+<!-- rel&#45;&gt;ipc -->
+<g id="edge12" class="edge">
+<title>rel-&gt;ipc</title>
+<path fill="none" stroke="#444444" d="M419.57,-402C496.54,-402 601.64,-402 601.64,-402 601.64,-402 601.64,-44.1 601.64,-44.1"/>
+<polygon fill="#444444" stroke="#444444" points="605.14,-44.1 601.64,-34.1 598.14,-44.1 605.14,-44.1"/>
+</g>
+<!-- emg -->
+<g id="node5" class="node">
+<title>emg</title>
+<path fill="#f1948a" stroke="#333333" d="M398.77,-328.56C398.77,-328.56 382.64,-336.24 382.64,-336.24 377.22,-338.82 365.8,-341.4 359.8,-341.4 359.8,-341.4 308.2,-341.4 308.2,-341.4 302.2,-341.4 290.78,-338.82 285.36,-336.24 285.36,-336.24 269.23,-328.56 269.23,-328.56 263.81,-325.98 263.81,-320.82 269.23,-318.24 269.23,-318.24 285.36,-310.56 285.36,-310.56 290.78,-307.98 302.2,-305.4 308.2,-305.4 308.2,-305.4 359.8,-305.4 359.8,-305.4 365.8,-305.4 377.22,-307.98 382.64,-310.56 382.64,-310.56 398.77,-318.24 398.77,-318.24 404.19,-320.82 404.19,-325.98 398.77,-328.56"/>
+<text xml:space="preserve" text-anchor="middle" x="334" y="-320.1" font-family="Segoe UI" font-size="11.00">EMERGENCY / B3</text>
+</g>
+<!-- e0&#45;&gt;emg -->
+<g id="edge4" class="edge">
+<title>e0-&gt;emg</title>
+<path fill="none" stroke="#444444" d="M230.55,-383.83C230.55,-360.43 230.55,-323 230.55,-323 230.55,-323 246.76,-323 246.76,-323"/>
+<polygon fill="#444444" stroke="#444444" points="246.76,-326.5 256.76,-323 246.76,-319.5 246.76,-326.5"/>
+<text xml:space="preserve" text-anchor="middle" x="275" y="-360.1" font-family="Segoe UI" font-size="9.00">sí</text>
+</g>
+<!-- d0 -->
+<g id="node6" class="node">
+<title>d0</title>
+<path fill="#fdebd0" stroke="#333333" d="M212.84,-341.4C212.84,-341.4 125.16,-341.4 125.16,-341.4 119.16,-341.4 113.16,-335.4 113.16,-329.4 113.16,-329.4 113.16,-317.4 113.16,-317.4 113.16,-311.4 119.16,-305.4 125.16,-305.4 125.16,-305.4 212.84,-305.4 212.84,-305.4 218.84,-305.4 224.84,-311.4 224.84,-317.4 224.84,-317.4 224.84,-329.4 224.84,-329.4 224.84,-335.4 218.84,-341.4 212.84,-341.4"/>
+<text xml:space="preserve" text-anchor="middle" x="169" y="-320.1" font-family="Segoe UI" font-size="11.00">¿Tracción (notch&gt;4)?</text>
+</g>
+<!-- e0&#45;&gt;d0 -->
+<g id="edge5" class="edge">
+<title>e0-&gt;d0</title>
+<path fill="none" stroke="#444444" d="M169,-383.92C169,-383.92 169,-353.36 169,-353.36"/>
+<polygon fill="#444444" stroke="#444444" points="172.5,-353.36 169,-343.36 165.5,-353.36 172.5,-353.36"/>
+<text xml:space="preserve" text-anchor="middle" x="173.5" y="-360.1" font-family="Segoe UI" font-size="9.00">no</text>
+</g>
+<!-- emg&#45;&gt;ipc -->
+<g id="edge13" class="edge">
+<title>emg-&gt;ipc</title>
+<path fill="none" stroke="#444444" d="M409.85,-323C468.88,-323 540.84,-323 540.84,-323 540.84,-323 540.84,-47.23 540.84,-47.23"/>
+<polygon fill="#444444" stroke="#444444" points="544.34,-47.23 540.84,-37.23 537.34,-47.23 544.34,-47.23"/>
+</g>
+<!-- coast -->
+<g id="node7" class="node">
+<title>coast</title>
+<path fill="#f5cba7" stroke="#333333" d="M407.43,-248.19C407.43,-248.19 372.89,-259.01 372.89,-259.01 367.17,-260.81 355.44,-262.6 349.44,-262.6 349.44,-262.6 258.56,-262.6 258.56,-262.6 252.56,-262.6 240.83,-260.81 235.11,-259.01 235.11,-259.01 200.57,-248.19 200.57,-248.19 194.84,-246.39 194.84,-242.81 200.57,-241.01 200.57,-241.01 235.11,-230.19 235.11,-230.19 240.83,-228.39 252.56,-226.6 258.56,-226.6 258.56,-226.6 349.44,-226.6 349.44,-226.6 355.44,-226.6 367.17,-228.39 372.89,-230.19 372.89,-230.19 407.43,-241.01 407.43,-241.01 413.16,-242.81 413.16,-246.39 407.43,-248.19"/>
+<text xml:space="preserve" text-anchor="middle" x="304" y="-241.3" font-family="Segoe UI" font-size="11.00">COAST_THROTTLE → notch 4</text>
+</g>
+<!-- d0&#45;&gt;coast -->
+<g id="edge6" class="edge">
+<title>d0-&gt;coast</title>
+<path fill="none" stroke="#444444" d="M206.98,-305.12C206.98,-305.12 206.98,-261.94 206.98,-261.94"/>
+<polygon fill="#444444" stroke="#444444" points="210.48,-261.94 206.98,-251.94 203.48,-261.94 210.48,-261.94"/>
+<text xml:space="preserve" text-anchor="middle" x="267.37" y="-281.3" font-family="Segoe UI" font-size="9.00">sí y perfil activo</text>
+</g>
+<!-- l0 -->
+<g id="node8" class="node">
+<title>l0</title>
+<path fill="#f9e79f" stroke="#333333" d="M152.46,-262.6C152.46,-262.6 69.54,-262.6 69.54,-262.6 63.54,-262.6 57.54,-256.6 57.54,-250.6 57.54,-250.6 57.54,-238.6 57.54,-238.6 57.54,-232.6 63.54,-226.6 69.54,-226.6 69.54,-226.6 152.46,-226.6 152.46,-226.6 158.46,-226.6 164.46,-232.6 164.46,-238.6 164.46,-238.6 164.46,-250.6 164.46,-250.6 164.46,-256.6 158.46,-262.6 152.46,-262.6"/>
+<text xml:space="preserve" text-anchor="middle" x="111" y="-241.3" font-family="Segoe UI" font-size="11.00">¿spd &gt; límite + 0.9?</text>
+</g>
+<!-- d0&#45;&gt;l0 -->
+<g id="edge7" class="edge">
+<title>d0-&gt;l0</title>
+<path fill="none" stroke="#444444" d="M138.81,-305.12C138.81,-305.12 138.81,-274.56 138.81,-274.56"/>
+<polygon fill="#444444" stroke="#444444" points="142.31,-274.56 138.81,-264.56 135.31,-274.56 142.31,-274.56"/>
+<text xml:space="preserve" text-anchor="middle" x="144.5" y="-281.3" font-family="Segoe UI" font-size="9.00">no</text>
+</g>
+<!-- coast&#45;&gt;ipc -->
+<g id="edge14" class="edge">
+<title>coast-&gt;ipc</title>
+<path fill="none" stroke="#444444" d="M418.97,-245C452.37,-245 480.04,-245 480.04,-245 480.04,-245 480.04,-47.71 480.04,-47.71"/>
+<polygon fill="#444444" stroke="#444444" points="483.54,-47.71 480.04,-37.71 476.54,-47.71 483.54,-47.71"/>
+</g>
+<!-- apply_lim -->
+<g id="node9" class="node">
+<title>apply_lim</title>
+<path fill="#f7dc6f" stroke="#333333" d="M407.8,-169.41C407.8,-169.41 373.57,-180.19 373.57,-180.19 367.85,-182 356.12,-183.8 350.12,-183.8 350.12,-183.8 259.88,-183.8 259.88,-183.8 253.88,-183.8 242.15,-182 236.43,-180.19 236.43,-180.19 202.2,-169.41 202.2,-169.41 196.48,-167.6 196.48,-164 202.2,-162.19 202.2,-162.19 236.43,-151.41 236.43,-151.41 242.15,-149.6 253.88,-147.8 259.88,-147.8 259.88,-147.8 350.12,-147.8 350.12,-147.8 356.12,-147.8 367.85,-149.6 373.57,-151.41 373.57,-151.41 407.8,-162.19 407.8,-162.19 413.52,-164 413.52,-167.6 407.8,-169.41"/>
+<text xml:space="preserve" text-anchor="middle" x="305" y="-162.5" font-family="Segoe UI" font-size="11.00">APPLY SPEED_LIMIT B1–B3</text>
+</g>
+<!-- l0&#45;&gt;apply_lim -->
+<g id="edge8" class="edge">
+<title>l0-&gt;apply_lim</title>
+<path fill="none" stroke="#444444" d="M164.87,-245C172.25,-245 177.36,-245 177.36,-245 177.36,-245 177.36,-166 177.36,-166 177.36,-166 178.63,-166 178.63,-166"/>
+<polygon fill="#444444" stroke="#444444" points="178.55,-169.5 188.55,-166 178.55,-162.5 178.55,-169.5"/>
+<text xml:space="preserve" text-anchor="middle" x="227" y="-202.5" font-family="Segoe UI" font-size="9.00">sí</text>
+</g>
+<!-- s0 -->
+<g id="node10" class="node">
+<title>s0</title>
+<path fill="#d4e6f1" stroke="#333333" d="M153.59,-183.8C153.59,-183.8 28.41,-183.8 28.41,-183.8 22.41,-183.8 16.41,-177.8 16.41,-171.8 16.41,-171.8 16.41,-159.8 16.41,-159.8 16.41,-153.8 22.41,-147.8 28.41,-147.8 28.41,-147.8 153.59,-147.8 153.59,-147.8 159.59,-147.8 165.59,-153.8 165.59,-159.8 165.59,-159.8 165.59,-171.8 165.59,-171.8 165.59,-177.8 159.59,-183.8 153.59,-183.8"/>
+<text xml:space="preserve" text-anchor="middle" x="91" y="-162.5" font-family="Segoe UI" font-size="11.00">¿Andén ≤ horizonte servicio?</text>
+</g>
+<!-- l0&#45;&gt;s0 -->
+<g id="edge9" class="edge">
+<title>l0-&gt;s0</title>
+<path fill="none" stroke="#444444" d="M111,-226.32C111,-226.32 111,-195.76 111,-195.76"/>
+<polygon fill="#444444" stroke="#444444" points="114.5,-195.76 111,-185.76 107.5,-195.76 114.5,-195.76"/>
+<text xml:space="preserve" text-anchor="middle" x="105.5" y="-202.5" font-family="Segoe UI" font-size="9.00">no</text>
+</g>
+<!-- apply_lim&#45;&gt;ipc -->
+<g id="edge15" class="edge">
+<title>apply_lim-&gt;ipc</title>
+<path fill="none" stroke="#444444" d="M224.49,-154.67C224.49,-121.25 224.49,-24 224.49,-24 224.49,-24 342.5,-24 342.5,-24"/>
+<polygon fill="#444444" stroke="#444444" points="342.5,-27.5 352.5,-24 342.5,-20.5 342.5,-27.5"/>
+</g>
+<!-- apply_stn -->
+<g id="node11" class="node">
+<title>apply_stn</title>
+<path fill="#85c1e9" stroke="#333333" d="M200.83,-91.13C200.83,-91.13 174.31,-100.87 174.31,-100.87 168.68,-102.93 157.05,-105 151.05,-105 151.05,-105 76.95,-105 76.95,-105 70.95,-105 59.32,-102.93 53.69,-100.87 53.69,-100.87 27.17,-91.13 27.17,-91.13 21.54,-89.07 21.54,-84.93 27.17,-82.87 27.17,-82.87 53.69,-73.13 53.69,-73.13 59.32,-71.07 70.95,-69 76.95,-69 76.95,-69 151.05,-69 151.05,-69 157.05,-69 168.68,-71.07 174.31,-73.13 174.31,-73.13 200.83,-82.87 200.83,-82.87 206.46,-84.93 206.46,-89.07 200.83,-91.13"/>
+<text xml:space="preserve" text-anchor="middle" x="114" y="-83.7" font-family="Segoe UI" font-size="11.00">APPLY STATION B1–B3</text>
+</g>
+<!-- s0&#45;&gt;apply_stn -->
+<g id="edge10" class="edge">
+<title>s0-&gt;apply_stn</title>
+<path fill="none" stroke="#444444" d="M66.14,-147.52C66.14,-147.52 66.14,-116.96 66.14,-116.96"/>
+<polygon fill="#444444" stroke="#444444" points="69.64,-116.96 66.14,-106.96 62.64,-116.96 69.64,-116.96"/>
+<text xml:space="preserve" text-anchor="middle" x="106" y="-123.7" font-family="Segoe UI" font-size="9.00">sí</text>
+</g>
+<!-- hold -->
+<g id="node12" class="node">
+<title>hold</title>
+<path fill="#e5e8e8" stroke="#333333" d="M404,-91.49C404,-91.49 381.69,-100.51 381.69,-100.51 376.12,-102.75 364.56,-105 358.56,-105 358.56,-105 293.44,-105 293.44,-105 287.44,-105 275.88,-102.75 270.31,-100.51 270.31,-100.51 248,-91.49 248,-91.49 242.44,-89.25 242.44,-84.75 248,-82.51 248,-82.51 270.31,-73.49 270.31,-73.49 275.88,-71.25 287.44,-69 293.44,-69 293.44,-69 358.56,-69 358.56,-69 364.56,-69 376.12,-71.25 381.69,-73.49 381.69,-73.49 404,-82.51 404,-82.51 409.56,-84.75 409.56,-89.25 404,-91.49"/>
+<text xml:space="preserve" text-anchor="middle" x="326" y="-83.7" font-family="Segoe UI" font-size="11.00">HOLD / sin_plan_activo</text>
+</g>
+<!-- s0&#45;&gt;hold -->
+<g id="edge11" class="edge">
+<title>s0-&gt;hold</title>
+<path fill="none" stroke="#444444" d="M115.86,-147.76C115.86,-137.23 115.86,-126 115.86,-126 115.86,-126 326,-126 326,-126 326,-126 326,-116.64 326,-116.64"/>
+<polygon fill="#444444" stroke="#444444" points="329.5,-116.64 326,-106.64 322.5,-116.64 329.5,-116.64"/>
+<text xml:space="preserve" text-anchor="middle" x="237.5" y="-123.7" font-family="Segoe UI" font-size="9.00">no</text>
+</g>
+<!-- apply_stn&#45;&gt;ipc -->
+<g id="edge16" class="edge">
+<title>apply_stn-&gt;ipc</title>
+<path fill="none" stroke="#444444" d="M114,-68.84C114,-46.65 114,-12 114,-12 114,-12 342.26,-12 342.26,-12"/>
+<polygon fill="#444444" stroke="#444444" points="342.26,-15.5 352.26,-12 342.26,-8.5 342.26,-15.5"/>
+</g>
+</g>
+</svg>

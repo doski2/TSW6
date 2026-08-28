@@ -280,6 +280,50 @@ class TestFSMTransitions(unittest.TestCase):
             eff_max_decel=0.9, eff_k_stop=2.5)
         self.assertEqual(self.fsm.state, "DEPARTING")
 
+    def test_approaching_stopped_when_hud_frozen_far(self):
+        """HUD Four Oaks @ ~2 km y spd=0: creep → STOPPED (andén real)."""
+        self.fsm.state = "APPROACHING"
+        self.fsm.name = "Four Oaks, andén 2"
+        self.fsm._we_stopped = True
+        self.fsm._min_stop_dist = 2358.0
+        stations = [{"name": "Four Oaks, andén 2", "distance_m": 2358.0,
+                     "platform_length_m": 100.0}]
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertTrue(self.fsm._creep_to_station)
+        self.assertEqual(self.fsm.state, "APPROACHING")
+        self.fsm.update_state_transitions(
+            speed_mph=0.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "STOPPED")
+
+    def test_stopped_departs_on_rollaway_without_doors(self):
+        """Check-in: arranca sin lua=1 → DEPARTING y siguiente parada."""
+        self.fsm.state = "STOPPED"
+        self.fsm.name = "Four Oaks, andén 2"
+        self.fsm._doors_opened = False
+        self.fsm._stopped_at = time.time() - 4.0
+        stations = [
+            {"name": "Four Oaks, andén 2", "distance_m": 8.0, "scheduled": True},
+            {"name": "Sutton Coldfield, andén 2", "distance_m": 2200.0,
+             "scheduled": True},
+        ]
+        self.fsm.update_state_transitions(
+            speed_mph=8.0, limit_mph=55.0, stations=stations,
+            doors_open=False, doors_dmi=None, doors_telem=False,
+            ocr_stop_dist_m=None, ocr_task=None,
+            braking_dist_fn=_braking_dist_fn,
+            eff_max_decel=0.9, eff_k_stop=2.5)
+        self.assertEqual(self.fsm.state, "DEPARTING")
+        self.assertIn("four oaks", self.fsm._served_bases)
+
 
 class TestCooldown(unittest.TestCase):
     """Tests del cooldown post-salida."""

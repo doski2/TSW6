@@ -3,7 +3,7 @@
 Documento de arquitectura para corregir el cuello de botella IPC/mandos antes de
 retomar trabajo en P1, learner o planner.
 
-**Última revisión:** 2026-08-27 — B.8 **canal PASS** / P1 **no PASS** (`autopilot_20260827_192303.log`); siguiente = Fase C  
+**Última revisión:** 2026-08-28 — **A acordado** (A1 código; medir work); hitch carga OK; B.8 canal PASS  
 **Relacionado:** [FLUJO_FRENOS.md](FLUJO_FRENOS.md) · [ESTADO.md](ESTADO.md) ·
 [ARQUITECTURA.md](ARQUITECTURA.md) · `tsw6/telemetry/channel_diagnostics.py` · `install_ue4ss_probe.bat`
 
@@ -31,6 +31,105 @@ Dentro del juego, el Lua solo usa:
 3. **Escritura nativa UE** — `SetCurrentOutputValue(muesca − 4)` en Class 323 (no HTTP, no `InputValue`).
 
 No hay sockets, URLs, `PATCH`, ni cliente HTTP **en el Lua**.
+
+**Nombres de mando:** no se descubren en el tick. Catálogo y **ruta de perfiles** (copia Desktop + GitHub)
+en [DRIVERINPUT_API.md](DRIVERINPUT_API.md). F9 = dump opcional. Tick: hijo `PowerBrakeHandle` del drivable.
+
+---
+
+## Plan debate — rendimiento / canal v2 (2026-08-28)
+
+Para seguir en Cursor: bloque **acordado** (A; B si el canal limita). Medidas:
+`lua_probe_perf.bat`, `autopilot_perf.bat`, logs `UE4SS.log` + `logs/autopilot_*.log`.
+
+### Hechos (no opinables)
+
+| Capa | Qué sale | Conclusión |
+| --- | --- | --- |
+| Lua `collect_sample` | `avg_ms ≈ 1` @ ~17 Hz | El probe **ya es liviano** |
+| seq 1→2 ~2,7 s | `writes=1`, `avg_ms` sigue ~1 | **ReceiveTick parado**; primer `GetDriverAidData` nativo. Ningún rewrite TS/C++ lo quita |
+| Autopilot tick | ~30 ms work + ~24 ms sleep @ 20 Hz | ~**56 % de un núcleo** del hilo de control; el presupuesto es 50 ms y **se cumple** |
+| `telem_poll` ~16 Hz vs `loop_hz` ~20 | Python lee más a menudo que Lua escribe | Espera a `GetData.txt`, no “Python lento” |
+| GUI tkinter | Fuera de `work=` | Otro hilo; no confundir con el tick |
+
+### Qué no hacer (propuesta)
+
+- **No** reescribir el autopilot en TypeScript / Node / Electron: más RAM, mismo fichero, mismo hitch UE4SS.
+- **No** “v2 = otro lenguaje para P1”: `braking/v2/` ya es el frenado; mezclar nombres confunde.
+- **No** DLL C++ para el decider entero mientras el canal sea un `.txt` overwrite 20 veces/s.
+
+### Opciones (para debatir)
+
+| ID | Idea | Gana | Cuesta | Riesgo |
+| --- | --- | --- | --- | --- |
+| **A** | Pulir tick Python (menos log, planning HTTP fuera del 20 Hz, leer GetData sin reabrir) | Días; `work` puede bajar de ~30 ms | Poco | Bajo |
+| **B** | Memoria compartida / pipe (Lua escribe struct binario; Python o Rust mínimo lee) | Latencia disco; Hz más estable | Semanas; Windows `CreateFileMapping` + versión de struct | Medio (sync, seq) |
+| **C** | Núcleo tick en **Rust o C++** (parse + notch + SendCommand); GUI/learner en Python | CPU del decider | Reimplementar contrato IPC; tests | Alto si se mueve P1 |
+| **D** | TypeScript | — | Stack nuevo | Alto, sin ganancia de canal |
+
+**Recomendación acordada (2026-08-28):** **A ahora** (estabilidad ~20 Hz). **B** solo si tras A el cuello es el fichero. **C** si B no basta. **D** no.
+
+### Fases A→B
+
+1. **A1** — Código: menos `_log_cycle`, caché layout/learner, GetData con handle reutilizado. **Medir** con `autopilot_perf.bat` (objetivo `work` med &lt; 25 ms).
+2. **A2** — Hitch 1→2 al **cargar** escenario: **aceptado** (arranque UE4SS). No hay ticket.
+3. **B1** — (después, si hace falta) SHM solo telemetría; mandos en `SendCommand.txt`.
+4. **B2** — Si B1 estable: buffer mandos+ACK.
+5. **C** — Opcional: tick nativo; GUI Python se suscribe.
+
+Contrato a congelar antes de B: mismos campos que `GetData.txt` (`seq`, `speed_ms`, `lever_notch`, `dist_limit_cm`, …) en un struct versionado (`v1`).
+
+### Preguntas (debate 2026-08-28)
+
+**1. ¿Menos CPU o más Hz?** — Decisión: **estabilidad del bucle**, no cazar 50 Hz.
+
+Hoy el presupuesto es 50 ms (20 Hz). El juego puede tener picos (carga de assets, hitch UE4SS) y el probe puede dejar de escribir un rato. Lo que queremos medir y proteger:
+
+- `loop_hz` y `work_ms` **no se hunden** cuando TSW tira un frame raro (salvo el hitch de arranque, ver 2).
+- Distancia/límite **no se adelantan** en pausa (ya corregido: C.3a solo si el odómetro avanza).
+- Mandos: un tick retrasado vale más que 40 Hz con jitter (palanca que salta).
+
+Subir a 30–50 Hz **solo** si, con A hecho, el canal fichero es el que limita (Lua escribe ~17 Hz, Python espera). Hasta entonces 20 Hz estables gana.
+
+**2. Hitch ~2,7 s al cargar escenario** — Decisión: **sí, permanente / aceptable.**
+
+Es el primer `GetDriverAidData` nativo con ReceiveTick parado (`seq` 1→2, `avg_ms` del probe sigue ~1). No es el tick de cabina. Arrancar el juego **fuera** del escenario y cargar después: el hitch cae al load, no en marcha. No hay ticket de “arreglar hitch con C++”.
+
+**3. ¿SHM (B) si A deja `work` en 15–20 ms?** — Explicación (aún no decidir B).
+
+`work` = tiempo de **un** `tick()` Python **sin** el `sleep` hasta el siguiente ciclo. Presupuesto 50 ms @ 20 Hz:
+
+| Si `work` es… | Margen `sleep` | Qué duele |
+| --- | --- | --- |
+| ~30 ms (hoy) | ~20 ms | Un log extra o HTTP en el tick te come el margen |
+| 15–20 ms (objetivo A) | 30–35 ms | El hilo va holgado; **CPU del decider ya no es el problema** |
+
+**Opción A** = hacer ese `tick` más barato (menos log, no reabrir fichero, HTTP/planning fuera del 20 Hz). Sigues con `GetData.txt`.
+
+**Opción B (SHM)** = Lua y Python se hablan por un **bloque de RAM** (Windows `CreateFileMapping`), no por overwrite de `.txt`. Eso **no** reduce el cálculo de P1; reduce:
+
+- latencia y jitter de **leer/escribir disco** (antivirus, flush, `telem_poll` > `loop_hz`);
+- el techo de Hz: Lua ~17 Hz no es porque Python sea lento, es porque el probe + fichero van a ese ritmo.
+
+**¿Vale la pena B si A llega a 15–20 ms?**  
+- Si el objetivo es **estabilidad a 20 Hz**: **probablemente no ahora** — A basta.  
+- Si tras A sigues viendo `telem_poll` irregular, palanca que “espera al disco”, o quieres **más Hz reales**: entonces B (primero solo telemetría, mandos aún en `SendCommand.txt`).
+
+B no sustituye A: si el tick Python tarda 30 ms en P1+log, SHM no lo baja. Primero A, medir, luego B solo si el cuello es el **canal**, no el **decider**.
+
+**4. Lim2 / señales / GPS andén fuera de este plan** — Explicación.
+
+Este bloque (**V2**) es **cómo viaja** lo que **ya** está en `GetData.txt` (velocidad, 1 límite, palanca) y **a qué ritmo** corre el tick. No es “más datos de vía”.
+
+| Tema | Qué es | Dónde vive | Por qué no es canal v2 |
+| --- | --- | --- | --- |
+| **Lim2** | 2.º cambio de velocidad (no el cartel que ya frena P1) | HTTP `nextSpeedLimits[]`; Lua no lee el TArray en tick (hitch) | Hace falta **otro campo** y una regla P1; un pipe más rápido no inventa el 2.º float |
+| **C1 señales** | Distancia + aspecto DANGER → `evaluate_signal_brake` (hoy stub) | DriverAid HTTP; probe aún no | Cablear telemetría nueva a `TrainState` |
+| **C2 GPS/OCR andén** | Distancia fina al tablón (parada en andén) | HTTP markers / OCR; no el IPC de palanca | Coordinador estación, no Hz del puente |
+
+Cadena de producto: **E1** (validar frenado v2 in-game) → **C1** → **C2**. Mezclar lim2/señales en SHM retrasaría E1. C4 en ESTADO es el 2.º límite en log, **después**.
+
+Contrato a congelar si un día hay B: mismos campos que hoy (`seq`, `speed_ms`, `lever_notch`, `dist_limit_cm`, …), no `dist_limit2` hasta que exista en Lua.
 
 ```text
 Python autopilot                          Lua (UE4SS en TSW)

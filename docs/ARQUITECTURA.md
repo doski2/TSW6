@@ -24,7 +24,7 @@ Estado: **sin RailBridge**. Lectura preferente **UE4SS** (~20 Hz); escritura de 
 | `tsw6/autopilot/handle_controller.py` | Ejecución notch + SafetyWatchdog |
 | `tsw6/governor/governor_physics.py` | Física tren, learner, distancias |
 | `tsw6/governor/governor_station.py` | FSM paradas (APPROACHING / STOPPED / DEPARTING) |
-| `tsw6/braking/v2/` | **Frenado P1** — physics, command, planner, coordinator |
+| `tsw6/braking/v2/` | **Frenado P1** — physics, command, coordinator |
 | `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz + GUI |
 | `archive/railbridge/` | Companion SSE — **no usar** |
 
@@ -39,7 +39,7 @@ Detalle frenado P1: [BRAKE_V2.md](BRAKE_V2.md). Paridad Dastsc:
 | --- | --- | --- |
 | Velocidad, mandos, acel | ✅ ~20 Hz | ✅ ~12 Hz |
 | Gradiente vía | `GetDriverAidData` probe | `DriverAid.Data.gradient` |
-| 2 límites adelante | ✅ `GetData.txt` | ✅ `DriverAid.Data` |
+| 1 próximo límite | ✅ `GetData.txt` (escalares) | ✅ `DriverAid.Data` (cola JSON; no en probe) |
 | Estaciones / horario | No | ✅ `TrackData` + `tsw_hud.db` |
 | `PlayerInfo.geoLocation` | No | ✅ match horario HUD |
 | Escribir mandos | ✅ `SendCommand.txt` → Lua UE4SS (sin HTTP) | ✅ PATCH (fallback Python) |
@@ -120,12 +120,14 @@ Mandos permitidos: `PowerBrakeHandle`, `AutomaticBrake`, `IndependentBrake`, `Dy
 | Integración Python (B3) | ✅ | `tsw_telemetry_source`, aprender/autopilot |
 | Gradiente (Lua probe) | ✅ | `gradient_pct` en GetData.txt |
 | Escritura Lua (B4) | ✅ | `SendCommand.txt` |
-| Planning 2 límites probe | ✅ | `dist_limit_*` en GetData.txt |
+| Planning 1 límite probe | ✅ | `dist_limit_cm` / `next_limit_ms` |
+| 2.º límite (`lim2`) | ⬜ | [DRIVERAID_API.md](DRIVERAID_API.md#investigar-2º-límite-lim2) |
 | Horario HUD (`tsw_hud.db`) | ✅ planning + GUI arr/dep | `hud_timetable.py` |
 | Frenado P1 v2 (autopilot) | ✅ | `braking/v2/` — ver [BRAKE_V2.md](BRAKE_V2.md) |
-| Parada andén (`plan_brake_for_station`) | ✅ | `v2/station_brake` → `v2/planner.py` |
-| Señal rojo (DANGER) | ⬜ | `signal_brake.py` stub; falta telemetría |
+| Parada andén (`plan_brake_for_station`) | ✅ | `v2/objectives` → `v2/station_plan.py` |
+| Señal rojo (DANGER) | ⬜ | `evaluate_signal_brake` stub; falta telemetría |
 | Freight SD40-2 probe | ⬜ | 4 mandos en `GetData.txt` |
+| Canal v2 / rendimiento | ⬜ debate | [CANAL_CONTROL.md § plan](CANAL_CONTROL.md#plan-debate--rendimiento--canal-v2-2026-08-28) |
 
 Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 
@@ -138,7 +140,8 @@ Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 3. ~~Planning estaciones sin RailBridge~~ → HUD DB + HTTP ✅
 4. ~~B4 SendCommand~~ ✅
 5. Distancia tablón en tiempo real (GPS cada tick) vs odometría — pendiente
-6. Telemetría señal DANGER → `signal_brake` v2
+6. Telemetría señal DANGER → `evaluate_signal_brake`
+7. Canal: **A** (20 Hz estables); **B** SHM solo si el `.txt` limita — [CANAL_CONTROL.md](CANAL_CONTROL.md#plan-debate--rendimiento--canal-v2-2026-08-28)
 
 ---
 
@@ -147,7 +150,8 @@ Checklist: [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md).
 | Fecha | Nota |
 | --- | --- |
 | 2026-08-18 | Probe 323 ~17 Hz; DynamicHUD `enabled.txt` anulaba `mods.txt` |
-| 2026-08-19 | IPC mandos; planning 2 límites |
+| 2026-08-19 | IPC mandos; intento 2 límites (luego 1 escalar) |
+| 2026-08-28 | A1 tick: log ciclo, layout cache, handle GetData; hitch carga aceptado |
 | 2026-08-22 | Velocidad congelada ~20 Hz GUI |
 | 2026-08-23 | HUD timetable: filtro paradas, `car_stop_signs`, merge `hud_geo` |
 | 2026-08-24 | P1 v2 en autopilot (`BrakeCoordinatorV2`); todo frenado en `braking/v2/` |

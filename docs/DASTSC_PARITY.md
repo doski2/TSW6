@@ -57,7 +57,7 @@ Ver [FLUJO_FRENOS.md](FLUJO_FRENOS.md) · [ESTADO.md](ESTADO.md)
 | Gradiente en distancia freno | `v2/physics.py` (`gradient_pct`) | `gravityAcceleration` (‰) + signo manual V4 |
 | Ventana APPLY (metros) | `apply_zone_margin_m` (vel + `apply_at`, sin 60 m fijo) | Zona effective en plan |
 | Decel por muesca (aprendida) | `OnlineLearner` | `brakeStats` + **bandas H/M/B** (P3.7) |
-| Parada unificada cartel+andén | `v2/cluster.py` + `priority.py` | cluster límite+estación |
+| Parada unificada cartel+andén | `v2/policy.py` | cluster límite+estación |
 | Horario / paradas comerciales | `hud_timetable.py` + `tsw_hud.db` | OCR + `station_distance.py` |
 | Documentación flujo SVG | `esqueleto_flujo_cronologico.svg` | `flujo_frenos_v4.svg` (15 pasos) |
 
@@ -88,7 +88,7 @@ Ver [FLUJO_FRENOS.md](FLUJO_FRENOS.md) · [ESTADO.md](ESTADO.md)
 
 | Pieza | Prioridad | Proyecto |
 | --- | --- | --- |
-| `signal_brake` con distancia DANGER | Media | TSW6 (telemetría) |
+| `evaluate_signal_brake` con distancia DANGER | Media | TSW6 (telemetría) |
 | Recalcular distancia tablón cada tick | Media | TSW6 |
 | Perfil por tren (`agent_config` JSON) | Media | Ambos |
 | Perfiles semilla UK EMU | Media | TSW6 — [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) |
@@ -173,7 +173,7 @@ Dastsc:
 
 | Dastsc | TSW6 |
 | --- | --- |
-| `nexus-agent/src/brake/planBrake.ts` | `braking/v2/` (`planner.py`, `limit_brake.py`, …) |
+| `nexus-agent/src/brake/planBrake.ts` | `braking/v2/` (`station_plan.py`, `limit_brake.py`, …) |
 | `nexus-agent/src/command/commandBus.ts` | `v2/command.py` |
 | `nexus-agent/src/tick.ts` | `autopilot_core.py` + `speed_decider.py` |
 | `Dastsc-V3/backend/core/command_bus.py` | `tsw_ipc_bus.py` |

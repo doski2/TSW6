@@ -121,15 +121,17 @@ def test_resolve_station_door_state():
     assert src == "telem+dmi-closed"
 
 
-def test_parse_driver_aid_planning_includes_doors():
+def test_parse_driver_aid_planning_excludes_doors():
     data = {
         "distanceToNextSpeedLimit": 50000.0,
         "nextSpeedLimit": {"value": 20.12},
         "messages": [{"id": "dmi-doors-open"}],
     }
     out = parse_driver_aid_planning(data)
-    assert out.get("doors_dmi") is True
+    assert "doors_dmi" not in out
     assert "doors_open" not in out
+    assert "doors_telem" not in out
+    assert "gradient_pct" not in out
 
 
 def test_parse_track_data_stations_dedup():

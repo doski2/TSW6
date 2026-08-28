@@ -7,7 +7,7 @@
 | **TSW6** | [assets/esqueleto_flujo_cronologico.svg](assets/esqueleto_flujo_cronologico.svg) | `C:\Users\doski\TSW6` |
 | **Dastsc** | [FLUJO_FRENOS_V4.md](file:///C:/Users/doski/Dastsc/docs/FLUJO_FRENOS_V4.md) + [flujo_frenos_v4.svg](file:///C:/Users/doski/Dastsc/docs/flujo_frenos_v4.svg) | `C:\Users\doski\Dastsc` |
 
-**Última revisión:** 2026-08-26
+**Última revisión:** 2026-08-28
 
 ---
 
@@ -45,8 +45,8 @@ Use esta tabla al estudiar. Los colores del encabezado coinciden con ambos SVG.
 | **5** | CICLO | `build_train_state()` → `TrainState` | `toTelemetrySnapshot` + `useBrakeStats` | |
 | **6** | DECISIÓN | `speed_decider.decide()` — FSM → P1 / HOLD | `tickAgent()` — horizon + plan wrapper | |
 | **7** | DECISIÓN | (dentro de decider) guardias P1 / watchdog | `PolicyMode` + `blockedReason` AUTO | |
-| **8** | PLAN | `coordinator` — limit / station / planner (+ signal stub) | `planBrakeForLimit` / `Station` / `Signal` | |
-| **9** | PLAN | prioridad + cluster | `selectUrgentBrakePlan` | |
+| **8** | PLAN | `coordinator` — limit / objectives / station_plan (+ señal stub) | `planBrakeForLimit` / `Station` / `Signal` | |
+| **9** | PLAN | `policy.py` (cluster + prioridad) | `selectUrgentBrakePlan` | |
 | **10** | PLAN | `decel_for_notch` + gradiente % | `decelForNotch` + gradiente ‰ + stats banda v | |
 | **11** | PLAN / decisión | RELEASE + coast latch | `resolveReleaseAction` (+ P3.6 BC pendiente Dastsc) | |
 | **12** | EJECUCIÓN | `BrakeCommand` → notch absoluto | `AgentAction` — `commandBus.buildBrakeCommand` | |
@@ -65,8 +65,8 @@ Dastsc tiene **paso 15** explícito en el SVG; TSW6 cierra en **14** (vuelta al 
 | Muescas B1–B3 | `v2/command.py` | `commandBus.notchToBrakeValue` | Notch absoluto IPC |
 | RELEASE al objetivo | `v2/command.py` | `resolveReleaseAction` | Dastsc P1.6: `limits.effective` |
 | Coast latch UK | `BrakeReleaseState` | `shouldInhibitLimitRebrake` | |
-| Cluster cartel+andén | `cluster.py` | `<350 m` excluye plan estación | |
-| Prioridad | `priority.py` | Señal → Límite → Estación | |
+| Cluster cartel+andén | `policy.py` | `<350 m` excluye plan estación | |
+| Prioridad | `policy.select_urgent_target` | Señal → Límite → Estación | |
 | Gradiente en plan | `gradient_pct` | ‰ + botón **+/−** manual V4 | TSW: probe DriverAid |
 | Ventana APPLY | `apply_zone_margin_m` (física) | effective zone en plan | TSW6: sin 60 m fijo (2026-08-26) |
 | Stats aprendidas | `OnlineLearner` | `brakeStats` por banda H/M/B | Dastsc P3.7 |

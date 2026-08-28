@@ -192,11 +192,15 @@ class AutopilotApp:
         self._build_learn_tab(tab_learn)
 
         self.root.bind("<Configure>", self._on_root_configure)
+        self._wrap_w = 0
 
     def _on_root_configure(self, event: tk.Event) -> None:
         if event.widget is not self.root:
             return
         wrap = max(320, event.width - 220)
+        if abs(wrap - self._wrap_w) < 16:
+            return
+        self._wrap_w = wrap
         self.lbl_action_detail.configure(wraplength=wrap)
 
     def _build_live_tab(self, parent: ttk.Frame) -> None:
@@ -410,7 +414,6 @@ class AutopilotApp:
     def _refresh_ui(self, s: AutopilotSnapshot) -> None:
         mode_labels = {
             "ue4ss": "UE4SS probe ✓",
-            "tsw_api": "TSW API ✓",
             "manual": "Manual",
             "searching": "Buscando conexión…",
         }
@@ -418,9 +421,6 @@ class AutopilotApp:
         if s.probe_live:
             probe_txt = "● PROBE F7 ON — canal rápido (~20 Hz)"
             probe_col = "#2a7"
-        elif s.conn_mode == "tsw_api":
-            probe_txt = f"● {s.probe_hint or 'F7 OFF — HTTP lento (~2s)'}"
-            probe_col = "#c80"
         elif s.probe_hint:
             probe_txt = f"● {s.probe_hint}"
             probe_col = "#c33"
@@ -429,24 +429,20 @@ class AutopilotApp:
             probe_col = "#c33"
         self.lbl_probe.configure(text=probe_txt, foreground=probe_col)
 
-        col = "#2a7" if s.conn_mode == "ue4ss" else (
-            "#c80" if s.conn_mode == "tsw_api" else "#a60")
+        col = "#2a7" if s.conn_mode == "ue4ss" else "#a60"
         ch = s.control_channel
         if ch == "ipc":
             ctrl_txt = "Mandos: SendCommand ✓"
             ctrl_col = "#2a7"
-        elif ch == "http":
-            ctrl_txt = "Mandos: HTTPAPI ✓"
-            ctrl_col = "#2a7"
         else:
-            ctrl_txt = "Mandos: no disponibles (probe UE4SS o -HTTPAPI)"
+            ctrl_txt = "Mandos: no disponibles (F7 / probe UE4SS)"
             ctrl_col = "#c33"
         plan_txt = ""
         if s.stations:
             plan_txt = "   ·   Estaciones: HTTP"
         elif s.next_limit_mph is not None:
             plan_txt = "   ·   Límites: probe"
-        conn_ok = s.conn_mode in ("ue4ss", "tsw_api")
+        conn_ok = s.conn_mode == "ue4ss"
         self.lbl_conn.configure(
             text=f"Fuente: {mode}   ·   {ctrl_txt}{plan_txt}",
             foreground=col if conn_ok else ctrl_col)
@@ -525,11 +521,11 @@ class AutopilotApp:
             foreground="#2a7" if s.last_cmd_sent else "#888")
         self.lbl_fps.configure(
             text=(
-                f"{s.fps:.1f} Hz"
+                f"bucle {s.fps:.1f} Hz"
                 f"   ·   probe seq={s.probe_seq if s.probe_seq is not None else '?'}"
                 f"   age={s.probe_age_ms:.0f}ms"
                 if s.probe_age_ms is not None
-                else f"{s.fps:.1f} Hz   ·   probe seq={s.probe_seq if s.probe_seq is not None else '?'}"
+                else f"bucle {s.fps:.1f} Hz   ·   probe seq={s.probe_seq if s.probe_seq is not None else '?'}"
             ))
 
         self._refresh_planning(s)

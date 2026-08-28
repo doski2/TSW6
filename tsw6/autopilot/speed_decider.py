@@ -25,7 +25,7 @@ de state.handle_notch (telemetría como fuente de verdad).
 import logging
 from typing import Optional
 
-from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
+from tsw6.braking.v2.policy import should_merge_limit_and_station_plans
 from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
 from tsw6.telemetry.driver_aid_parser import station_base_name
 from tsw6.autopilot.control_actions import (

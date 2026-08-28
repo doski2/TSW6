@@ -1,15 +1,15 @@
 """Tests frenado v2."""
 
 from tsw6.autopilot.control_actions import BRAKE, EMERGENCY
-from tsw6.braking.v2.emergency import check_p1_emergency, is_red_signal_aspect
+from tsw6.braking.v2.objectives import check_p1_emergency, is_red_signal_aspect
 from tsw6.braking.v2.limit_brake import (
     LimitBrakeState,
     _apply_notch_hysteresis,
     evaluate_limit_brake,
 )
 from tsw6.braking.v2.physics import brake_command_apply_zone_m
-from tsw6.braking.v2.priority import select_urgent_target
-from tsw6.braking.v2.types import BrakeTargetResult
+from tsw6.braking.v2.command import BrakeTargetResult
+from tsw6.braking.v2.policy import select_urgent_target
 
 
 def _apply_zone(speed_mph: float, dist_start: float, distance_m: float = 400.0) -> float:
@@ -325,7 +325,7 @@ class TestPriorityV2:
 
 class TestStationBrakeV2:
     def test_far_station_not_a_candidate(self):
-        from tsw6.braking.v2.station_brake import evaluate_station_brake
+        from tsw6.braking.v2.objectives import evaluate_station_brake
 
         result = evaluate_station_brake(
             speed_mph=32.0,
@@ -346,3 +346,54 @@ class TestStationBrakeV2:
             apply_now=False,
         )
         assert target.to_brake_command(throttle_notch=3, current_notch=6) is None
+
+    def test_speed_limit_coasts_before_apply_window(self):
+        target = BrakeTargetResult(
+            target_kind="SPEED_LIMIT",
+            distance_m=1120.0,
+            target_speed_mph=55.0,
+            handle_notch=3,
+            phase="B1",
+            dist_start=1058.0,
+            apply_now=False,
+        )
+        cmd = target.to_brake_command(
+            throttle_notch=2, current_notch=6, speed_mph=55.3,
+        )
+        assert cmd is not None
+        assert cmd.kind == "COAST_THROTTLE"
+        assert cmd.target_notch == 4
+
+    def test_speed_limit_overspeed_applies_outside_window(self):
+        target = BrakeTargetResult(
+            target_kind="SPEED_LIMIT",
+            distance_m=700.0,
+            target_speed_mph=55.0,
+            handle_notch=3,
+            phase="B1",
+            dist_start=580.0,
+            apply_now=False,
+        )
+        cmd = target.to_brake_command(
+            throttle_notch=0, current_notch=4, speed_mph=56.3,
+        )
+        assert cmd is not None
+        assert cmd.kind == "APPLY"
+        assert cmd.target_notch == 3
+
+    def test_speed_limit_releases_when_in_band(self):
+        target = BrakeTargetResult(
+            target_kind="SPEED_LIMIT",
+            distance_m=429.0,
+            target_speed_mph=55.0,
+            handle_notch=3,
+            phase="B1",
+            dist_start=350.0,
+            apply_now=False,
+        )
+        cmd = target.to_brake_command(
+            throttle_notch=0, current_notch=3, speed_mph=55.2,
+        )
+        assert cmd is not None
+        assert cmd.kind == "RELEASE"
+        assert cmd.target_notch == 4

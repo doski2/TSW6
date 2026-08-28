@@ -63,7 +63,8 @@ Debe mostrar `seq` incrementándose y Hz ~15–20. Con `aprender.bat` verás mod
 
   HTTP PATCH si no hay UE4SS).
 
-- **Planning límites:** probe UE4SS ~20 Hz (2 límites adelante).
+- **Planning límites:** probe UE4SS ~20 Hz (**1** próximo cartel). 2.º límite: no en Lua;
+  notas en [DRIVERAID_API.md](DRIVERAID_API.md#investigar-2º-límite-lim2).
 - **Planning estaciones:** HTTP `DriverAid` + **`tsw_hud.db`** (horario comercial,
 
   `car_stop_signs`).

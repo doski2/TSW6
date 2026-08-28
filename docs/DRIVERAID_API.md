@@ -27,10 +27,11 @@ tren (masa, aire, esfuerzos): [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md)
 | Campo / nodo | Probe Lua (GetData) | HTTP (`tsw_telemetry_source`) | P1 autopilot |
 | --- | --- | --- | --- |
 | `speedLimit`, `gradient` | ✅ ~20 Hz | ✅ fallback / validación | ✅ |
-| `distanceToNextSpeedLimit`, `nextSpeedLimits[]` | ✅ 2 límites ~20 Hz | ✅ `parse_driver_aid_planning` | ✅ `limit_brake` |
+| `distanceToNextSpeedLimit`, `nextSpeedLimit` | ✅ 1 límite ~20 Hz (escalares) | Parser HTTP listo; probe no usa HTTP para límites | ✅ `limit_brake` (P1 al 1.er cartel) |
+| `nextSpeedLimits[]` (2.º cambio) | ❌ Lua: ítems `UScriptStruct`, `d=nil` | ✅ en JSON HTTP | ⬜ no cablear hasta leer floats |
 | `TrackData.markers` | ❌ | ✅ ~2 s | ✅ con `tsw_hud.db` |
 | `PlayerInfo` (servicio, geo) | ❌ | ✅ ~2 s | ✅ horario HUD |
-| `distanceToSignal`, aspecto | ❌ | 🟡 en API, no cableado | ❌ `signal_brake` stub |
+| `distanceToSignal`, aspecto | ❌ | 🟡 en API, no cableado | ❌ `evaluate_signal_brake` stub |
 | `trackHeights[]`, perfil | ❌ | ❌ | ❌ futuro |
 
 **Estudiar ahora (tarjeta C1):** señales — validar en juego si `signalAspectClass` = `Stop` /
@@ -97,12 +98,43 @@ Todos son **solo lectura** (`writable: false` en el dump).
 | `distanceToNextSpeedLimit` | number (cm) | ✅ | Distancia al **próximo** cambio de límite | Probe `dist_limit_cm` ~20 Hz; HTTP fallback |
 | `nextSpeedLimit` | `{ value: m/s }` | ✅ | Valor del próximo límite (primer cambio) | Probe `next_limit_ms`; P1 planning |
 | `nextSpeedLimitPosition` | `{ x,y,z }` | 🟡 | Posición mundo del primer cambio | Debug / mapa |
-| `nextSpeedLimits[]` | array | ✅ | Cola de cambios de límite adelante | Probe 2.º par `dist_limit2_*`; `speed_limits_ahead[]` |
+| `nextSpeedLimits[]` | array | ⚠️ | Cola HTTP (muchos carteles, a menudo el mismo mph) | **Probe: no.** Ver [Investigar 2.º límite](#investigar-2º-límite-lim2) |
 | `nextSpeedLimits[].restrictionType` | string | 🟡 | Tipo de restricción | Ej. `TrackPropertySpeedLimit` |
-| `nextSpeedLimits[].value` | `{ value: m/s }` | 🟡 | Límite en ese punto | — |
+| `nextSpeedLimits[].value` | `{ value: m/s }` | 🟡 | Límite en ese punto | HTTP anidado `value.value` |
 
 **Ejemplo dump:** `speedLimit.value` = 20.12 m/s ≈ **45 mph** (coherente con Class 323 en
 Cross-City).
+
+### Investigar 2.º límite (`lim2`)
+
+**Decisión 2026-08-28:** el autopilot usa **un** próximo límite (escalares Lua
+`DistanceToNextSpeedLimit` + `NextSpeedLimit` → `dist_limit_cm` / `next_limit_ms`). No se
+publica `dist_limit2_*` hasta que haya lectura fiable.
+
+**Qué sí hay en HTTP** (RailBridge / `DriverAid.Data`, p.ej.
+`tsw-api-export-DriverAid-20260828T002847Z.json`):
+
+- `nextSpeedLimits[i].distanceToNextSpeedLimit` es un **float cm**.
+- `nextSpeedLimits[i].value.value` es m/s.
+- El **2.º elemento no es `lim2`**. Suele ser otro cartel **al mismo mph** (mismo 55 a ~50 m).
+  El primer **cambio de cifra** (p.ej. 45 mph) puede ir **kilómetros** más adelante.
+
+**Qué hace UE4SS (`GetDriverAidData`, probe `20260828i`, log `023813`):**
+
+- Padre: `DistanceToNextSpeedLimit=number`, `NextSpeedLimit=table` → **1 límite OK**
+  (`n2=false`, `dist1_cm≈249579`, `next_limit_ms=24.5872` ≈ 55 mph).
+- `NextSpeedLimits` es `table` con `foreach_n=2`, pero cada ítem es `userdata`:
+  `arr1 d=nil ms=nil`. Sin `ForEachProperty`/`Get` en el tick (hitch ~2,7 s).
+- Mezclar `foundSpeedLimits` con la cola **no**: misma query, otro envase → `lim2` falso.
+
+**Pistas para más adelante (no implementar ahora):**
+
+1. HTTP **solo** `GET DriverAid.Data.nextSpeedLimits` (~2 s), fusionar el primer `value`
+   distinto del 1.er cartel; velocidad/palanca siguen en el probe.
+2. Tecla F-key: `ForEachProperty` **una vez** sobre `arr[1]`/`arr[2]` (nunca en `ReceiveTick`).
+3. Probar `GetPropertyValue("distanceToNextSpeedLimit")` en el ítem si UE4SS lo expone.
+
+Parser Python `parse_driver_aid_planning` ya entiende la cola HTTP; el probe no la rellena.
 
 ### Gradiente y pendiente
 
@@ -122,7 +154,7 @@ el campo.
 | --- | --- | --- | --- | --- |
 | `signalSeen` | bool | 🟡 | Hay señal relevante en el query | — |
 | `distanceToSignal` | number (cm) | 🟡 | Distancia a la señal consultada | **Pendiente C1** — no en GetData ni `TrainState` |
-| `signalAspectClass` | string | 🟡 | Aspecto actual | Ej. `Stop`, `Clear` — cablear a `signal_brake` |
+| `signalAspectClass` | string | 🟡 | Aspecto actual | Ej. `Stop`, `Clear` — cablear a `evaluate_signal_brake` |
 | `bSignalIsPermissive` | bool | 🟡 | Señal permisiva (puede pasar con precaución) | — |
 | `signalPropertyGuid` | string | 🟡 | ID interno de la señal | Debug / correlación editor |
 | `nextSignalPosition` | `{ x,y,z }` | 🟡 | Posición de la señal | — |
@@ -261,7 +293,7 @@ DriverAid:
 
 | Archivo | Relación |
 | --- | --- |
-| `mods/TelemetryProbeMod/Scripts/main.lua` | `GetDriverAidData` → `speed_limit_ms`, `gradient_pct`, `dist_limit_cm` ×2, `doors_dmi` |
+| `mods/TelemetryProbeMod/Scripts/main.lua` | `GetDriverAidData` → `speed_limit_ms`, `gradient_pct`, `dist_limit_cm` (1), `doors_dmi` |
 | `tsw_telemetry_source.py` | `_poll_driver_aid_planning`: Data + TrackData + PlayerInfo (HTTP ~2 s) |
 | `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
 | `driver_aid_parser.py` | `parse_track_data_stations`, filtros parada |
@@ -283,7 +315,8 @@ DriverAid:
 | 2026-08-18 | `speedLimit` | Coherente con límite HUD (~45 mph) |
 | 2026-08-18 | Dump completo | 3 endpoints, Cross-City / Lichfield |
 | 2026-08-23 | `PlayerInfo` + HUD DB | `2R17` Cross-City, paradas `car_stop_signs` en planning |
-| 2026-08-24 | `nextSpeedLimits` en probe | 2 límites en GetData @ ~20 Hz; estados doc actualizados |
+| 2026-08-24 | `nextSpeedLimits` en probe | Intento 2 límites; revertido a 1 escalar (2026-08-28) |
+| 2026-08-28 | 1 límite probe | `023813` + UE4SS: `lim`/`next_lim` OK; TArray `d=nil`; `lim2` aparcado |
 
 *Pendiente doc:* validar mismos campos en **BNSF SD40-2**; sesión **señales** (C1) antes de marcar
 ✅.

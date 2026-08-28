@@ -349,18 +349,18 @@ def main() -> None:
     conn = TswTelemetrySource()
     for _ in range(30):
         conn.probe()
-        if conn.mode in ("ue4ss", "tsw_api"):
+        if conn.mode == "ue4ss":
             break
         import time
         time.sleep(1.0)
 
-    if conn.mode not in ("ue4ss", "tsw_api"):
+    if conn.mode != "ue4ss":
         root = tk.Tk()
         root.withdraw()
         messagebox.showerror(
             "Sin conexión",
             "No se pudo conectar a TSW6.\n\n"
-            "¿TelemetryProbeMod activo o TSW6 con -HTTPAPI (en cabina)?")
+            "¿TelemetryProbeMod activo y F7 en cabina?")
         sys.exit(1)
 
     if args.vehicle:

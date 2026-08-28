@@ -46,9 +46,25 @@ DEFAULT_TSW_PATHS: dict[str, str] = {
     "dyn_brake": "DynamicBrake",
 }
 
-# Handle UK 0–8 → API 0.0–1.0 (misma escala que HandleController RPC)
+# Handle UK 0–8 → IPC cmd 0.0–1.0 (misma escala que HandleController / SendCommand)
 _COMBINED_NOTCH_MAX = 8
 _NEUTRAL_NOTCH = 4
+
+# PowerBrakeHandle.InputValue (Class 323). Peldaños de
+# LiahMartens/tsw-controller-app shared-profiles/class323.tswprofile
+# (DirectControl min=-0.6 max=1). Notch 0 (emergencia HUD) no está en ese
+# perfil; se escribe -1.0. Tracción 5–8 coincide con 0.25/0.5/0.75/1.
+CLASS323_PBH_INPUT_BY_NOTCH: tuple[float, ...] = (
+    -1.0,   # 0 emergencia
+    -0.6,   # 1 B3
+    -0.4,   # 2 B2
+    -0.2,   # 3 B1
+    0.0,    # 4 neutro
+    0.25,   # 5 P1
+    0.5,    # 6 P2
+    0.75,   # 7 P3
+    1.0,    # 8 P4
+)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -109,13 +125,26 @@ def combined_notch_to_value(notch: int) -> float:
 
 
 def combined_notch_to_axis(notch: int) -> float:
-    """Muesca handle UK 0–8 → eje InputValue -1..1 (neutro en 0)."""
+    """Muesca handle UK 0–8 → InputValue Class 323 (detents Liah)."""
     n = max(0, min(_COMBINED_NOTCH_MAX, int(notch)))
-    return (n - 4) / 4.0
+    return float(CLASS323_PBH_INPUT_BY_NOTCH[n])
+
+
+def combined_axis_to_notch(axis: float) -> int:
+    """InputValue Class 323 → muesca 0–8 más cercana."""
+    v = float(axis)
+    best = 0
+    best_d = abs(v - CLASS323_PBH_INPUT_BY_NOTCH[0])
+    for i, det in enumerate(CLASS323_PBH_INPUT_BY_NOTCH):
+        d = abs(v - det)
+        if d < best_d:
+            best_d = d
+            best = i
+    return best
 
 
 def combined_value_to_notch(value: float) -> int:
-    """Valor API → muesca entera más cercana."""
+    """Valor IPC 0..1 (notch/8) → muesca entera más cercana."""
     v = _clamp(value, 0.0, 1.0)
     return int(round(v * _COMBINED_NOTCH_MAX))
 

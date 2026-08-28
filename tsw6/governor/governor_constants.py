@@ -68,8 +68,8 @@ STATION_DWELL_TIMEOUT_S = 45   # segundos máx. en STOPPED sin datos de puertas 
 # Derivado de v = sqrt(2 * MAX_DECEL_MS2 / SAFETY_MARGIN * dist)
 _K_STOP = math.sqrt(2.0 * MAX_DECEL_MS2 / SAFETY_MARGIN) / 0.44704
 
-# ── Handle combinado PowerBrakeHandle (Class 323) ────────────────────────────
-# Notch 0 = freno máximo … 4 = neutro … 8 = tracción máxima
+# Notch 0 = emergencia HUD; 1–3 B3..B1 InputValue -0.6/-0.4/-0.2
+# (Liah class323.tswprofile); 4 neutro; 5–8 tracción 0.25..1.
 
 NOTCH_NEUTRAL = 4   # posición central del handle combinado (neutro)
 

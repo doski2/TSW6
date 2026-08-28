@@ -125,8 +125,8 @@ def build_speed_limits_queue(data: dict[str, Any]) -> list[dict[str, float]]:
     """
     Cola unificada de cambios de límite adelante (ordenada por distancia).
 
-    Fusiona ``nextSpeedLimit`` + ``distanceToNextSpeedLimit`` con
-    ``nextSpeedLimits[]`` para que P1 y la GUI vean al menos los 2 próximos.
+    Fusiona el escalar ``nextSpeedLimit`` con ``nextSpeedLimits[]`` (HTTP DriverAid).
+    El probe Lua ya deduplica; ``ProbeSnapshot.planning_dict`` solo pasa el array.
     """
     limits: list[dict[str, float]] = []
 
@@ -294,17 +294,13 @@ def parse_door_state(data: Any) -> dict[str, Optional[bool]]:
 
 def parse_driver_aid_planning(data: Any) -> dict[str, Any]:
     """
-    Campos de planning para P1: próximo límite y cola de límites adelante.
+    Campos de planning P1 desde un dict estilo DriverAid.
 
-    También incluye ``gradient_pct`` si viene en el mismo nodo.
+    El probe reconstruye ``nextSpeedLimits`` desde GetData.
     """
     out: dict[str, Any] = {}
     if not isinstance(data, dict):
         return out
-
-    grad = parse_gradient_pct(data)
-    if grad is not None:
-        out["gradient_pct"] = grad
 
     limits = build_speed_limits_queue(data)
     if limits:
@@ -314,12 +310,6 @@ def parse_driver_aid_planning(data: Any) -> dict[str, Any]:
         if len(limits) > 1:
             out["next_limit_2_mph"] = limits[1]["limit_mph"]
             out["distance_next_2_m"] = limits[1]["distance_m"]
-
-    doors = parse_door_state(data)
-    if doors["doors_open"] is not None:
-        out["doors_open"] = doors["doors_open"]
-    if doors["doors_dmi"] is not None:
-        out["doors_dmi"] = doors["doors_dmi"]
 
     return out
 

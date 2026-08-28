@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional
 
 from tsw6.telemetry.tsw_ipc_bus import (
     adaptive_ack_timeout_s,
@@ -22,7 +22,11 @@ from tsw6.telemetry.tsw_ipc_bus import (
     dispatch_ipc_combined_notch,
     enable_lua_commands,
 )
-from tsw6.telemetry.tsw_ue4ss_reader import ProbeSnapshot, read_probe_file
+from tsw6.telemetry.tsw_ue4ss_reader import (
+    ProbeSnapshot,
+    decode_probe_raw,
+    parse_probe_line,
+)
 
 _log = logging.getLogger("tsw.telemetry.channel")
 
@@ -90,6 +94,7 @@ class TelemetryReader:
         self._slot = _TelemSlot()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._fh: Optional[BinaryIO] = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -107,6 +112,40 @@ class TelemetryReader:
         if self._thread is not None:
             self._thread.join(timeout=1.5)
             self._thread = None
+        self._close_fh()
+
+    def _close_fh(self) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is not None:
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+    def _read_snapshot(self) -> Optional[ProbeSnapshot]:
+        path = self._path
+        try:
+            if self._fh is None:
+                if not path.is_file():
+                    return None
+                self._fh = open(path, "rb")
+            self._fh.seek(0)
+            data = self._fh.read()
+        except OSError as exc:
+            _log.debug("TelemetryReader read error: %s", exc)
+            self._close_fh()
+            return None
+        if not data:
+            self._close_fh()
+            return None
+        line = decode_probe_raw(data)
+        if not line:
+            return None
+        parsed = parse_probe_line(line)
+        if parsed.get("seq") is None or parsed.get("speed_ms") is None:
+            return None
+        return ProbeSnapshot.from_dict(parsed)
 
     def poll_hz(self) -> float:
         with self._lock:
@@ -125,18 +164,15 @@ class TelemetryReader:
             t0 = time.perf_counter()
             snap: Optional[ProbeSnapshot] = None
             age_ms = 0.0
-            try:
-                snap = read_probe_file(self._path)
-                if snap is not None:
-                    try:
-                        age_ms = max(
-                            0.0,
-                            (time.time() - self._path.stat().st_mtime) * 1000.0,
-                        )
-                    except OSError:
-                        age_ms = 0.0
-            except OSError as exc:
-                _log.debug("TelemetryReader read error: %s", exc)
+            snap = self._read_snapshot()
+            if snap is not None:
+                try:
+                    age_ms = max(
+                        0.0,
+                        (time.time() - self._path.stat().st_mtime) * 1000.0,
+                    )
+                except OSError:
+                    age_ms = 0.0
 
             with self._lock:
                 slot = self._slot

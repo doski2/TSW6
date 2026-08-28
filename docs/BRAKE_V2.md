@@ -10,18 +10,14 @@ Todo el código de frenado está en **`tsw6/braking/v2/`** (sin `archive/braking
 
 | Archivo | Rol |
 | --- | --- |
-| `v2/coordinator.py` | Orquestación P1: RELEASE, emergencias, prioridad, latch unificado |
+| `v2/coordinator.py` | Un tick P1: RELEASE, emergencias, prioridad, latch unificado |
+| `v2/policy.py` | Dónde: cluster 350 m, parada unificada, qué objetivo gana |
+| `v2/objectives.py` | Cómo: andén (`station_plan`), señal stub, emergencia |
+| `v2/station_plan.py` | Perfil parada HUD: B1–B3 a 0, ETA, sin OCR |
 | `v2/limit_brake.py` | Cartel de velocidad (perfil + física latched) |
-| `v2/station_brake.py` | Parada en andén → `planner.plan_brake_for_station` |
-| `v2/planner.py` | Planificación Dastsc (límite, estación, horario, cluster) |
-| `v2/signal_brake.py` | Semáforo rojo (stub — falta telemetría DANGER) |
-| `v2/priority.py` | Qué objetivo gana (orden en vía + cluster 350 m) |
-| `v2/cluster.py` | Cartel ↔ estación, parada unificada, coast cartel→andén |
-| `v2/emergency.py` | P1-CRITICO / P1-EMERGENCIA (andén y señal roja) |
-| `v2/types.py` | `BrakeTargetResult` → `BrakeCommand` |
-| `v2/command.py` | Notch IPC, RELEASE, anti-rebrake (coast latch) |
+| `v2/command.py` | `BrakeTargetResult`, APPLY / RELEASE, anti-rebrake |
 | `v2/plan.py` | Tipos `BrakePlan`, `BrakePlanStep` |
-| `v2/physics.py` | Cinemática única (distancias, márgenes, **ventana de aplicación**) — ver abajo |
+| `v2/physics.py` | Cinemática (distancias, márgenes, ventana de aplicación) |
 
 ### Ventana de aplicación (2026-08-26)
 
@@ -31,7 +27,7 @@ Los metros de acción del plan **ya no son constantes**. Todo pasa por `physics.
 | --- | --- |
 | `apply_zone_margin_m(speed_ms, apply_at)` | Zona base: `max(25, speed×2.5, apply_at×0.12)`, cap **150 m** |
 | `brake_command_apply_zone_m(...)` | Misma fórmula con `speed_mph` + `apply_at` coherente (`distance − dist_start`) |
-| `is_in_brake_action_window(...)` | Ventana simétrica **±zona** — prioridad estación, `station_brake`, bloqueo RELEASE |
+| `is_in_brake_action_window(...)` | Ventana simétrica **±zona** — prioridad estación, andén, bloqueo RELEASE |
 | `should_emit_brake_command(...)` | Emitir APPLY: ±zona **o** tarde dentro del envelope (`distance ≤ apply_at`) |
 
 **Ejemplo Class 323 @ 60 mph** (`apply_at ≈ 400 m`): zona ≈ **67 m** (antes 60 m fijo).
@@ -47,41 +43,47 @@ Los metros de acción del plan **ya no son constantes**. Todo pasa por `physics.
 
 | Antes (hardcoded) | Ahora | Módulo |
 | --- | --- | --- |
-| Zona APPLY **60 m** | `apply_zone_margin_m` / `brake_command_apply_zone_m` | `physics.py`, `command.py`, `planner.py` |
+| Zona APPLY **60 m** | `apply_zone_margin_m` / `brake_command_apply_zone_m` | `physics.py`, `command.py` |
 | Histeresis cartel **80 m / 30 m** | ±`apply_zone_m` del plan activo | `limit_brake.py` |
 | Contención bajada **150 m** al cartel | `distance ≤ apply_zone_margin_m(speed, distance)` | `limit_brake.py` |
 | B3 tarde si `dist_start < −30` | `dist_start < −late_zone_m` (`brake_command_apply_zone_m`) | `command.py` |
 | RELEASE sin mirar estación | `release_blocked:station` si estación en ventana | `coordinator.py` |
 
 Constantes que **siguen** siendo fijas (no cinemática): `TARGET_CLUSTER_GAP_M = 350`,
-`STATION_COAST_CUTOFF_M = 100`, emergencia andén por distancia absoluta en `emergency.py`.
+`STATION_COAST_CUTOFF_M = 100`, emergencia andén por distancia absoluta en `objectives.py`.
 
 Import público: `from tsw6.braking import BrakeCoordinatorV2`
 
 ---
 
-## Flujo
+## Flujo (un tick)
 
 ```text
+1. RELEASE  — cartel en banda (≤ target+0.4) y andén fuera de horizonte de servicio
+2. Emergencia  — andén / señal roja (P1-CRITICO)
+3. Candidatos  — SPEED_LIMIT / STATION (si no diferida) / SIGNAL
+4. Prioridad   — distancia en vía + cluster 350 m
+5. Comando     — command_from_target → COAST | RELEASE | APPLY → IPC
 ```
 
-Antes del plan activo: `resolve_release_command` y `check_p1_emergency`.
+`should_defer_station_brake`: no hay B1 de andén hasta `station_dist > horizonte(v→0) + 25 m`
+(decel de servicio, no la ventana gorda B1).
 
 ---
 
 ## Parada unificada (2026-08-27)
 
-Una sola regla en `cluster.py` (`is_unified_limit_station_stop`): cartel antes del andén,
+Una sola regla en `policy.py` (`is_unified_limit_station_stop`): cartel antes del andén,
 gap ≤ 350 m, y **no** cabe frenar a v_límite, soltar y luego parar.
 
 | Qué | Quién | No hacer |
 | --- | --- | --- |
-| **Cuándo** APPLY | Plan **SPEED_LIMIT** (horizonte del 55) | APPLY de estación a 800 m (ventana gorda B1→0) |
-| **Hasta dónde** | Plan **STATION** (v→0 en andén) | Soltar en el cartel (`RELEASE @55`) |
-| Sustituir cartel por estación | Solo si dist al cartel **≤ 8 m** | Si `dist_start` de B1 estación es negativo desde lejos |
-| RELEASE unificado | Bloqueado si el cartel sigue delante; **sí** si ya pasado y `station_dist > 1.2 × horizonte(v→0)` | Bloquear siempre (`sin_plan_activo` + B1) |
+| **Cuándo** APPLY cartel | SPEED_LIMIT si `spd > límite + 0.9` | B1 de andén a 800 m |
+| **Coast / RELEASE** | Cartel hecho (`spd ≤ límite + 0.4`) | Dejar B1 pegado hasta el andén |
+| **Cuándo APPLY andén** | STATION cuando entra horizonte de servicio | Usar apply_at de B1 (~1,1 km) |
+| Sustituir cartel por estación | dist al cartel **≤ 8 m** | `dist_start` de B1 estación negativo desde lejos |
 
-Logs: `p1tgt=SPEED_LIMIT` cerca del 55; `uni=Y`; no `STATION/B1` a ~800 m.
+Logs: `p1cmd=RELEASE` tras el 55; `p1tgt=STATION` cerca del andén; `uni=Y`.
 
 ### Prioridad (resto)
 
@@ -90,7 +92,7 @@ Logs: `p1tgt=SPEED_LIMIT` cerca del 55; `uni=Y`; no `STATION/B1` a ~800 m.
 3. **Señal detrás del andén** (≤50 m o mismo cluster) → descartar señal.
 
 Constantes: `TARGET_CLUSTER_GAP_M = 350`, `STATION_STOPPED_MPH = 1.5`,
-`LIMIT_RELEASE_MAX_OVER_MPH = 0.5`.
+`LIMIT_RELEASE_MAX_OVER_MPH = 0.4`, `LIMIT_SCORING_MAX_OVER_MPH = 0.9`.
 
 ---
 
@@ -125,7 +127,7 @@ Propiedades usadas por GUI: `last_brake_command`, `last_debug` (`p1_debug`).
 
 | Tema | Estado |
 | --- | --- |
-| Telemetría señal DANGER → `signal_brake` | Stub |
+| Telemetría señal DANGER → `evaluate_signal_brake` | Stub |
 | OCR distancia tablón en coordinador | No integrado |
 | `station_eta` en coordinator (horario) | ✅ vía `TrainState.next_stop_arrival` |
 | Tests P1 integración | `test_brake_v2.py`, `test_brake_coordinator.py`, `test_speed_decider.py` |
@@ -137,5 +139,4 @@ Propiedades usadas por GUI: `last_brake_command`, `last_debug` (`p1_debug`).
 ```bat
 ```
 
-Planner y estación: `tests/test_brake_planner.py`, `tests/test_brake_station.py` (importan
-`tsw6.braking.v2.planner`).
+Física/policy: `tests/test_brake_planner.py`. Estación: `tests/test_brake_station.py`.

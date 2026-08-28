@@ -164,16 +164,20 @@ class ProbeSnapshot:
         """Planning P1 desde campos probe (reutiliza driver_aid_parser)."""
         if not self.has_limit_planning():
             return {}
-        data: dict[str, Any] = {}
+        items: list[dict[str, Any]] = []
         if self.dist_limit_cm is not None and self.next_limit_ms is not None:
-            data["distanceToNextSpeedLimit"] = self.dist_limit_cm
-            data["nextSpeedLimit"] = {"value": self.next_limit_ms}
+            items.append({
+                "distanceToNextSpeedLimit": self.dist_limit_cm,
+                "value": {"value": self.next_limit_ms},
+            })
         if self.dist_limit2_cm is not None and self.next_limit2_ms is not None:
-            data["nextSpeedLimits"] = [{
+            items.append({
                 "distanceToNextSpeedLimit": self.dist_limit2_cm,
                 "value": {"value": self.next_limit2_ms},
-            }]
-        return parse_driver_aid_planning(data)
+            })
+        if not items:
+            return {}
+        return parse_driver_aid_planning({"nextSpeedLimits": items})
 
     def to_telemetry_dict(self) -> dict[str, Any]:
         """Dict aproximado al de tsw_monitor / get_telemetry."""
@@ -209,16 +213,26 @@ class ProbeSnapshot:
         return power_to_combined_notch(self.power, self.power_neg)
 
 
-def read_probe_raw_line(path: Path) -> Optional[str]:
-    if not path.is_file():
+def decode_probe_raw(data: bytes) -> Optional[str]:
+    if not data:
         return None
     try:
-        text = path.read_text(encoding="utf-8").strip()
-    except OSError:
+        text = data.decode("utf-8").strip()
+    except UnicodeDecodeError:
         return None
     if not text:
         return None
     return text.splitlines()[-1].strip()
+
+
+def read_probe_raw_line(path: Path) -> Optional[str]:
+    if not path.is_file():
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return decode_probe_raw(data)
 
 
 def read_probe_file(path: Path) -> Optional[ProbeSnapshot]:
@@ -349,17 +363,17 @@ _DISPLAY_MIN_S = 0.12
 
 
 def fetch_api_gradient() -> Optional[float]:
-    """DriverAid.Data.gradient vía HTTPAPI (referencia para validar probe)."""
+    """CLI ``--api``: DriverAid.Data vía HTTP (solo diagnóstico, no autopilot)."""
     try:
         from tsw6.telemetry.tsw_api_client import client_from_key_file
-        from tsw6.telemetry.tsw_telemetry_source import _parse_gradient_pct
+        from tsw6.telemetry.driver_aid_parser import parse_gradient_pct
     except ImportError:
         return None
     client = client_from_key_file()
     if client is None or not client.probe():
         return None
     node = client.get_node("DriverAid.Data")
-    return _parse_gradient_pct(node)
+    return parse_gradient_pct(node)
 
 
 def render_snapshot(

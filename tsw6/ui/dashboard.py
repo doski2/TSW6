@@ -96,11 +96,10 @@ def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
     action      = gov.last_action
     action_col  = ACTION_COLOR.get(action, Fore.WHITE)
     mode_str    = {"ue4ss":     "UE4SS probe ✓",
-                   "tsw_api":    "TSW API ✓",
                    "manual":     "MANUAL",
                    "searching":  "Buscando conexión...",
                   }.get(conn.mode, conn.mode)
-    mode_col    = Fore.GREEN  if conn.mode in ("ue4ss", "tsw_api") else \
+    mode_col    = Fore.GREEN  if conn.mode == "ue4ss" else \
                   Fore.YELLOW if conn.mode == "manual" else Fore.RED
     hwnd_str    = f"hwnd={hwnd:#010x}" if hwnd else "ventana TSW no encontrada"
 

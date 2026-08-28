@@ -23,6 +23,7 @@ from tsw6.braking.v2.physics import (
     apply_zone_margin_m,
     brake_reaction_margin_m,
     braking_distance_mph,
+    gravity_acceleration_ms2,
     is_in_apply_zone,
 )
 from tsw6.braking.v2.command import (
@@ -30,7 +31,7 @@ from tsw6.braking.v2.command import (
     LIMIT_CONTAIN_ESCALATE_OVER_MPH,
     LIMIT_SCORING_MAX_OVER_MPH,
 )
-from tsw6.braking.v2.types import (
+from tsw6.braking.v2.command import (
     SERVICE_HANDLES_WEAK_TO_STRONG,
     BrakeTargetResult,
 )
@@ -151,7 +152,7 @@ def _decel_for_handle(
         if learned is not None and learned > 0.05:
             return learned
     frac = _DEFAULT_DECEL_FRAC.get(handle, 0.8)
-    grav = 9.80665 * gradient_pct / 100.0
+    grav = gravity_acceleration_ms2(gradient_pct)
     return max(base_decel * frac + grav, 0.05)
 
 

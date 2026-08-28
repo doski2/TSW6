@@ -1,0 +1,58 @@
+// P1 — un tick. Render: dot -Tsvg docs/assets/flujo_frenos_p1.dot -o docs/assets/flujo_frenos_p1.svg
+// Graphviz: https://graphviz.org/
+digraph P1 {
+  rankdir=TB;
+  splines=ortho;
+  nodesep=0.35;
+  ranksep=0.45;
+  fontname="Segoe UI";
+  node [fontname="Segoe UI", fontsize=11, shape=box, style="rounded,filled", fillcolor="#f4f4f1", color="#333333"];
+  edge [fontname="Segoe UI", fontsize=9, color="#444444"];
+
+  tick [label="SpeedDecider → BrakeCoordinatorV2.evaluate", fillcolor="#d6eaf8", shape=oval];
+
+  subgraph cluster_prio {
+    label="Prioridad (primera que gane, el resto no actúa)";
+    style=rounded;
+    color="#1a5276";
+    fontname="Segoe UI";
+    fontsize=12;
+
+    r0 [label="¿Freno aplicado y objetivo hecho?\nspd ≤ límite+0.4  y  andén > horizonte+25 m", fillcolor="#d5f5e3"];
+    rel [label="RELEASE → notch 4", fillcolor="#abebc6", shape=hexagon];
+
+    e0 [label="¿Andén/señal roja crítica?", fillcolor="#fadbd8"];
+    emg [label="EMERGENCY / B3", fillcolor="#f1948a", shape=hexagon];
+
+    d0 [label="¿Tracción (notch>4)?", fillcolor="#fdebd0"];
+    coast [label="COAST_THROTTLE → notch 4", fillcolor="#f5cba7", shape=hexagon];
+
+    l0 [label="¿spd > límite + 0.9?", fillcolor="#f9e79f"];
+    apply_lim [label="APPLY SPEED_LIMIT B1–B3", fillcolor="#f7dc6f", shape=hexagon];
+
+    s0 [label="¿Andén ≤ horizonte servicio?", fillcolor="#d4e6f1"];
+    apply_stn [label="APPLY STATION B1–B3", fillcolor="#85c1e9", shape=hexagon];
+
+    hold [label="HOLD / sin_plan_activo", fillcolor="#e5e8e8", shape=hexagon];
+  }
+
+  ipc [label="HandleController → SendCommand.txt → Lua palanca", fillcolor="#d6eaf8", shape=oval];
+
+  tick -> r0;
+  r0 -> rel [label="sí"];
+  r0 -> e0 [label="no"];
+  e0 -> emg [label="sí"];
+  e0 -> d0 [label="no"];
+  d0 -> coast [label="sí y perfil activo"];
+  d0 -> l0 [label="no"];
+  l0 -> apply_lim [label="sí"];
+  l0 -> s0 [label="no"];
+  s0 -> apply_stn [label="sí"];
+  s0 -> hold [label="no"];
+
+  rel -> ipc;
+  emg -> ipc;
+  coast -> ipc;
+  apply_lim -> ipc;
+  apply_stn -> ipc;
+}

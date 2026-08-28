@@ -11,7 +11,7 @@ Relacionado: [BRAKE_V2.md](BRAKE_V2.md) · [DASTSC_PARITY.md](DASTSC_PARITY.md) 
 | --- | --- |
 | `governor_constants.MAX_DECEL_MS2` | Decel de servicio máxima (base única, Class 323) |
 | `braking/v2/physics.py` | Cinemática `v²/2a`, gradiente, márgenes |
-| `planner.py` + `limit_brake.py` | Perfil B1/B2/B3 (fracciones 0.33 / 0.55 / 0.80) |
+| `plan.py` + `limit_brake.py` | Perfil B1/B2/B3 (fracciones 0.33 / 0.55 / 0.80) |
 | `TrainPhysics` + `OnlineLearner` | Calibración por muesca y banda de velocidad |
 | `aprender.bat` | Monitor **guiado** (mismo learner, conducción manual) |
 | Autopilot GUI / `--learn` | Aprendizaje **en marcha** mientras conduces |
@@ -97,7 +97,7 @@ Por eso el MVP sigue siendo: calibrar 323 una vez y validar E1.
 | --- | --- | --- | --- |
 | `MAX_DECEL_MS2` | **1.071** | `governor_constants.py` | `TrainPhysics.eff_max_decel` → **P1 `base_decel`** |
 | `DEFAULT_MAX_BRAKE_DECEL` | **0.80** | `v2/physics.py` (legacy Dastsc) | Fallback si `base_decel` no se pasa |
-| Fracciones B3 | 0.80 × base | `planner.py` | B3 ≈ 0.86 m/s² con base 1.07 |
+| Fracciones B3 | 0.80 × base | `plan.py` | B3 ≈ 0.86 m/s² con base 1.07 |
 
 En la práctica P1 **ya usaba 1.071** vía `eff_max_decel`. El 0.80 solo afectaba tests o llamadas
 directas a funciones v2 sin pasar `base_decel` — dos “verdades” distintas.

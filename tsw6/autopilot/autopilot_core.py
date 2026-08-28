@@ -203,9 +203,13 @@ class AutopilotEngine:
         self._control_api_check_t = 0.0
         self._ipc_armed = False
         self._log_cycle_n = 0
+        self._learn_status_t = 0.0
+        self._learn_status_cache: Optional[LearnStatus] = None
         self._telem_ready_logged = False
         self._telem_partial_logged = False
         self._searching_warn_t = 0.0
+        self._hwnd_search_t = 0.0
+        self._search_connect_t = 0.0
         self._heartbeat_t = 0.0
         self._pause_diag_t = 0.0
         self._loop_fps = 0.0
@@ -282,9 +286,6 @@ class AutopilotEngine:
             with self._probe_lock:
                 if self.conn.mode == "searching":
                     self.conn.probe()
-                elif self.conn.mode == "tsw_api":
-                    if self.conn.maybe_upgrade_to_ue4ss():
-                        self._on_ue4ss_upgraded()
 
     def pause(self) -> None:
         if not self.decider.paused:
@@ -379,8 +380,11 @@ class AutopilotEngine:
 
         if self.conn.mode in ("manual", "searching"):
             if self.conn.mode == "searching":
-                with self._probe_lock:
-                    self.conn.try_connect_ue4ss()
+                now_s = time.monotonic()
+                if now_s - self._search_connect_t >= 0.5:
+                    self._search_connect_t = now_s
+                    with self._probe_lock:
+                        self.conn.try_connect_ue4ss()
                 if self.conn.mode == "ue4ss":
                     new = self.conn.get_telemetry()
                     if new:
@@ -390,20 +394,25 @@ class AutopilotEngine:
                 if new:
                     self.telem = new
         else:
-            prev_mode = self.conn.mode
             new = self.conn.get_telemetry()
-            if prev_mode == "tsw_api" and self.conn.mode == "ue4ss":
-                self._on_ue4ss_upgraded()
             if new:
                 self.telem = new
+            elif self.conn.mode == "searching":
+                self.telem = {}
 
         self._log_searching_hint()
         self._log_telemetry_ready()
 
+        if self.hwnd and not user32.IsWindow(self.hwnd):
+            self.hwnd = None
+            self.ocr._hwnd = 0
         if not self.hwnd:
-            self.hwnd = find_tsw_window()
-            if self.hwnd:
-                self.ocr._hwnd = self.hwnd
+            now_w = time.monotonic()
+            if now_w - self._hwnd_search_t >= 1.0:
+                self._hwnd_search_t = now_w
+                self.hwnd = find_tsw_window()
+                if self.hwnd:
+                    self.ocr._hwnd = self.hwnd
 
         self._detect_vehicle()
         self._sync_handle()
@@ -507,7 +516,7 @@ class AutopilotEngine:
         self.loop_times.append(elapsed)
         if len(self.loop_times) > 20:
             self.loop_times.pop(0)
-        fps = 1.0 / (sum(self.loop_times) / len(self.loop_times)) if self.loop_times else 0.0
+        fps = self._loop_hz_real
         self._loop_fps = fps
         self._last_tick_ms = elapsed * 1000.0
         self._heartbeat_tick_count += 1
@@ -645,6 +654,10 @@ class AutopilotEngine:
         return self._learn_status()
 
     def _learn_status(self) -> LearnStatus:
+        now = time.monotonic()
+        cached = self._learn_status_cache
+        if cached is not None and now - self._learn_status_t < 0.25:
+            return cached
         physics = self.decider._physics
         learner = physics.learner
         vehicle = self._veh_detected.get("v") or ""
@@ -668,7 +681,7 @@ class AutopilotEngine:
         conf = raw.get("confidence") or {}
         if not isinstance(conf, dict):
             conf = {}
-        return {
+        result: LearnStatus = {
             "profile": str(raw.get("profile") or ""),
             "done_cells": int(raw.get("done_cells") or 0),
             "total_cells": int(raw.get("total_cells") or 0),
@@ -679,6 +692,9 @@ class AutopilotEngine:
             "eff_max_decel": float(physics.eff_max_decel),
             "confidence": {str(k): int(v) for k, v in conf.items()},
         }
+        self._learn_status_cache = result
+        self._learn_status_t = now
+        return result
 
     def _needs_ocr(self) -> bool:
         if self.decider.station_state in ("APPROACHING", "STOPPED", "DEPARTING"):
@@ -695,7 +711,7 @@ class AutopilotEngine:
         time.sleep(sleep_s)
 
     def _detect_vehicle(self) -> None:
-        if self._vehicle_profiled or self.conn.mode not in ("ue4ss", "tsw_api"):
+        if self._vehicle_profiled or self.conn.mode != "ue4ss":
             return
         name = self.telem.get("vehicle_name") or self.conn.get_vehicle_name()
         if name:
@@ -750,7 +766,7 @@ class AutopilotEngine:
             self._log.warning(msg, self.conn.last_probe_info)
 
     def _log_telemetry_ready(self) -> None:
-        if self._telem_ready_logged or self.conn.mode not in ("ue4ss", "tsw_api"):
+        if self._telem_ready_logged or self.conn.mode != "ue4ss":
             return
         speed = self.telem.get("speed_mph")
         limit = self.telem.get("limit_mph")
@@ -935,7 +951,7 @@ class AutopilotEngine:
         if now - self._channel_summary_t < 10.0:
             return
         self._channel_summary_t = now
-        if self.conn.mode not in ("ue4ss", "tsw_api"):
+        if self.conn.mode != "ue4ss":
             return
         rep = self.conn.channel_report()
         ctrl = self.controller.session_metrics()
@@ -1109,7 +1125,7 @@ class AutopilotEngine:
         if self._handle_synced:
             return
         # No bloquear ~5s con teclado hasta que el probe/API esté conectado.
-        if self.conn.mode not in ("ue4ss", "tsw_api") or not self.telem:
+        if self.conn.mode != "ue4ss" or not self.telem:
             return
         if self.config.no_control:
             self._log.warning(
@@ -1128,7 +1144,17 @@ class AutopilotEngine:
         if self.decider.paused or self.telem.get("probe_motion_frozen"):
             return
         self._log_cycle_n += 1
-        if self._log_cycle_n > 5 and self._log_cycle_n % 20 != 0:
+        want_info = self._log_cycle_n <= 5
+        want_debug = (
+            self._log_cycle_n > 5 and self._log_cycle_n % 40 == 0
+        )
+        if want_info:
+            if not self._log.isEnabledFor(logging.INFO):
+                return
+        elif want_debug:
+            if not self._log.isEnabledFor(logging.DEBUG):
+                return
+        else:
             return
         telem = self.telem
         cmd = self.decider.brake_command

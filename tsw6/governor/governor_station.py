@@ -16,7 +16,7 @@ from tsw6.telemetry.driver_aid_parser import (
     select_next_scheduled_stop,
     station_base_name,
 )
-from tsw6.braking.v2.cluster import should_merge_limit_and_station_plans
+from tsw6.braking.v2.policy import should_merge_limit_and_station_plans
 from tsw6.governor.governor_constants import (
     STATION_STOPPED_MPH, STATION_DWELL_TIMEOUT_S,
 )
@@ -270,7 +270,20 @@ class StationFSM:
             ocr_task=ocr_task,
         ):
             return "HOLD", 0.0
-        # Timeout: probe sin dato (None) o cerrado todo el dwell (lua=0, nunca 1).
+        # Check-in / salida sin probe de puertas (lua=0 en cabina 323).
+        if (
+            not self._doors_opened
+            and speed_mph > 5.0
+            and (time.time() - self._stopped_at) >= 3.0
+        ):
+            self._mark_current_stop_served()
+            _log.info(
+                "FSM: STOPPED → DEPARTING (salida spd=%.1f sin ciclo puertas)  '%s'",
+                speed_mph, self.name or "?",
+            )
+            self.state = "DEPARTING"
+            self._doors_opened = False
+            return "HOLD", 0.0
         no_open_cycle = not self._doors_opened
         no_sensor = doors_telem is None and doors_dmi is None
         if no_open_cycle and (no_sensor or doors_telem is False):
@@ -377,6 +390,8 @@ class StationFSM:
                 stop_dist_m < stop_window
                 or next_is_other
                 or (self._we_stopped and stop_dist_m < 150.0)
+                # HUD congelado (~2 km) pero ya paramos en aproximación (check-in).
+                or (self._we_stopped and self._creep_to_station)
             )
         )
         if at_platform:

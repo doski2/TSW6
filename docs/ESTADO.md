@@ -25,7 +25,7 @@ Imagen de referencia (abrir en el IDE o navegador — **las ramas están en el S
 **[esqueleto_flujo_cronologico.svg](assets/esqueleto_flujo_cronologico.svg)** — pasos 1→14,
 ~20 Hz, arriba = primero. Ramas visibles: paso **1** (HUD + DriverAid → GetData), paso **3**
 (probe + HTTP + HUD DB → `_telem`), paso **6** (FSM → P1 → HOLD), pasos **7–11**
-(coordinator → 8 limit / 9 station / 10 planner → BrakeCommand).
+(coordinator → 8 limit / 9 objectives / 10 station_plan → BrakeCommand).
 
 Estos tres pasos son **solo lectura**: del juego (UE4SS/Lua) hasta el dict de telemetría que
 consume el autopilot. **Aún no** hay decisión de freno ni escritura de mandos.
@@ -69,8 +69,8 @@ manual + dump DriverAid al log UE4SS.
 | `max_speed_ms` | `HUD_GetMaxPermittedSpeed` | Techo ATS |
 | `speed_limit_ms` | `GetDriverAidData` → `SpeedLimit` | Cartel actual (mph→ms en parser) |
 | `gradient_pct` | `GetDriverAidData` → `gradient` | Perfil freno / learner |
-| `dist_limit_cm`, `next_limit_ms` | `distanceToNextSpeedLimit`, `nextSpeedLimit` | **P1** — 1.er cartel adelante |
-| `dist_limit2_cm`, `next_limit2_ms` | cola `nextSpeedLimits[]` (2.º límite) | Cola planning probe |
+| `dist_limit_cm`, `next_limit_ms` | `DistanceToNextSpeedLimit`, `NextSpeedLimit` (escalares) | **P1** — único cartel en probe |
+| `dist_limit2_cm`, `next_limit2_ms` | *no en GetData* | ⬜ [DRIVERAID_API.md — lim2](DRIVERAID_API.md#investigar-2º-límite-lim2) |
 | `odo_m` | `Simulation.Axle_1_1.TotalDistanceTravelled_M` | Detectar tren parado (hold distancias) |
 | `vehicle` | `actor:GetClass():GetFName()` | Layout UK combined vs freight |
 | `doors_open` / `doors_telem` | componentes `PassengerDoor_*` | FSM estación |
@@ -79,11 +79,11 @@ manual + dump DriverAid al log UE4SS.
 
 **Lógica extra en Lua (importante para entender distancias):**
 
-- Si el tren **no se mueve** (odómetro o posición actor), **mantiene** las distancias de límite
+- Distancias de límite: DriverAid en Lua (sin hold). Python no resta HUD×dt
+  si el odómetro no avanzó (ESC: `probe_raw` fijo y `stale=Y` era C.3a).
 
-  anteriores (`hold_planning_if_stationary`) — evita que bajen al pausar con ESC.
-
-- Si `dist_limit_cm ≤ 0` (ya en el cartel), **promueve** el siguiente límite de la cola.
+- Si `dist_limit_cm ≤ 0` (ya en el cartel), el juego **cambia el escalar** al siguiente
+  cartel; no hay cola Lua que promover.
 
 #### Formato de línea (ejemplo real)
 
@@ -122,7 +122,8 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
 | `train_brake`, `loco_brake`, `dyn_brake` | `float?` | |
 | `accel_ms2`, `max_speed_ms`, `speed_limit_ms` | `float?` | |
 | `gradient_pct` | `float?` | |
-| `dist_limit_cm`, `next_limit_ms`, `dist_limit2_*` | `float?` | planning límites |
+| `dist_limit_cm`, `next_limit_ms` | `float?` | 1.er cartel (probe) |
+| `dist_limit2_*` | `float?` | ausente hasta investigación lim2 |
 | `odo_m` | `float?` | |
 | `doors_*` | `bool?` | |
 | `vehicle` | `str` | clase UE del tren |
@@ -175,7 +176,7 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
 | --- | --- |
 | `stations[]` | Lista paradas con distancia en vía |
 | `next_stop`, `next_stop_name` | Próxima parada comercial |
-| `next_stop_arrival`, `next_stop_departure` | `station_eta` → P1 planner |
+| `next_stop_arrival`, `next_stop_departure` | `station_eta` → P1 `station_plan` |
 | `schedule_source` | `hud_db` / `timetable_json` / `trackdata` |
 | `hud_timetable_id`, `hud_route_name` | GUI horario |
 | `service_name` | Filtro paradas por servicio |
@@ -184,15 +185,26 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
 
 #### `_apply_probe_planning()` — reglas de distancia (límites)
 
+**Lua no resta ni “hold”.** Build `20260828l+`: `dist_limit_cm` = DriverAid crudo. Un hold
+por `speed_ms` fallaba (ESC deja el HUD en 50 mph) y odo/actor no se actualizan en UE4SS.
+
+| Capa | Qué hace | Cuándo | ¿Duplica Lua? |
+| --- | --- | --- | --- |
+| Lua `GetData` | Escribe cm + `seq` | ReceiveTick ~20 Hz | No: solo sensor |
+| `probe_motion_frozen` | No odo de **estaciones** ni resync a la baja | odo/speed planos ~0,3 s | No: Python |
+| C.3a | Resta **cartel** HUD×dt | `seq` nuevo + odo **avanzó** + cm plano | No: Lua no interpola |
+| C.3d | No pisar odo con raw 2495 al parar | `spd<0.5` | No |
+| `planning_hold` | Botón pausa autopilot | GUI | Independiente del menú TSW |
+| GetData `age>3,5 s` | Modo `searching` | Menú / juego cerrado; **no** el hitch 1→2 (~2,7 s) |
+
+No hay doble resta del mismo metro: C.3a toca `distance_next_m`; `_tick_station_distances`
+toca `stations[]` HTTP y **no corre** si frozen o `telemetry_age` stale.
+
 - Resync cuando cambia `probe_seq` (línea nueva de Lua).
-- Si el tren **congelado** (`probe_motion_frozen`) o velocidad &lt; 0,5 mph: **no acepta** que
-
-  baje `distance_next_m` (misma idea que hold en Lua).
-
-- `planning_hold=True` (autopilot pausado): congela distancias overlay.
+- Si el tren **congelado** o velocidad &lt; 0,5 mph: **no acepta** que baje `distance_next_m`.
 - Si el **cm del cartel no cambia** vs último raw y el tren se mueve: odometría Python
-  (`probe_stale`); no resync a 2495 m en cada `seq` (C.3a, `CANAL_CONTROL.md`).
-- Si el cm **sí cambia**: resync DriverAid (sin doble resta).
+  (`probe_stale`); no resync a 2495 m en cada `seq` (C.3a).
+- Si el cm **sí cambia**: resync DriverAid (sin segunda resta encima).
 
 #### Cómo lo consume el autopilot
 
@@ -209,7 +221,7 @@ Cada campo es opcional salvo que Lua lo tenga; `?` = desconocido (parser → `No
 | Stale | Si mtime &gt; **0,75 s** y aún no conectado → “F7 en cabina” |
 
 **Pendiente en esta capa (tarjetas C1–C2):** `distanceToSignal` / aspecto DANGER **no** están en
-GetData ni en `_telem` hoy → `signal_brake` sigue stub.
+GetData ni en `_telem` hoy → `evaluate_signal_brake` sigue stub.
 
 ---
 
@@ -260,7 +272,7 @@ Campos clave para P1:
 | `speed_mph`, `limit_mph` | probe | Cinemática |
 | `next_limit_mph`, `distance_next_m` | probe + planning | `limit_brake` |
 | `speed_limits_ahead[]` | HTTP + probe | Cola carteles |
-| `next_stop_distance_m`, `next_stop_arrival` | HUD / TrackData | `station_brake` |
+| `next_stop_distance_m`, `next_stop_arrival` | HUD / TrackData | `objectives.evaluate_station_brake` |
 | `station_state` | FSM interna | Prioridad / reset P1 |
 | `handle_notch`, `throttle_notch` | probe | `COAST_THROTTLE` antes de APPLY |
 
@@ -284,7 +296,7 @@ Campos clave para P1:
 
 **Regla de numeración:** los círculos del
 [SVG](assets/esqueleto_flujo_cronologico.svg) son la fuente de verdad. Las cajas **sin círculo**
-(`priority + cluster`, `signal_brake` punteado) son sub-fases **dentro del paso 7**, no pasos
+(`policy`, `evaluate_signal_brake` punteado) son sub-fases **dentro del paso 7**, no pasos
 nuevos.
 
 El paso **7** es `BrakeCoordinatorV2.evaluate()` (`coordinator.py`), invocado desde el paso 6
@@ -298,10 +310,10 @@ consulta; **11** es el `BrakeCommand` resultante.
 | --- | --- | --- |
 | **7** | `coordinator.evaluate()` | Orquesta RELEASE, emergencia, parada unificada, prioridad |
 | **8** | `limit_brake.py` | Cartel → perfil B1–B3, `dist_start` |
-| **9** | `station_brake.py` | Entrada andén HUD / parada comercial |
-| **10** | `planner.py` | Perfil físico, ETA, cluster 350 m (llamado desde **9**) |
-| *(sin nº)* | `priority.py` + `cluster.py` | Caja fusión SVG: elige 1 plan; `uni=Y` |
-| *(sin nº)* | `signal_brake.py` | Caja punteada SVG: stub DANGER (tarjeta C1) |
+| **9** | `objectives.evaluate_station_brake` | Entrada andén HUD / parada comercial |
+| **10** | `station_plan.py` | Perfil andén HUD / ETA (llamado desde **9**) |
+| *(sin nº)* | `policy.py` | Fusión cartel↔andén; elige 1 plan; `uni=Y` |
+| *(sin nº)* | `objectives.evaluate_signal_brake` | Stub DANGER (tarjeta C1) |
 | **11** | `BrakeCommand` | `to_brake_command()` → APPLY / RELEASE → `decider.brake_command` |
 | **12** | `handle_controller.execute()` | Prioridad comando IPC P1 |
 | **13** | `tsw_ipc_bus` | `SendCommand.txt` + flag |
@@ -379,8 +391,8 @@ Leyenda de tipos (como FlowPlan):
 | T2 | Mandos IPC notch absoluto | `tsw_ipc_bus.py`, probe Lua | [DASTSC_PARITY](DASTSC_PARITY.md) |
 | T3 | P1 v2 consolidado | `tsw6/braking/v2/*` | [BRAKE_V2](BRAKE_V2.md) |
 | T4 | Horario estaciones arr/dep GUI | `hud_timetable.py` | [HUD_TIMETABLE](HUD_TIMETABLE.md) |
-| T5 | Parada unificada cartel+andén | `coordinator.py`, `cluster.py` | [FLUJO_FRENOS](FLUJO_FRENOS.md) |
-| T6 | `station_eta` al planner | `train_state` → `planner.py` | [BRAKE_V2 § Pendiente](BRAKE_V2.md#pendiente) |
+| T5 | Parada unificada cartel+andén | `coordinator.py`, `policy.py` | [FLUJO_FRENOS](FLUJO_FRENOS.md) |
+| T6 | `station_eta` al plan de andén | `train_state` → `station_plan.py` | [BRAKE_V2 § Pendiente](BRAKE_V2.md#pendiente) |
 | T7 | Eliminar capa P2 reactiva | `speed_decider.py`, `command.py` | § Sin P2 abajo |
 
 ### 🎯 Hacer ahora
@@ -388,8 +400,9 @@ Leyenda de tipos (como FlowPlan):
 | ID | Tarjeta | Qué comprobar | Log / señal |
 | --- | --- | --- | --- |
 | **E1** | Validar in-game frenado v2 | 2R17 Cross-City, cartel 55 + andén | `uni=Y`, `p1tgt=SPEED_LIMIT` al APPLY; no RELEASE en cartel |
-| **C1** | Telemetría señal → P1 | `signal_brake.py` hoy stub | `distanceToSignal`, aspecto DANGER en `TrainState` |
-| **C2** | Distancia tablón fina | OCR/GPS cada tick | `station_brake` / coordinador |
+| **V2** | Canal A1 (tick más barato) | Medir `work` &lt; 25 ms in-game | `autopilot_perf.bat`; SHM no ahora |
+| **C1** | Telemetría señal → P1 | `evaluate_signal_brake` hoy stub | `distanceToSignal`, aspecto DANGER en `TrainState` |
+| **C2** | Distancia tablón fina | OCR/GPS cada tick | `objectives` / coordinador |
 
 ### ⏸️ Después
 

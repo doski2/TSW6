@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource, _power_to_handle_notch
+from tsw6.telemetry.tsw_telemetry_source import (
+    TswTelemetrySource,
+    UE4SS_LOST_S,
+    _power_to_handle_notch,
+)
 from tsw6.telemetry.tsw_ue4ss_reader import ProbeSnapshot
 
 
@@ -48,16 +52,23 @@ def test_probe_status_hints(tmp_path: Path):
     getdata = tmp_path / "GetData.txt"
     conn = TswTelemetrySource()
     conn._ue4ss_path = getdata
-    conn.mode = "tsw_api"
+    conn.mode = "searching"
     st = conn.probe_status()
     assert st["live"] is False
-    assert "F7" in st["hint"]
+    assert "GetData" in st["hint"] or "F7" in st["hint"]
 
     getdata.write_text("seq=1 speed_ms=1.0 vehicle=x\n", encoding="utf-8")
     conn.mode = "ue4ss"
     st2 = conn.probe_status()
     assert st2["live"] is True
     assert "PROBE OK" in st2["hint"]
+
+    old = time.time() - 5.0
+    import os
+    os.utime(getdata, (old, old))
+    st3 = conn.probe_status()
+    assert st3["live"] is False
+    assert "congelado" in st3["hint"]
 
 
 def test_power_to_handle_notch_neutral():
@@ -69,7 +80,7 @@ def test_power_to_handle_notch_neutral():
 
 def test_get_telemetry_includes_layout_and_vehicle():
     conn = TswTelemetrySource()
-    conn.mode = "tsw_api"
+    conn.mode = "ue4ss"
     conn._vehicle_name = "BNSF SD40-2 C"
     conn._telem = {
         "speed_mph": 25.0,
@@ -79,7 +90,7 @@ def test_get_telemetry_includes_layout_and_vehicle():
         "dyn_brake_value": 0.0,
         "dyn_brake_active": False,
     }
-    with patch.object(conn, "_poll"):
+    with patch.object(conn, "_poll_ue4ss"):
         telem = conn.get_telemetry()
     assert telem["vehicle_name"] == "BNSF SD40-2 C"
     assert telem["control_layout"] == "freight_na"
@@ -109,7 +120,7 @@ def test_probe_prefers_ue4ss_when_fresh(tmp_path: Path):
     assert conn._vehicle_name == "Class323"
 
 
-def test_probe_falls_back_to_api_when_ue4ss_stale(tmp_path: Path):
+def test_probe_stays_searching_when_ue4ss_stale(tmp_path: Path):
     getdata = tmp_path / "GetData.txt"
     getdata.write_text("seq=1 speed_ms=1.0 vehicle=x\n", encoding="utf-8")
     old = time.time() - 5.0
@@ -119,23 +130,66 @@ def test_probe_falls_back_to_api_when_ue4ss_stale(tmp_path: Path):
 
     conn = TswTelemetrySource()
     conn._ue4ss_path = getdata
-    mock_client = MagicMock()
-    mock_client.get_json.return_value = {"Meta": {"APIVersion": 2, "GameBuildNumber": 1}}
-    mock_reader = MagicMock()
-    mock_reader.read.return_value = MagicMock(
-        speed_ms=10.0,
-        power=0.0,
-        train_brake=0.0,
-        accel_ms2=0.0,
-        power_negative=False,
-        source="poll",
-        age_ms=12.0,
+    result = conn.probe()
+    assert result == "searching"
+    assert conn.mode == "searching"
+
+
+def test_poll_drops_ue4ss_when_getdata_mtime_old(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=1 speed_ms=22.0 handle_notch=6 vehicle=Class323\n",
+        encoding="utf-8",
     )
-    with patch("tsw6.telemetry.tsw_telemetry_source.client_from_key_file", return_value=mock_client):
-        with patch("tsw6.telemetry.tsw_telemetry_source.FastControlReader", return_value=mock_reader):
-            result = conn.probe()
-    assert result == "tsw_api"
-    assert conn.mode == "tsw_api"
+    old = time.time() - 5.0
+    import os
+    os.utime(getdata, (old, old))
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    from tsw6.telemetry.tsw_ue4ss_reader import read_probe_file
+    snap = read_probe_file(getdata)
+    assert snap is not None
+    conn._poll_ue4ss(snap)
+    assert conn.mode == "searching"
+
+
+def test_poll_keeps_ue4ss_during_seq1_hitch(tmp_path: Path):
+    """age 2,7 s = hitch DriverAid; no soltar como si el juego hubiera cerrado."""
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=1 speed_ms=22.0 handle_notch=6 dist_limit_cm=249500 "
+        "next_limit_ms=24.6 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    hitch = time.time() - 2.7
+    import os
+    os.utime(getdata, (hitch, hitch))
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    from tsw6.telemetry.tsw_ue4ss_reader import read_probe_file
+    snap = read_probe_file(getdata)
+    assert snap is not None
+    with patch.object(conn, "_kick_planning_refresh"):
+        conn._poll_ue4ss(snap)
+    assert conn.mode == "ue4ss"
+    assert 2.7 < UE4SS_LOST_S
+
+
+def test_station_odom_skips_when_probe_age_stale():
+    conn = TswTelemetrySource()
+    conn._planning_dist = {
+        "stations": [{"name": "X", "distance_m": 2000.0}],
+    }
+    conn._station_odom_last_t = time.monotonic() - 1.0
+    parsed: dict[str, Any] = {
+        "speed_mph": 50.0,
+        "telemetry_age_ms": 8000.0,
+        "probe_motion_frozen": False,
+    }
+    conn._overlay_planning_distances(parsed)
+    assert parsed["stations"][0]["distance_m"] == 2000.0
 
 
 def test_get_telemetry_from_ue4ss_poll(tmp_path: Path):
@@ -173,9 +227,8 @@ def test_ue4ss_polls_driver_aid_when_gradient_missing(tmp_path: Path):
     with patch.object(conn, "_kick_planning_refresh") as mock_kick:
         telem = conn.get_telemetry()
     mock_kick.assert_called_once()
-    assert telem["gradient_pct"] == 0.8
-    assert telem["next_limit_mph"] == 20.0
-    assert telem["distance_next_m"] == 150.0
+    assert telem["gradient_pct"] == 0.0
+    assert "next_limit_mph" not in telem
 
 
 def test_ue4ss_planning_on_slow_tick_with_probe_gradient(tmp_path: Path):
@@ -198,7 +251,7 @@ def test_ue4ss_planning_on_slow_tick_with_probe_gradient(tmp_path: Path):
     with patch.object(conn, "_kick_planning_refresh"):
         telem = conn.get_telemetry()
     assert telem["gradient_pct"] == 1.2  # probe wins
-    assert telem["next_limit_mph"] == 25.0
+    assert "next_limit_mph" not in telem
     assert telem["stations"][0]["name"] == "Test"
 
 
@@ -402,6 +455,25 @@ def test_probe_no_double_count_when_seq_advances():
     assert abs(parsed["distance_next_m"] - 975.0) < 0.1
 
 
+def test_probe_flat_same_odo_does_not_use_hud_speed():
+    """ESC: seq avanza, cm probe fijo, odo igual → no restar HUD×dt."""
+    conn = TswTelemetrySource()
+    planning = {
+        "distance_next_m": 2495.8,
+        "speed_limits_ahead": [{"limit_mph": 55.0, "distance_m": 2495.8}],
+    }
+    conn._apply_probe_planning(
+        {"speed_mph": 56.0, "odo_m": 100.0, "speed_ms": 25.0},
+        planning,
+        probe_seq=10,
+    )
+    conn._planning_dist_last_t = time.monotonic() - 1.0
+    parsed: dict[str, Any] = {"speed_mph": 56.0, "odo_m": 100.0, "speed_ms": 25.0}
+    conn._apply_probe_planning(parsed, planning, probe_seq=11)
+    assert parsed["distance_next_m"] == 2495.8
+    assert parsed.get("probe_stale") is not True
+
+
 def test_probe_flat_limit_uses_python_odometry():
     """C.3a: seq avanza, cartel cm fijo, tren en marcha → dist baja (no 2495 fijo)."""
     conn = TswTelemetrySource()
@@ -580,3 +652,47 @@ def test_speed_updates_each_probe_read(tmp_path: Path):
     assert telem_a["speed_mph"] < telem_b["speed_mph"]
     assert abs(telem_a["speed_mph"] - 22.37) < 0.5
     assert abs(telem_b["speed_mph"] - 33.55) < 0.5
+
+
+def test_merge_planning_does_not_overwrite_probe_doors():
+    """HTTP planning no pisa doors_telem del GetData."""
+    conn = TswTelemetrySource()
+    parsed = {"doors_telem": True, "gradient_pct": 0.0}
+    planning = {
+        "doors_telem": False,
+        "doors_open": False,
+        "doors_dmi": False,
+        "service_name": "x",
+    }
+    conn._merge_planning(parsed, planning)
+    assert parsed["doors_telem"] is True
+
+
+def test_merge_planning_skips_http_limits_when_probe_has_them():
+    conn = TswTelemetrySource()
+    parsed = {"gradient_pct": 0.0}
+    planning = {
+        "next_limit_mph": 20.0,
+        "distance_next_m": 100.0,
+        "next_limit_2_mph": 20.0,
+        "distance_next_2_m": 110.0,
+        "service_name": "x",
+    }
+    conn._merge_planning(parsed, planning, skip_limit_keys=True)
+    assert "next_limit_mph" not in parsed
+    assert "next_limit_2_mph" not in parsed
+
+
+def test_ue4ss_poll_keeps_probe_doors_open(tmp_path: Path):
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text(
+        "seq=9 speed_ms=0.0 power=0 handle_notch=4 doors_telem=1 vehicle=Class323\n",
+        encoding="utf-8",
+    )
+    conn = TswTelemetrySource()
+    conn.mode = "ue4ss"
+    conn._ue4ss_path = getdata
+    conn._planning_cache = {"doors_telem": False, "doors_dmi": False}
+    with patch.object(conn, "_kick_planning_refresh"):
+        telem = conn.get_telemetry()
+    assert telem.get("doors_telem") is True

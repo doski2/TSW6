@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 from tsw6.telemetry.tsw_command_bus import (
     clamp_brake_value,
+    combined_axis_to_notch,
+    combined_notch_to_axis,
     combined_notch_to_value,
     dispatch_brake,
     dispatch_combined_notch,
@@ -39,6 +41,18 @@ class TestClampAndNotch(unittest.TestCase):
         self.assertEqual(combined_notch_to_value(4), 0.5)
         self.assertEqual(combined_notch_to_value(8), 1.0)
 
+    def test_class323_input_detents(self):
+        self.assertEqual(combined_notch_to_axis(0), -1.0)
+        self.assertEqual(combined_notch_to_axis(1), -0.6)
+        self.assertEqual(combined_notch_to_axis(2), -0.4)
+        self.assertEqual(combined_notch_to_axis(3), -0.2)
+        self.assertEqual(combined_notch_to_axis(4), 0.0)
+        self.assertEqual(combined_notch_to_axis(5), 0.25)
+        self.assertEqual(combined_notch_to_axis(8), 1.0)
+        self.assertEqual(combined_axis_to_notch(-0.6), 1)
+        self.assertEqual(combined_axis_to_notch(-0.4), 2)
+        self.assertEqual(combined_axis_to_notch(0.75), 7)
+
     def test_neutral(self):
         self.assertEqual(neutral_combined_value(), 0.5)
 
@@ -54,7 +68,7 @@ class TestDispatchBrake(unittest.TestCase):
     def setUp(self):
         self.client = MagicMock()
         self.client.set_input_value.return_value = {
-            "ok": True, "path": "PowerBrakeHandle", "value": -0.5,
+            "ok": True, "path": "PowerBrakeHandle", "value": -0.4,
         }
         self.client.set_value.return_value = {"ok": True, "path": "PowerBrakeHandle", "value": 0.25}
         self.client.get_input_value.return_value = None
@@ -65,7 +79,7 @@ class TestDispatchBrake(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["path"], "PowerBrakeHandle")
         self.client.set_input_value.assert_called_once_with(
-            "PowerBrakeHandle", -0.5, timeout=None)
+            "PowerBrakeHandle", -0.4, timeout=None)
         self.client.set_value.assert_not_called()
 
     def test_dispatch_combined_brake_falls_back_to_value(self):
@@ -91,7 +105,7 @@ class TestDispatchBrake(unittest.TestCase):
         result = dispatch_combined_notch(self.client, 2)  # freno B2 ≈ 0.25
         self.assertTrue(result["ok"])
         self.client.set_input_value.assert_called_once_with(
-            "PowerBrakeHandle", -0.5, timeout=None)
+            "PowerBrakeHandle", -0.4, timeout=None)
 
     def test_dispatch_clamps_high_value(self):
         dispatch_brake(self.client, "AutomaticBrake", 9.0)

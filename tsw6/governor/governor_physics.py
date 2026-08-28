@@ -17,7 +17,9 @@ from typing import Optional
 from tsw6.braking.v2.physics import (
     BrakePhysicsContext,
     DEFAULT_BRAKE_FILL_S,
+    G_MSS,
     braking_distance_mph,
+    effective_decel_ms2,
     should_brake_for_target,
 )
 from tsw6.learning.online_learner import OnlineLearner
@@ -216,7 +218,7 @@ class TrainPhysics:
     def g_force(self) -> Optional[float]:
         """Fuerza g (aceleración / 9.81)."""
         a = self.acceleration_ms2
-        return a / 9.81 if a is not None else None
+        return a / G_MSS if a is not None else None
 
     # ── Física de frenado ────────────────────────────────────────────────────
 
@@ -226,10 +228,9 @@ class TrainPhysics:
         Devuelve el valor en m/s² (siempre >= coast_decel_ms2)."""
         if decel is None:
             decel = self.eff_max_decel
-        if gradient_pct is not None:
-            g_comp = 9.81 * gradient_pct / 100.0
-            return max(decel + g_comp, self.coast_decel_ms2)
-        return decel
+        if gradient_pct is None:
+            return decel
+        return effective_decel_ms2(decel, gradient_pct, self.coast_decel_ms2)
 
     def is_critical_gradient(self, gradient_pct: Optional[float] = None) -> bool:
         """True si la deceleración efectiva en esta pendiente es críticamente baja.
