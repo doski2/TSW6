@@ -6,7 +6,7 @@ La API HTTP de TSW no es push: cada lectura es una petición. Este módulo:
   1. Intenta suscripción batched (1 GET /subscription por ciclo).
   2. Si falla, hace polling secuencial mínimo (speed + mando + freno + acel).
 
-Para decisiones en tiempo real el objetivo es mod UE4SS (ver docs/ARQUITECTURA.md).
+Para decisiones en tiempo real el objetivo es mod UE4SS (ver docs/v1/ARQUITECTURA.md).
 La API TSW directa sirve para diagnóstico y escritura de frenos.
 """
 

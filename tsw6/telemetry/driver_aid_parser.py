@@ -333,6 +333,29 @@ def station_base_name(name: str) -> str:
     return str(name or "").split(",")[0].strip().lower()
 
 
+# Andenes más cercanos se tratan como ya pasados si hay otra parada más lejos.
+SCHEDULED_STOP_MIN_AHEAD_M = 100.0
+
+
+def station_distance_m(
+    stations: Optional[list],
+    name: Optional[str],
+) -> Optional[float]:
+    """Distancia HUD al andén cuyo nombre base coincide con ``name``."""
+    if not stations or not name:
+        return None
+    tbase = station_base_name(name)
+    for st in stations:
+        st_name = st.get("name")
+        if not st_name:
+            continue
+        if st_name == name or station_base_name(str(st_name)) == tbase:
+            d = st.get("distance_m")
+            if d is not None:
+                return float(d)
+    return None
+
+
 def load_service_timetable(path: Optional[Path] = None) -> dict[str, list[str]]:
     """Carga ``timetable.json`` — paradas programadas por headcode."""
     path = path or _TIMETABLE_PATH
@@ -461,7 +484,7 @@ def resolve_display_next_stop(
     *,
     exclude_bases: Optional[set[str]] = None,
     hud_stop_names: Optional[list[str]] = None,
-    min_distance_m: float = 100.0,
+    min_distance_m: float = SCHEDULED_STOP_MIN_AHEAD_M,
 ) -> Optional[dict[str, Any]]:
     """
     Próxima parada para GUI/P1, excluyendo andenes ya servidos.
@@ -500,7 +523,7 @@ def resolve_display_next_stop(
 def select_next_scheduled_stop(
     stations: Optional[list],
     *,
-    min_distance_m: float = 100.0,
+    min_distance_m: float = SCHEDULED_STOP_MIN_AHEAD_M,
     exclude_bases: Optional[set[str]] = None,
 ) -> Optional[dict[str, Any]]:
     """

@@ -19,6 +19,7 @@ from tsw6.braking.v2.physics import (
     MPH_TO_MS,
     STATION_COAST_CUTOFF_M,
     apply_zone_margin_m,
+    brake_ctx_for_decel,
     brake_reaction_margin_m,
     braking_distance_m,
     is_in_apply_zone,
@@ -476,7 +477,15 @@ def plan_station_service_brake(
     for i, phase in enumerate(UK_SERVICE_PHASES):
         decel, using_learned = resolve_phase_decel(
             phase, speed_mph, gradient_pct, base_decel, predict_decel)
-        dist_needed = braking_distance_m(speed_ms, target_ms, decel)
+        dist_needed = braking_distance_m(
+            speed_ms,
+            target_ms,
+            decel,
+            ctx=brake_ctx_for_decel(
+                gradient_pct=gradient_pct,
+                using_learned=using_learned,
+            ),
+        )
         apply_at = dist_needed + reaction
         dist_start = station_distance_m - apply_at + coast_allowance_m
         zone = apply_zone_margin_m(speed_ms, apply_at)

@@ -104,7 +104,74 @@ def test_plan_releases_when_at_limit_target():
     assert cmd.kind != "APPLY" or cmd.target_notch != 1
 
 
-def test_station_plan_releases_when_stopped():
+def test_station_plan_keeps_profile_notch_while_fast():
+    """Andén a ~50 mph: APPLY usa B2 del plan, no B3 por target_speed=0 + regla +8."""
+    plan = _plan(
+        target_kind="STATION",
+        target_speed_mph=0.0,
+        distance_m=416.0,
+        apply_now=True,
+        dist_start=15.0,
+        notch="B2",
+        handle_notch=2,
+    )
+    cmd, _ = plan_to_brake_command(
+        plan,
+        speed_mph=54.0,
+        throttle_notch=0,
+        effective_limit=55.0,
+        current_notch=4,
+    )
+    assert cmd is not None
+    assert cmd.kind == "APPLY"
+    assert cmd.phase == "B2"
+    assert cmd.target_notch == 2
+
+
+def test_speed_limit_still_escalates_when_well_over():
+    plan = _plan(
+        target_kind="SPEED_LIMIT",
+        target_speed_mph=55.0,
+        distance_m=50.0,
+        apply_now=True,
+        dist_start=-20.0,
+        notch="B1",
+        handle_notch=3,
+    )
+    cmd, _ = plan_to_brake_command(
+        plan,
+        speed_mph=70.0,
+        throttle_notch=0,
+        effective_limit=55.0,
+        current_notch=4,
+    )
+    assert cmd is not None
+    assert cmd.kind == "APPLY"
+    assert cmd.target_notch == 1
+
+
+def test_speed_limit_no_b3_when_next_sign_far():
+    plan = _plan(
+        target_kind="SPEED_LIMIT",
+        target_speed_mph=50.0,
+        distance_m=3998.0,
+        apply_now=False,
+        dist_start=3700.0,
+        notch="B1",
+        handle_notch=3,
+    )
+    cmd, _ = plan_to_brake_command(
+        plan,
+        speed_mph=59.5,
+        throttle_notch=0,
+        effective_limit=60.0,
+        current_notch=4,
+    )
+    assert cmd is None
+
+
+def test_station_plan_holds_b1_when_stopped():
+    """Casi parado: B1 para puertas, no RELEASE a neutro."""
     plan = _plan(
         target_kind="STATION",
         target_speed_mph=0.0,
@@ -122,5 +189,6 @@ def test_station_plan_releases_when_stopped():
         current_notch=1,
     )
     assert cmd is not None
-    assert cmd.kind == "RELEASE"
-    assert cmd.target_notch == 4
+    assert cmd.kind == "APPLY"
+    assert cmd.phase == "B1"
+    assert cmd.target_notch == 3

@@ -54,6 +54,17 @@ class TestUe4ssReader(unittest.TestCase):
         data = parse_probe_line(line)
         self.assertAlmostEqual(data["gradient_pct"], 1.25)
 
+    def test_parse_adhesion_fields_reserved(self) -> None:
+        line = (
+            "seq=9 speed_ms=5 is_slipping=1 traction_locked=0 vehicle=Class323"
+        )
+        data = parse_probe_line(line)
+        self.assertTrue(data["is_slipping"])
+        self.assertFalse(data["traction_locked"])
+        snap = ProbeSnapshot.from_dict(data)
+        self.assertTrue(snap.is_slipping)
+        self.assertFalse(snap.traction_locked)
+
     def test_parse_probe_planning_fields(self) -> None:
         line = (
             "seq=5 speed_ms=10 dist_limit_cm=19993.8 next_limit_ms=8.94 "

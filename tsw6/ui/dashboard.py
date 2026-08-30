@@ -192,8 +192,8 @@ def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
     _min_m = getattr(gov, 'target_stop_min_m', None)
     _locked = getattr(gov, '_locked_stop_name', None)
     if _min_m is not None and _min_m <= 0:
-        line_stop_mode = (f"  {Fore.MAGENTA}{Style.BRIGHT}⭑ MODO SIN PARADAS – "
-                          f"pulse S para configurar{Style.RESET_ALL}\033[K")
+        line_stop_mode = (f"  {Fore.MAGENTA}{Style.BRIGHT}⭑ MODO SIN PARADAS"
+                          f"{Style.RESET_ALL}\033[K")
     elif _locked is not None:
         line_stop_mode = (f"  {Fore.GREEN}{Style.BRIGHT}◎ PARADA MANUAL: {_locked}{Style.RESET_ALL}\033[K")
     elif _min_m is not None:
@@ -266,7 +266,7 @@ def render_dashboard(gov: Any, telem: dict, conn: TswTelemetrySource,
         line_state = f"  {Fore.YELLOW}{Style.BRIGHT}[ AUTOPILOT EN PAUSA – pulse P para reanudar ]{Style.RESET_ALL}"
     else:
         line_state = (f"  {Fore.GREEN}[ AUTOPILOT ACTIVO ]{Style.RESET_ALL}"
-                      f"   P=pausar  Q=salir  +/-=target  R=neutro  S=parada")
+                      f"   P=pausar  Q=salir")
 
     if _first_render:
         os.system("cls")
@@ -330,6 +330,8 @@ class KeyListener(threading.Thread):
                     msvcrt.getwch()    # leer segundo byte de teclas especiales
                     continue
                 key = ch.upper()
+                if key not in ("Q", "P"):
+                    continue
                 with self._lock:
                     self._queue.append(key)
             else:

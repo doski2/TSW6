@@ -276,7 +276,7 @@
   <text x="170" y="1352" font-size="10" fill="#276749">&#9632; Verde = CICLO (4-5): tick y TrainState</text>
   <text x="170" y="1370" font-size="10" fill="#c05621">&#9632; Naranja paso 6: P1 (rojo) o HOLD sin plan (gris punteado)</text>
   <text x="170" y="1388" font-size="10" fill="#c53030">&#9632; Rojo paso 7-11: ramas paralelas  -  policy elige 1  -  BrakeCommand</text>
-  <text x="170" y="1406" font-size="10" fill="#4a5568">&#9632; Caja punteada = pendiente (señal DANGER)  |  Detalle: docs/ESTADO.md</text>
+  <text x="170" y="1406" font-size="10" fill="#4a5568">&#9632; Caja punteada = pendiente (señal DANGER)  |  Detalle: docs/v1/ESTADO.md</text>
   <text x="170" y="1430" font-size="9" fill="#a0aec0">esqueleto_flujo_capas.svg  |  docs/FLUJO_FRENOS.md</text>
   <text x="170" y="1446" font-size="9" fill="#a0aec0">TSW6  -  actualizado 2026-08-25</text>
 </svg>

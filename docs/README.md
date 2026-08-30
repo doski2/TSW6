@@ -1,67 +1,85 @@
 # Documentación TSW6 Autopilot
 
-Índice único del proyecto. Todo lo demás está aquí o en `archive/`.
+```
+docs/
+  README.md           ← este índice
+  CANAL_CONTROL.md    ← contrato IPC / GetData (v2, compartido)
+  NOTAS.txt           ← personal
+  assets/             ← diagramas .svg / .dot
+  v1/                 ← runtime actual (autopilot_core, P1, probe)
+  v2/                 ← plan producto + orden de trabajo
+  reference/          ← catálogos HTTP API
+  archive/docs/       ← histórico (no editar)
+```
 
-## Empezar
+## Por dónde empezar
 
-| Documento | Para quién | Contenido |
-| --- | --- | --- |
-| [GUIA.md](GUIA.md) | Uso diario | `.bat`, calibración, autopilot, HUD horarios |
-| `validar_freno.bat` | Validación freno aire | Sesión guiada → `logs/brake_physics/*.csv` |
-| [HUD_TIMETABLE.md](HUD_TIMETABLE.md) | Servicios UK / paradas | `tsw_hud.db`, extractor, planning comercial |
-| [ARQUITECTURA.md](ARQUITECTURA.md) | Desarrollo | API TSW, módulos, UE4SS, latencia |
-| [DRIVERAID_API.md](DRIVERAID_API.md) | HTTPAPI / DriverAid | Catálogo nodos, estaciones, geo |
-| [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) | HTTPAPI completa | Índice dumps + prioridad física |
-| [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | Física tren | Masa, aire, esfuerzos, HUD |
-| [DRIVERINPUT_API.md](DRIVERINPUT_API.md) | Mandos cabina | IPC + peldaños 323; perfiles Liah (`shared-profiles`) |
-| [DASTSC_PARITY.md](DASTSC_PARITY.md) | Frenado P1 | Paridad con Dastsc, B1–B3, pendientes |
-| [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | Estudio cruzado | Tabla paso a paso TSW6 SVG ↔ Nexus V4 |
-| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | Runtime frenos | Prioridad P1, Graphviz `.dot`, ciclo 1→14 |
-| [BRAKE_V2.md](BRAKE_V2.md) | Frenado activo | Arquitectura P1 v2, ventana APPLY física, prioridad |
-| [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 / diesel NA | Layout multi-mando, fases 4–6 |
-| [CANAL_CONTROL.md](CANAL_CONTROL.md) | IPC mandos + **plan debate rendimiento/v2 canal** |
-| [ESTADO.md](ESTADO.md) | Tablero visual (Mermaid) qué está hecho y qué sigue |
-| [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | UE4SS / probe / foco de trabajo |
-| [NOTAS.txt](NOTAS.txt) | Personal | Recordatorios de pruebas |
+| Objetivo | Documento |
+| --- | --- |
+| **Qué hacer / en qué orden** | [v2/PLAN_V2.md](v2/PLAN_V2.md) |
+| **Usar el autopilot hoy** | [v1/GUIA.md](v1/GUIA.md) |
+| **Entender el código actual** | [v1/ARQUITECTURA.md](v1/ARQUITECTURA.md) · [v1/ESTADO.md](v1/ESTADO.md) |
+| **Probe Lua / log** | [v1/PENDIENTE_DYNAMICHUD.md](v1/PENDIENTE_DYNAMICHUD.md) |
+| **Contrato GetData / IPC** | [CANAL_CONTROL.md](CANAL_CONTROL.md) |
+| **Laboratorio Lua (HTTP ↔ UE)** | [v2/PLAN_API_EXPLORER.md](v2/PLAN_API_EXPLORER.md) |
+| **API HTTP del juego** | [reference/](reference) |
+
+**Regla:** backlog solo en [v2/PLAN_V2.md](v2/PLAN_V2.md). `v1/` y `reference/` son referencia, no listas de tareas.
+
+**Enlaces antiguos:** si abres `docs/GUIA.md`, `docs/ESTADO.md`, etc. en la raíz, verás un stub «Movido» que apunta a `v1/` o `reference/`.
+
+---
+
+## v1 — runtime actual
+
+Índice completo: [v1/README.md](v1/README.md).
+
+| Documento | Contenido |
+| --- | --- |
+| [GUIA.md](v1/GUIA.md) | `.bat`, calibración, autopilot |
+| [ARQUITECTURA.md](v1/ARQUITECTURA.md) | Módulos, UE4SS |
+| [ESTADO.md](v1/ESTADO.md) | Árbol 1–14, tablero visual |
+| [BRAKE_V2.md](v1/BRAKE_V2.md) | P1 frenado |
+| [FLUJO_FRENOS.md](v1/FLUJO_FRENOS.md) | Ciclo coordinator |
+| [PENDIENTE_DYNAMICHUD.md](v1/PENDIENTE_DYNAMICHUD.md) | Probe, bitácora |
+
+## v2 — producto
+
+| Documento | Contenido |
+| --- | --- |
+| [v2/PLAN_V2.md](v2/PLAN_V2.md) | Plan, fases, orden, deltas |
+| [assets/esqueleto_v2.svg](assets/esqueleto_v2.svg) | Árbol producto v2 |
+
+## reference — HTTP API
+
+Índice: [reference/README.md](reference/README.md).
 
 ## Código activo (mapa rápido)
 
 | Módulo | Rol |
 | --- | --- |
-| `tsw_telemetry_source.py` | Telemetría UE4SS + HTTPAPI; filtro estaciones HUD |
-| `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs`, merge paradas |
-| `tsw_ue4ss_reader.py` | Parser `GetData.txt` probe |
-| `tsw_ipc_bus.py` | Mandos vía `SendCommand.txt` (UE4SS) |
-| `tsw_command_bus.py` | Mandos HTTPAPI (fallback) |
-| `driver_aid_parser.py` | `DriverAid` → planning, estaciones, límites |
-| `autopilot_core.py` | Bucle de control ~20 Hz |
-| `autopilot_gui.py` | GUI tkinter (Estado / Planning / Depuración) |
-| `speed_decider.py` | Decisiones velocidad/freno + FSM estación |
-| `braking/v2/` | **Frenado P1** — policy, station_plan, limit_brake, command, coordinator |
-| `governor_station.py` | FSM paradas (Lua/DMI abrir/cerrar) |
-| `handle_controller.py` | Ejecución mandos |
-| `distance_format.py` | Distancias uk_imperial / metric en GUI |
-| `learn_monitor.py` | Calibración guiada |
-| `tsw_autopilot.py` | Entrada CLI/GUI (`--console`) |
+| `mods/TelemetryProbeMod/` | Probe Lua ~20 Hz |
+| `mods/ApiExplorerMod/` | Laboratorio Lua (HTTP ↔ UE) |
+| `tsw6/braking/v2/` | P1 — coordinator, policy, physics |
+| `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz hoy |
+| `tsw6/telemetry/` | IPC, parser GetData, HTTP planning |
 
 ## Desarrollo
 
-| Recurso | Uso |
-| --- | --- |
-| `requirements-dev.txt` | `pytest` y dependencias de test |
-| `.venv/` | Entorno virtual recomendado (pyright + tests) |
-| `pyrightconfig.json` | Analizador de tipos (basedpyright) |
-
 ```bat
+python -m pytest tests/
 ```
 
-## Archivos históricos
+| Recurso | Uso |
+| --- | --- |
+| `requirements-dev.txt` | pytest, dev deps |
+| `.venv/` | Entorno recomendado |
+
+## Histórico
 
 | Ruta | Qué es |
 | --- | --- |
-| [archive/docs/](../archive/docs/) | Documentos sustituidos por esta carpeta |
-| [archive/railbridge/](../archive/railbridge/) | Código companion RailBridge |
+| [archive/docs/](../archive/docs/) | Docs sustituidos |
+| [archive/railbridge/](../archive/railbridge/) | RailBridge (no usar) |
 
-## Comentar / decidir
-
-Anotaciones de sesión en juego → sección final de [ARQUITECTURA.md](ARQUITECTURA.md).
+Decisiones de producto → [v2/PLAN_V2.md](v2/PLAN_V2.md). Notas de sesión → [v1/ARQUITECTURA.md](v1/ARQUITECTURA.md).

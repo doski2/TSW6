@@ -114,29 +114,6 @@ class AutopilotApp:
         row1.pack(fill=tk.X, padx=6, pady=4)
         self.btn_pause = ttk.Button(row1, text="Pausar", command=self._toggle_pause)
         self.btn_pause.pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1, text="Neutro (R)", command=self.engine.reset_neutral).pack(
-            side=tk.LEFT, padx=2)
-        ttk.Button(row1, text="Sync handle (N)", command=self.engine.force_neutral).pack(
-            side=tk.LEFT, padx=2)
-        ttk.Button(row1, text="Parada (S)", command=self._set_stop).pack(
-            side=tk.LEFT, padx=2)
-        ttk.Button(row1, text="Sin paradas", command=self.engine.clear_stop).pack(
-            side=tk.LEFT, padx=2)
-
-        row2 = ttk.Frame(ctrl)
-        row2.pack(fill=tk.X, padx=6, pady=(0, 6))
-        ttk.Label(row2, text="Objetivo mph:").pack(side=tk.LEFT)
-        self.var_target = tk.StringVar(
-            value=str(int(self.engine.config.target_mph)))
-        self.ent_target = ttk.Entry(row2, textvariable=self.var_target, width=6)
-        self.ent_target.pack(side=tk.LEFT, padx=4)
-        ttk.Button(row2, text="Aplicar", command=self._apply_target).pack(
-            side=tk.LEFT, padx=2)
-        ttk.Button(row2, text="−5", width=4,
-                   command=lambda: self._bump_target(-5)).pack(side=tk.LEFT, padx=1)
-        ttk.Button(row2, text="+5", width=4,
-                   command=lambda: self._bump_target(5)).pack(side=tk.LEFT, padx=1)
-        ttk.Label(row2, text="(0 = seguir límite de vía)").pack(side=tk.LEFT, padx=8)
 
         row3 = ttk.Frame(ctrl)
         row3.pack(fill=tk.X, padx=6, pady=(0, 6))
@@ -354,32 +331,6 @@ class AutopilotApp:
     def _toggle_pause(self) -> None:
         paused = self.engine.toggle_pause()
         self.btn_pause.configure(text="Reanudar" if paused else "Pausar")
-
-    def _apply_target(self) -> None:
-        try:
-            val = float(self.var_target.get().strip())
-            self.engine.set_target_mph(val)
-        except ValueError:
-            messagebox.showwarning("Objetivo", "Introduce un número válido en mph.")
-
-    def _bump_target(self, delta: int) -> None:
-        self.engine.adjust_target(delta)
-        self.var_target.set(str(int(self.engine.decider.target_mph)))
-
-    def _set_stop(self) -> None:
-        raw = simpledialog.askstring(
-            "Parada manual",
-            "Distancia a próxima parada en millas\n(Enter vacío = modo automático):")
-        if raw is None:
-            return
-        raw = raw.strip()
-        if raw == "":
-            self.engine.clear_stop()
-            return
-        try:
-            self.engine.set_stop_miles(float(raw))
-        except ValueError:
-            messagebox.showwarning("Parada", "Introduce un número válido.")
 
     def _control_loop(self) -> None:
         while self._running:

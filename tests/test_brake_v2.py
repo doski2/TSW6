@@ -306,6 +306,19 @@ class TestPriorityV2:
         )
         assert picked is limit
 
+    def test_inverted_hud_drops_station_until_55(self):
+        """Four Oaks HUD @442 m, 55 @927 m: no STATION a 0."""
+        limit = self._r("SPEED_LIMIT", 927.0, 80.0, target_mph=55.0)
+        station = self._r("STATION", 442.0, -50.0)
+        picked = select_urgent_target(
+            [limit, station],
+            speed_mph=59.0,
+            limit_mph=55.0,
+            limit_dist_m=927.0,
+            station_dist_m=442.0,
+        )
+        assert picked is limit
+
     def test_station_wins_when_signal_slightly_after(self):
         station = self._r("STATION", 300.0, 80.0)
         signal = self._r("SIGNAL", 340.0, 60.0)
@@ -347,24 +360,43 @@ class TestStationBrakeV2:
         )
         assert target.to_brake_command(throttle_notch=3, current_notch=6) is None
 
-    def test_speed_limit_coasts_before_apply_window(self):
+    def test_speed_limit_coasts_near_apply_window(self):
+        """Pre-coast ~8 s antes del APPLY; no millas enteras."""
         target = BrakeTargetResult(
             target_kind="SPEED_LIMIT",
-            distance_m=1120.0,
-            target_speed_mph=55.0,
+            distance_m=450.0,
+            target_speed_mph=50.0,
             handle_notch=3,
             phase="B1",
-            dist_start=1058.0,
+            dist_start=120.0,
             apply_now=False,
         )
         cmd = target.to_brake_command(
-            throttle_notch=2, current_notch=6, speed_mph=55.3,
+            throttle_notch=2, current_notch=6, speed_mph=60.0,
         )
         assert cmd is not None
         assert cmd.kind == "COAST_THROTTLE"
         assert cmd.target_notch == 4
 
-    def test_speed_limit_overspeed_applies_outside_window(self):
+    def test_speed_limit_aware_when_sign_miles_away(self):
+        """60→50 @ ~4 km: planifica, no COAST ni B3 (log 2026-08-28)."""
+        target = BrakeTargetResult(
+            target_kind="SPEED_LIMIT",
+            distance_m=3998.0,
+            target_speed_mph=50.0,
+            handle_notch=3,
+            phase="B1",
+            dist_start=3700.0,
+            apply_now=False,
+        )
+        assert target.to_brake_command(
+            throttle_notch=2, current_notch=6, speed_mph=59.5,
+        ) is None
+        assert target.to_brake_command(
+            throttle_notch=0, current_notch=4, speed_mph=59.5,
+        ) is None
+
+    def test_speed_limit_no_apply_overspeed_outside_window(self):
         target = BrakeTargetResult(
             target_kind="SPEED_LIMIT",
             distance_m=700.0,
@@ -374,12 +406,9 @@ class TestStationBrakeV2:
             dist_start=580.0,
             apply_now=False,
         )
-        cmd = target.to_brake_command(
+        assert target.to_brake_command(
             throttle_notch=0, current_notch=4, speed_mph=56.3,
-        )
-        assert cmd is not None
-        assert cmd.kind == "APPLY"
-        assert cmd.target_notch == 3
+        ) is None
 
     def test_speed_limit_releases_when_in_band(self):
         target = BrakeTargetResult(
@@ -397,3 +426,50 @@ class TestStationBrakeV2:
         assert cmd is not None
         assert cmd.kind == "RELEASE"
         assert cmd.target_notch == 4
+
+
+class TestBrakeCurveGradientOnce:
+    """g entra solo en braking_distance, no también en decel_for_notch."""
+
+    def test_downhill_s_matches_single_g(self):
+        from tsw6.braking.v2.physics import (
+            DEFAULT_MAX_BRAKE_DECEL,
+            MPH_TO_MS,
+            brake_ctx_for_decel,
+            braking_distance_m,
+            decel_for_notch,
+            gravity_acceleration_ms2,
+        )
+
+        v = 60.0 * MPH_TO_MS
+        u = 50.0 * MPH_TO_MS
+        a_flat = decel_for_notch(0.33, DEFAULT_MAX_BRAKE_DECEL, -1.0)
+        g_pct = -1.0
+        s = braking_distance_m(
+            v, u, a_flat,
+            ctx=brake_ctx_for_decel(gradient_pct=g_pct, using_learned=False),
+        )
+        a_net = a_flat + gravity_acceleration_ms2(g_pct)
+        s_once = (v * v - u * u) / (2.0 * a_net)
+        assert abs(s - s_once) < 1e-6
+        s_double = (v * v - u * u) / (
+            2.0 * (a_flat + 2.0 * gravity_acceleration_ms2(g_pct))
+        )
+        assert abs(s - s_double) > 50.0
+
+    def test_learned_decel_does_not_add_g_again(self):
+        from tsw6.braking.v2.physics import (
+            MPH_TO_MS,
+            brake_ctx_for_decel,
+            braking_distance_m,
+        )
+
+        v = 60.0 * MPH_TO_MS
+        u = 50.0 * MPH_TO_MS
+        a_learned = 0.40
+        s = braking_distance_m(
+            v, u, a_learned,
+            ctx=brake_ctx_for_decel(gradient_pct=-2.0, using_learned=True),
+        )
+        s_flat = (v * v - u * u) / (2.0 * a_learned)
+        assert abs(s - s_flat) < 1e-6

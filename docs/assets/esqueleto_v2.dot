@@ -1,0 +1,96 @@
+digraph TSW6_V2 {
+  rankdir=TB;
+  splines=ortho;
+  nodesep=0.22;
+  ranksep=0.38;
+  fontname="Segoe UI";
+  node [shape=box, style="rounded,filled", fontname="Segoe UI", fontsize=8];
+  edge [fontname="Segoe UI", fontsize=7];
+
+  subgraph cluster_once {
+    label="UNA VEZ  (vehicle= / arranque / cambio tren)";
+    style="rounded,dashed";
+    color="#d69e2e";
+    veh [label="vehicle= en GetData", fillcolor="#fefcbf"];
+    pkg [label="Paquete G-B\n(data/vehicles/<id>.json)\nlayout + nombres UE + mapa muesca\nsemilla fill_s / a", fillcolor="#fefcbf"];
+    pkg_today [label="Hoy: detect_control_layout\n+ freight_na schema", fillcolor="#fefcbf", style="rounded,dashed,filled"];
+    learn [label="Learner EMA\nlogs/profiles/<veh>.json", fillcolor="#faf5ff"];
+    hud [label="tsw_hud.db (G-A pasajeros)\nservicio + stop_names + car_stop_signs", fillcolor="#fefcbf"];
+    veh -> pkg;
+    veh -> pkg_today [style=dashed];
+    pkg -> learn [style=dashed, label="a viva"];
+  }
+
+  subgraph cluster_probe {
+    label="PROBE Lua  ~20 Hz  (solo I/O — §4.1)";
+    style="rounded";
+    color="#2c5282";
+    lua [label="TelemetryProbeMod\nReceiveTick + pcall", fillcolor="#2b6cb0", fontcolor="#fff"];
+    gd [label="GetData.txt\nvel power muescas train_brake\ngradient dist_limit next_limit\nodo doors brake_cyl\nsignal_red* dist_signal*", fillcolor="#bee3f8"];
+    sc [label="SendCommand.txt + flag + ack\nPowerBrakeHandle | Throttle | Auto | Dyn", fillcolor="#bee3f8"];
+    lua -> gd;
+    sc -> lua [dir=back];
+    lua -> sc;
+  }
+
+  subgraph cluster_ipc {
+    label="IPC archivo  %TEMP%\\TSW6Bridge\\  (§4.2)";
+    style="rounded,dashed";
+    color="#4a5568";
+    ipc_note [label="Sin HTTP mandos\nTelemetryReader + AsyncCommandWriter", fillcolor="#edf2f7", shape=note];
+  }
+
+  subgraph cluster_http {
+    label="HTTP DriverAid  ~2 s  (planning — no tick P1 límites con F7)";
+    style="rounded,dashed";
+    color="#805ad5";
+    http [label="TrackData.markers → estaciones\nPlayerInfo.geo → hud_geo\nFormación → masa F-B (5 min)", fillcolor="#e9d8fd"];
+  }
+
+  subgraph cluster_tick {
+    label="AGENTE Python  ~20 Hz  (D1: agent/ — hoy autopilot_core)";
+    style="rounded";
+    color="#2b6cb0";
+    read [label="TelemetryReader\nparse GetData → ProbeSnapshot", fillcolor="#ebf8ff"];
+    state [label="TrainState\n+ planning cache (v×dt estaciones)", fillcolor="#f7fafc"];
+    ga [label="G-A Servicio\npassenger: ETA andén puertas FSM\nfreight: vía sin horario", fillcolor="#e6fffa"];
+    gb [label="G-B Layout (caché)\ncombined | freight_na", fillcolor="#e6fffa"];
+    phys [label="physics.py\ns = v²/(2a)\ngradiente probe; massFactor HTTP*", fillcolor="#c6f6d5"];
+    p1 [label="P1 coordinator\nlimit_brake | station_plan | signal*\npolicy station_waits skip_defer", fillcolor="#fff5f5"];
+    rel [label="RELEASE / APPLY\nun mando por tick", fillcolor="#fed7d7"];
+    read -> state;
+    state -> ga;
+    state -> gb;
+    ga -> phys;
+    gb -> phys [style=dashed];
+    phys -> p1;
+    p1 -> rel;
+  }
+
+  subgraph cluster_gui {
+    label="GUI / consola  (visor — §4.7)";
+    style="rounded,dashed";
+    color="#718096";
+    gui [label="AutopilotSnapshot\nvel lim acción P1* probe Hz\n--console sin tkinter", fillcolor="#edf2f7"];
+  }
+
+  subgraph cluster_out {
+    label="FUERA v2 / aplazado";
+    style="rounded,dotted";
+    color="#a0aec0";
+    defer [label="SHM · lim2 · ámbar/verde\nsidecar · OCR · pace\nHTTP límites con F7 ON", fillcolor="#f7fafc", style="rounded,dashed"];
+  }
+
+  juego [label="TSW6 UE4", fillcolor="#1a1a2e", fontcolor="#fff"];
+
+  juego -> lua;
+  gd -> read;
+  rel -> sc;
+  hud -> ga [style=dotted, constraint=false];
+  pkg -> gb [style=dotted, constraint=false];
+  pkg_today -> gb [style=dotted, constraint=false];
+  learn -> phys [style=dotted, constraint=false];
+  http -> state [style=dashed, label="~2s"];
+  p1 -> gui [style=dashed, constraint=false];
+  read -> gui [style=dashed, constraint=false];
+}

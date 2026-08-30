@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
 policy.py — Dónde frenar: cartel↔andén (cluster) y qué objetivo gana.
-
-Antes: cluster.py + priority.py.
 """
 
 from __future__ import annotations
@@ -10,10 +8,13 @@ from __future__ import annotations
 from typing import Optional
 
 from tsw6.braking.v2.command import (
+    LIMIT_OVER_ACTIVE_MPH,
     LIMIT_SCORING_MAX_OVER_MPH,
+    LIMIT_SIGN_PASSED_M,
     BrakeTargetKind,
     BrakeTargetResult,
 )
+from tsw6.braking.v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6.braking.v2.physics import (
     DEFAULT_MAX_BRAKE_DECEL,
     MPH_TO_MS,
@@ -51,9 +52,75 @@ def should_merge_limit_and_station_plans(
     station_dist_m: float,
     cluster_gap_m: float = TARGET_CLUSTER_GAP_M,
 ) -> bool:
-    if not targets_are_clustered(limit_dist_m, station_dist_m, cluster_gap_m):
+    """Cartel **antes** del andén y a ≤ cluster (no el HUD invertido)."""
+    if limit_dist_m > station_dist_m:
         return False
-    return limit_dist_m <= station_dist_m
+    return targets_are_clustered(limit_dist_m, station_dist_m, cluster_gap_m)
+
+
+def next_sign_is_reduction_beyond_station(
+    *,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    current_limit_mph: Optional[float] = None,
+) -> bool:
+    """Cartel más lejos que el andén y más bajo que el límite actual (HUD 55 vs Four Oaks)."""
+    if limit_mph is None or limit_dist_m is None or station_dist_m is None:
+        return False
+    if limit_dist_m <= LIMIT_SIGN_PASSED_M or station_dist_m <= 0:
+        return False
+    if limit_dist_m <= station_dist_m + LIMIT_SIGN_PASSED_M:
+        return False
+    if current_limit_mph is not None and limit_mph >= current_limit_mph - 0.1:
+        return False
+    return True
+
+
+def station_waits_for_approach_limit(
+    *,
+    speed_mph: float,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    current_limit_mph: Optional[float] = None,
+) -> bool:
+    """No frenar a 0 mientras un recorte de aproximación sigue vigente.
+
+    Four Oaks: 55 más lejos que el andén HUD → primero 60→55.
+    Sutton: 60 más lejos, 35 ya vigente → no esperar; es parada.
+    """
+    if next_sign_is_reduction_beyond_station(
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        current_limit_mph=current_limit_mph,
+    ):
+        return True
+    if limit_mph is None or limit_dist_m is None or station_dist_m is None:
+        return False
+    if limit_dist_m <= LIMIT_SIGN_PASSED_M or station_dist_m <= 0:
+        return False
+    return speed_mph > limit_mph + LIMIT_SCORING_MAX_OVER_MPH
+
+
+def merged_approach_overspeed(
+    *,
+    speed_mph: float,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    min_ahead_m: float = 50.0,
+    over_mph: float = LIMIT_OVER_ACTIVE_MPH,
+) -> bool:
+    """Cluster 55+andén y aún por encima del cartel (P1 / FSM, una sola regla)."""
+    if limit_mph is None or limit_dist_m is None or station_dist_m is None:
+        return False
+    if not should_merge_limit_and_station_plans(limit_dist_m, station_dist_m):
+        return False
+    if limit_dist_m <= min_ahead_m:
+        return False
+    return speed_mph > limit_mph + over_mph
 
 
 def is_unified_limit_station_stop(
@@ -91,7 +158,7 @@ def sequential_limit_stop_feasible(
         base_decel_ms2=base_decel,
         gradient_pct=gradient_pct,
     )
-    decel = decel_for_notch(0.80, base_decel, gradient_pct)
+    decel = decel_for_notch(SERVICE_DECEL_FRAC_BY_HANDLE[1], base_decel)
     stop_after_limit = braking_distance_mph(
         limit_mph,
         0.0,
@@ -177,6 +244,53 @@ def should_defer_station_brake(
     return station_dist_m > horizon + HORIZON_SLACK_M
 
 
+def station_plan_held_back(
+    *,
+    speed_mph: float,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    gradient_pct: float = 0.0,
+    base_decel: float = DEFAULT_MAX_BRAKE_DECEL,
+    current_limit_mph: Optional[float] = None,
+) -> bool:
+    """No publicar STATION: horizonte, dos fases, o 55 de aproximación aún vigente."""
+    if station_waits_for_approach_limit(
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        current_limit_mph=current_limit_mph,
+    ):
+        return True
+    skip_defer = (
+        limit_dist_m is not None
+        and station_dist_m is not None
+        and limit_dist_m > station_dist_m
+        and not next_sign_is_reduction_beyond_station(
+            limit_mph=limit_mph,
+            limit_dist_m=limit_dist_m,
+            station_dist_m=station_dist_m,
+            current_limit_mph=current_limit_mph,
+        )
+    )
+    if not skip_defer and should_defer_station_brake(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        base_decel=base_decel,
+    ):
+        return True
+    return should_delay_unified_station_plan(
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        base_decel=base_decel,
+    )
+
+
 def limit_redundant_for_station(
     *,
     speed_mph: float,
@@ -191,9 +305,7 @@ def limit_redundant_for_station(
     - Ya vas a velocidad del cartel (o menos).
     - Parada unificada: no cabe 60→55 soltar y luego parar → estación frena sola.
     """
-    if not targets_are_clustered(limit_dist_m, station_dist_m):
-        return False
-    if limit_dist_m > station_dist_m:
+    if not should_merge_limit_and_station_plans(limit_dist_m, station_dist_m):
         return False
     if speed_mph > limit_mph + LIMIT_SCORING_MAX_OVER_MPH:
         return False
@@ -254,18 +366,26 @@ def _filter_pool(
     station_dist_m: Optional[float],
     signal_dist_m: Optional[float],
     gradient_pct: float,
+    current_limit_mph: Optional[float] = None,
 ) -> list[BrakeTargetResult]:
     out = list(pool)
 
-    # Cartel antes del andén: ¿hace falta plan de límite aparte?
+    # HUD: parada más cerca que el 55 → no STATION a 0 hasta el cartel.
+    if station_waits_for_approach_limit(
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        current_limit_mph=current_limit_mph,
+    ):
+        out = [c for c in out if c.target_kind != "STATION"]
+
+    # Cartel de aproximación + andén (HUD puede invertir distancias).
     if (
         limit_mph is not None
         and limit_dist_m is not None
         and station_dist_m is not None
-        and limit_dist_m > 0
-        and station_dist_m > 0
-        and limit_dist_m <= station_dist_m
-        and targets_are_clustered(limit_dist_m, station_dist_m)
+        and should_merge_limit_and_station_plans(limit_dist_m, station_dist_m)
     ):
         actionable_station = station_plan_actionable(out, speed_mph=speed_mph)
         unified = is_unified_limit_station_stop(
@@ -284,11 +404,8 @@ def _filter_pool(
         if unified:
             # Mientras el cartel sigue por delante, el 55 marca el APPLY.
             # dist_start de estación es negativo desde 800 m (B1) y no debe ganar.
-            if limit_dist_m <= 8.0:
+            if limit_dist_m <= LIMIT_SIGN_PASSED_M:
                 out = [c for c in out if c.target_kind != "SPEED_LIMIT"]
-        elif speed_mph > limit_mph + LIMIT_SCORING_MAX_OVER_MPH:
-            # Dos fases: cartel primero si aún por encima del límite.
-            out = [c for c in out if c.target_kind != "STATION"]
         elif redundant_limit and actionable_station:
             out = [c for c in out if c.target_kind != "SPEED_LIMIT"]
 
@@ -323,6 +440,7 @@ def select_urgent_target(
     station_dist_m: Optional[float] = None,
     signal_dist_m: Optional[float] = None,
     gradient_pct: float = 0.0,
+    current_limit_mph: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     if not candidates:
         return None
@@ -335,6 +453,7 @@ def select_urgent_target(
         station_dist_m=station_dist_m,
         signal_dist_m=signal_dist_m,
         gradient_pct=gradient_pct,
+        current_limit_mph=current_limit_mph,
     )
     if not pool:
         return None

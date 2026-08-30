@@ -1,4 +1,4 @@
-"""Tests de física P1 y policy (cluster / defer) — código TSW, no Dastsc planner."""
+"""Tests de física P1 y policy (cluster / defer)."""
 
 from tsw6.braking.v2.physics import (
     MPH_TO_MS,
@@ -13,6 +13,8 @@ from tsw6.braking.v2.policy import (
     should_defer_station_brake,
     should_delay_unified_station_plan,
     should_merge_limit_and_station_plans,
+    station_waits_for_approach_limit,
+    next_sign_is_reduction_beyond_station,
     targets_are_clustered,
 )
 from tsw6.braking.v2.station_plan import plan_station_service_brake
@@ -125,8 +127,65 @@ class TestLimitStationPolicy:
         assert targets_are_clustered(300, 800) is False
 
     def test_merge_when_sign_before_platform(self):
+        from tsw6.braking.v2.policy import is_unified_limit_station_stop
+
         assert should_merge_limit_and_station_plans(300, 400) is True
+        # HUD invertido (55 más lejos que el andén): no unificar a parada 0
         assert should_merge_limit_and_station_plans(800, 500) is False
+        assert should_merge_limit_and_station_plans(876.0, 361.0) is False
+        assert is_unified_limit_station_stop(
+            limit_mph=55.0, limit_dist_m=876.0, station_dist_m=361.0,
+        ) is False
+        assert should_merge_limit_and_station_plans(400.0, 550.0) is True
+        # Cartel y andén separados: dos fases, no cluster
+        assert should_merge_limit_and_station_plans(700, 1500) is False
+
+    def test_station_waits_until_approach_limit(self):
+        """Log 01:24:07: Four Oaks @442 m, 55 @927 m, 59 mph — primero 60→55."""
+        assert station_waits_for_approach_limit(
+            speed_mph=59.0,
+            limit_mph=55.0,
+            limit_dist_m=927.0,
+            station_dist_m=442.0,
+        ) is True
+        assert station_waits_for_approach_limit(
+            speed_mph=60.0,
+            limit_mph=55.0,
+            limit_dist_m=400.0,
+            station_dist_m=550.0,
+        ) is True
+        assert station_waits_for_approach_limit(
+            speed_mph=54.0,
+            limit_mph=55.0,
+            limit_dist_m=400.0,
+            station_dist_m=550.0,
+        ) is False
+        assert station_waits_for_approach_limit(
+            speed_mph=45.0,
+            limit_mph=55.0,
+            limit_dist_m=8.0,
+            station_dist_m=30.0,
+        ) is False
+        # Sutton: 35 vigente, HUD 60 más lejos que el andén — no esperar cartel
+        assert next_sign_is_reduction_beyond_station(
+            limit_mph=60.0,
+            limit_dist_m=533.0,
+            station_dist_m=464.0,
+            current_limit_mph=35.0,
+        ) is False
+        assert station_waits_for_approach_limit(
+            speed_mph=34.8,
+            limit_mph=60.0,
+            limit_dist_m=533.0,
+            station_dist_m=464.0,
+            current_limit_mph=35.0,
+        ) is False
+        assert next_sign_is_reduction_beyond_station(
+            limit_mph=55.0,
+            limit_dist_m=927.0,
+            station_dist_m=442.0,
+            current_limit_mph=60.0,
+        ) is True
 
     def test_two_phase_when_gap_allows_stop_after_limit(self):
         assert sequential_limit_stop_feasible(

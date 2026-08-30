@@ -9,6 +9,7 @@ from tsw6.telemetry.driver_aid_parser import (
     resolve_display_next_stop,
     select_next_scheduled_stop,
     station_base_name,
+    station_distance_m,
 )
 
 
@@ -216,6 +217,16 @@ def test_select_next_scheduled_stop_skips_passed():
     nxt = select_next_scheduled_stop(stops, min_distance_m=100.0)
     assert nxt is not None
     assert nxt["name"] == "B"
+
+
+def test_station_distance_m_matches_base_name():
+    stations = [
+        {"name": "Lichfield City, andén 2", "distance_m": 47.0},
+        {"name": "Shenstone", "distance_m": 4200.0},
+    ]
+    assert station_distance_m(stations, "Lichfield City") == 47.0
+    assert station_distance_m(stations, "Shenstone, andén 1") == 4200.0
+    assert station_distance_m(stations, "Missing") is None
 
 
 def test_select_next_scheduled_stop_exclude_served():

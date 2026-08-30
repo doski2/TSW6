@@ -20,15 +20,32 @@ from tsw6.braking.v2.physics import (
     apply_zone_margin_m,
     brake_reaction_margin_m,
 )
-from tsw6.braking.v2.policy import should_merge_limit_and_station_plans
-from tsw6.governor.governor_constants import STATION_STOPPED_MPH
+from tsw6.braking.v2.policy import (
+    merged_approach_overspeed,
+    station_waits_for_approach_limit,
+)
+from tsw6.governor.governor_constants import (
+    DEPARTING_CLEAR_MPH,
+    DEPARTING_MAX_S,
+    PLATFORM_STOP_WINDOW_MIN_M,
+    SPAWN_PLATFORM_MAX_M,
+    STATION_STOPPED_MPH,
+)
 from tsw6.telemetry.driver_aid_parser import (
+    SCHEDULED_STOP_MIN_AHEAD_M,
     resolve_station_door_state,
     select_next_scheduled_stop,
     station_base_name,
+    station_distance_m,
 )
 
 _log = logging.getLogger("tsw.station")
+
+
+def _platform_stop_window_m(platform_length_m: Optional[float]) -> float:
+    if platform_length_m:
+        return max(PLATFORM_STOP_WINDOW_MIN_M, float(platform_length_m) / 2.0)
+    return PLATFORM_STOP_WINDOW_MIN_M
 
 
 class StationFSM:
@@ -50,6 +67,7 @@ class StationFSM:
 
         self._last_departed_name: Optional[str] = None
         self._last_departed_at: float = 0.0
+        self._departing_at: float = 0.0
         self._DEPARTURE_COOLDOWN_S = 60.0
 
         self._served_bases: set[str] = set()
@@ -62,7 +80,12 @@ class StationFSM:
             ex.add(station_base_name(self._last_departed_name))
         return ex
 
-    def select_next_stop(self, stations: Optional[list]) -> Optional[dict]:
+    def select_next_stop(
+        self,
+        stations: Optional[list],
+        *,
+        speed_mph: Optional[float] = None,
+    ) -> Optional[dict]:
         if self.target_stop_min_m is not None and self.target_stop_min_m <= 0:
             return None
         if self.target_stop_min_m is not None:
@@ -86,8 +109,19 @@ class StationFSM:
                     None,
                 )
             return None
+        # Por defecto se ignoran andenes <100 m (ya pasados). En spawn/STOPPED
+        # el origen está a ~50 m y hay otra parada más lejos: hay que cogerlo.
+        min_d = SCHEDULED_STOP_MIN_AHEAD_M
+        at_standstill = (
+            speed_mph is not None and speed_mph <= STATION_STOPPED_MPH
+        )
+        if self.state in ("STOPPED", "DEPARTING") or at_standstill:
+            min_d = 0.0
         return select_next_scheduled_stop(
-            stations, exclude_bases=self._stop_exclude_bases())
+            stations,
+            min_distance_m=min_d,
+            exclude_bases=self._stop_exclude_bases(),
+        )
 
     def update_state_transitions(
         self,
@@ -103,19 +137,21 @@ class StationFSM:
         next_limit_mph: Optional[float] = None,
         distance_next_m: Optional[float] = None,
     ) -> Tuple[Optional[str], float]:
-        next_stop = self.select_next_stop(stations)
+        next_stop = self.select_next_stop(stations, speed_mph=speed_mph)
 
         if self.state == "DEPARTING":
-            _dep_base = station_base_name(self.name or "")
-            _nxt_base = (
-                station_base_name(next_stop["name"]) if next_stop else ""
+            # No salir solo porque el HUD ya muestra la siguiente parada
+            # (cercanías ~400 m): P1 frenaba en cuanto se cerraban puertas.
+            _dwell_s = (
+                time.time() - self._departing_at if self._departing_at else 0.0
             )
             _cleared = (
                 next_stop is None
-                or float(next_stop.get("distance_m") or 0) > 200
-                or (_dep_base and _nxt_base and _nxt_base != _dep_base)
+                or speed_mph >= DEPARTING_CLEAR_MPH
+                or _dwell_s >= DEPARTING_MAX_S
             )
             if _cleared:
+                _dep_base = station_base_name(self.name or "")
                 if _dep_base:
                     self._served_bases.add(_dep_base)
                 _log.info("FSM: DEPARTING → None")
@@ -124,6 +160,7 @@ class StationFSM:
                 self.state = None
                 self.name = None
                 self._min_stop_dist = None
+                self._departing_at = 0.0
                 if (
                     self.target_stop_min_m is not None
                     and self._locked_stop_name == self._last_departed_name
@@ -133,14 +170,34 @@ class StationFSM:
                     _log.info("Parada manual liberada – modo sin paradas activo")
 
         if self.state is None and next_stop is not None:
+            dist = float(next_stop.get("distance_m") or 0.0)
+            spawn_m = max(
+                _platform_stop_window_m(next_stop.get("platform_length_m")),
+                SPAWN_PLATFORM_MAX_M,
+            )
+            # Antes: STOPPED iba dentro del envelope de frenado (~25 m a spd=0).
+            # Spawn Lichfield @47 m nunca entraba → P1 de emergencia al salir.
+            if speed_mph <= STATION_STOPPED_MPH and 0 <= dist < spawn_m:
+                _log.info(
+                    "FSM: None → STOPPED (en andén)  '%s'  dist=%.0fm  ventana=%.0fm  spd=%.1f",
+                    next_stop["name"], dist, spawn_m, speed_mph,
+                )
+                self._enter_stopped(
+                    next_stop["name"],
+                    doors_telem=doors_telem,
+                    doors_dmi=doors_dmi,
+                    we_stopped=False,
+                )
+                return "HOLD", 0.0
+
             brake_needed = braking_dist_fn(speed_mph, 0.0)
             speed_ms = speed_mph * MPH_TO_MS
             react_m = brake_reaction_margin_m(speed_ms)
             approach_pad_m = react_m + apply_zone_margin_m(
                 speed_ms, brake_needed + react_m)
-            if next_stop["distance_m"] <= brake_needed + approach_pad_m:
-                _dep_base = (self._last_departed_name or "").split(",")[0].strip().lower()
-                _stn_base = next_stop["name"].split(",")[0].strip().lower()
+            if dist <= brake_needed + approach_pad_m:
+                _dep_base = station_base_name(self._last_departed_name or "")
+                _stn_base = station_base_name(next_stop["name"])
                 _in_cooldown = (
                     _dep_base and _stn_base == _dep_base
                     and time.time() - self._last_departed_at < self._DEPARTURE_COOLDOWN_S
@@ -152,28 +209,13 @@ class StationFSM:
                         next_stop["name"],
                     )
                 else:
-                    _plat = next_stop.get("platform_length_m")
-                    _sw = max(50.0, _plat / 2.0) if _plat else 50.0
-                    if speed_mph <= STATION_STOPPED_MPH and next_stop["distance_m"] < _sw:
-                        _log.info(
-                            "FSM: None → STOPPED (en andén)  '%s'  dist=%.0fm  ventana=%.0fm  spd=%.1f",
-                            next_stop["name"], next_stop["distance_m"], _sw, speed_mph,
-                        )
-                        self.state = "STOPPED"
-                        self.name = next_stop["name"]
-                        self._stopped_at = time.time()
-                        self._doors_opened = (doors_telem is True) or (doors_dmi is True)
-                        self._we_stopped = False
-                        self._min_stop_dist = None
-                        return "HOLD", 0.0
-
                     _log.info(
                         "FSM: None → APPROACHING  '%s'  dist=%.0fm  spd=%.1f",
-                        next_stop["name"], next_stop["distance_m"], speed_mph,
+                        next_stop["name"], dist, speed_mph,
                     )
                     self.state = "APPROACHING"
                     self.name = next_stop["name"]
-                    self._min_stop_dist = next_stop["distance_m"]
+                    self._min_stop_dist = dist
                     self._we_stopped = (speed_mph > STATION_STOPPED_MPH)
 
         if self.state == "STOPPED":
@@ -199,6 +241,33 @@ class StationFSM:
             if base:
                 self._served_bases.add(base)
 
+    def _enter_stopped(
+        self,
+        name: str,
+        *,
+        doors_telem: Optional[bool],
+        doors_dmi: Optional[bool],
+        we_stopped: bool,
+        doors_opened: Optional[bool] = None,
+    ) -> None:
+        self.state = "STOPPED"
+        self.name = name
+        self._stopped_at = time.time()
+        if doors_opened is not None:
+            self._doors_opened = doors_opened
+        else:
+            self._doors_opened = (doors_telem is True) or (doors_dmi is True)
+        self._we_stopped = we_stopped
+        self._min_stop_dist = None
+        self._creep_to_station = False
+
+    def _enter_departing(self) -> None:
+        self._mark_current_stop_served()
+        self.state = "DEPARTING"
+        self._departing_at = time.time()
+        self._doors_opened = False
+        self._min_stop_dist = None
+
     def _handle_door_service_at_stop(
         self,
         speed_mph: float,
@@ -221,19 +290,20 @@ class StationFSM:
             self._doors_opened = True
             if self.state == "APPROACHING":
                 _log.info("FSM: APPROACHING → STOPPED (puertas)  '%s'", self.name)
-                self.state = "STOPPED"
-                self._stopped_at = time.time()
-                self._we_stopped = True
+                self._enter_stopped(
+                    self.name,
+                    doors_telem=doors_telem,
+                    doors_dmi=doors_dmi,
+                    we_stopped=True,
+                    doors_opened=True,
+                )
             return False
         if self._doors_opened and not effective:
-            self._mark_current_stop_served()
             _log.info(
                 "FSM: %s → DEPARTING (puertas cerradas, servida, src=%s)  '%s'",
                 self.state, src, self.name,
             )
-            self.state = "DEPARTING"
-            self._doors_opened = False
-            self._min_stop_dist = None
+            self._enter_departing()
             return True
         return False
 
@@ -259,13 +329,11 @@ class StationFSM:
             and speed_mph > 5.0
             and (time.time() - self._stopped_at) >= 3.0
         ):
-            self._mark_current_stop_served()
             _log.info(
                 "FSM: STOPPED → DEPARTING (salida spd=%.1f sin ciclo puertas)  '%s'",
                 speed_mph, self.name or "?",
             )
-            self.state = "DEPARTING"
-            self._doors_opened = False
+            self._enter_departing()
             return "HOLD", 0.0
         return "HOLD", 0.0
 
@@ -275,14 +343,12 @@ class StationFSM:
         stations: Optional[list] = None,
     ) -> float:
         if self.name:
-            tbase = station_base_name(self.name)
-            for st in stations or []:
-                name = st.get("name")
-                if name and station_base_name(str(name)) == tbase:
-                    return float(st.get("distance_m") or 0.0)
+            found = station_distance_m(stations, self.name)
+            if found is not None:
+                return found
             if next_stop:
                 nbase = station_base_name(str(next_stop.get("name") or ""))
-                if nbase != tbase:
+                if nbase != station_base_name(self.name):
                     return 0.0
         if next_stop:
             return float(next_stop.get("distance_m") or 0.0)
@@ -312,6 +378,14 @@ class StationFSM:
                 station_base_name(str(next_stop.get("name") or ""))
                 != station_base_name(self.name)
             )
+        if next_is_other and self._min_stop_dist and self._min_stop_dist > 0:
+            api_dist = self._min_stop_dist
+
+        raw_dist = api_dist
+        if raw_dist > 0 and (
+            self._min_stop_dist is None or raw_dist < self._min_stop_dist
+        ):
+            self._min_stop_dist = raw_dist
 
         if self._handle_door_service_at_stop(
             speed_mph,
@@ -321,12 +395,11 @@ class StationFSM:
         ):
             return "HOLD", 0.0
 
-        raw_dist = api_dist
-        if self._min_stop_dist is None or raw_dist < self._min_stop_dist:
-            self._min_stop_dist = raw_dist
-        stop_dist_m = self._min_stop_dist
+        stop_dist_m = (
+            self._min_stop_dist if self._min_stop_dist is not None else api_dist
+        )
         plat_len = next_stop.get("platform_length_m") if next_stop else None
-        stop_window = max(50.0, plat_len / 2.0) if plat_len else 50.0
+        stop_window = _platform_stop_window_m(plat_len)
 
         at_platform = (
             speed_mph <= STATION_STOPPED_MPH
@@ -342,11 +415,12 @@ class StationFSM:
                 "FSM: APPROACHING → STOPPED  '%s'  stop_dist=%.1fm",
                 self.name or "?", stop_dist_m,
             )
-            self.state = "STOPPED"
-            self._creep_to_station = False
-            self._doors_opened = (doors_telem is True) or (doors_dmi is True)
-            self._stopped_at = time.time()
-            self._min_stop_dist = None
+            self._enter_stopped(
+                self.name or "?",
+                doors_telem=doors_telem,
+                doors_dmi=doors_dmi,
+                we_stopped=self._we_stopped,
+            )
             return "HOLD", 0.0
 
         if stop_dist_m < stop_window:
@@ -358,13 +432,17 @@ class StationFSM:
             return None, 0.0
 
         _stn_dist = api_dist
-        if (
-            distance_next_m is not None
-            and next_limit_mph is not None
-            and _stn_dist > 0
-            and should_merge_limit_and_station_plans(distance_next_m, _stn_dist)
-            and distance_next_m > 80
-            and speed_mph > next_limit_mph + 1.0
+        if merged_approach_overspeed(
+            speed_mph=speed_mph,
+            limit_mph=next_limit_mph,
+            limit_dist_m=distance_next_m,
+            station_dist_m=_stn_dist,
+        ) or station_waits_for_approach_limit(
+            speed_mph=speed_mph,
+            limit_mph=next_limit_mph,
+            limit_dist_m=distance_next_m,
+            station_dist_m=_stn_dist,
+            current_limit_mph=limit_mph,
         ):
             return None, 0.0
 

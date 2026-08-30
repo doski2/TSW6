@@ -3,7 +3,7 @@
 tsw_api_client.py — Cliente HTTP para la API externa de TSW6 (V2).
 
 Requiere TSW6 con -HTTPAPI y CommAPIKey.txt generado.
-Documentación: docs/ARQUITECTURA.md
+Documentación: docs/ARQUITECTURA.md → docs/v1/ARQUITECTURA.md
 """
 
 from __future__ import annotations

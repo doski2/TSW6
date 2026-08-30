@@ -322,6 +322,103 @@ class TestCoordinatorStationReleaseBlock:
         assert action == "RELEASE"
 
 
+class TestCoordinatorLimitBeforeStation:
+    def test_inverted_hud_does_not_station_stop_before_55(self):
+        """Log 01:24:07: Four Oaks @442 m, 55 @927 m — 60→55, no STATION a 0."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=59.0,
+            next_limit_mph=55.0,
+            distance_next_m=927.0,
+            effective_limit=60.0,
+            gradient_pct=-0.6,
+            handle_notch=4,
+            station_distance_m=442.0,
+            station_name="Four Oaks",
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
+        assert coord.last_target.target_speed_mph == 55.0
+        if coord.last_brake_command is not None:
+            assert "STATION" not in (coord.last_brake_command.reason or "")
+            assert "EMERGENCIA" not in (coord.last_brake_command.reason or "")
+
+    def test_inverted_hud_no_station_emergency_before_55(self):
+        """Log 02:02:29: HUD 234 m, 55 @700 m, 59 mph — no P1-EMERGENCIA-STATION."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=58.7,
+            next_limit_mph=55.0,
+            distance_next_m=709.0,
+            effective_limit=60.0,
+            gradient_pct=-1.0,
+            handle_notch=4,
+            station_distance_m=234.0,
+            station_name="Four Oaks",
+        )
+        assert action != "EMERGENCY"
+        if coord.last_brake_command is not None:
+            assert "EMERGENCIA-STATION" not in (coord.last_brake_command.reason or "")
+            assert "CRITICO-STATION" not in (coord.last_brake_command.reason or "")
+        if coord.last_target is not None:
+            assert coord.last_target.target_kind == "SPEED_LIMIT"
+
+    def test_inverted_hud_at_55_does_not_hold_station_b3(self):
+        """HUD andén más cerca que el 55: a ~55 mph no unificar a parada 0."""
+        coord = _coord()
+        _eval(
+            coord,
+            speed_mph=55.7,
+            next_limit_mph=55.0,
+            distance_next_m=876.0,
+            effective_limit=60.0,
+            gradient_pct=-0.6,
+            handle_notch=1,
+            station_distance_m=361.0,
+            station_name="Four Oaks",
+        )
+        if coord.last_target is not None:
+            assert coord.last_target.target_kind != "STATION"
+
+    def test_sutton_next_60_does_not_block_station(self):
+        """Log 02:18:04: 35 vigente, 60 tras el andén — frenar Sutton, no esperar."""
+        coord = _coord()
+        _eval(
+            coord,
+            speed_mph=34.8,
+            next_limit_mph=60.0,
+            distance_next_m=533.0,
+            effective_limit=35.0,
+            gradient_pct=-1.0,
+            handle_notch=4,
+            station_distance_m=464.0,
+            station_name="Sutton Coldfield",
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "STATION"
+
+    def test_downhill_holds_posted_limit_while_next_is_far(self):
+        """Log 02:17:09: 48 mph en 45, 35 a 900 m — sujetar 45, no solo aware del 35."""
+        coord = _coord()
+        action, _ = _eval(
+            coord,
+            speed_mph=46.2,
+            next_limit_mph=35.0,
+            distance_next_m=1500.0,
+            effective_limit=45.0,
+            gradient_pct=-1.0,
+            handle_notch=4,
+        )
+        assert coord.last_target is not None
+        assert coord.last_target.target_kind == "SPEED_LIMIT"
+        assert coord.last_target.apply_now
+        assert coord.last_target.target_speed_mph == 45.0
+        assert coord.last_brake_command is not None
+        assert coord.last_brake_command.kind == "APPLY"
+
+
 class TestCoordinatorEmergency:
     def test_station_critical_close(self):
         coord = _coord()
@@ -329,8 +426,8 @@ class TestCoordinatorEmergency:
             coord,
             speed_mph=45.0,
             next_limit_mph=55.0,
-            distance_next_m=500.0,
-            effective_limit=60.0,
+            distance_next_m=8.0,
+            effective_limit=55.0,
             handle_notch=4,
             station_distance_m=30.0,
         )

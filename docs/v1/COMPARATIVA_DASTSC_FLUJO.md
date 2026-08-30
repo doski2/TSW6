@@ -1,0 +1,141 @@
+# Comparativa de flujo — TSW6 ↔ Nexus V4 (Dastsc)
+
+**Objetivo:** mismo número de paso en cada diagrama para estudiar y portar algoritmos.
+
+| Proyecto | Diagrama | Ruta |
+| --- | --- | --- |
+| **TSW6** | [assets/esqueleto_flujo_cronologico.svg](../assets/esqueleto_flujo_cronologico.svg) | `C:\Users\doski\TSW6` |
+| **Dastsc** | [FLUJO_FRENOS_V4.md](file:///C:/Users/doski/Dastsc/docs/FLUJO_FRENOS_V4.md) + [flujo_frenos_v4.svg](file:///C:/Users/doski/Dastsc/docs/flujo_frenos_v4.svg) | `C:\Users\doski\Dastsc` |
+
+**Última revisión:** 2026-08-29 (reglas P1 vs `planBrake` / `commandBus`, no solo SVG)
+
+---
+
+## Resumen arquitectónico
+
+| Aspecto | TSW6 | Nexus V4 (Dastsc) |
+| --- | --- | --- |
+| Sim | Train Sim World 6 + UE4SS | Train Simulator Classic + Lua plugin |
+| UI | **GUI tkinter** en el mismo proceso Python | **React** (puerto 5175) + WebSocket |
+| Telemetría rápida | Probe ~20 Hz → `%TEMP%\TSW6Bridge\GetData.txt` | Lua ~10–20 Hz → `plugins\GetData.txt` |
+| Fusión lenta | HTTP DriverAid + `tsw_hud.db` | OCR backend + `station_distance.py` |
+| Paso “bus” | **No hay WS** — `dict` en memoria (`_telem`) | **WebSocket** `:8000/ws` → V4 |
+| Decisión | `autopilot_core` + `speed_decider` | `tickAgent` + `PolicyMode` |
+| Plan freno | `BrakeCoordinatorV2` (v2/) | `planBrake.ts` + `selectUrgentBrakePlan` |
+| Mando | `tsw_ipc_bus` → `SendCommand.txt` | `command_bus.py` → `SendCommand.txt` |
+| Aprendizaje | `OnlineLearner` / `predict_decel` | `brakeStats` + bandas H/M/B (P3.7) |
+| Log sesión | `logs/autopilot_*.log` | `logs/nexus-v4/session_*.json` |
+
+**TSW6 es más directo** en lectura→decisión (un proceso + GUI). **Dastsc** separa kernel/agente/UI y
+añade WS + log estructurado — no suele ser el cuello de botella (localhost); el IPC **archivo**
+Lua↔Python es común a ambos.
+
+---
+
+## Mapa paso a paso (numeración SVG)
+
+Use esta tabla al estudiar. Los colores del encabezado coinciden con ambos SVG.
+
+| Paso | Bloque | TSW6 | Dastsc Nexus V4 | |
+| --- | --- | --- | --- | --- |
+| **1** | LECTURA | `main.lua` UE4SS — HUD + DriverAid → GetData TSV | `Railworks_GetData_Script.lua` — controles TSC → GetData `\ | ` |
+| **2** | LECTURA | `tsw_ue4ss_reader.py` — `ProbeSnapshot` | `main.py` `parse_telemetry_line` + OCR/cab enrich | |
+| **3** | LECTURA / bus | `tsw_telemetry_source.py` — merge probe+HTTP+HUD → `_telem` | **WebSocket `TELEMETRY`** — `broadcast()` → V4 | |
+| **4** | CICLO | `autopilot_core.tick()` | `TelemetryHub.ingestMessage` + `DataNormalizer` | |
+| **5** | CICLO | `build_train_state()` → `TrainState` | `toTelemetrySnapshot` + `useBrakeStats` | |
+| **6** | DECISIÓN | `speed_decider.decide()` — FSM → P1 / HOLD | `tickAgent()` — horizon + plan wrapper | |
+| **7** | DECISIÓN | (dentro de decider) guardias P1 / watchdog | `PolicyMode` + `blockedReason` AUTO | |
+| **8** | PLAN | `coordinator` — limit / objectives / station_plan (+ señal stub) | `planBrakeForLimit` / `Station` / `Signal` | |
+| **9** | PLAN | `policy.py` (cluster + prioridad) | `selectUrgentBrakePlan` | |
+| **10** | PLAN | `decel_for_notch` + gradiente % | `decelForNotch` + gradiente ‰ + stats banda v | |
+| **11** | PLAN / decisión | RELEASE + coast latch | `resolveReleaseAction` (+ P3.6 BC pendiente Dastsc) | |
+| **12** | EJECUCIÓN | `BrakeCommand` → notch absoluto | `AgentAction` — `commandBus.buildBrakeCommand` | |
+| **13** | EJECUCIÓN | `handle_controller.execute()` | `useAutoCommand` / ARM confirm → WS `COMMAND` | |
+| **14** | EJECUCIÓN | `tsw_ipc_bus` → SendCommand | `command_bus.py` → SendCommand + flag | |
+| **15** | JUEGO | `main.lua` aplica PowerBrakeHandle | Lua `SendData()` — VirtualBrake / ThrottleAndBrake | |
+
+Dastsc tiene **paso 15** explícito en el SVG; TSW6 cierra en **14** (vuelta al tick 1).
+
+---
+
+## Paridad de algoritmo (frenado P1)
+
+| Concepto | TSW6 | Dastsc | Notas |
+| --- | --- | --- | --- |
+| Muescas B1–B3 | `v2/command.py` | `commandBus.notchToBrakeValue` | Notch absoluto IPC |
+| RELEASE al objetivo | `v2/command.py` | `resolveReleaseAction` | Dastsc P1.6: `limits.effective` |
+| Coast latch UK | `BrakeReleaseState` | `shouldInhibitLimitRebrake` | |
+| Cluster cartel+andén | `uni` + waits + defer | gap≤350 m **y** cartel antes → **STATION fuera del pool** | TSW no es el mismo algoritmo |
+| RELEASE | Dos caminos + atajo `uni=Y` | **Una** `resolveReleaseAction` al inicio del mando | Portar el corte, no el margen 2 mph |
+| Bajada + cartel | Hold ~8 m si `spd` alta | &lt; −3 ‰ + hay next → nunca OFF; muesca fuerte | Estructura sí; “nunca OFF” no |
+| Horizonte andén | defer servicio **o** emit B1 | `stationPlanHorizonM` (B1×1,15) | Una regla; ver [DASTSC_PARITY.md](DASTSC_PARITY.md#reglas-de-conducción-revisión-2026-08-29) |
+| HUD invertido / recorte más lejos | `station_waits` | No existe | Conservar en TSW |
+| Prioridad empate | `select_urgent_target` | Señal → Límite → Estación | Igual idea |
+| Gradiente en plan | `gradient_pct` | ‰ + botón **+/−** manual V4 | TSW: probe DriverAid |
+| Ventana APPLY | `apply_zone_margin_m` (física) | effective zone en plan | TSW6: sin 60 m fijo (2026-08-26) |
+| Stats aprendidas | `OnlineLearner` | `brakeStats` por banda H/M/B | Dastsc P3.7 |
+| Effort / BC feedback | probe limitado | Lua v12 + log `brake.tractiveKn` | Dastsc P3.5/P3.6 |
+| Señal DANGER | **stub** (sin distancia en GetData) | `planBrakeForSignal` ✅ | Port pendiente TSW |
+| Masa `massFactor` | ❌ implícito en learner | ✅ `massT/500` sin stats | Ver [DASTSC_PARITY.md](DASTSC_PARITY.md) |
+| Modos SUGGEST/ARM/AUTO | GUI manual (sin ARM separado) | SUGGEST / ARM / AUTO | |
+
+---
+
+## Dastsc — cambios recientes (2026-08-17 … 25)
+
+Para no desincronizar la paridad al comparar:
+
+| Cambio Dastsc | Doc |
+| --- | --- |
+| Árbol frenado V4 + SVG 15 pasos | `Dastsc/docs/FLUJO_FRENOS_V4.md`, `flujo_frenos_v4.svg` |
+| `brakeStats` banda velocidad (high/med/low) | P3.7 en `PENDIENTES_V4.md` |
+| Gradiente manual +/− UI | `NEXUS_V4_ARQUITECTURA.md` §4.5 |
+| Lua v12 Effort/BC Acela | `ESPECIFICACION_ULTRA_CORE_V4.md` |
+| Log sesión `gradient`, `gradientPct`, effort | `debug/README.md` |
+| Tipos freno SPLIT/blended | `TIPOS_DE_FRENOS.md` |
+| Fix OFF zona límite (effective) | P1.6 validado |
+
+---
+
+## Qué portar en cada dirección
+
+#### Dastsc → TSW6 (algoritmo)
+
+- Corte: un RELEASE, tres planes, cluster = filtrar STATION (cartel antes).
+- No copiar: margen 2 mph, “nunca OFF en bajada”, SUGGEST/ARM, OCR de andén.
+- Conservar TSW: hold 8 m, `station_waits` (Four Oaks), FSM, 0,4 mph.
+
+#### Dastsc → TSW6 (telemetría / freight)
+
+- Guards BC al soltar OFF (cuando haya cilindro en probe).
+- `massFactor(massT)` en `decel_for_notch` si se expone masa UE.
+- Filtrar learning por calidad de muestra (Plan B Effort).
+
+#### TSW6 → Dastsc
+
+- FSM estación UK (puertas Lua/DMI, creep) — Dastsc usa OCR de andén; TSW no.
+- `station_waits` (recorte más lejos que el andén) — Dastsc no lo tiene.
+- GUI “Acción” compacta (B2→N2) — referencia UX, no arquitectura.
+
+---
+
+## Estudio recomendado
+
+1. Mismo paso en ambos SVG (esta tabla).
+2. TSW6 detalle pasos 1–3: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-1-2-3-lectura).
+3. Dastsc detalle paso 3 WS: sección WebSocket en FLUJO Dastsc (mismo repo hermano).
+4. Algoritmo de **reglas** (no el SVG):
+
+   [DASTSC_PARITY.md](DASTSC_PARITY.md#reglas-de-conducción-revisión-2026-08-29) ↔ `planBrake.ts` +
+   `commandBus.ts`.
+
+5. Cómo implementarlo en TSW **sin borrar v2:**
+
+   [BRAKE_V2.md](BRAKE_V2.md#cómo-tocar-reglas-sin-borrar-v2).
+
+---
+
+## Rutas absolutas (desarrollo local)
+
+```text
+```

@@ -61,6 +61,12 @@ CRITICAL_DECEL_THRESHOLD = 0.3  # m/s²: si effective_decel < este valor → for
 # ── Paradas en estación ───────────────────────────────────────────────────────
 
 STATION_STOPPED_MPH    = 1.5   # por debajo de esto = tren parado
+PLATFORM_STOP_WINDOW_MIN_M = 50.0  # mitad de andén, suelo
+# Spawn / andén: HUD a veces pone el tablón a 40–120 m con el tren ya parado.
+SPAWN_PLATFORM_MAX_M   = 150.0
+# Salida: no soltar DEPARTING (ni P1 andén) hasta esta velocidad.
+DEPARTING_CLEAR_MPH    = 25.0
+DEPARTING_MAX_S        = 90.0
 
 # Perfil de frenado para paradas en andén:
 # v_límite = _K_STOP * sqrt(distancia_m)  [en mph]

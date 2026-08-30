@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
 objectives.py — Cómo frenar cada objetivo: andén, señal (stub), emergencia.
-
-Antes: station_brake.py + signal_brake.py + emergency.py.
 """
 
 from __future__ import annotations
@@ -15,11 +13,12 @@ from tsw6.braking.v2.command import BrakeCommand, BrakeTargetResult
 from tsw6.braking.v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
-    BrakePhysicsContext,
     braking_distance_mph,
+    brake_ctx_for_decel,
     decel_for_notch,
-    is_in_brake_action_window,
+    should_emit_brake_command,
 )
+from tsw6.braking.v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6.braking.v2.station_plan import plan_brake_for_station
 from tsw6.governor.governor_constants import (
     EMERGENCY_BRAKE_HANDLE,
@@ -30,7 +29,6 @@ from tsw6.governor.governor_constants import (
 
 _log = logging.getLogger("tsw.governor.v2")
 
-_UK_SERVICE_FRAC = 0.80
 EmergencyTargetKind = Literal["STATION", "SIGNAL"]
 _RED_SIGNAL_ASPECTS = frozenset({"DANGER", "RED", "STOP"})
 
@@ -68,22 +66,28 @@ def evaluate_station_brake(
     if plan is None:
         return None
     step = plan.active_step
-    if step is not None and not step.apply_now and not is_in_brake_action_window(
-        step.dist_start,
-        speed_mph=speed_mph,
-        distance_to_target_m=plan.distance_to_target_m,
-        apply_at_remaining_m=step.apply_at_remaining_m,
-    ):
-        late = [s for s in plan.steps if s.apply_now and s.dist_start <= 0]
-        step = late[-1] if late else None
     if step is None:
         return None
-    if not step.apply_now and not is_in_brake_action_window(
-        step.dist_start,
+    emit = should_emit_brake_command(
+        apply_now=step.apply_now,
+        dist_start=step.dist_start,
         speed_mph=speed_mph,
         distance_to_target_m=plan.distance_to_target_m,
         apply_at_remaining_m=step.apply_at_remaining_m,
-    ):
+    )
+    if not emit:
+        late = [s for s in plan.steps if s.dist_start <= 0]
+        step = late[-1] if late else None
+        if step is None:
+            return None
+        emit = should_emit_brake_command(
+            apply_now=True,
+            dist_start=step.dist_start,
+            speed_mph=speed_mph,
+            distance_to_target_m=plan.distance_to_target_m,
+            apply_at_remaining_m=step.apply_at_remaining_m,
+        )
+    if not emit:
         return None
     return BrakeTargetResult(
         target_kind="STATION",
@@ -92,7 +96,7 @@ def evaluate_station_brake(
         handle_notch=step.handle_notch,
         phase=step.notch,
         dist_start=step.dist_start,
-        apply_now=step.apply_now,
+        apply_now=True,
         detail=f"Estación dist={plan.distance_to_target_m:.0f}m",
     )
 
@@ -120,8 +124,8 @@ def is_red_signal_aspect(aspect: Optional[str]) -> bool:
     return upper in _RED_SIGNAL_ASPECTS or "DANGER" in upper
 
 
-def _service_decel(base_decel: float, gradient_pct: float) -> float:
-    return decel_for_notch(_UK_SERVICE_FRAC, base_decel, gradient_pct)
+def _service_decel(base_decel: float) -> float:
+    return decel_for_notch(SERVICE_DECEL_FRAC_BY_HANDLE[1], base_decel)
 
 
 def _stop_distance(
@@ -132,16 +136,17 @@ def _stop_distance(
     brake_transition_s: float,
     accel_ms2: Optional[float],
 ) -> float:
-    ctx = BrakePhysicsContext(
-        base_decel_ms2=base_decel,
+    ctx = brake_ctx_for_decel(
         gradient_pct=gradient_pct,
+        using_learned=False,
         current_accel_ms2=accel_ms2,
         brake_transition_s=brake_transition_s,
+        base_decel_ms2=base_decel,
     )
     return braking_distance_mph(
         speed_mph,
         0.0,
-        decel_ms2=_service_decel(base_decel, gradient_pct),
+        decel_ms2=_service_decel(base_decel),
         ctx=ctx,
         apply_margin=True,
     )

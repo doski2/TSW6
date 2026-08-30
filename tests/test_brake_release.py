@@ -6,6 +6,7 @@ from tsw6.braking.v2.command import (
     BrakeReleaseState,
     is_brake_applied,
     resolve_release_command,
+    should_hold_limit_brake_downhill,
 )
 from tsw6.braking.v2.plan import BrakePlan, BrakePlanStep
 from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
@@ -116,7 +117,8 @@ def test_no_release_without_next_limit():
     assert cmd is None
 
 
-def test_release_station_plan_when_stopped():
+def test_no_release_station_plan_when_stopped():
+    """Andén: no soltar por plan; el freno se suelta al cerrar puertas."""
     step = BrakePlanStep(
         notch="B3",
         handle_notch=1,
@@ -144,8 +146,7 @@ def test_release_station_plan_when_stopped():
         gradient_pct=0.0,
         plan=plan,
     )
-    assert cmd is not None
-    assert cmd.kind == "RELEASE"
+    assert cmd is None
 
 
 def test_coast_latch_clears_on_limit_change():
@@ -178,7 +179,19 @@ def test_no_release_parked_at_scenario_start():
 
 
 def test_release_at_limit_speed_on_downhill():
-    """Bajada: soltar en el cartel (no mantener B3 hasta casi parado)."""
+    """Bajada: no soltar el cartel a 200 m (g acelera)."""
+    assert should_hold_limit_brake_downhill(
+        gradient_pct=-1.0,
+        distance_next_m=200.0,
+        speed_mph=45.0,
+        target_mph=45.0,
+    ) is True
+    assert should_hold_limit_brake_downhill(
+        gradient_pct=-1.0,
+        distance_next_m=5.0,
+        speed_mph=43.5,
+        target_mph=45.0,
+    ) is False
     cmd = resolve_release_command(
         speed_mph=45.0,
         handle_notch=1,
@@ -187,9 +200,17 @@ def test_release_at_limit_speed_on_downhill():
         distance_next_m=200.0,
         gradient_pct=-1.0,
     )
+    assert cmd is None
+    cmd = resolve_release_command(
+        speed_mph=43.5,
+        handle_notch=1,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=5.0,
+        gradient_pct=-1.0,
+    )
     assert cmd is not None
     assert cmd.kind == "RELEASE"
-    assert cmd.target_notch == 4
 
 
 def test_downhill_containment_b1_before_penalty():
@@ -315,9 +336,7 @@ def test_release_downhill_coordinator():
         station_distance_m=2200.0,
         station_name="Sutton Coldfield",
     )
-    assert action == "RELEASE"
-    assert coord.last_brake_command is not None
-    assert coord.last_brake_command.kind == "RELEASE"
+    assert action != "RELEASE"
 
     coord = BrakeCoordinatorV2()
     action, _ = coord.evaluate(

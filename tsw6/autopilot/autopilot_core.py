@@ -23,12 +23,11 @@ from tsw6.autopilot.speed_decider import SpeedDecider
 from tsw6.autopilot.train_state import TrainState, build_train_state
 from tsw6.autopilot.tsw_keys import user32
 from tsw6.autopilot.tsw_ocr import TswOcr
-from tsw6.autopilot.distance_format import format_distance, format_distance_pair
+from tsw6.autopilot.distance_format import format_distance
 from tsw6.learning.learn_monitor import learn_progress_summary
 from tsw6.hud.hud_timetable import schedule_times_for_station
 from tsw6.telemetry.driver_aid_parser import resolve_display_next_stop
 from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource
-from tsw6.telemetry.control_channel import DEFAULT_TELEM_HZ
 from tsw6.telemetry.channel_diagnostics import (
     ControllerMetrics,
     LoopMetrics,
@@ -195,7 +194,6 @@ class AutopilotEngine:
         self._veh_thread_started = False
 
         self.telem: dict = {}
-        self.loop_times: list[float] = []
         self.snapshot = AutopilotSnapshot(target_mph=config.target_mph)
         self._running = True
         self._manual_prompt: Optional[Callable[[], dict]] = None
@@ -212,7 +210,6 @@ class AutopilotEngine:
         self._search_connect_t = 0.0
         self._heartbeat_t = 0.0
         self._pause_diag_t = 0.0
-        self._loop_fps = 0.0
         self._last_tick_ms = 0.0
         self._last_sleep_ms = 0.0
         self._heartbeat_wall_t = 0.0
@@ -238,7 +235,7 @@ class AutopilotEngine:
                 "%(asctime)s.%(msecs)03d [%(name)-14s] %(levelname)-7s %(message)s",
                 datefmt="%H:%M:%S"))
             self._log.addHandler(fh)
-            self._log.setLevel(logging.DEBUG)
+            self._log.setLevel(logging.INFO)
         gh = _GuiLogHandler(self._log_buffer)
         gh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s",
                                           datefmt="%H:%M:%S"))
@@ -253,7 +250,7 @@ class AutopilotEngine:
                 "tsw.physics", "tsw.learner", "tsw.telemetry.channel",
             ):
                 _lg = logging.getLogger(_name)
-                _lg.setLevel(logging.DEBUG)
+                _lg.setLevel(logging.INFO)
                 if _name == "tsw.governor.v2":
                     _lg.propagate = False
                 _lg.addHandler(fh)
@@ -513,11 +510,7 @@ class AutopilotEngine:
                 self._control_skip_reason = "skip_other"
 
         elapsed = time.perf_counter() - t0
-        self.loop_times.append(elapsed)
-        if len(self.loop_times) > 20:
-            self.loop_times.pop(0)
         fps = self._loop_hz_real
-        self._loop_fps = fps
         self._last_tick_ms = elapsed * 1000.0
         self._heartbeat_tick_count += 1
         self._loop_metrics.record_tick(self._last_tick_ms, self._loop_hz_real)
@@ -649,10 +642,6 @@ class AutopilotEngine:
         label = "activada" if enabled else "desactivada"
         self._log.info("Holgura de horario %s", label)
 
-    def learn_status(self) -> LearnStatus:
-        """Estado del perfil / learner para la GUI."""
-        return self._learn_status()
-
     def _learn_status(self) -> LearnStatus:
         now = time.monotonic()
         cached = self._learn_status_cache
@@ -734,15 +723,6 @@ class AutopilotEngine:
             self._log.info("Perfil de tren cargado: %s", veh)
             self._log_learner_state("perfil cargado")
             self._vehicle_profiled = True
-
-    def _on_ue4ss_upgraded(self) -> None:
-        """Probe F7 disponible tras arrancar en HTTP — canal rápido + IPC."""
-        self._probe_mod_logged = False
-        self._log.info(
-            "Probe UE4SS activo — cambio HTTP → UE4SS (~%d Hz telemetría)",
-            int(DEFAULT_TELEM_HZ),
-        )
-        self._log_probe_mod()
 
     def _log_searching_hint(self) -> None:
         if self.conn.mode != "searching":
@@ -1141,17 +1121,10 @@ class AutopilotEngine:
         if self.decider.paused or self.telem.get("probe_motion_frozen"):
             return
         self._log_cycle_n += 1
-        want_info = self._log_cycle_n <= 5
-        want_debug = (
-            self._log_cycle_n > 5 and self._log_cycle_n % 40 == 0
-        )
-        if want_info:
-            if not self._log.isEnabledFor(logging.INFO):
-                return
-        elif want_debug:
-            if not self._log.isEnabledFor(logging.DEBUG):
-                return
-        else:
+        # Arranque: 5 líneas; luego ~2 s @ 20 Hz (parada, gap, p1dbg).
+        if self._log_cycle_n > 5 and self._log_cycle_n % 40 != 0:
+            return
+        if not self._log.isEnabledFor(logging.INFO):
             return
         telem = self.telem
         cmd = self.decider.brake_command
@@ -1228,7 +1201,4 @@ class AutopilotEngine:
             fill_n,
             lrn,
         )
-        if self._log_cycle_n <= 5:
-            self._log.info(line, *args)
-        else:
-            self._log.debug(line, *args)
+        self._log.info(line, *args)

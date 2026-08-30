@@ -24,8 +24,7 @@ _CANAL = re.compile(
     r"canal \[PASS\].*?work_max=([\d.]+)ms slow=(\d+)\s+"
     r"loop_hz=([\d.]+)-([\d.]+)\s+telem_poll=([\d.]+)Hz",
 )
-_CYCLE_DEBUG = re.compile(r"\[tsw\.autopilot\s*\]\s+DEBUG\s+spd=")
-_CYCLE_INFO = re.compile(r"\[tsw\.autopilot\s*\]\s+INFO\s+spd=")
+_CYCLE_SPD = re.compile(r"\[tsw\.autopilot\s*\]\s+(?:DEBUG|INFO)\s+spd=")
 
 MIN_LOOP_HZ = 16.0
 MAX_WORK_MED_MS = 45.0
@@ -72,13 +71,12 @@ def parse_canal(text: str) -> list[dict[str, float]]:
 def summarize(text: str) -> dict[str, Any]:
     hb = parse_heartbeats(text)
     canal = parse_canal(text)
-    n_dbg = len(_CYCLE_DEBUG.findall(text))
-    n_info_spd = len(_CYCLE_INFO.findall(text))
+    n_spd = len(_CYCLE_SPD.findall(text))
     out: dict[str, Any] = {
         "n_heartbeat": len(hb),
         "n_canal": len(canal),
-        "n_cycle_debug": n_dbg,
-        "n_cycle_info_spd": n_info_spd,
+        "n_cycle_debug": n_spd,
+        "n_cycle_info_spd": n_spd,
     }
     if hb:
         works = [r["work_ms"] for r in hb]
@@ -122,7 +120,7 @@ def why_cpu(stats: dict[str, Any]) -> list[str]:
     if w is not None and w >= 36:
         notes.append(
             "work alto: get_telemetry (GetData.txt) + decider + IPC + "
-            "_log_cycle. OCR se enciende cerca de estación (<1500 m)."
+            "snapshot GUI. OCR se enciende cerca de estación (<1500 m)."
         )
     poll = stats.get("telem_poll_med")
     hz = stats.get("loop_hz_med")
@@ -131,12 +129,12 @@ def why_cpu(stats: dict[str, Any]) -> list[str]:
             f"telem_poll {poll:.1f} Hz < loop {hz:.1f} Hz: Python lee más "
             f"rápido que Lua escribe GetData (probe ~17 Hz)."
         )
-    n_dbg = int(stats.get("n_cycle_debug") or 0)
+    n_spd = int(stats.get("n_cycle_info_spd") or stats.get("n_cycle_debug") or 0)
     n_hb = max(int(stats.get("n_heartbeat") or 1), 1)
-    if n_dbg > n_hb * 4:
+    if n_spd > n_hb * 4:
         notes.append(
-            f"Muchas líneas DEBUG spd= ({n_dbg}): I/O de log; el ciclo "
-            "completo no se imprime cada tick (1/20 tras los 5 primeros)."
+            f"Muchas líneas ciclo spd= ({n_spd}): I/O de log; el ciclo "
+            "completo no se imprime cada tick (~1/40 tras los 5 primeros)."
         )
     mx = stats.get("work_max_ms")
     if mx is not None and mx > 80:
@@ -161,7 +159,7 @@ def evaluate(stats: dict[str, Any]) -> list[str]:
 def format_report(stats: dict[str, Any]) -> str:
     lines = [
         f"heartbeats {stats.get('n_heartbeat')}  canal {stats.get('n_canal')}",
-        f"DEBUG spd= {stats.get('n_cycle_debug')}  INFO spd= {stats.get('n_cycle_info_spd')}",
+        f"ciclo spd= {stats.get('n_cycle_info_spd')}",
     ]
     if stats.get("loop_hz_med") is not None:
         lines.append(

@@ -1,7 +1,7 @@
 # Archivo — integración RailBridge (deprecada)
 
 **Fecha de archivo:** 2026-06-13  
-**Motivo:** el proyecto pasa a telemetría y mandos **sin RailBridge** — ver `docs/ARQUITECTURA.md`.
+**Motivo:** el proyecto pasa a telemetría y mandos **sin RailBridge** — ver `docs/v1/ARQUITECTURA.md`.
 
 ## Contenido
 

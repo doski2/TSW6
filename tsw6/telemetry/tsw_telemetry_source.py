@@ -18,6 +18,9 @@ Planning de distancias
 - **Límites y desnivel:** solo probe Lua. HTTP no rellena carteles ni ``gradient_pct``.
   Odometría Python si el cm del probe está plano y el tren se mueve.
 - **Estaciones** (HTTP): ``DriverAid.TrackData`` + ``_tick_station_distances``.
+- **Masa formación (F-B, paso 9 — sin cablear):** poll
+  ``CurrentFormation/0/Simulation/ClampPowerInput.Mass`` en hilo planning
+  (arranque + 300 s). Ver ``_poll_formation_mass`` (stub) y [PLAN_V2 §2](docs/v2/PLAN_V2.md).
 
 Escritura de mandos: ``SendCommand.txt`` (IPC Lua) o ``tsw_command_bus`` (HTTP).
 """
@@ -80,6 +83,11 @@ PROBE_LIMIT_FLAT_M = 0.5
 SLOW_EVERY = 30
 PLANNING_MIN_INTERVAL_S = 2.0
 PLANNING_READ_TIMEOUT = 1.0
+# F-B masa (PLAN_V2 §2 paso 9): poll HTTP cada 300 s — sin cablear aún.
+MASS_POLL_INTERVAL_S = 300.0
+FORMATION_MASS_HTTP_PATH = (
+    "CurrentFormation/0/Simulation/ClampPowerInput.Mass"
+)
 UE4SS_STALE_S = 0.75
 # Hitch seq 1→2 ~2,7 s (GetDriverAid nativo). Menú/cierre: ReceiveTick para.
 UE4SS_LOST_S = 3.5
@@ -617,6 +625,16 @@ class TswTelemetrySource:
             return out
         finally:
             self._api_lock.release()
+
+    def _poll_formation_mass(self) -> Optional[float]:
+        """
+        F-B — peso total formación vía HTTPAPI (paso 9, sin cablear).
+
+        Ruta: ``FORMATION_MASS_HTTP_PATH``. Evidencia lab ~45 550 kg (``213100Z``).
+        Cuando se cablee: llamar desde hilo planning; guardar ``mass_kg``,
+        ``mass_ref_kg``, ``mass_factor``; exponer en telemetría interna (no GetData).
+        """
+        return None
 
     def _reset_planning_distances(self, planning: dict[str, Any]) -> None:
         """Sincroniza distancias con un snapshot HTTP de DriverAid."""

@@ -82,26 +82,6 @@ def run_console(args: argparse.Namespace) -> None:
                     raise KeyboardInterrupt
                 if cmd == "P":
                     engine.toggle_pause()
-                elif cmd == "R" and not config.no_control:
-                    engine.reset_neutral()
-                elif cmd == "N" and not config.no_control:
-                    print(f"\n  {Fore.YELLOW}Sincronizando handle (~5s)...{Style.RESET_ALL}")
-                    engine.force_neutral()
-                elif cmd in ("+", "="):
-                    engine.adjust_target(5)
-                elif cmd in ("-", "_"):
-                    engine.adjust_target(-5)
-                elif cmd == "S":
-                    print(f"\n{Fore.CYAN}Distancia a próxima parada en millas"
-                          f" (Enter=auto): {Style.RESET_ALL}", end="", flush=True)
-                    try:
-                        raw = input().strip()
-                        if raw == "":
-                            engine.clear_stop()
-                        else:
-                            engine.set_stop_miles(float(raw))
-                    except ValueError:
-                        pass
 
             snap = engine.tick()
             render_dashboard(

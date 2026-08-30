@@ -32,7 +32,6 @@ local hookPre, hookPost
 local debugDumped = false
 local limitsLogged = false
 local driver_input_dumped = false
-local pbh_ufn_dumped = false
 local pbh_setter_names = nil  -- UFunctions del lever aptas para ProcessEvent (una vez)
 
 -- Planning: distancias = DriverAid. No hold Lua: odo/actor no se mueven
@@ -48,6 +47,7 @@ local last_cmd_id = 0
 local last_ack_ok = false
 local commands_armed_cache = false
 local commands_armed_checked_at = 0
+local last_ipc_poll_clock = 0
 local read_hud_lever_notch = nil  -- definido tras helpers HUD
 local control_path_logged = {}
 local pbh_write_strategy = nil
@@ -285,6 +285,12 @@ local function ctrl_is_valid(ctrl)
     return ok and valid == true
 end
 
+local function read_ctrl_number(ctrl, prop)
+    local ok, v = pcall(function() return ctrl[prop] end)
+    if ok and type(v) == "number" then return v end
+    return nil
+end
+
 local function collect_names_for_control(name)
     return CONTROL_ALIASES[name] or { name }
 end
@@ -296,6 +302,21 @@ local function lua_str(v)
     if ok and type(s) == "string" and s ~= "" then return s end
     ok, s = pcall(function() return tostring(v) end)
     if ok and type(s) == "string" and s ~= "" then return s end
+    return nil
+end
+
+-- UE4SS: cada parámetro CPF_OutParm necesita su propia tabla {}.
+local function out_val(t, ...)
+    if type(t) ~= "table" then return nil end
+    for i = 1, select("#", ...) do
+        local key = select(i, ...)
+        if t[key] ~= nil then return t[key] end
+    end
+    for _, v in pairs(t) do
+        if type(v) == "number" or type(v) == "boolean" then
+            return v
+        end
+    end
     return nil
 end
 
@@ -321,21 +342,6 @@ local function lever_name_matches_control(child_name, names)
         return true
     end
     return false
-end
-
-local function append_levers_from_actor_pairs(parent, names, candidates, seen)
-    if not parent then return end
-    pcall(function()
-        for k, v in pairs(parent) do
-            if type(k) == "string" and v and v.IsValid and v:IsValid() then
-                local cls = object_class_name(v)
-                if lever_name_matches_control(k, names)
-                    or string.find(cls, "Lever", 1, true) then
-                    append_control_candidate(candidates, seen, v)
-                end
-            end
-        end
-    end)
 end
 
 local function lever_belongs_to_actor(lever, actor)
@@ -554,10 +560,6 @@ local function scalar_to_notch(kind, val)
     return nil
 end
 
-local function input_to_notch(input_val)
-    return scalar_to_notch("scalar", input_val)
-end
-
 local function control_debug_label(ctrl)
     local cls = object_class_name(ctrl)
     local ok, path = pcall(function() return lua_str(ctrl:GetFullName()) end)
@@ -570,16 +572,6 @@ end
 local function fmt_probe_num(v)
     if type(v) == "number" then return string.format("%.4f", v) end
     return tostring(v)
-end
-
-local function fmt_probe_any(v)
-    if v == nil then return "nil" end
-    local t = type(v)
-    if t == "number" then return string.format("%.4f", v) end
-    if t == "boolean" or t == "string" then return tostring(v) end
-    local s = lua_str(v)
-    if s and s ~= "" then return s end
-    return t
 end
 
 local function container_len(arr)
@@ -608,20 +600,6 @@ local function read_index(arr, i)
     ok = pcall(function() v = arr[i] end)
     if ok and v ~= nil then return v end
     return nil
-end
-
--- TArray convertido a tabla Lua (1-based). ForEach/Get(0..8)/pairs en
--- UScriptStruct tiran ReceiveTick (seq 1→2 ~2.7 s).
-local function foreach_container(arr, fn)
-    if arr == nil then return end
-    local kind = type(arr)
-    if kind ~= "table" and kind ~= "userdata" then return end
-    for i = 1, 8 do
-        local item
-        pcall(function() item = arr[i] end)
-        if item == nil then return end
-        if fn(item) == false then return end
-    end
 end
 
 -- UE4SS: `n ~= v` / `v > 0` entre number y UScriptStruct tira
@@ -700,16 +678,6 @@ local function struct_axis(el)
     if n ~= nil then return n end
     local fields = dump_struct_numbers(el, nil)
     return fields.OutputValue or fields.InputValue or fields.Value or fields.NormalisedValue
-end
-
-local function struct_notch_id(el)
-    if type(el) == "number" then return nil end
-    if el == nil then return nil end
-    for _, key in ipairs({ "NotchID", "NotchIndex", "Index", "ID" }) do
-        local ok, v = pcall(function() return el[key] end)
-        if ok and type(v) == "number" then return math.floor(v + 0.5) end
-    end
-    return nil
 end
 
 -- Una vez (F9): Notches.InputValue. El 323 ya está en PBH_INPUT_BY_NOTCH.
@@ -944,71 +912,6 @@ local function collect_pbh_setters(ctrl)
     return setters
 end
 
-local function dump_ufunction_params(obj, fname)
-    local fn
-    pcall(function() fn = obj:GetFunction(fname) end)
-    if not fn then
-        print(string.format("[TelemetryProbe] ufn %s: GetFunction=nil\n", fname))
-        return
-    end
-    local names = {}
-    pcall(function()
-        if type(fn.ForEachProperty) == "function" then
-            fn:ForEachProperty(function(prop)
-                local n = lua_str(prop:GetFName())
-                local pt = "?"
-                pcall(function() pt = lua_str(prop:GetClass():GetFName()) or "?" end)
-                if n then
-                    table.insert(names, n .. ":" .. pt)
-                    print("[TelemetryProbe]   ufn-param " .. n .. " [" .. pt .. "]\n")
-                end
-            end)
-        end
-    end)
-    print(string.format(
-        "[TelemetryProbe] ufn %s params(%d)=%s\n",
-        fname, #names, #names > 0 and table.concat(names, ", ") or "?"))
-end
-
-local function method_type_label(method)
-    if method == nil then return "nil" end
-    local lt = type(method)
-    local ut
-    pcall(function()
-        if type(method.type) == "function" then
-            ut = method:type()
-        end
-    end)
-    if ut and ut ~= "" then return lt .. "/" .. ut end
-    return lt
-end
-
--- UFunction obtenida por obj.Func ya lleva contexto: NO pasar obj otra vez
--- (build t: BeginDecreaseDigital expected 2 received 0; SetPositionDeltaAnalogue expected 3 received 1).
-local function dump_bound_fn_params(fn, fname)
-    if fn == nil then
-        print(string.format("[TelemetryProbe] bound %s: nil\n", fname))
-        return
-    end
-    local names = {}
-    pcall(function()
-        if type(fn.ForEachProperty) == "function" then
-            fn:ForEachProperty(function(prop)
-                local n = lua_str(prop:GetFName())
-                local pt = "?"
-                pcall(function() pt = lua_str(prop:GetClass():GetFName()) or "?" end)
-                if n then
-                    table.insert(names, n .. ":" .. pt)
-                end
-            end)
-        end
-    end)
-    print(string.format(
-        "[TelemetryProbe] bound %s type=%s params=%s\n",
-        fname, method_type_label(fn),
-        #names > 0 and table.concat(names, ", ") or "?"))
-end
-
 local function call_bound(fn, args)
     if fn == nil then return false, "no_method" end
     local n = args and #args or 0
@@ -1162,7 +1065,6 @@ local function dump_driver_input_inventory(controller, reason)
     local pbh = get_direct_actor_lever("PowerBrakeHandle", controller)
     if pbh then
         pbh_setter_names = nil
-        pbh_ufn_dumped = false
         collect_pbh_setters(pbh)
     else
         print("[TelemetryProbe] reflect: sin actor.PowerBrakeHandle\n")
@@ -1209,19 +1111,6 @@ local function hud_step_ack(hud_before, hud_after, dest, step)
             tostring(hud_before), tostring(hud_after), tostring(step), tostring(dest)))
     end
     return true
-end
-
-local function read_ctrl_number(ctrl, prop)
-    local ok, v = pcall(function() return ctrl[prop] end)
-    if ok and type(v) == "number" then return v end
-    return nil
-end
-
-local function safe_assign_lever_prop(ctrl, prop, val)
-    local before = read_ctrl_number(ctrl, prop)
-    local wok = pcall(function() ctrl[prop] = val end)
-    local after = read_ctrl_number(ctrl, prop)
-    return wok, before, after
 end
 
 local function write_pbh_one_step(ctrl, num, controller)
@@ -1624,21 +1513,6 @@ local function log_hud_error(label, err)
     print(string.format("[TelemetryProbe] WARN %s: %s\n", label, tostring(err)))
 end
 
--- UE4SS: cada parámetro CPF_OutParm necesita su propia tabla {}.
-local function out_val(t, ...)
-    if type(t) ~= "table" then return nil end
-    for i = 1, select("#", ...) do
-        local key = select(i, ...)
-        if t[key] ~= nil then return t[key] end
-    end
-    for _, v in pairs(t) do
-        if type(v) == "number" or type(v) == "boolean" then
-            return v
-        end
-    end
-    return nil
-end
-
 local function is_valid_num(v)
     if type(v) ~= "number" or v ~= v then return false end
     local ok, good = pcall(function()
@@ -1712,39 +1586,6 @@ read_hud_lever_notch = function(controller)
         return power_to_notch(power, power_neg == true)
     end
     return nil
-end
-
-local function door_state_from_id(id)
-    if not id then return nil end
-    local mid = string.lower(tostring(id))
-    if mid == "dmi-doors-open" or mid == "doors-open" or mid == "door-open" then
-        return true
-    end
-    if mid == "dmi-doors-closed" or mid == "doors-closed" or mid == "door-closed" then
-        return false
-    end
-    if string.find(mid, "door", 1, true) and string.find(mid, "open", 1, true)
-        and not string.find(mid, "clos", 1, true) then
-        return true
-    end
-    if string.find(mid, "door", 1, true) and string.find(mid, "clos", 1, true) then
-        return false
-    end
-    return nil
-end
-
-local function scan_door_messages(msgs)
-    if msgs == nil then return nil end
-    local found = nil
-    foreach_container(msgs, function(m)
-        local id
-        pcall(function()
-            id = m.id or m.Id or m.messageId or m.MessageId
-        end)
-        found = door_state_from_id(id)
-        if found ~= nil then return false end
-    end)
-    return found
 end
 
 local function read_door_component_value(door_comp)
@@ -1926,6 +1767,9 @@ end
 local PLANNING_FIELDS = {
     "dist_limit_cm", "next_limit_ms", "odo_m",
 }
+
+-- 9b-a (PLAN_V2 §2): emitir is_slipping / traction_locked desde HUD_Get* en build_line.
+-- Sin handler autopilot hasta estudio S1–S4 (paso 9b-b). Ver docs/CANAL_CONTROL.md.
 
 local function build_line(sample)
     local parts = {
@@ -2190,7 +2034,6 @@ RegisterKeyBind(Key.F9, {}, function()
     ExecuteInGameThread(function()
         driver_input_dumped = false
         pbh_setter_names = nil
-        pbh_ufn_dumped = false
         pbh_map_dumped = false
         pbh_axis_by_notch = nil
         local controller = UEHelpers.GetPlayerController()

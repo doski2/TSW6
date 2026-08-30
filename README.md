@@ -12,7 +12,7 @@ Python 3.9+ (3.11 recomendado), en cabina.
 ```bat
 ```
 
-Horarios comerciales (opcional): [docs/HUD_TIMETABLE.md](docs/HUD_TIMETABLE.md) →
+Horarios comerciales (opcional): [docs/HUD_TIMETABLE.md](docs/v1/HUD_TIMETABLE.md) →
 `preparar_db_hud.bat`.
 
 ## Estructura del proyecto
@@ -24,12 +24,12 @@ Horarios comerciales (opcional): [docs/HUD_TIMETABLE.md](docs/HUD_TIMETABLE.md) 
 
 Todo está en **[docs/README.md](docs/README.md)**:
 
-- [Guía de uso](docs/GUIA.md) — `.bat`, calibración, autopilot
-- [Horarios HUD](docs/HUD_TIMETABLE.md) — `tsw_hud.db`, paradas programadas
-- [DriverAid API](docs/DRIVERAID_API.md) — nodos HTTPAPI
-- [Paridad Dastsc](docs/DASTSC_PARITY.md) — frenado B1–B3
-- [Arquitectura](docs/ARQUITECTURA.md) — módulos, UE4SS, latencia
-- [Freight NA](docs/FREIGHT_NA.md) — SD40-2, fases pendientes
-- [Pendiente DynamicHUD](docs/PENDIENTE_DYNAMICHUD.md) — telemetría probe
+- [Guía de uso](docs/v1/GUIA.md) — `.bat`, calibración, autopilot
+- [Horarios HUD](docs/v1/HUD_TIMETABLE.md) — `tsw_hud.db`, paradas programadas
+- [DriverAid API](docs/reference/DRIVERAID_API.md) — nodos HTTPAPI
+- [Paridad Dastsc](docs/v1/DASTSC_PARITY.md) — frenado B1–B3
+- [Arquitectura](docs/v1/ARQUITECTURA.md) — módulos, UE4SS, latencia
+- [Freight NA](docs/v1/FREIGHT_NA.md) — SD40-2, fases pendientes
+- [Pendiente DynamicHUD](docs/v1/PENDIENTE_DYNAMICHUD.md) — telemetría probe
 
 Código RailBridge archivado: `archive/railbridge/`

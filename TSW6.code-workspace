@@ -4,5 +4,19 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"Lua.diagnostics.globals": [
+			"FindAllOf",
+			"FindFirstOf",
+			"StaticFindObject",
+			"RegisterHook",
+			"UnregisterHook",
+			"RegisterInitGameStatePreHook",
+			"RegisterInitGameStatePostHook",
+			"RegisterKeyBind",
+			"ExecuteInGameThread",
+			"Key",
+			"ModifierKey"
+		]
+	}
 }

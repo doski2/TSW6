@@ -83,7 +83,8 @@ def parse_probe_line(line: str) -> dict[str, Any]:
             except ValueError:
                 out[key] = raw
             continue
-        if key in ("power_neg", "doors_open", "doors_telem", "doors_dmi", "last_ack_ok"):
+        if key in ("power_neg", "doors_open", "doors_telem", "doors_dmi", "last_ack_ok",
+                   "is_slipping", "traction_locked"):
             out[key] = raw in ("1", "true", "True")
             continue
         if key == "vehicle":
@@ -122,6 +123,9 @@ class ProbeSnapshot:
     doors_open: Optional[bool] = None
     doors_telem: Optional[bool] = None
     doors_dmi: Optional[bool] = None
+    # 9b-a (PLAN_V2 §2): probe emitirá HUD_GetIsSlipping / HUD_GetIsTractionLocked.
+    is_slipping: Optional[bool] = None
+    traction_locked: Optional[bool] = None
     vehicle: str = "?"
 
     @classmethod
@@ -151,6 +155,8 @@ class ProbeSnapshot:
             doors_open=data.get("doors_open"),
             doors_telem=data.get("doors_telem", data.get("doors_open")),
             doors_dmi=data.get("doors_dmi"),
+            is_slipping=data.get("is_slipping"),
+            traction_locked=data.get("traction_locked"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 

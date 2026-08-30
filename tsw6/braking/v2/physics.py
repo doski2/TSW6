@@ -1,6 +1,27 @@
 #!/usr/bin/env python3
 """
 physics.py — Física única de frenado (Dastsc physics.ts + márgenes TSW6).
+
+Curva de servicio (ATO / RSSB, misma idea que Dastsc)::
+
+    a_neta = a_freno + g * (pendiente/100)
+             pendiente < 0 → bajada → menos decel → más metros
+
+    s = (v² − u²) / (2 * a_neta)
+
+``v`` velocidad actual, ``u`` objetivo (cartel o 0 en andén). Luego fill/reacción
+(``brake_reaction_margin_m``) y ventana APPLY (``apply_zone_margin_m``: ~2,5 s
+de marcha, cap 150 m). Eso es ``dist_start``: metros que aún faltan para aplicar.
+
+A 60→50 mph con B1, ``s`` son cientos de metros, no millas. Un umbral fijo
+«no frenar hasta 2 mi» rompe un 90→40; la curva no.
+
+Capa aware vs act: el HUD puede mostrar el 50 a 4 km; APPLY/COAST solo cuando
+``dist_start`` entra en la ventana (más un pre-coast de ~8 s). Overspeed
+respecto al *siguiente* cartel no dispara freno lejos.
+
+Gravedad al soltar: el fill (~2,5 s) sigue frenando y en bajada ``g`` empuja;
+el RELEASE en pendiente se adelanta un poco en mph.
 """
 
 from __future__ import annotations
@@ -44,9 +65,12 @@ class BrakePhysicsContext:
     brake_transition_s: float = BRAKE_TRANSITION_S
     gradient_pct: float = 0.0
     current_accel_ms2: Optional[float] = None
+    # F-B (PLAN_V2 §2 paso 9): mass_factor en decel cuando HTTP masa cableado.
+    # mass_factor: float = 1.0
 
 
 def gravity_acceleration_ms2(gradient_pct: float) -> float:
+    """Componente de g a lo largo de la vía (pendiente en %, no ‰)."""
     return G_MSS * (gradient_pct / 100.0)
 
 
@@ -143,10 +167,37 @@ def kinematic_horizon_m(
 def decel_for_notch(
     fraction: float,
     base_decel: float,
-    gradient_pct: float,
+    gradient_pct: float = 0.0,
 ) -> float:
-    grav = gravity_acceleration_ms2(gradient_pct)
-    return max(base_decel * fraction + grav, 0.05)
+    """Decel de servicio en **llano** (fracción × base).
+
+    La pendiente entra **una sola vez** en ``braking_distance_m`` vía
+    ``BrakePhysicsContext.gradient_pct``. No sumar ``g`` aquí: el learner ya
+    devuelve a con grado, y duplicar g alarga/acorta ``s`` al doble.
+    """
+    del gradient_pct
+    return max(base_decel * fraction, 0.05)
+
+
+def brake_ctx_for_decel(
+    *,
+    gradient_pct: float,
+    using_learned: bool,
+    current_accel_ms2: Optional[float] = None,
+    brake_transition_s: Optional[float] = None,
+    base_decel_ms2: Optional[float] = None,
+) -> BrakePhysicsContext:
+    """ctx para ``s=(v²−u²)/2a``: fórmula → pendiente; aprendido → ya va en a."""
+    return BrakePhysicsContext(
+        gradient_pct=0.0 if using_learned else gradient_pct,
+        current_accel_ms2=current_accel_ms2,
+        brake_transition_s=(
+            BRAKE_TRANSITION_S if brake_transition_s is None else brake_transition_s
+        ),
+        base_decel_ms2=(
+            DEFAULT_MAX_BRAKE_DECEL if base_decel_ms2 is None else base_decel_ms2
+        ),
+    )
 
 
 def apply_zone_margin_m(speed_ms: float, apply_at_remaining_m: float) -> float:
@@ -282,6 +333,29 @@ def brake_command_apply_zone_m(
         dist_start=dist_start,
     )
     return apply_zone_margin_m(speed_ms, apply_at)
+
+
+def speed_limit_pre_coast_horizon_m(
+    *,
+    speed_mph: float,
+    distance_to_target_m: Optional[float] = None,
+    apply_at_remaining_m: Optional[float] = None,
+    dist_start: Optional[float] = None,
+) -> float:
+    """
+    ``dist_start`` máximo para COAST (soltar tracción) antes del APPLY.
+
+    ~8 s de marcha o 3× zona APPLY (≈200–270 m @ 60 mph). Lejos de eso el
+    cartel siguiente solo se planifica (aware), no se toca el mando.
+    """
+    zone = brake_command_apply_zone_m(
+        speed_mph=speed_mph,
+        distance_to_target_m=distance_to_target_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+        dist_start=dist_start,
+    )
+    speed_ms = speed_mph * MPH_TO_MS
+    return max(zone * 3.0, speed_ms * 8.0, 80.0)
 
 
 def _coherent_apply_at_remaining_m(

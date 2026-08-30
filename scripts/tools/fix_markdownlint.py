@@ -12,7 +12,7 @@ Uso:
   python fix_markdownlint.py --check
   python fix_markdownlint.py --lint
 
-Config: `.markdownlint.json` (raíz) + `.vscode/settings.json` (Cursor/VS Code).
+Config: `.markdownlint.json` en la raíz del repo (MD004 / MD060). No lee settings de Cursor.
 Ver reglas: https://github.com/DavidAnson/markdownlint/tree/v0.41.1/doc
 """
 
@@ -59,6 +59,9 @@ MD034_SHIELD_PATTERNS = (
 MD034_BARE_URL = re.compile(r"https?://[^\s<>\[\]()]+(?:\([^\s)]*\))?[^\s<>\[\].,;:!?]*")
 MD034_BARE_EMAIL = re.compile(r"(?<![</\w])([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})")
 MD060_VISUAL_WIDE = re.compile(r"[\u2600-\u27BF\U0001F300-\U0001FAFF]")
+# MD060 compact: whitespace immediately left of `|` must be exactly one space
+# (mensaje: "Table pipe has extra space to the left for style compact").
+MD060_EXTRA_SPACE_LEFT = re.compile(r" {2,}\|")
 MD060_DEFAULTS = {"style": "any", "aligned_delimiter": False}
 MD004_DEFAULTS = {"style": "consistent"}
 MD004_SUBLIST_SYMBOLS = ("*", "+", "-")
@@ -239,6 +242,11 @@ def is_compact_cell(part: str) -> bool:
     return part == compact_cell_content(part.strip())
 
 
+def count_compact_extra_space_left(lines: list[str]) -> int:
+    """Cuenta `|` con más de un espacio a la izquierda (mismo aviso que markdownlint)."""
+    return sum(len(MD060_EXTRA_SPACE_LEFT.findall(line)) for line in lines)
+
+
 def count_compact_violations(lines: list[str], aligned_delimiter: bool) -> int:
     violations = 0
     if aligned_delimiter and len(lines) >= 2:
@@ -286,6 +294,10 @@ def pick_md060_style(
     aligned_delimiter = bool(config.get("aligned_delimiter", False))
     if style != "any":
         return style
+    # Padding tipo `| Pieza         |` no es aligned válido: markdownlint
+    # reporta compacto. No elegir aligned, que rellenaría aún más.
+    if count_compact_extra_space_left(lines) and count_aligned_violations(lines) > 0:
+        return "compact"
     scores = md060_style_scores(lines, aligned_delimiter)
     return min(scores, key=lambda k: scores[k])
 
@@ -299,6 +311,8 @@ def table_needs_md060_fix(
     if configured_style != "any":
         scores = md060_style_scores(lines, aligned_delimiter)
         return scores[configured_style] > 0
+    if count_compact_extra_space_left(lines) and count_aligned_violations(lines) > 0:
+        return True
     return min(md060_style_scores(lines, aligned_delimiter).values()) > 0
 
 
@@ -349,20 +363,29 @@ def format_aligned_table(rows: list[list[str]]) -> list[str]:
 def format_compact_table(
     rows: list[list[str]], aligned_delimiter: bool = False
 ) -> list[str]:
+    """
+    MD060 compact: un espacio alrededor del texto.
+
+    aligned_delimiter=true (spec): cabecera + fila --- alineadas; cuerpo compacto.
+    No reescribir toda la tabla como style=aligned.
+    """
     if not rows:
         return []
     col_count = max(len(row) for row in rows)
     normalized = [row + [""] * (col_count - len(row)) for row in rows]
-    if aligned_delimiter:
-        return format_aligned_table(normalized)
-    lines: list[str] = []
+    compact_lines: list[str] = []
     for row in normalized:
         if is_delimiter_row(row):
             cells = [compact_cell_content("---") for _ in range(col_count)]
         else:
             cells = [compact_cell_content(row[col]) for col in range(col_count)]
-        lines.append("|" + "|".join(cells) + "|")
-    return lines
+        compact_lines.append("|" + "|".join(cells) + "|")
+    if not aligned_delimiter:
+        return compact_lines
+    aligned = format_aligned_table(normalized)
+    if len(aligned) < 2:
+        return compact_lines
+    return [aligned[0], aligned[1], *compact_lines[2:]]
 
 
 def format_tight_table(

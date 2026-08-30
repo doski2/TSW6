@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1320" viewBox="0 0 960 1320" font-family="Segoe UI, Arial, sans-serif">
+  <rect width="960" height="1320" fill="#fafafa"/>
+  <text x="480" y="28" text-anchor="middle" font-size="17" font-weight="700">TSW6 producto v2</text>
+  <text x="480" y="48" text-anchor="middle" font-size="11" fill="#666">PLAN_V2.md | Arbol v2 | esqueleto_v2.dot</text>
+
+  <!-- UNA VEZ -->
+  <rect x="30" y="64" width="900" height="150" rx="10" fill="#fffbeb" stroke="#d69e2e" stroke-dasharray="6,4"/>
+  <text x="480" y="86" text-anchor="middle" font-size="11" font-weight="700" fill="#975a16">UNA VEZ (vehicle= / arranque / cambio tren)</text>
+  <rect x="50" y="98" width="150" height="52" rx="6" fill="#fefcbf" stroke="#d69e2e"/>
+  <text x="125" y="120" text-anchor="middle" font-size="11">vehicle=</text>
+  <text x="125" y="136" text-anchor="middle" font-size="9" fill="#666">GetData probe</text>
+  <rect x="220" y="98" width="200" height="52" rx="6" fill="#fefcbf" stroke="#d69e2e"/>
+  <text x="320" y="116" text-anchor="middle" font-size="10" font-weight="600">Paquete G-B</text>
+  <text x="320" y="130" text-anchor="middle" font-size="8" fill="#666">layout | nombres UE | mapa</text>
+  <text x="320" y="142" text-anchor="middle" font-size="8" fill="#666">semilla fill_s / a</text>
+  <rect x="440" y="98" width="180" height="52" rx="6" fill="#fefcbf" stroke="#d69e2e" stroke-dasharray="4,3"/>
+  <text x="530" y="116" text-anchor="middle" font-size="10">Hoy: detect_control</text>
+  <text x="530" y="132" text-anchor="middle" font-size="8" fill="#666">+ freight_na schema</text>
+  <rect x="640" y="98" width="130" height="52" rx="6" fill="#faf5ff" stroke="#9f7aea"/>
+  <text x="705" y="120" text-anchor="middle" font-size="10">Learner EMA</text>
+  <text x="705" y="136" text-anchor="middle" font-size="8" fill="#666">logs/profiles</text>
+  <rect x="790" y="98" width="120" height="52" rx="6" fill="#fefcbf" stroke="#d69e2e"/>
+  <text x="850" y="116" text-anchor="middle" font-size="9" font-weight="600">tsw_hud.db</text>
+  <text x="850" y="132" text-anchor="middle" font-size="8" fill="#666">G-A pasajeros</text>
+  <line x1="200" y1="124" x2="220" y2="124" stroke="#333" stroke-width="1.5"/>
+  <line x1="420" y1="124" x2="440" y2="124" stroke="#333" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="620" y1="124" x2="640" y2="124" stroke="#9f7aea" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="480" y="168" text-anchor="middle" font-size="9" fill="#888">G-B -&gt; cache nombres UE | G-A -&gt; horario/paradas (freight: sin HUD)</text>
+
+  <!-- JUEGO + PROBE -->
+  <rect x="290" y="232" width="380" height="36" rx="6" fill="#1a1a2e"/>
+  <text x="480" y="255" text-anchor="middle" fill="#fff" font-size="13">TSW6 UE4</text>
+  <line x1="480" y1="268" x2="480" y2="284" stroke="#333" stroke-width="2"/>
+  <rect x="200" y="284" width="560" height="72" rx="8" fill="#2b6cb0"/>
+  <text x="480" y="306" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Probe Lua ~20 Hz (s4.1 - solo I/O)</text>
+  <text x="480" y="324" text-anchor="middle" fill="#e2e8f0" font-size="9">GetData: vel grad 1 cartel odo doors brake_cyl signal_red* vehicle=</text>
+  <text x="480" y="340" text-anchor="middle" fill="#e2e8f0" font-size="9">SendCommand + flag -&gt; ack | sin pairs | sin P1</text>
+
+  <!-- IPC -->
+  <line x1="480" y1="356" x2="480" y2="372" stroke="#333" stroke-width="2"/>
+  <rect x="180" y="372" width="600" height="44" rx="6" fill="#edf2f7" stroke="#4a5568" stroke-dasharray="5,3"/>
+  <text x="480" y="392" text-anchor="middle" font-size="11" font-weight="600">IPC %TEMP%\TSW6Bridge\ (s4.2)</text>
+  <text x="480" y="408" text-anchor="middle" font-size="9" fill="#666">TelemetryReader + AsyncCommandWriter | sin HTTP mandos | SHM aplazado</text>
+
+  <!-- HTTP lateral -->
+  <rect x="30" y="440" width="200" height="80" rx="6" fill="#e9d8fd" stroke="#805ad5" stroke-dasharray="4,3"/>
+  <text x="130" y="462" text-anchor="middle" font-size="10" font-weight="600" fill="#553c9a">HTTP ~2 s</text>
+  <text x="130" y="478" text-anchor="middle" font-size="8" fill="#666">markers estaciones</text>
+  <text x="130" y="492" text-anchor="middle" font-size="8" fill="#666">geo | masa F-B*</text>
+  <text x="130" y="508" text-anchor="middle" font-size="8" fill="#c53030">NO limites P1 con F7</text>
+  <line x1="230" y1="480" x2="280" y2="520" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="5,3"/>
+
+  <!-- AGENTE -->
+  <rect x="30" y="430" width="900" height="520" rx="10" fill="#fff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="480" y="452" text-anchor="middle" font-size="11" font-weight="700" fill="#2b6cb0">AGENTE Python ~20 Hz (D1: agent/ - hoy autopilot_core)</text>
+
+  <rect x="280" y="468" width="400" height="40" rx="6" fill="#ebf8ff" stroke="#3182ce"/>
+  <text x="480" y="484" text-anchor="middle" font-size="11">TelemetryReader -&gt; ProbeSnapshot -&gt; TrainState</text>
+  <text x="480" y="500" text-anchor="middle" font-size="9" fill="#666">planning cache v x dt estaciones</text>
+
+  <line x1="480" y1="508" x2="480" y2="524" stroke="#333" stroke-width="1.5"/>
+  <rect x="80" y="524" width="360" height="56" rx="6" fill="#e6fffa" stroke="#38b2ac"/>
+  <text x="260" y="546" text-anchor="middle" font-size="11" font-weight="600">G-A Servicio</text>
+  <text x="260" y="562" text-anchor="middle" font-size="9" fill="#666">passenger: ETA anden FSM puertas</text>
+  <text x="260" y="574" text-anchor="middle" font-size="9" fill="#666">freight: via sin horario</text>
+  <rect x="520" y="524" width="360" height="56" rx="6" fill="#e6fffa" stroke="#38b2ac" stroke-dasharray="4,2"/>
+  <text x="700" y="546" text-anchor="middle" font-size="11" font-weight="600">G-B Layout (cache)</text>
+  <text x="700" y="562" text-anchor="middle" font-size="9" fill="#666">combined | freight_na</text>
+  <text x="700" y="574" text-anchor="middle" font-size="9" fill="#666">nombres del paquete</text>
+
+  <line x1="480" y1="580" x2="480" y2="596" stroke="#333" stroke-width="1.5"/>
+  <rect x="200" y="596" width="560" height="48" rx="6" fill="#c6f6d5" stroke="#38a169"/>
+  <text x="480" y="616" text-anchor="middle" font-size="11" font-weight="600">physics.py - s = v^2/(2a)</text>
+  <text x="480" y="632" text-anchor="middle" font-size="9" fill="#666">gradiente probe | learner a | massFactor* HTTP</text>
+
+  <line x1="480" y1="644" x2="480" y2="660" stroke="#c53030" stroke-width="2"/>
+  <rect x="60" y="660" width="840" height="100" rx="8" fill="#fff5f5" stroke="#c53030" stroke-width="2"/>
+  <text x="480" y="682" text-anchor="middle" font-size="11" font-weight="700" fill="#c53030">P1 coordinator</text>
+  <rect x="90" y="692" width="180" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="180" y="714" text-anchor="middle" font-size="10">limit_brake</text>
+  <text x="180" y="730" text-anchor="middle" font-size="8" fill="#666">1 cartel | C.3a odo</text>
+  <rect x="290" y="692" width="180" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="380" y="714" text-anchor="middle" font-size="10">station_plan</text>
+  <text x="380" y="730" text-anchor="middle" font-size="8" fill="#666">FSM puertas</text>
+  <rect x="490" y="692" width="200" height="52" rx="6" fill="#fff" stroke="#e53e3e" stroke-width="2"/>
+  <text x="590" y="714" text-anchor="middle" font-size="10">signal* (C1)</text>
+  <text x="590" y="730" text-anchor="middle" font-size="8" fill="#666">evaluate_signal_brake stub</text>
+  <rect x="710" y="692" width="170" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="795" y="714" text-anchor="middle" font-size="10">policy</text>
+  <text x="795" y="730" text-anchor="middle" font-size="8" fill="#666">waits skip_defer</text>
+
+  <line x1="480" y1="760" x2="480" y2="776" stroke="#333" stroke-width="1.5"/>
+  <rect x="280" y="776" width="400" height="40" rx="6" fill="#fed7d7" stroke="#c53030"/>
+  <text x="480" y="794" text-anchor="middle" font-size="11" font-weight="600">RELEASE / APPLY - un mando por tick</text>
+  <text x="480" y="808" text-anchor="middle" font-size="9" fill="#666">politica TSW D5</text>
+
+  <!-- feedback to probe -->
+  <path d="M 680 796 L 860 796 L 860 320 L 760 320" fill="none" stroke="#2b6cb0" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="872" y="560" font-size="10" fill="#2b6cb0" transform="rotate(90 872 560)">SendCommand</text>
+
+  <!-- GUI -->
+  <line x1="480" y1="816" x2="480" y2="832" stroke="#718096" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <rect x="200" y="832" width="560" height="56" rx="6" fill="#edf2f7" stroke="#718096" stroke-dasharray="5,3"/>
+  <text x="480" y="854" text-anchor="middle" font-size="11" font-weight="600">GUI / --console (s4.7 visor)</text>
+  <text x="480" y="872" text-anchor="middle" font-size="9" fill="#666">vel | limite | accion | plan P1* | probe Hz | sin limite efectivo en pantalla</text>
+
+  <!-- FUERA v2 -->
+  <rect x="30" y="970" width="900" height="70" rx="8" fill="#f7fafc" stroke="#a0aec0" stroke-dasharray="4,4"/>
+  <text x="480" y="992" text-anchor="middle" font-size="10" font-weight="600" fill="#718096">FUERA v2 / aplazado</text>
+  <text x="480" y="1010" text-anchor="middle" font-size="9" fill="#888">SHM | lim2 | ambar/verde | sidecar | OCR | pace | HTTP limites con F7 | blended/Acela</text>
+  <text x="480" y="1026" text-anchor="middle" font-size="9" fill="#888">* = pendiente cablear (C1 senal, F-B masa, D9 holgura)</text>
+
+  <!-- notas pie -->
+  <text x="480" y="1070" text-anchor="middle" font-size="10" fill="#444">Flujo: UE -&gt; Probe -&gt; GetData -&gt; TrainState -&gt; G-A/G-B -&gt; physics -&gt; P1 -&gt; IPC -&gt; Probe -&gt; UE</text>
+  <text x="480" y="1090" text-anchor="middle" font-size="9" fill="#666">Ahorro v2 = cache palanca (paquete G-B). No ahorro = v^2/2a cada tick.</text>
+  <text x="480" y="1110" text-anchor="middle" font-size="9" fill="#666">Campo nuevo = contrato GetData (D2) + F9 + tests (D7) - no if suelto en Lua.</text>
+</svg>

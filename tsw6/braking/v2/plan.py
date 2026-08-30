@@ -46,6 +46,9 @@ UK_SERVICE_PHASES: tuple[BrakePhase, ...] = (
     BrakePhase("B2", 2, 0.55),
     BrakePhase("B3", 1, 0.80),
 )
+SERVICE_DECEL_FRAC_BY_HANDLE: dict[int, float] = {
+    p.handle_notch: p.fraction for p in UK_SERVICE_PHASES
+}
 
 
 def resolve_phase_decel(

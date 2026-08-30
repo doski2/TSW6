@@ -257,6 +257,25 @@ class TestP1V2Integration:
         assert d._p1_station_target(s) == "Four Oaks, andén 2"
         assert d._p1_station_distance(s, stns) == 110.0
 
+    def test_p1_does_not_target_origin_when_rolling_out(self):
+        """FSM vacía y andén de spawn aún en HUD: P1 usa la siguiente parada."""
+        d = _decider()
+        s = _state(
+            speed_mph=13.0,
+            limit_mph=20.0,
+            next_stop_name="Lichfield City, andén 2",
+            next_stop_distance_m=16.0,
+            stations=(
+                {"name": "Lichfield City, andén 2", "distance_m": 16.0,
+                 "scheduled": True, "platform_length_m": 100.0},
+                {"name": "Shenstone", "distance_m": 4200.0, "scheduled": True},
+            ),
+        )
+        stns = list(s.stations) if s.stations else []
+        assert "Shenstone" in (d._p1_station_target(s) or "")
+        dist = d._p1_station_distance(s, stns)
+        assert dist is not None and dist > 1000.0
+
     def test_p1_hold_when_stopped_at_platform_until_doors(self):
         """Parado en andén: HOLD con B1; RELEASE al cerrar puertas (Lua)."""
         d = _decider()
@@ -277,9 +296,12 @@ class TestP1V2Integration:
         action = d.decide(s)
         assert d._fsm.state == "STOPPED"
         assert action == HOLD
+        assert d.brake_command is not None
+        assert d.brake_command.kind == "APPLY"
+        assert d.brake_command.target_notch == 3
 
     def test_p1_idle_when_stopped_neutral(self):
-        """STOPPED con palanca en neutro: no RELEASE (no pelear tracción)."""
+        """STOPPED en neutro: APPLY B1 para poder abrir puertas."""
         d = _decider()
         d._fsm.state = "STOPPED"
         d._fsm.name = "Four Oaks, andén 2"
@@ -296,7 +318,9 @@ class TestP1V2Integration:
         )
         action = d.decide(s)
         assert action == HOLD
-        assert d.brake_command is None
+        assert d.brake_command is not None
+        assert d.brake_command.kind == "APPLY"
+        assert d.brake_command.target_notch == 3
         assert d.p1_debug == "p1off:STOPPED"
 
     def test_release_on_lua_door_close_while_braked(self):
@@ -329,6 +353,53 @@ class TestP1V2Integration:
         nxt = d._fsm.select_next_stop(list(stations))
         assert nxt is not None
         assert "Sutton" in nxt["name"]
+
+    def test_departing_does_not_apply_next_station_brake(self):
+        """Salida: HUD ya muestra la siguiente (~400 m) — no APPLY P1."""
+        d = _decider()
+        d._fsm.state = "DEPARTING"
+        d._fsm.name = "Wylde Green, andén 2"
+        d._fsm._departing_at = time.time()
+        d._fsm._served_bases.add("wylde green")
+        s = _state(
+            speed_mph=15.0,
+            limit_mph=60.0,
+            handle_notch=8,
+            station_state="DEPARTING",
+            station_name="Wylde Green, andén 2",
+            next_stop_name="Chester Road",
+            next_stop_distance_m=350.0,
+            stations=(
+                {"name": "Chester Road", "distance_m": 350.0, "scheduled": True},
+            ),
+        )
+        action = d.decide(s)
+        assert d._fsm.state == "DEPARTING"
+        assert action == HOLD
+        cmd = d.brake_command
+        assert cmd is None or cmd.kind != "APPLY"
+        assert d.p1_debug == "p1off:DEPARTING"
+
+    def test_departing_releases_residual_brake(self):
+        d = _decider()
+        d._fsm.state = "DEPARTING"
+        d._fsm.name = "Wylde Green, andén 2"
+        d._fsm._departing_at = time.time()
+        d._fsm._served_bases.add("wylde green")
+        s = _state(
+            speed_mph=12.0,
+            limit_mph=60.0,
+            handle_notch=3,
+            station_state="DEPARTING",
+            station_name="Wylde Green, andén 2",
+            stations=(
+                {"name": "Chester Road", "distance_m": 350.0, "scheduled": True},
+            ),
+        )
+        action = d.decide(s)
+        assert action == RELEASE
+        assert d.brake_command is not None
+        assert d.brake_command.kind == "RELEASE"
 
     def test_p1_passes_station_eta_to_coordinator(self):
         from unittest.mock import patch
