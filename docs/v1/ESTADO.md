@@ -14,7 +14,8 @@ Se abre en Cursor, GitHub o cualquier visor que renderice Mermaid.
 [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) ·
 [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) (probe, bitácora)
 
-Última revisión: **2026-08-30** · **Backlog v2:** [v2/PLAN_V2.md § Orden](../v2/PLAN_V2.md#orden-de-implementación) ·
+Última revisión: **2026-08-30** · **Backlog v2:** [v2/PLAN_V2.md §
+Orden](../v2/PLAN_V2.md#orden-de-implementación) ·
 Estudio P1: pasos **7–14** del
 [árbol cronológico](../assets/esqueleto_flujo_cronologico.svg) (numeración = círculos del SVG)
 

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<title>P1 cartel — capas (concepto)</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 1.5rem 2rem; max-width: 900px; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; }
+  .sub { color: #555; margin-bottom: 1.5rem; }
+  svg { width: 100%; max-width: 860px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; font-size: 14px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; }
+  code { font-size: 12px; background: #eee; padding: 1px 4px; border-radius: 3px; }
+  .debate { background: #f7f9fc; border-left: 4px solid #4a7fc1; padding: 0.75rem 1rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<h1>Aproximación a un cartel — capas P1</h1>
+<p class="sub">Distancia al cartel (eje horizontal) · ejemplo 60 → 55 mph. Los nombres técnicos (APPLY, COAST) se mantienen en código; en consola y gráficos usamos <strong>capas</strong>.</p>
+
+<svg viewBox="0 0 860 280" xmlns="http://www.w3.org/2000/svg">
+  <!-- distance axis -->
+  <line x1="60" y1="230" x2="820" y2="230" stroke="#333" stroke-width="1"/>
+  <text x="440" y="260" text-anchor="middle" font-size="13">Distancia al cartel (m)</text>
+  <text x="80" y="248" font-size="11">2000</text>
+  <text x="280" y="248" font-size="11">800</text>
+  <text x="480" y="248" font-size="11">300</text>
+  <text x="620" y="248" font-size="11">80</text>
+  <text x="760" y="248" font-size="11">0</text>
+
+  <!-- speed curve schematic -->
+  <text x="20" y="120" font-size="11" fill="#666">mph</text>
+  <path d="M 80 60 L 350 70 L 520 100 L 680 140 L 760 175" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="400" y="55" font-size="12" fill="#2563eb">velocidad</text>
+  <line x1="60" y1="155" x2="820" y2="155" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="700" y="150" font-size="12" fill="#ea580c">cartel 55 mph</text>
+
+  <!-- layer bands -->
+  <rect x="80" y="190" width="200" height="28" fill="#94a3b8" opacity="0.5"/>
+  <text x="180" y="208" text-anchor="middle" font-size="12">VIGILAR</text>
+  <rect x="280" y="190" width="200" height="28" fill="#fbbf24" opacity="0.55"/>
+  <text x="380" y="208" text-anchor="middle" font-size="12">ESPERAR ventana</text>
+  <rect x="480" y="190" width="140" height="28" fill="#f87171" opacity="0.55"/>
+  <text x="550" y="208" text-anchor="middle" font-size="12">FRENAR</text>
+  <rect x="620" y="190" width="140" height="28" fill="#4ade80" opacity="0.55"/>
+  <text x="690" y="208" text-anchor="middle" font-size="12">SOLTAR freno</text>
+
+  <!-- coast power note -->
+  <rect x="430" y="12" width="200" height="36" fill="#c4b5fd" opacity="0.6" rx="4"/>
+  <text x="530" y="35" text-anchor="middle" font-size="11">Si palanca &gt; neutro: QUITAR TRACCIÓN primero</text>
+
+  <!-- dist_start arrow -->
+  <line x1="480" y1="175" x2="480" y2="218" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="490" y="168" font-size="11" fill="#7c3aed">dist_start = 0</text>
+  <defs><marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7c3aed"/></marker></defs>
+</svg>
+
+<table>
+  <thead><tr><th>Capa (debate)</th><th>Código antiguo</th><th>¿Manda al tren?</th><th>Cuándo</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Vigilar</strong> [WATCH]</td><td><code>command_none</code>, apply_now=false</td><td>No</td><td>Cartel lejos; plan calculado pero sin ventana de frenado.</td></tr>
+    <tr><td><strong>Esperar ventana</strong> [WAIT]</td><td><code>apply_deferred</code></td><td>No</td><td>Cerca del cartel pero dist_start aún positivo (metros de margen).</td></tr>
+    <tr><td><strong>Quitar tracción</strong> [COAST_PWR]</td><td><code>COAST_THROTTLE</code></td><td>Sí → neutro</td><td>Potencia puesta; hay que soltar antes de frenar.</td></tr>
+    <tr><td><strong>Frenar</strong> [BRAKE]</td><td><code>APPLY</code> B1/B2/B3</td><td>Sí → muesca freno</td><td>apply_now=true; dentro de la ventana cinemática.</td></tr>
+    <tr><td><strong>Soltar freno</strong> [RELEASE]</td><td><code>RELEASE</code></td><td>Sí → neutro</td><td>Velocidad ≤ cartel + banda (~0.4 mph).</td></tr>
+    <tr><td><strong>Revisar</strong> [GAP]</td><td>apply_now=true sin cmd</td><td>—</td><td>Candidato a bug o umbral mal afinado — debatir con JSONL.</td></tr>
+  </tbody>
+</table>
+
+<div class="debate">
+  <strong>Cómo debatimos una sesión</strong>
+  <ol>
+    <li>Grabar: <code>V2\run_p1_session.bat limit cross-city</code></li>
+    <li>Replay: <code>python scripts/tools/summarize_v2_limit.py logs\v2\….jsonl --html</code></li>
+    <li>Mirar franja de <strong>capas</strong> (colores) vs velocidad y cartel.</li>
+    <li>Solo discutir tramos <strong>GAP</strong> o donde el comportamiento “se siente mal”.</li>
+    <li>Cambiar umbrales en V2 (no v1); nueva sesión para comparar.</li>
+  </ol>
+</div>
+</body>
+</html>

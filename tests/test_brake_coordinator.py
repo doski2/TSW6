@@ -204,14 +204,15 @@ class TestCoordinatorUnifiedStop:
         assert coord.last_target is not None
         assert coord.last_target.target_kind == "SPEED_LIMIT"
         assert coord.last_target.phase == "B1"
-        assert "Contención bajada" in (coord.last_target.detail or "")
+        assert coord.last_target.apply_now
+        assert "Límite 55" in (coord.last_target.detail or "")
 
         coord = _coord()
         action, _ = _eval(
             coord,
             speed_mph=60.0,
             next_limit_mph=55.0,
-            distance_next_m=400.0,
+            distance_next_m=300.0,
             effective_limit=60.0,
             handle_notch=4,
             station_distance_m=550.0,
@@ -222,13 +223,13 @@ class TestCoordinatorUnifiedStop:
         assert "unified" in coord.last_debug
 
     def test_unified_overspeed_brakes_to_station_when_gap_short(self):
-        """58 mph, cartel 280 m, andén 530 m: el 55 marca el APPLY; no B1 de andén."""
+        """58 mph, cartel 200 m, andén 530 m: el 55 marca el APPLY; no B1 de andén."""
         coord = _coord()
         action, _ = _eval(
             coord,
             speed_mph=58.0,
             next_limit_mph=55.0,
-            distance_next_m=280.0,
+            distance_next_m=200.0,
             effective_limit=60.0,
             handle_notch=4,
             station_distance_m=530.0,
@@ -241,13 +242,13 @@ class TestCoordinatorUnifiedStop:
         assert coord.last_debug != "sin_plan_activo"
 
     def test_unified_overspeed_60_uses_limit_timing(self):
-        """60 mph, cartel 400 m, andén 550 m: APPLY del 55, no B1 a ~800 m."""
+        """60 mph, cartel 300 m, andén 550 m: APPLY del 55, no B1 a ~800 m."""
         coord = _coord()
         action, _ = _eval(
             coord,
             speed_mph=60.0,
             next_limit_mph=55.0,
-            distance_next_m=400.0,
+            distance_next_m=300.0,
             effective_limit=60.0,
             handle_notch=4,
             station_distance_m=550.0,
@@ -339,7 +340,7 @@ class TestCoordinatorLimitBeforeStation:
         )
         assert coord.last_target is not None
         assert coord.last_target.target_kind == "SPEED_LIMIT"
-        assert coord.last_target.target_speed_mph == 55.0
+        assert coord.last_target.target_speed_mph == 54.0
         if coord.last_brake_command is not None:
             assert "STATION" not in (coord.last_brake_command.reason or "")
             assert "EMERGENCIA" not in (coord.last_brake_command.reason or "")
@@ -400,12 +401,12 @@ class TestCoordinatorLimitBeforeStation:
         assert coord.last_target.target_kind == "STATION"
 
     def test_downhill_holds_posted_limit_while_next_is_far(self):
-        """Log 02:17:09: 48 mph en 45, 35 a 900 m — sujetar 45, no solo aware del 35."""
+        """Misma zona 45→45 lejos del cartel: HOLD_DH @44, no solo aware."""
         coord = _coord()
         action, _ = _eval(
             coord,
             speed_mph=46.2,
-            next_limit_mph=35.0,
+            next_limit_mph=45.0,
             distance_next_m=1500.0,
             effective_limit=45.0,
             gradient_pct=-1.0,
@@ -414,7 +415,9 @@ class TestCoordinatorLimitBeforeStation:
         assert coord.last_target is not None
         assert coord.last_target.target_kind == "SPEED_LIMIT"
         assert coord.last_target.apply_now
-        assert coord.last_target.target_speed_mph == 45.0
+        assert coord.last_target.target_speed_mph == 44.0
+        assert coord.last_target.downhill_hold
+        assert "Mantener bajada" in (coord.last_target.detail or "")
         assert coord.last_brake_command is not None
         assert coord.last_brake_command.kind == "APPLY"
 

@@ -1,7 +1,7 @@
 -- ApiExplorerMod — rutas, schema, mapeo HTTP
 local M = {}
 
-M.BUILD = "20260830l"
+M.BUILD = "20260901a"
 M.SCHEMA = "tsw6-lab-export/1"
 M.HTTP_PREFIX = "CurrentFormation/0/Function."
 
@@ -70,12 +70,39 @@ M.FORMATION_MISC_NODES = {
     "ParkingBrakeCylinder",
 }
 
+-- L0.6d — esfuerzo tractivo (HUD_GetTractiveEffort = 0 en 323; candidatos Simulation).
+M.FORMATION_AXLE_NODES = {
+    "Axle_1_1",
+    "Axle_2_1",
+}
+
+M.FORMATION_TRACTION_SUBNODES = {
+    "Axle",
+    "Wheel",
+}
+
+M.FORMATION_TRACTION_FIELDS = {
+    "NetTractiveEffort",
+    "LocalTractiveEffort",
+    "NetTorque_NM",
+    "Power_KW",
+    "NetForce_N",
+}
+
 function M.http_sim_path(node, field)
     return "CurrentFormation/0/Simulation/" .. node .. "." .. field
 end
 
 function M.http_drivable_sim_path(node, field)
     return "CurrentDrivableActor/Simulation/" .. node .. "." .. field
+end
+
+function M.http_sim_nested_path(node, subnode, field)
+    return "CurrentFormation/0/Simulation/" .. node .. "/" .. subnode .. "." .. field
+end
+
+function M.http_drivable_sim_nested_path(node, subnode, field)
+    return "CurrentDrivableActor/Simulation/" .. node .. "/" .. subnode .. "." .. field
 end
 
 function M.http_formation_component(name, field)

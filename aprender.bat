@@ -2,8 +2,8 @@
 chcp 65001 >nul
 title TSW6 Monitor de Aprendizaje
 
-:: ── Cambiar al directorio del .bat (funciona desde cualquier sitio) ──────────
 cd /d "%~dp0"
+set "PYTHONPATH=%CD%"
 
 :: ── Detectar Python 3.9+ ─────────────────────────────────────────────────────
 set "PY="

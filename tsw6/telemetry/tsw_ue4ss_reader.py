@@ -67,6 +67,26 @@ def default_getdata_path() -> Path:
     return Path(temp) / "TSW6Bridge" / "GetData.txt"
 
 
+def _as_probe_int(val: Any) -> Optional[int]:
+    """Entero de campo probe (acepta 4, 4.0, '4.0000')."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(round(val))
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_probe_line(line: str) -> dict[str, Any]:
     """Parsea una línea `key=value` separada por espacios."""
     out: dict[str, Any] = {}
@@ -78,13 +98,10 @@ def parse_probe_line(line: str) -> dict[str, Any]:
             out[key] = "?" if key == "vehicle" else None
             continue
         if key in ("seq", "handle_notch", "lever_notch", "last_cmd_id"):
-            try:
-                out[key] = int(raw)
-            except ValueError:
-                out[key] = raw
+            out[key] = _as_probe_int(raw)
             continue
         if key in ("power_neg", "doors_open", "doors_telem", "doors_dmi", "last_ack_ok",
-                   "is_slipping", "traction_locked"):
+                   "is_slipping", "traction_locked", "signal_red"):
             out[key] = raw in ("1", "true", "True")
             continue
         if key == "vehicle":
@@ -126,6 +143,9 @@ class ProbeSnapshot:
     # 9b-a (PLAN_V2 §2): probe emitirá HUD_GetIsSlipping / HUD_GetIsTractionLocked.
     is_slipping: Optional[bool] = None
     traction_locked: Optional[bool] = None
+    # C1 (PLAN_V2 §3): solo si rojo adelante.
+    signal_red: Optional[bool] = None
+    signal_dist_cm: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -157,6 +177,8 @@ class ProbeSnapshot:
             doors_dmi=data.get("doors_dmi"),
             is_slipping=data.get("is_slipping"),
             traction_locked=data.get("traction_locked"),
+            signal_red=data.get("signal_red"),
+            signal_dist_cm=data.get("signal_dist_cm"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 
@@ -212,10 +234,12 @@ class ProbeSnapshot:
         }
 
     def combined_handle_notch(self) -> Optional[int]:
-        if self.lever_notch is not None:
-            return int(self.lever_notch)
-        if self.handle_notch is not None:
-            return int(self.handle_notch)
+        notch = _as_probe_int(self.lever_notch)
+        if notch is not None:
+            return notch
+        notch = _as_probe_int(self.handle_notch)
+        if notch is not None:
+            return notch
         return power_to_combined_notch(self.power, self.power_neg)
 
 
@@ -461,6 +485,7 @@ def monitor_loop(
     interval: float,
     logger: Optional[SessionLogger] = None,
     with_api: bool = False,
+    simple: bool = False,
 ) -> None:
     last_seq: Optional[int] = None
     last_change = time.perf_counter()
@@ -498,7 +523,10 @@ def monitor_loop(
             stale_warned = False
             if logger:
                 logger.log_sample(snap, hz, raw_line)
-            if now - last_render >= _DISPLAY_MIN_S:
+            if simple:
+                print(render_snapshot(snap, hz, path, api_grad))
+                print()
+            elif now - last_render >= _DISPLAY_MIN_S:
                 if rendered:
                     _home_screen()
                 else:
@@ -545,6 +573,11 @@ def main() -> None:
         help="Comparar gradient_pct probe vs DriverAid.Data (TSW con -HTTPAPI)",
     )
     parser.add_argument(
+        "--simple",
+        action="store_true",
+        help="Una línea por actualización (sin ANSI; recomendado en .bat)",
+    )
+    parser.add_argument(
         "--benchmark",
         type=float,
         metavar="SEG",
@@ -571,7 +604,7 @@ def main() -> None:
         logger = SessionLogger(log_path, args.path)
 
     try:
-        monitor_loop(args.path, args.interval, logger, with_api=args.api)
+        monitor_loop(args.path, args.interval, logger, with_api=args.api, simple=args.simple)
     except KeyboardInterrupt:
         print("\nSalida.")
     finally:

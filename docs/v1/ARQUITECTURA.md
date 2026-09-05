@@ -145,9 +145,14 @@ Resueltas o movidas al plan v2 — conservar solo contexto:
 2. ~~Gradiente en probe~~ ✅
 3. ~~Planning estaciones~~ → HUD DB + HTTP ✅
 4. ~~B4 SendCommand~~ ✅
-5. Andén fino / GPS vs odómetro → [v2 §4.4](../v2/PLAN_V2.md#44-andén-distancia-plataforma-vs-tablon)
+5. Andén fino / GPS vs odómetro → [v2
+
+   §4.4](../v2/PLAN_V2.md#44-andén-distancia-plataforma-vs-tablon)
+
 6. Señal rojo → [v2 pasos 4–5](../v2/PLAN_V2.md#orden-de-implementación)
-7. ~~Canal rendimiento~~ → ficheros OK; SHM aplazado ([CANAL_CONTROL](../CANAL_CONTROL.md#rendimiento-y-shm))
+7. ~~Canal rendimiento~~ → ficheros OK; SHM aplazado
+
+   ([CANAL_CONTROL](../CANAL_CONTROL.md#rendimiento-y-shm))
 
 ---
 

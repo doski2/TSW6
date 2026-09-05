@@ -5,6 +5,17 @@
 		}
 	],
 	"settings": {
+		"python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+		"python.terminal.activateEnvironment": true,
+		"terminal.integrated.env.windows": {
+			"PYTHONPATH": "${workspaceFolder};${workspaceFolder}/V2"
+		},
+		"python.testing.pytestEnabled": true,
+		"python.testing.cwd": "${workspaceFolder}",
+		"python.testing.pytestArgs": [
+			"V2/tests",
+			"tests"
+		],
 		"Lua.diagnostics.globals": [
 			"FindAllOf",
 			"FindFirstOf",

@@ -1,7 +1,7 @@
 # Laboratorio — qué recopila F5 (`hud_batch`)
 
-**Mod:** `ApiExplorerMod` · **Tecla:** F5 (snapshot, **no** log continuo)  
-**Salida:** `data/lab_exports/exports/<session>/hud_batch.json`  
+**Mod:** `ApiExplorerMod` · **Tecla:** F5 (snapshot, **no** log continuo)
+**Salida:** `data/lab_exports/exports/<session>/hud_batch.json`
 **Plan:** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md)
 
 ---
@@ -40,9 +40,9 @@ Validado in-game Class 323 — sesión `20260830T140413Z` (~21 m/s, power 2).
 | `HUD_GetMaxPermittedSpeed` | `max_speed`, `is_active` | ✅ `max_speed_ms` | Techo ATS (a menudo inactivo) |
 | `HUD_GetIsSlipping` | `IsSlipping` | ❌ (candidato C1 física) | Patinaje |
 | `HUD_GetIsTractionLocked` | `IsTractionLocked` | ❌ | Bloqueo tracción |
-| `HUD_GetTractiveEffort` | esfuerzo N / presión | 🟡 `brake_cyl_bar` parcial | Esfuerzo freno/tracción (B3 overflow) |
+| `HUD_GetTractiveEffort` | esfuerzo N | ❌ **siempre 0** (L0.6d) | HUD no cableado; ver Simulation HTTP |
 | `HUD_GetSpeedControlTarget` | `Speed (ms)`, `IsActive` | ❌ | Cruise (no 323) |
-| `HUD_GetAmmeter` | `Amps` | ❌ | Amperímetro |
+| `HUD_GetAmmeter` | `Amps` | ❌ **catálogo 323** (L0.6f cerrado) | Siempre 0 en 323; repetir en otro tren |
 | `HUD_GetEngineRPM` | `Needle1/2 RPM` | ❌ | Diesel (0 en EMU) |
 
 **HTTP:** cada clave en `http_guess` es la ruta `CurrentFormation/0/Function.<nombre>`.
@@ -61,7 +61,8 @@ Validado in-game Class 323 — sesión `20260830T140413Z` (~21 m/s, power 2).
 | Nombres lever (`PowerBrakeHandle`) | **F6** `controls` | ✅ ya conocido en 323 |
 | Señal roja, distancia andén | **F7** `driver_aid` (L0.4) | ⬜ C1/C2 |
 
-**Conclusión 323:** F5 cubre la **cabina HUD** que el probe ya usa para P1. No sustituye **vía**
+#### Conclusión 323:** F5 cubre la **cabina HUD** que el probe ya usa para P1. No sustituye **vía
+
 (DriverAid) ni **IPC** (`lever_notch`, `seq`).
 
 ---
@@ -82,14 +83,16 @@ Objetivo: ver cómo cambian los valores **sin** log continuo.
 | 4 | Acelerando (power +) | `Speed` sube, `Acceleration` > 0 |
 | 5 | Crucero ~40 mph | `Speed` estable, `power` según muesca |
 | 6 | Frenando (B1–B3) | `Acceleration` < 0, gauges, `train_brake` |
+| 7 | Tracción P3–P4 (~30 mph) | `Amps` > 0 · `power` · comparar con reposo |
+| 8 | Retención / regen (power neg) | `Amps` < 0 · `power_neg` · `dyn_brake` |
+| 9 | Solo freno eléctrico (`dyn_brake` sin B aire) | `Amps` vs `dyn_brake` · `Acceleration` |
+| 10 | Freno aire B2 sin power | `Amps` ≈ 0 · gauges suben |
+
+Ver **L0.6f** — guía completa: [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) + `summarize_hud_amps.py`.
 
 Plantilla de notas (misma carpeta `exports/<session>/`):
 
 ```markdown
-# Sesión 20260830T140413Z
-- hud_batch_reposo.json — parado, release
-- hud_batch_b1.json — B1 fijo
-- hud_batch_freno.json — frenando desde 45 mph
 ```
 
 **Log continuo** (opcional): probe ON + `probe_ue4ss.bat` o `probe_ue4ss_log.bat` → línea GetData
@@ -121,4 +124,5 @@ cada ~50 ms. El explorer no hará eso (diseño: no competir con probe).
 
 - [CANAL_CONTROL.md](../CANAL_CONTROL.md) — contrato GetData probe
 - [CURRENTFORMATION_API.md](../reference/CURRENTFORMATION_API.md) — catálogo HTTP/Lua
+- [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) — protocolo L0.6f amperímetro
 - [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — F6/F7 y roadmap

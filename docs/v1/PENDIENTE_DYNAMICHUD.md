@@ -1,13 +1,17 @@
 # Pendiente — Probe UE4SS (referencia operativa)
 
-**No es el backlog del proyecto.** Tareas y orden → [v2/PLAN_V2.md § Orden](../v2/PLAN_V2.md#orden-de-implementación).
+**No es el backlog del proyecto.** Tareas y orden → [v2/PLAN_V2.md §
+Orden](../v2/PLAN_V2.md#orden-de-implementación).
 
-**Objetivo:** documentar el **probe** Class 323: reglas Lua, IPC, señales de log, bitácora de sesiones.
+**Objetivo:** documentar el **probe** Class 323: reglas Lua, IPC, señales de log, bitácora de
+sesiones.
 
 **Plan maestro:** [v2/PLAN_V2.md](../v2/PLAN_V2.md).
 
-**Estado runtime (2026-08-30):** MVP 323 — probe ~20 Hz · IPC mandos · P1 en `braking/v2/` · horario HUD en
-Planning · FSM andén · holgura **OFF** (D9) · señal: diseño S-Lua, probe sin `signal_red` aún · `agent/` (D1) no arrancado.
+**Estado runtime (2026-08-30):** MVP 323 — probe ~20 Hz · IPC mandos · P1 en `braking/v2/` · horario
+HUD en
+Planning · FSM andén · holgura **OFF** (D9) · señal: diseño S-Lua, probe sin `signal_red` aún ·
+`agent/` (D1) no arrancado.
 
 **Relacionado:** [ARQUITECTURA.md](ARQUITECTURA.md) · [BRAKE_V2.md](BRAKE_V2.md) ·
 [HUD_TIMETABLE.md](HUD_TIMETABLE.md) · [TIMEOFDAY_API.md](../reference/TIMEOFDAY_API.md) ·
@@ -53,7 +57,8 @@ Ver [v2/PLAN_V2.md § Orden](../v2/PLAN_V2.md#orden-de-implementación) (pasos 1
 
 Tarjetas in-game habituales: **C1** (señal Lua) · **C2** (andén) · **F-D** (SD40).
 
-**No reabrir:** señales HTTP tick (D3) · lim2 probe · ámbar/verde en autopilot (D8) · contención `uni=Y` en bajada (2026-08-26).
+**No reabrir:** señales HTTP tick (D3) · lim2 probe · ámbar/verde en autopilot (D8) · contención
+`uni=Y` en bajada (2026-08-26).
 
 ---
 
@@ -79,7 +84,8 @@ La pestaña **Planning** y el checkbox **Holgura de horario** no son lo mismo.
 | `station_eta` → P1 (`p1eta=`) | Sí se pasa | Igual |
 | Perfil frenado andén | ×1 | Coast / tarde (P-A) |
 
-`schedule_slack=False` por defecto. Reloj = **PC** hasta [TimeOfDay](../reference/TIMEOFDAY_API.md) (D9).
+`schedule_slack=False` por defecto. Reloj = **PC** hasta [TimeOfDay](../reference/TIMEOFDAY_API.md)
+(D9).
 Holgura ON solo con hora de escenario **y** hora de llegada.
 
 Setup BD: [HUD_TIMETABLE.md](HUD_TIMETABLE.md).
@@ -119,8 +125,10 @@ Arquitectura: [BRAKE_V2.md](BRAKE_V2.md).
 
 ### Señales (estado técnico)
 
-Diseño **S-Lua** cerrado (§3 PLAN). Probe **sin** `signal_red` / `signal_dist_cm`. Python: `is_red_signal_aspect`,
-policy, emergencia SIGNAL en coordinator — **stub** `evaluate_signal_brake` hasta pasos 4–5 del plan v2.
+Diseño **S-Lua** cerrado (§3 PLAN). Probe **sin** `signal_red` / `signal_dist_cm`. Python:
+`is_red_signal_aspect`,
+policy, emergencia SIGNAL en coordinator — **stub** `evaluate_signal_brake` hasta pasos 4–5 del plan
+v2.
 
 Implementación → [v2/PLAN_V2.md](../v2/PLAN_V2.md) fase 4.
 
@@ -146,7 +154,8 @@ Implementación → [v2/PLAN_V2.md](../v2/PLAN_V2.md) fase 4.
 | **Sí** | Plantilla UE4SS; referencia `HUD_Get*` / `GetDriverAidData` |
 | **No** | No es el probe de producción; no exporta IPC |
 
-**TelemetryProbeMod** es el fork de lectura/escritura IPC. DynamicHUD **desactivado** (`mods.txt : 0`,
+**TelemetryProbeMod** es el fork de lectura/escritura IPC. DynamicHUD **desactivado** (`mods.txt :
+0`,
 sin `enabled.txt` en `DynamicHUDMod`).
 
 ---
@@ -234,7 +243,8 @@ IPC: `%TEMP%\TSW6Bridge\GetData.txt` — [CANAL_CONTROL.md](../CANAL_CONTROL.md)
 | 7 | Señal rojo | v2 pasos 4–5 (C1) |
 | 8 | Holgura + TimeOfDay | v2 paso 8 (D9) o OFF |
 
-Detalle de validación → [v2 § Transversal](../v2/PLAN_V2.md#transversal--revisión-tests-y-mantenimiento).
+Detalle de validación → [v2 §
+Transversal](../v2/PLAN_V2.md#transversal--revisión-tests-y-mantenimiento).
 
 ---
 

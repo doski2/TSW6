@@ -78,7 +78,8 @@ class TestLimitBrakeV2:
         )
         assert r1 is not None
         assert state.latch is not None
-        assert state.latch.limit_mph == 55.0
+        assert state.latch.posted_limit_mph == 55.0
+        assert state.latch.limit_mph == 54.0
         assert state.latch.latched_speed_mph == 60.0
         assert 3 in state.latch.decel_by_handle
 

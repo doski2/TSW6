@@ -47,6 +47,14 @@ class TestUe4ssReader(unittest.TestCase):
         data = parse_probe_line("seq=1 handle_notch=4 power=0 vehicle=Class323")
         self.assertEqual(data["handle_notch"], 4)
 
+    def test_parse_lever_notch_float_format(self) -> None:
+        line = "seq=1 lever_notch=4.0000 handle_notch=4.0000 vehicle=Class323"
+        data = parse_probe_line(line)
+        self.assertEqual(data["lever_notch"], 4)
+        self.assertEqual(data["handle_notch"], 4)
+        snap = ProbeSnapshot.from_dict(data)
+        self.assertEqual(snap.combined_handle_notch(), 4)
+
     def test_parse_gradient_pct(self) -> None:
         line = (
             "seq=1 speed_ms=10 gradient_pct=1.25 speed_limit_ms=20 vehicle=Class323"
@@ -64,6 +72,19 @@ class TestUe4ssReader(unittest.TestCase):
         snap = ProbeSnapshot.from_dict(data)
         self.assertTrue(snap.is_slipping)
         self.assertFalse(snap.traction_locked)
+
+    def test_parse_signal_red_c1(self) -> None:
+        line = (
+            "seq=10 speed_ms=15 signal_red=1 signal_dist_cm=8420.5 vehicle=Class323"
+        )
+        data = parse_probe_line(line)
+        self.assertTrue(data["signal_red"])
+        self.assertAlmostEqual(data["signal_dist_cm"], 8420.5)
+        snap = ProbeSnapshot.from_dict(data)
+        self.assertTrue(snap.signal_red)
+        dist_cm = snap.signal_dist_cm
+        assert dist_cm is not None
+        self.assertAlmostEqual(dist_cm, 8420.5)
 
     def test_parse_probe_planning_fields(self) -> None:
         line = (

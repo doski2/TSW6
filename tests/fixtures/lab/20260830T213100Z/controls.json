@@ -1,0 +1,55 @@
+{
+  "build": "20260830l",
+  "captured_at": "2026-08-30T21:32:26Z",
+  "errors": {},
+  "http_guess": {
+    "CurrentFormation/0/EmergencyBrake_C.CurrentInputValue": 0,
+    "CurrentFormation/0/EmergencyBrake_C.InputValue": 0,
+    "CurrentFormation/0/EmergencyBrake_L.CurrentInputValue": 0,
+    "CurrentFormation/0/EmergencyBrake_L.InputValue": 0,
+    "CurrentFormation/0/MasterKey.CurrentInputValue": 1,
+    "CurrentFormation/0/MasterKey.InputValue": 1,
+    "CurrentFormation/0/ParkingBrake.CurrentInputValue": 0,
+    "CurrentFormation/0/ParkingBrake.InputValue": 0,
+    "CurrentFormation/0/PowerBrakeHandle.CurrentInputValue": -0.6000000238,
+    "CurrentFormation/0/PowerBrakeHandle.InputValue": -0.6000000238,
+    "CurrentFormation/0/RegenBrakes.CurrentInputValue": 1,
+    "CurrentFormation/0/RegenBrakes.InputValue": 1,
+    "CurrentFormation/0/Reverser.CurrentInputValue": 0.6669999957,
+    "CurrentFormation/0/Reverser.InputValue": 0.6669999957,
+    "DriverInput/0/EmergencyBrake_C.InputValue": 0,
+    "DriverInput/0/EmergencyBrake_L.InputValue": 0,
+    "DriverInput/0/MasterKey.InputValue": 1,
+    "DriverInput/0/ParkingBrake.InputValue": 0,
+    "DriverInput/0/PowerBrakeHandle.InputValue": -0.6000000238,
+    "DriverInput/0/RegenBrakes.InputValue": 1,
+    "DriverInput/0/Reverser.InputValue": 0.6669999957
+  },
+  "in_cab": true,
+  "ipc_aliases": {
+    "DynamicBrake": "RegenBrakes",
+    "PowerBrakeHandle": "PowerBrakeHandle"
+  },
+  "layout_hint": "combined",
+  "lua": {
+    "actor_ue_path": "RVM_BCC_WRM_Class323_DMS_A_C /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436",
+    "driver_input": {},
+    "levers": [
+      {"CurrentInputValue":-0.6000000238,"CurrentNotchID":1,"CurrentOutputValue":-3,"TargetInputValue":-0.6000000238,"class":"IrregularLeverComponent","name":"PowerBrakeHandle","notches":[{"MaximumInputValue":-1,"MinimumInputValue":-1,"index":1},{"MaximumInputValue":-0.6000000238,"MinimumInputValue":-0.6000000238,"index":2},{"MaximumInputValue":-0.400000006,"MinimumInputValue":-0.400000006,"index":3},{"MaximumInputValue":-0.200000003,"MinimumInputValue":-0.200000003,"index":4},{"MaximumInputValue":0,"MinimumInputValue":0,"index":5},{"MaximumInputValue":0.25,"MinimumInputValue":0.25,"index":6},{"MaximumInputValue":0.5,"MinimumInputValue":0.5,"index":7},{"MaximumInputValue":0.75,"MinimumInputValue":0.75,"index":8}],"number_of_notches":null,"read_kind":"scalar","read_value":-0.6000000238,"scope":"actor","ue_path":"IrregularLeverComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.PowerBrakeHandle"},
+      {"CurrentInputValue":0.6669999957,"CurrentNotchID":2,"CurrentOutputValue":1,"TargetInputValue":0.6669999957,"class":"IrregularLeverComponent","name":"Reverser","notches":[{"MaximumInputValue":0,"MinimumInputValue":0,"index":1},{"MaximumInputValue":0.3330000043,"MinimumInputValue":0.3330000043,"index":2},{"MaximumInputValue":0.6669999957,"MinimumInputValue":0.6669999957,"index":3}],"number_of_notches":null,"read_kind":"scalar","read_value":0.6669999957,"scope":"actor","ue_path":"IrregularLeverComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.Reverser"},
+      {"CurrentInputValue":0,"CurrentOutputValue":0,"class":"PushButtonComponent","name":"EmergencyBrake_L","number_of_notches":null,"read_kind":"scalar","read_value":0,"scope":"actor","ue_path":"PushButtonComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.EmergencyBrake_L"},
+      {"CurrentInputValue":0,"CurrentOutputValue":0,"class":"PushButtonComponent","name":"EmergencyBrake_C","number_of_notches":null,"read_kind":"scalar","read_value":0,"scope":"actor","ue_path":"PushButtonComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.EmergencyBrake_C"},
+      {"CurrentInputValue":0,"CurrentNotchID":0,"CurrentOutputValue":0,"TargetInputValue":0,"class":"IrregularLeverComponent","name":"ParkingBrake","notches":[{"MaximumInputValue":0,"MinimumInputValue":0,"index":1}],"number_of_notches":null,"read_kind":"scalar","read_value":0,"scope":"actor","ue_path":"IrregularLeverComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.ParkingBrake"},
+      {"CurrentInputValue":1,"CurrentNotchID":1,"CurrentOutputValue":1,"TargetInputValue":1,"class":"SimpleLeverComponent","name":"MasterKey","notches":[{"index":0},{"index":1},{"index":2}],"number_of_notches":2,"read_kind":"scalar","read_value":1,"scope":"actor","ue_path":"SimpleLeverComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.MasterKey"},
+      {"CurrentInputValue":1,"CurrentNotchID":0,"CurrentOutputValue":1,"TargetInputValue":1,"class":"SimpleLeverComponent","name":"RegenBrakes","notches":[{"index":0},{"index":1},{"index":2}],"number_of_notches":2,"read_kind":"scalar","read_value":1,"scope":"actor","ue_path":"SimpleLeverComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.RegenBrakes"}
+    ],
+    "simulation": {
+      "class": "SimulationComponent /CrossCity/Map/CrossCityMap.CrossCityMap:PersistentLevel.RVM_BCC_WRM_Class323_DMS_A_C_2147380436.Simulation"
+    }
+  },
+  "mode": "controls",
+  "schema": "tsw6-lab-export/1",
+  "session_id": "20260830T213100Z",
+  "status": "ok",
+  "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
+}

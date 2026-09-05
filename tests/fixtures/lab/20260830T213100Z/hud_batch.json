@@ -1,0 +1,128 @@
+{
+  "build": "20260830l",
+  "captured_at": "2026-08-30T21:32:09Z",
+  "errors": {},
+  "http_guess": {
+    "CurrentFormation/0/Function.HUD_GetAcceleration": {
+      "Acceleration (ms2)": -0.0002460816177
+    },
+    "CurrentFormation/0/Function.HUD_GetAmmeter": {
+      "Amps": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetBrakeGauge_1": {
+      "RedNeedle (Pa)": 428324.7188,
+      "WhiteNeedle (Pa)": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetBrakeGauge_2": {
+      "RedNeedle (Pa)": 800313.375,
+      "WhiteNeedle (Pa)": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetDirection": {
+      "Direction": 1,
+      "IsActive": true
+    },
+    "CurrentFormation/0/Function.HUD_GetElectricBrakeHandle": {
+      "HandlePosition": 1,
+      "IsActive": true
+    },
+    "CurrentFormation/0/Function.HUD_GetEngineRPM": {
+      "Needle1 RPM": 0,
+      "Needle2 RPM": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetIsSlipping": {
+      "IsSlipping": false
+    },
+    "CurrentFormation/0/Function.HUD_GetIsTractionLocked": {
+      "IsTractionLocked": false
+    },
+    "CurrentFormation/0/Function.HUD_GetLocomotiveBrakeHandle": {
+      "HandlePosition": 0,
+      "IsActive": false
+    },
+    "CurrentFormation/0/Function.HUD_GetMaxPermittedSpeed": {
+      "max_speed": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetPowerHandle": {
+      "power": -3
+    },
+    "CurrentFormation/0/Function.HUD_GetSpeed": {
+      "Speed (ms)": 6.414022937e-05
+    },
+    "CurrentFormation/0/Function.HUD_GetSpeedControlTarget": {
+      "IsActive": false,
+      "Speed (ms)": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetTractiveEffort": {
+      "BrakeEffort (N)": 0,
+      "TractiveEffort (N)": 0
+    },
+    "CurrentFormation/0/Function.HUD_GetTrainBrakeHandle": {
+      "HandlePosition": 1,
+      "IsActive": true
+    }
+  },
+  "in_cab": true,
+  "lua": {
+    "HUD_GetAcceleration": {
+      "Acceleration (ms2)": -0.0002460816177
+    },
+    "HUD_GetAmmeter": {
+      "Amps": 0
+    },
+    "HUD_GetBrakeGauge_1": {
+      "RedNeedle (Pa)": 428324.7188,
+      "WhiteNeedle (Pa)": 0
+    },
+    "HUD_GetBrakeGauge_2": {
+      "RedNeedle (Pa)": 800313.375,
+      "WhiteNeedle (Pa)": 0
+    },
+    "HUD_GetDirection": {
+      "Direction": 1,
+      "IsActive": true
+    },
+    "HUD_GetElectricBrakeHandle": {
+      "HandlePosition": 1,
+      "IsActive": true
+    },
+    "HUD_GetEngineRPM": {
+      "Needle1 RPM": 0,
+      "Needle2 RPM": 0
+    },
+    "HUD_GetIsSlipping": {
+      "IsSlipping": false
+    },
+    "HUD_GetIsTractionLocked": {
+      "IsTractionLocked": false
+    },
+    "HUD_GetLocomotiveBrakeHandle": {
+      "HandlePosition": 0,
+      "IsActive": false
+    },
+    "HUD_GetMaxPermittedSpeed": {
+      "max_speed": 0
+    },
+    "HUD_GetPowerHandle": {
+      "power": -3
+    },
+    "HUD_GetSpeed": {
+      "Speed (ms)": 6.414022937e-05
+    },
+    "HUD_GetSpeedControlTarget": {
+      "IsActive": false,
+      "Speed (ms)": 0
+    },
+    "HUD_GetTractiveEffort": {
+      "BrakeEffort (N)": 0,
+      "TractiveEffort (N)": 0
+    },
+    "HUD_GetTrainBrakeHandle": {
+      "HandlePosition": 1,
+      "IsActive": true
+    }
+  },
+  "mode": "hud_batch",
+  "schema": "tsw6-lab-export/1",
+  "session_id": "20260830T213100Z",
+  "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
+}

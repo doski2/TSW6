@@ -16,7 +16,8 @@ freno. Para calibrar frenos usa el probe (`train_brake`, `loco_brake`, `dyn_brak
 actual**y**anticipación** (próximo límite, señal, estación).
 
 **¿Revisar este archivo?** Sí, pero como **catálogo de referencia** (qué existe en TSW), no como
-lista de tareas. El tablero de trabajo está en [ESTADO.md](../v1/ESTADO.md). Actualiza aquí solo cuando
+lista de tareas. El tablero de trabajo está en [ESTADO.md](../v1/ESTADO.md). Actualiza aquí solo
+cuando
 cambie el **estado de integración** (probe, HTTP, P1) — no hace falta releerlo entero cada sesión.
 
 **Índice de todos los árboles HTTPAPI:** [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) · Física del

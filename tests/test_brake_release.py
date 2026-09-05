@@ -229,42 +229,47 @@ def test_downhill_containment_b1_before_penalty():
 
 
 def test_downhill_containment_b2_near_ceiling():
-    """55.85: primer tick B1, segundo B2 (no saltar)."""
+    """HOLD_DH misma zona: primer tick B1, segundo B2 (escalón, no saltar a B3)."""
     state = LimitBrakeState()
     r1 = evaluate_limit_brake(
         state,
-        speed_mph=55.85,
-        limit_mph=55.0,
-        distance_m=80.0,
+        speed_mph=60.5,
+        limit_mph=60.0,
+        distance_m=2000.0,
         gradient_pct=-1.0,
+        posted_limit_mph=60.0,
     )
     assert r1 is not None
+    assert r1.downhill_hold
     assert r1.phase == "B1"
     r2 = evaluate_limit_brake(
         state,
-        speed_mph=55.85,
-        limit_mph=55.0,
-        distance_m=80.0,
+        speed_mph=60.5,
+        limit_mph=60.0,
+        distance_m=2000.0,
         gradient_pct=-1.0,
+        posted_limit_mph=60.0,
     )
     assert r2 is not None
     assert r2.phase == "B2"
 
 
 def test_downhill_containment_after_limit():
-    """Repunte leve en bajada → B1 inmediato, no esperar dist_start."""
+    """Repunte leve en bajada (misma zona) → HOLD_DH B1 inmediato."""
     state = LimitBrakeState()
     r = evaluate_limit_brake(
         state,
         speed_mph=45.5,
         limit_mph=45.0,
-        distance_m=80.0,
+        distance_m=200.0,
         gradient_pct=-1.0,
+        posted_limit_mph=45.0,
     )
     assert r is not None
     assert r.apply_now
     assert r.phase == "B1"
-    assert "Contención bajada" in r.detail
+    assert r.downhill_hold
+    assert "Mantener bajada" in r.detail
 
 
 def test_far_approach_uses_full_plan_not_containment():
@@ -278,7 +283,7 @@ def test_far_approach_uses_full_plan_not_containment():
         gradient_pct=-1.0,
     )
     assert r is not None
-    assert "Contención bajada" not in r.detail
+    assert "Mantener bajada" not in r.detail
 
 
 def test_containment_skipped_at_1km():
@@ -292,15 +297,15 @@ def test_containment_skipped_at_1km():
         gradient_pct=-1.0,
     )
     if r is not None:
-        assert "Contención bajada" not in (r.detail or "")
+        assert "Mantener bajada" not in (r.detail or "")
 
 
 def test_coast_at_limit_on_downhill_no_brake():
-    """En el cartel en bajada → sin plan (coast)."""
+    """En el cartel en bajada (spd en banda @44) → sin plan."""
     state = LimitBrakeState()
     r = evaluate_limit_brake(
         state,
-        speed_mph=45.0,
+        speed_mph=44.0,
         limit_mph=45.0,
         distance_m=300.0,
         gradient_pct=-1.0,

@@ -69,6 +69,7 @@ from tsw6.telemetry.channel_diagnostics import (
 )
 from tsw6.telemetry.tsw_ue4ss_reader import (
     ProbeSnapshot,
+    _as_probe_int,
     default_getdata_path,
     power_to_combined_notch,
     read_probe_file,
@@ -167,11 +168,17 @@ def _telem_from_probe(
     if snap.brake_cyl_bar is not None:
         parsed["brake_cyl_bar"] = float(snap.brake_cyl_bar)
     if snap.lever_notch is not None:
-        parsed["lever_notch"] = int(snap.lever_notch)
+        lever = _as_probe_int(snap.lever_notch)
+        if lever is not None:
+            parsed["lever_notch"] = lever
     if snap.handle_notch is not None:
-        parsed["hud_notch"] = int(snap.handle_notch)
+        hud = _as_probe_int(snap.handle_notch)
+        if hud is not None:
+            parsed["hud_notch"] = hud
     if snap.last_cmd_id is not None:
-        parsed["last_cmd_id"] = int(snap.last_cmd_id)
+        cmd_id = _as_probe_int(snap.last_cmd_id)
+        if cmd_id is not None:
+            parsed["last_cmd_id"] = cmd_id
     if snap.last_ack_ok is not None:
         parsed["last_ack_ok"] = bool(snap.last_ack_ok)
     _attach_probe_doors(parsed, snap)

@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "tools" / "api_correlator.py"
-SESSION = ROOT / "data" / "lab_exports" / "exports" / "20260830T145544Z"
+SESSION = ROOT / "tests" / "fixtures" / "lab" / "20260830T213100Z"
 
 _spec = importlib.util.spec_from_file_location("api_correlator", SCRIPT)
 assert _spec and _spec.loader
@@ -51,16 +51,12 @@ def test_compare_values_exact_and_fuzzy():
 
 
 def test_collect_guesses_from_reference_session():
-    if not SESSION.is_dir():
-        pytest.skip("reference session not in tree")
     rows = collect_http_guesses(SESSION)
     hud = [r for r in rows if r.source == "hud_batch.json"]
     assert len(hud) == 16
 
 
 def test_correlate_hud_mock_client():
-    if not SESSION.is_dir():
-        pytest.skip("reference session not in tree")
     hud_batch = json.loads((SESSION / "hud_batch.json").read_text(encoding="utf-8"))
     guesses = hud_batch["http_guess"]
 
@@ -90,8 +86,6 @@ def test_normalize_simulation_path():
 
 
 def test_collect_formation_probe_defs_fallback():
-    if not SESSION.is_dir():
-        pytest.skip("reference session not in tree")
     probes, meta = collect_formation_probe_defs(SESSION)
     assert len(probes) >= 10
     paths = {p["path"] for p in probes}
@@ -120,8 +114,6 @@ def test_formation_lua_diagnosis_http_only():
 
 
 def test_fetch_formation_snapshot_mock():
-    if not SESSION.is_dir():
-        pytest.skip("reference session not in tree")
     client = MagicMock()
     client.probe.return_value = True
     client.get_node.return_value = {"Pressure_BAR": 2.61}
@@ -132,8 +124,6 @@ def test_fetch_formation_snapshot_mock():
 
 
 def test_dry_list_cli():
-    if not SESSION.is_dir():
-        pytest.skip("reference session not in tree")
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), str(SESSION), "--dry-list"],
         cwd=ROOT,

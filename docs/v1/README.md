@@ -4,6 +4,9 @@ Cómo funciona el autopilot **hoy** (`autopilot_core`, probe Class 323, P1 en `b
 
 **Backlog y producto futuro:** [v2/PLAN_V2.md](../v2/PLAN_V2.md) — única lista de trabajo.
 
+**Política de docs (no duplicar v1→v2):** [PLAN_V2 § Política de
+documentación](../v2/PLAN_V2.md#política-de-documentación).
+
 | Documento | Contenido |
 | --- | --- |
 | [GUIA.md](GUIA.md) | Uso diario — `.bat`, calibración, autopilot |
@@ -18,6 +21,7 @@ Cómo funciona el autopilot **hoy** (`autopilot_core`, probe Class 323, P1 en `b
 | [DASTSC_PARITY.md](DASTSC_PARITY.md) | Paridad histórica con Dastsc |
 | [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | TSW6 ↔ Nexus V4 (estudio) |
 
-**Compartido:** [CANAL_CONTROL.md](../CANAL_CONTROL.md) (contrato IPC) · [reference/](../reference/) (HTTP API).
+**Compartido:** [CANAL_CONTROL.md](../CANAL_CONTROL.md) (contrato IPC) · [reference/](../reference/)
+(HTTP API).
 
 Índice raíz: [docs/README.md](../README.md).

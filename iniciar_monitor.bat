@@ -3,6 +3,7 @@ chcp 65001 >nul
 title TSW6 API Monitor
 
 cd /d "%~dp0"
+set "PYTHONPATH=%CD%"
 
 set "PY="
 for %%c in (python3 python py) do (

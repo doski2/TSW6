@@ -1,0 +1,18 @@
+{
+  "build": "20260830l",
+  "captured_at": "2026-08-30T21:33:05Z",
+  "in_cab": true,
+  "last_file": "correlate_tick.json",
+  "last_mode": "correlate_tick",
+  "modes_run": [
+    "controls",
+    "correlate_tick",
+    "driver_aid",
+    "formation",
+    "hud_batch",
+    "reflect_shallow"
+  ],
+  "schema": "tsw6-lab-export/1",
+  "session_id": "20260830T213100Z",
+  "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
+}

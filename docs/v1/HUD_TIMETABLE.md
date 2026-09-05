@@ -109,7 +109,8 @@ Debe mostrar `[OK] BD encontrada` y, si extrajiste Cross-City, un horario `2R17`
 | `stations[].arrival` / `departure` | Llegada / salida por fila en planning |
 | `stations[].source` | `hud_geo` cuando la distancia viene de `car_stop_signs` |
 
-En la GUI (pestaña **Planning**): hora de llegada y de salida en próxima parada y tabla de estaciones
+En la GUI (pestaña **Planning**): hora de llegada y de salida en próxima parada y tabla de
+estaciones
 (columnas **Llegada** / **Salida**).
 
 ---

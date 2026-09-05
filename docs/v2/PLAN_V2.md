@@ -3,16 +3,44 @@
 **Fecha:** 2026-08-29 (paquete tren: no buscar palanca en el tick)
 **Árbol:** [../assets/esqueleto_v2.dot](../assets/esqueleto_v2.dot) ·
 [../assets/esqueleto_v2.svg](../assets/esqueleto_v2.svg)
-**Código actual:** foto en [../assets/esqueleto_arquitectura.svg](../assets/esqueleto_arquitectura.svg) —
+**Código actual:** foto en
+[../assets/esqueleto_arquitectura.svg](../assets/esqueleto_arquitectura.svg) —
 referencia, no el producto v2.
 
-**En juego:** `mods/TelemetryProbeMod/Scripts/main.lua` (contrato I/O).  
-**Laboratorio Lua (diseño):** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — mod aparte, no mezclar con el probe.
-**Python de hoy:** laboratorio. v2 puede **rediseñar el agente desde 0** (mismas pruebas de vía) sin
-clonar Nexus.
+**En juego:** `mods/TelemetryProbeMod/Scripts/main.lua` (contrato I/O).
+**Laboratorio Lua (diseño):** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — mod aparte, no mezclar
+con el probe.
+**Python v2:** todo código producto nuevo en **`V2/tsw6v2/`** — ver [CODIGO_V2.md](CODIGO_V2.md).
+**Python v1:** `tsw6/autopilot/`, `tsw6/braking/v2/`, … — referencia; no ampliar salvo bug crítico.
 
 Dastsc es **cómo otro proyecto creció** (capas, un mando por tick, cluster). No es plantilla ni
 techo. Lo que no encaje en TSW (OCR, TSC, 2 mph de RELEASE, nunca OFF en bajada, React) no se copia.
+
+---
+
+## Política de documentación
+
+Mientras v2 está en curso **no** se migra todo `docs/v1/` a `docs/v2/` ni se reescribe la guía desde
+cero. Cada pieza tiene un solo hogar canónico:
+
+| Qué documentar | Carpeta / archivo | Cuándo tocar |
+| --- | --- | --- |
+| Backlog, fases, decisiones de producto | **`v2/PLAN_V2.md`** (este doc) + deltas | Cierre de fase o cambio de contrato |
+| Dónde va código nuevo v2 | **`v2/CODIGO_V2.md`** | Nueva carpeta, paso de implementación, convención PR |
+| Tests, depuración, cierre de entrega | **`v2/MANTENIMIENTO.md`** | Cada PR; tras sesión in-game; repaso trimestral |
+| Laboratorio Lua, sesiones lab | `v2/PLAN_API_EXPLORER.md`, `reference/` | Tras capturas in-game validadas |
+| Dónde va código Python producto v2 | **`V2/tsw6v2/`** + [CODIGO_V2.md](CODIGO_V2.md) | Cada paso de implementación |
+| Contrato probe ↔ Python (GetData, IPC) | [`CANAL_CONTROL.md`](../CANAL_CONTROL.md) | Al definir o cablear un campo (D2) |
+| Cómo funciona el **código que corre hoy** | `docs/v1/` (GUIA, ARQUITECTURA, P1…) | Solo si cambia el runtime actual |
+| Catálogo HTTP / nombres UE | `docs/reference/` | Cuando el lab o RailBridge confirme rutas |
+
+**Reglas:** (1) Una sola lista de trabajo — aquí, no en `v1/ESTADO.md`. (2) No duplicar: en `v1/`
+una
+línea «Futuro: PLAN_V2 §…» basta. (3) Código producto v2 → **`V2/tsw6v2/`**
+([CODIGO_V2](CODIGO_V2.md));
+en
+`v2/` cuando exista código, no copia de `v1/`. (4) Stubs en raíz `docs/*.md` («Movido a v1/») no se
+editan — el canónico es `v1/` o `reference/`. Índice: [docs/README.md](../README.md).
 
 ---
 
@@ -44,7 +72,6 @@ base. El FSM de puertas no cambia; **cuánto aprietas entre paradas** lo dice el
 una etiqueta `express`.
 
 ```text
-en vía → límite y señales → acercarse al andén → parar → puertas → despachar → repetir
 ```
 
 **Horario (nombres de este doc):** **hora de llegada** y **hora de salida** = reloj HUD de la
@@ -75,7 +102,9 @@ Con ETA basta para “muchas paradas a media vs 2 paradas a fondo”:
 
 - **Pronto** (holgura +) → coast / frenar más tarde (no hace falta etiqueta `stopping`).
 - **Tarde** (holgura −) → aplicar antes, ir al techo de vía (no hace falta etiqueta `express`).
-- **Sin hora de llegada** → **no hay holgura** (no hay reloj contra el que ir pronto/tarde). Techo de vía +
+- **Sin hora de llegada** → **no hay holgura** (no hay reloj contra el que ir pronto/tarde). Techo
+
+  de vía +
   señales; no inventar horario ni un `pace`. Es lo normal en **mercancías**; también pasajero sin
   match HUD. El “margen” freight es `a` menor + ejes, no más slack de horario.
 
@@ -84,7 +113,8 @@ solo `schedule_slack` en el agente v2; no calcular holgura si el flag está OFF 
 
 ### Líneas: BD que ya tenemos
 
-[HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md): `tsw_hud.db` (servicios, STOP vs GO VIA, `car_stop_signs`). No
+[HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md): `tsw_hud.db` (servicios, STOP vs GO VIA,
+`car_stop_signs`). No
 hace falta otra base de “líneas” para saber cuántas paradas hay.
 
 **Estudio (¿hace falta mejorar?):** match `currentServiceName` + geo; andenes de la dirección mala;
@@ -96,12 +126,15 @@ Cross-City, **no** rediseñar la BD.
 Sigue siendo combined vs freight ([FREIGHT_NA.md](../v1/FREIGHT_NA.md)). Independiente de la BD de
 viajeros.
 
-**Mercancías y horario:** lo normal es **sin** hora de llegada ni de salida (no hay servicio HUD útil). Holgura ETA
+**Mercancías y horario:** lo normal es **sin** hora de llegada ni de salida (no hay servicio HUD
+útil). Holgura ETA
 **apagada**. Mandos = límites, señales, pendiente, selector de eje. Si un escenario freight trae
-timetable (poco probable), se trata como pasajeros: hay hora de llegada → se puede holgura; no hace falta un
+timetable (poco probable), se trata como pasajeros: hay hora de llegada → se puede holgura; no hace
+falta un
 tercer perfil.
 
-**Hueco en v2:** `PassengerService` = ciclo puertas + consumo de hora de llegada / salida **cuando existan**.
+**Hueco en v2:** `PassengerService` = ciclo puertas + consumo de hora de llegada / salida **cuando
+existan**.
 Freight = layout + física de ejes, sin FSM de puertas de viajeros.
 
 ##### Opciones (ritmo)
@@ -133,7 +166,9 @@ Freight = layout + física de ejes, sin FSM de puertas de viajeros.
 
 2. Holgura **una** función; `now` = escenario (D9) antes de subir umbrales 15/30/60.
 3. Freight: ni intentar `tsw_hud.db` por defecto (evita match basura).
-4. Si hay hora de llegada y holgura OFF, el log no debería sugerir que el horario “manda” (`p1eta=` hoy se ve
+4. Si hay hora de llegada y holgura OFF, el log no debería sugerir que el horario “manda” (`p1eta=`
+
+   hoy se ve
 
    igual).
 
@@ -146,7 +181,8 @@ Freight = layout + física de ejes, sin FSM de puertas de viajeros.
 | G-C | Dejar el FSM 323 y “genérico” solo en el doc | Entregar antes | v2 miente |
 | G-D | Parada solo por distancia HUD, ignorar horario | Freight, sandbox | Pierdes coast/tarde en viajeros |
 
-**Elegido:** **G-A** (ciclo comercial: ETA, andén, puertas) **y** **G-B** (a qué UObject se escribe).
+**Elegido:** **G-A** (ciclo comercial: ETA, andén, puertas) **y** **G-B** (a qué UObject se
+escribe).
 No mezclar: un 375 es pasajero G-A con palanca combined y **otro nombre** (`PowerHandle`); un
 SD40-2 es freight (casi sin horario HUD) con layout split. Ver
 [DRIVERINPUT_API.md](../reference/DRIVERINPUT_API.md) `shared-profiles`. No hay perfil `hs` / “AV”.
@@ -171,7 +207,6 @@ probe 323 lee componentes; otro tren puede llamarlos distinto — **eso no está
 qué mapa de muescas. El bucle caliente es:
 
 ```text
-GetData → snapshot → v²/2a + objetivos → SendCommand (nombres del paquete)
 ```
 
 **No** es: cada frame `FindAllOf` / `pairs(actor)` / F9 / heurística “¿será PowerBrakeHandle?”.
@@ -190,7 +225,8 @@ EMA suelta, `control_layout` heurístico. v2 = **un paquete**.
 
 ##### Qué va en el paquete / qué no
 
-El JSON es **G-B** (palancas). **G-A** (ETA, andén, puertas) no se guarda ahí: sale del HUD en el tick.
+El JSON es **G-B** (palancas). **G-A** (ETA, andén, puertas) no se guarda ahí: sale del HUD en el
+tick.
 
 | Va en JSON (una vez, G-B) | No va (tick) |
 | --- | --- |
@@ -204,9 +240,12 @@ El JSON es **G-B** (palancas). **G-A** (ETA, andén, puertas) no se guarda ahí:
 **Demasiado / poco** (tamaño del paquete, no del tick):
 
 - **Demasiado** = meter en JSON lo que cambia cada frame o lo que no es nuestro runtime: tablas de
+
   metros precalculadas (`v` y `dist` cambian); el `.tswprofile` Liah entero (USB/joystick) en el
   bucle; un archivo por muesca (el learner ya guarda `a` por muesca en `logs/profiles/`).
+
 - **Poco** = lo de hoy: adivinar palanca por nombre en caliente (`control_layout` heurístico), sin
+
   JSON del tren. Eso es lo que el paquete sustituye.
 
 ##### Archivos (pocos)
@@ -224,8 +263,6 @@ caliente.
 ##### Dos casos (servicio × layout)
 
 ```text
-servicio:  freight (casi nunca ETA)  |  passenger (ETA + puertas si hay andén)
-layout:    split                     |  combined | blended | MasterController
 ```
 
 - Mercancías: vía + selector de ejes; holgura OFF; no puertas de viajeros.
@@ -241,16 +278,17 @@ Extra freight = qué eje, no otro `physics.py`.
 ## 2. Física: qué investigar e introducir
 
 Hoy: `v²/2a`, gradiente en %, learner por muesca, `MAX_DECEL` de 323. Abajo: **qué entra en el
-plan** (decidido), **qué queda en dump HTTP** y **qué no tocar** hasta evidencia in-game.
+plan**(decidido),**qué queda en dump HTTP**y**qué no tocar** hasta evidencia in-game.
 
 ##### Estado v2
 
 | Estado | Qué | Bloqueo |
 | --- | --- | --- |
 | **En producción** | Gradiente probe (~20 Hz); learner (`logs/profiles/`); `s = v²/(2a)`; sin doble `g` con `using_learned` (gradiente **cerrado**) | — |
+| **L4 lite (2026-09)** | `brake_cyl_bar` probe → aprende `brake_fill_s`, anti-bombeo, escalón B1→B2→B3 con presión | Ver §2 L4 |
 | **Elegido, sin cablear** | Masa total HTTP → `massFactor` en `physics.py` (F-B); `mass_ref` al calibrar | Código Python poll §2 F-B |
 | **Validado lab · estudiar reglas** | Patinaje HUD → `is_slipping` en GetData; handler P1 **no** hasta matriz in-game | Sesiones slip §2 · ver 9b |
-| **Congelado** | Cilindro / esfuerzo (`HUD_GetTractiveEffort`); longitud de formación | `brake_cyl_bar` vía HUD gauge — ver nota §2 |
+| **Congelado** | Esfuerzo tractivo (`HUD_GetTractiveEffort`); longitud de formación | P1 esfuerzo no entra en plan |
 | **Investigar → freight F-D** | Selector auto + dyn en bajada; ind solo maniobras | Sesión SD40; [FREIGHT_NA](../v1/FREIGHT_NA.md) |
 
 Cierre del capítulo: ver **Criterio de cierre §2** más abajo en este apartado.
@@ -260,7 +298,8 @@ Cierre del capítulo: ver **Criterio de cierre §2** más abajo en este apartado
 | Gradiente | Probe DriverAid | Sí | Sí | Ya está |
 | Decel aprendida | `logs/profiles/` | Sí | Sí (multi-eje) | Ya está |
 | Masa consist | HTTP **peso total** (`ClampPowerInput.Mass`) | Mismo poll 5 min | Mismo poll 5 min (carga entra en el total) | F-B §2 — ruta validada lab |
-| Esfuerzo / cilindro | Simulation Lua no lee; HUD gauge opcional | **Congelado** P1 | **Congelado** P1 | `HUD_GetBrakeGauge_1` validado lab; no HTTP tick |
+| Esfuerzo tractivo | Simulation Lua / HUD | **Congelado** P1 | **Congelado** P1 | No sustituye `a` aprendida |
+| Presión cilindro `brake_cyl_bar` | Probe GetData ~20 Hz | **L4 lite** | **L4 lite** | Fill-time, escalón, anti-bombeo — §2 L4 |
 | Longitud tren | Formación / HTTP | **No útil** | **No útil** (igual) | Se frena al andén / objetivo; da igual lo largo |
 | Adherencia / patinaje | Probe **`HUD_GetIsSlipping`** (~20 Hz Lua) | Sí | Sí (más claro en bajada freight) | **Canal validado**; reglas P1 = estudio in-game (§2) |
 
@@ -273,8 +312,12 @@ masa dos veces.
 (DriverAid); **no** HTTP en el tick. Ese mismo valor sirve para:
 
 1. **Learner / P1 con perfil:** elegir celda plano / subida / bajada (`|grad| &lt; 0,5 %` ≈ plano).
+
    La `a` aprendida **ya incluye** el efecto de la pendiente en esa celda.
-2. **Fórmula sin perfil** (constantes UK): `effective_decel_ms2` suma gravedad en `braking_distance_m`.
+
+2. **Fórmula sin perfil** (constantes UK): `effective_decel_ms2` suma gravedad en
+
+   `braking_distance_m`.
 
 En código, si `using_learned` → `gradient_pct=0` en el ctx de `s=v²/2a` (evita contar la pendiente
 dos veces). No añadir tercera capa (p. ej. factor extra en bajada) sin residuo medido in-game.
@@ -298,28 +341,38 @@ igual. Si `vehicle=` cambia, leer ya (no esperar el poll). Si acoplas vagones si
 | Campo | Valor |
 | --- | --- |
 | **Ruta HTTP** | `GET /get/CurrentFormation/0/Simulation/ClampPowerInput.Mass` |
-| **Evidencia 323** | **45 550** kg (Cross-City, build `20260830l`) — coherente con dump RailBridge ~45 480 |
+| **Evidencia 323** | Cross-City **3 coches** → **45 550** kg (`213100Z`). Nieve **6 coches** → **44 430** kg (`214213Z`) |
+| **Validación composición** | **Cerrada 2026-09-01:** más coches, menos masa HTTP — **sin correlación**. **F-B no cablear** en `physics.py`; `mass_factor = 1.0` siempre. Poll/log HTTP opcional |
 | **Canal** | Python `tsw_telemetry_source` — **mismo hilo planning** que `DriverAid.TrackData` (~2 s), **no** GetData tick |
 | **Poll** | Al conectar HTTPAPI + **cada 300 s** + inmediato si cambia `vehicle=` en probe |
 | **Estado interno** | `mass_kg` (último OK), `mass_factor = mass_kg / mass_ref` |
 | **`mass_ref`** | Peso al calibrar learner o semilla en `data/vehicles/<id>.json` — evita doble conteo con `a` aprendida |
-| **`physics.py`** | Multiplicar decel efectiva por `mass_factor` solo cuando F-B activo y `mass_ref > 0` |
+| **`physics.py`** | ~~Multiplicar por `mass_factor`~~ **aplazado** — F-B off tras conteo 3 vs 6 coches (ver validación) |
 | **Log/GUI** | Una línea al primer poll OK: `mass_kg=… mass_factor=…` |
-| **Freight** | Misma ruta en líder; confirmar si acoplar vagones exige sumar varios coches (pendiente SD40) |
+| **Freight** | **323:** suma `Axle_1_1`+`Axle_2_1` = 2 000 kg fija (no total tren). **SD40 (futuro):** ampliar probe `formation` a todos los ejes/vagones en `CurrentFormation/N` y comparar suma vs `ClampPowerInput.Mass` — ver [PLAN_API_EXPLORER § masa por eje](PLAN_API_EXPLORER.md#masa-por-eje-http---formation---nota-freight) |
 | **Sin HTTP** | F-A: `mass_factor = 1.0`; no bloquear autopilot |
 
 **No** meter `mass_kg` en GetData (~20 Hz innecesario). El agente lee el factor del estado Python.
 
+**Masa por eje (lab 323, `formation_http`):** solo `Axle_1_1` y `Axle_2_1` del drivable — **1 000
+kg**
+cada uno, **idénticos** con 3 o 6 coches (suma 2 000 kg, no peso real).
+`LoadSensingBrakeModifier.Mass`
+sigue el Δ del total (−1 120 kg entre sesiones). Para **freight** (paso 10): experimento documentado
+—
+enumerar ejes por vagón en formación y validar si la suma cuadra; útil si `ClampPowerInput` falla en
+consist largos.
+
 ##### Adherencia — canal HUD (validado lab `20260830T213100Z`)
 
-| Campo | Valor |
-| --- | --- |
-| **Lectura Lua** | `actor:HUD_GetIsSlipping(out)` → `out["IsSlipping"]` (bool) |
-| **Complemento** | `HUD_GetIsTractionLocked` — incluir en probe; correlacionar con slip en estudio |
-| **GetData** | `is_slipping=0` \| `is_slipping=1` (omitir si falla); opcional `traction_locked=0\|1` |
-| **Frecuencia** | Mismo tick probe ~20 Hz — **no HTTP** en P1 |
-| **Evidencia 323** | F5 `hud_batch` 16/16; `IsSlipping: false` **solo parado** en `213100Z` — **sin** slip en marcha |
-| **HTTP alternativo** | `Simulation/Axle_* / IsSlipping`, `CurrentTrackAdhesion` — lab/correlator; no tick |
+| Campo | Valor | | |
+| --- | --- | --- | --- |
+| **Lectura Lua** | `actor:HUD_GetIsSlipping(out)` → `out["IsSlipping"]` (bool) | | |
+| **Complemento** | `HUD_GetIsTractionLocked` — incluir en probe; correlacionar con slip en estudio | | |
+| **GetData** | `is_slipping=0` \ | `is_slipping=1` (omitir si falla); opcional `traction_locked=0\ | 1` |
+| **Frecuencia** | Mismo tick probe ~20 Hz — **no HTTP** en P1 | | |
+| **Evidencia 323** | Parado: `IsSlipping: false` (`213100Z`, `212529Z`). **En marcha (nieve):** `true` + `TractionLocked: true` @ ~24 m/s — `214213Z` F5 | | |
+| **HTTP alternativo** | `Simulation/Axle_* / IsSlipping`, `CurrentTrackAdhesion` — lab/correlator; no tick. Nieve: adhesión ~**0,01** vs seco ~**0,99** (`214213Z` vs `213100Z`) | | |
 
 **Problema con las reglas “fase 1” anteriores:** eran un atajo (“APPLY + slip → −1 muesca”) sin
 sesiones de patinaje real. `HUD_GetIsSlipping` es un **booleano global** — no distingue:
@@ -334,12 +387,20 @@ sesiones de patinaje real. `HUD_GetIsSlipping` es un **booleano global** — no 
 
 **Principios de diseño (acordados, reglas numéricas pendientes):**
 
-1. **Separar canal y acción:** cablear probe **antes** que el handler; loggear slip sin modificar mando.
+1. **Separar canal y acción:** cablear probe **antes** que el handler; loggear slip sin modificar
+
+   mando.
+
 2. **Contexto obligatorio:** la acción depende de `brake_command.kind`, `handle_notch`, `speed_ms` —
+
    no de `is_slipping` solo.
+
 3. **No cancelar plan:** ningún escenario pasa a RELEASE ni aborta objetivo P1 por slip.
 4. **Sin +metros** al plan por adherencia (igual que antes).
-5. **323 combined:** tope de freno si aplica (ej. no bajar de B1) — **confirmar** si sigue siendo correcto.
+5. **323 combined:** tope de freno si aplica (ej. no bajar de B1) — **confirmar** si sigue siendo
+
+   correcto.
+
 6. **Freight (F-D):** −1 muesca en el **eje activo** (auto/dyn), no la misma regla que UK combined.
 
 ##### Protocolo estudio patinaje (antes de handler 9b)
@@ -350,21 +411,17 @@ log probe con `is_slipping`).
 | # | Situación in-game | Qué capturar | Pregunta |
 | --- | --- | --- | --- |
 | S1 | Freno fuerte en cartel, hojas/mojado | F5 o GetData + nota muesca | ¿`IsSlipping` true en APPLY? ¿cuántos frames? |
-| S2 | Arranque power alto en pendiente | idem | ¿slip true con power>0? ¿`TractionLocked`? |
+| S2 | Arranque power alto en pendiente / **nieve** | F5 `214213Z` o GetData + nota muesca | ¿slip true con power>0? ¿`TractionLocked`? — **parcial:** slip+locked @ ~24 m/s |
 | S3 | Regen activo bajando | idem | ¿slip ligado a dyn? |
 | S4 | Seco, frenada normal B2 | línea base | ¿slip siempre false? |
 | S5 | Freight SD40 bajada (futuro) | F-D | ¿slip en eje dyn vs auto? |
 
-**Salida del estudio:** tabla **escenario × señales × acción** aprobada; entonces sí cablear handler.
+**Salida del estudio:** tabla **escenario × señales × acción** aprobada; entonces sí cablear
+handler.
 
 **Borrador handler (solo tras S1–S4 en 323):**
 
 ```text
-SI speed_ms < 0.5 → no actuar
-SI brake_command.kind != "APPLY" → no actuar
-SI is_slipping == 0 → no actuar
-SI handle_notch <= 4 (zona tracción) → no bajar freno; opcional: cap tracción (futuro)
-SI handle_notch > 4 (zona freno) Y APPLY → soltar 1 muesca; debounce; tope B1
 ```
 
 **Fase 2 (aplazada):** learner + `CurrentTrackAdhesion` HTTP — solo si fase 1 insuficiente.
@@ -376,9 +433,41 @@ SI handle_notch > 4 (zona freno) Y APPLY → soltar 1 muesca; debounce; tope B1
 | **9b-a** | Probe: `is_slipping` (+ opcional `traction_locked`) en GetData | Log en partida; sin cambio de mando |
 | **9b-b** | Handler P1 tras matriz estudio | pytest + sesión S1–S4 |
 
-**Nota cilindro (independiente):** `Simulation` no lee presión en Lua 323; **`HUD_GetBrakeGauge_1`**
-(`RedNeedle (Pa)` ÷ 100 000 ≈ bar) coincide con HTTP cilindro en `213100Z`. Candidato probe para
-`brake_cyl_bar` — ver [PLAN_API_EXPLORER](PLAN_API_EXPLORER.md) L0.6; P1 esfuerzo sigue congelado.
+###### L4 lite — presión de aire (cableado V2, 2026-09)
+
+El probe ya manda `brake_cyl_bar` en GetData. V2 lo usa para:
+
+1. **Aprender `brake_fill_s`** (EMA) — sustituye el `DEFAULT_BRAKE_FILL_S = 2.5` fijo en
+   `brake_reaction_margin_m` cuando hay ≥3 muestras en `logs/profiles/`.
+2. **No APPLY hasta presión** (`p1.reason=air_fill`) — cilindro &lt; ~2 bar tras mandar freno.
+3. **Anti-bombeo** (`air_recharge`) — tras RELEASE, no re-frenar hasta vaciar cilindro (~1,5 bar)
+   o pasar ~1,5× fill aprendido (tanques recargando).
+4. **Escalón con presión** — B1→B2→B3 un escalón por tick; no subir muesca si la presión actual
+   no confirma la muesca comprometida (B1 ~2,5 bar, B2 ~3,2 bar, B3 ~4 bar en 323).
+
+**Estrategia de muescas (pasajeros UK):**
+
+| Objetivo | Regla | B3 |
+| --- | --- | --- |
+| **Cartel** (Δv pequeña, ej. 60→55) | `_pick_weakest_sufficient_notch` → suele **B1**; B2 si bajada/contención; B3 solo tarde o Δv grande | Raro |
+| **Andén** (parada total) | Escalón **B1 → B2 → B3** según distancia/velocidad restante; no bombar | Al final |
+
+Inventario completo de reglas portadas, evidencia JSONL y plan de refactor sin v1:
+[REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
+
+La cinemática `s = v²/(2a)` sigue eligiendo *cuándo*; la presión elige *cómo* sin malgastar aire
+(B3→soltar→B3 con tanques vacíos). JSONL: `brake_cyl_bar`, `brake_fill_s` por tick.
+
+Código: `V2/tsw6v2/brake_air.py`, `learner.py`, `limits._apply_notch_hysteresis`, `decision.py`.
+
+**L4+ (futuro):** presión depósito principal (MR); esfuerzo `BrakeEffort` solo parado; freight
+aire lento.
+
+###### Nota cilindro (histórico lab)
+
+**Nota cilindro (histórico lab):** `Simulation` Lua 323 no leía presión; **`HUD_GetBrakeGauge_1`**
+(`RedNeedle (Pa)` ÷ 100 000 ≈ bar) coincide con HTTP cilindro en `213100Z`. Producción: probe
+`brake_cyl_bar` en tick — ver [PROBE_LUA](PROBE_LUA.md) (`HUD_GetBrakeGauge_1`, no Simulation Lua).
 
 **F-D (mercancías):** investigar con el SD40. Selector **automático + dinámico** en línea (tren
 enganchado). Hipótesis: **bajada** → dyn; **límite / parada / emergencia** → automático (dyn + auto
@@ -408,10 +497,14 @@ falla in-game (residuo sistemático tras masa y fill).
 ##### Criterio de cierre §2
 
 - **323:** F-B cableado con ruta `ClampPowerInput.Mass` (evidencia `213100Z`); adherencia: probe
+
   `is_slipping` (9b-a) + sesiones S1–S4 antes de handler (9b-b).
+
 - **Freight:** una sesión SD40 con reglas auto/dyn anotadas (F-D); learner por eje sin mezclar con
+
   combined UK.
-- **No reabrir:** segundo `physics.py`, tablas precalculadas de metros, cilindro HTTP en el tick.
+
+- **No reabrir:** segundo `physics.py`, tablas precalculadas de metros, MR/reservoir HTTP en el tick.
 
 Investigación complementaria: [CURRENTFORMATION_API.md](../reference/CURRENTFORMATION_API.md),
 [FISICA_Y_APRENDIZAJE.md](../v1/FISICA_Y_APRENDIZAJE.md) L3–L4,
@@ -425,10 +518,12 @@ Investigación complementaria: [CURRENTFORMATION_API.md](../reference/CURRENTFOR
 **Alcance autopilot: solo rojo.** Ámbar, doble amarillo y verde **no** entran en P1 v2 — el
 conductor los vigila. Si más adelante hace falta, será decisión explícita fuera de este contrato.
 
-**Escenario y permisos:** en algunos modos TSW el **controlador / escenario** puede **autorizar pasar
-en rojo** (SPAD permitido, tutorial, variante de ruta, etc.). v2 **asume por defecto** que rojo =
+**Escenario y permisos:** en algunos modos TSW el **controlador / escenario** puede **autorizar
+pasar
+en rojo**(SPAD permitido, tutorial, variante de ruta, etc.). v2**asume por defecto** que rojo =
 parar (mismo criterio que un maquinista sin autorización). Cómo detectar “rojo pero legal pasar” y
-si el autopilot debe obedecer al juego o siempre frenar: **aplazado** — documentar en sesión C1 cuando
+si el autopilot debe obedecer al juego o siempre frenar: **aplazado** — documentar en sesión C1
+cuando
 aparezca un escenario concreto; no bloquea el contrato `signal_red` + distancia.
 
 **Canal elegido: solo Lua** (mismo `GetDriverAidData` que cartel y gradiente). **No HTTP** para
@@ -446,24 +541,24 @@ señales (lento; el tick ya va por GetData).
 Contrato mínimo en GetData — **solo cuando hay rojo adelante**:
 
 ```text
-signal_red=1
-signal_dist_cm=<metros en cm, como dist_limit_cm>
 ```
 
 Si no hay rojo, **no** mandar esas claves (Python no inventa señal).
 
 ```text
-GetDriverAidData (main.lua, pendiente)
-  → escalares distanceToSignal + signalAspectClass (evitar TArray nextSignals[] si lim2)
-  → si Stop / DANGER / RED → signal_red=1 + signal_dist_cm
-  → TrainState → policy (tercer objetivo de vía) → P1 como cartel/andén
 ```
 
 **Investigación Lua** (tarjeta **C1**, antes de cablear Python):
 
 1. F9 / `dump_driver_aid` frente a señal **roja**: nombres exactos y unidades (cm).
-2. UK: ¿`Stop` o `DANGER`? (`is_red_signal_aspect` acepta ambos.)
-3. `extract_signal_red(driverAid)` — `pick_float` + pcall; sin `pairs` del struct entero.
+2. UK 323: **`signalAspectClass == 2`** = Stop/rojo (lab `214213Z`, confirmado operador). Strings
+
+   `Stop`/`DANGER` si aparecen en otros trenes.
+
+3. `extract_signal_red(driverAid)` — `pick_float` + pcall; aceptar **enum numérico 2** además de
+
+   strings.
+
 4. Escribir claves solo si `dist_cm > 0` y aspecto rojo.
 
 | | Opción | Estado |
@@ -500,7 +595,8 @@ laboratorio.
 
 ### 4.1 Tick Lua (UE4SS)
 
-Referencia código: `mods/TelemetryProbeMod/Scripts/main.lua` (`WRITE_INTERVAL_S = 0.05` ≈ **17–20 Hz**;
+Referencia código: `mods/TelemetryProbeMod/Scripts/main.lua` (`WRITE_INTERVAL_S = 0.05` ≈ **17–20
+Hz**;
 `PROBE_BUILD`). Estabilidad: [PENDIENTE_DYNAMICHUD.md](../v1/PENDIENTE_DYNAMICHUD.md).
 
 ##### Estado v2
@@ -558,7 +654,7 @@ Hoy: `%TEMP%\TSW6Bridge\`:
 | **En producción** | Ficheros + `write_send_command_with_ack`; cola `CommandChannel` | — |
 | **Parcial** | Reassert: hasta 3 intentos, backoff 25 ms, `ack_timeout` ~120 ms adaptable | Documentar valores **nuestros** v2 |
 | **Aplazado** | SHM (telemetría o mandos) | Medición tarjeta V2 CANAL_CONTROL |
-| **Fuera de v2 agente** | HTTP PATCH como fallback si IPC falla | Mantener solo emergencia o quitar en `agent/` |
+| **Fuera de v2** | HTTP PATCH como fallback si IPC falla | Mantener solo emergencia o quitar en `V2/tsw6v2/` |
 
 **Semántica:** GetData = snapshot fresco cada tick. Mandos = cola Python → un writer async → Lua
 lee ~20 Hz y aplica; correlación `cmd_id` en GetData y ack. Vigilar `drops` si la cola se llena.
@@ -571,14 +667,18 @@ Código: `tsw_ipc_bus.py`, `control_channel.py` (no reimplementar en agente v2; 
 | **Reassert hasta ack** | Reintentos si no `ok` | Ya en `CommandChannel`; mal calibrado satura el puente |
 | **Shared memory (SHM)** | Menos lag que disco | Otro proyecto; no fase 0 |
 
-**Elegido:** seguir con **ficheros** + reassert **ya cableado** (calibrar ms/reintentos v2, no copiar
+**Elegido:** seguir con **ficheros** + reassert **ya cableado** (calibrar ms/reintentos v2, no
+copiar
 Dastsc). SHM solo si medición dice que el disco es el cuello; no ahora.
 
 ##### Criterio de cierre §4.2
 
 - Sesión 10+ min: mandos con `ack=ok`, `drops` bajo control, sin palanca “saltada”.
-- Timeouts/reintentos documentados en agente v2 o § [Orden de implementación](#orden-de-implementación).
-- Agente nuevo (`agent/`) usa el **mismo** puente; no segundo canal sin decisión explícita.
+- Timeouts/reintentos documentados en agente v2 o § [Orden de
+
+  implementación](#orden-de-implementación).
+
+- Producto v2 (`V2/tsw6v2/`) usa el **mismo** puente; no segundo canal sin decisión explícita.
 
 ### 4.3 Un cartel en el probe
 
@@ -587,7 +687,8 @@ Referencia código: `mods/TelemetryProbeMod/Scripts/main.lua` (`extract_speed_li
 `driver_aid_parser.build_speed_limits_queue`.
 
 **Hoy (probado 2026-08-28):** solo **un** cambio de límite adelante en GetData — escalares
-`DistanceToNextSpeedLimit` + `NextSpeedLimit` → `dist_limit_cm` / `next_limit_ms`. Al pasar un cartel
+`DistanceToNextSpeedLimit` + `NextSpeedLimit` → `dist_limit_cm` / `next_limit_ms`. Al pasar un
+cartel
 el juego actualiza el par. **No** hay `dist_limit2_*` en el probe (Python tiene campos y
 `_merge_probe_second_limit` preparados; **inactivos** hasta que Lua escriba lim2).
 
@@ -604,8 +705,8 @@ el juego actualiza el par. **No** hay `dist_limit2_*` en el probe (Python tiene 
 Ver [DRIVERAID_API.md — lim2](../reference/DRIVERAID_API.md#investigar-2º-límite-lim2).
 
 **Cola HTTP `nextSpeedLimits[]`:** sí hay muchos carteles en el JSON, pero el **2.º elemento no es
-“el siguiente mph”** — suele ser **otro cartel al mismo mph** (55 a ~50 m). El primer **cambio de
-cifra** (p. ej. 45) puede ir **kilómetros** más adelante. No confundir “dos filas en el array” con
+“el siguiente mph”**— suele ser**otro cartel al mismo mph**(55 a ~50 m). El primer**cambio de
+cifra**(p. ej. 45) puede ir**kilómetros** más adelante. No confundir “dos filas en el array” con
 90→75 juntos. Con **F7 ON**, `tsw_telemetry_source` hace `skip_limit_keys` al merge HTTP: la cola
 **no** alimenta P1; solo el escalar del probe (+ odometría C.3a si el cm va plano).
 
@@ -642,14 +743,20 @@ solo si in-game un tramo demuestra que el escalar no basta — no por teoría 90
 ##### Criterio de cierre §4.3
 
 - **Tests:** `test_telemetry_source.py` — odometría cartel, probe congelado en pausa, resync por
+
   `seq` (`test_planning_distance_dead_reckoning`, `test_stale_probe_holds_distance`,
   `test_frozen_probe_seq_holds_distance`, `test_probe_planning_interpolates_between_game_updates`).
+
 - **In-game (E1 / Cross-City 323, F7 ON):** sesión 10+ min; `lim2=—` estable;
+
   `p1tgt=SPEED_LIMIT` en carteles conocidos (p. ej. 55) con `p1d` coherente (baja; no fija
   @2496 m).
+
 - **C.3a:** en marcha, `next_lim`/`dist` bajan o `probe_stale=Y` con dist interpolada; en
+
   **pausa**, distancia no avanza (`probe_motion_frozen` / `frozen`); `gap` no absurdo vs andén
   (ver [CANAL_CONTROL.md § C.3a](../CANAL_CONTROL.md#odometría-cartel-c3a)).
+
 - **Sin cola HTTP en P1** con F7 ON — solo escalar probe (+ C.3a).
 
 **Reapertura lim2 (no es cierre §4.3):** sesión documentada donde un cartel no basta (tramo
@@ -666,16 +773,21 @@ Referencia código: `tsw6/telemetry/tsw_telemetry_source.py` (`_poll_driver_aid_
 (`tsw_hud.db`, `car_stop_signs`).
 
 **Tablón vs fin de andén:** en la API, `markers[].distanceToStationCM` es distancia al **fin de
-plataforma** (marker `Platform`), no al **tablón** `car_stop` del HUD. Hoy P1 frena con esa distancia
+plataforma**(marker `Platform`), no al**tablón** `car_stop` del HUD. Hoy P1 frena con esa
+distancia
 HTTP + odometría Python. El tablón fino (`car_stop_signs` en `tsw_hud.db`) es mejora **C2** — ver
-[DRIVERAID_API.md](../reference/DRIVERAID_API.md) TrackData · [HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
+[DRIVERAID_API.md](../reference/DRIVERAID_API.md) TrackData ·
+[HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
 
 **Hoy:** la distancia al andén **no va por Lua** — va por **HTTP** (~2 s, hilo en background):
 
 1. `DriverAid.TrackData` → `markers[].distanceToStationCM` (paradas programadas).
 2. Filtro `tsw_hud.db` (`filter_stations_by_stop_names`, `hud_geo` / `car_stop_signs` si el marker
+
    es de la dirección mala — detalle §4.6).
+
 3. Entre polls HTTP, Python **resta** metros con `v×dt` (`_tick_station_distances`) — no es GPS ni
+
    `odo_m` del probe (aún).
 
 El probe **sí** manda `odo_m` (~20 Hz) y puertas (`doors_telem` / `doors_dmi`); **no**
@@ -727,11 +839,17 @@ duplicar reglas aquí).
 ##### Criterio de cierre §4.4
 
 - **Tests:** `test_station_odom_skips_when_probe_age_stale`; `test_speed_decider` (FSM no salta
+
   `next_stop`); `test_brake_station` / `test_station_fsm`.
+
 - **In-game (Cross-City 323):** FSM llega a STOPPED en paradas del horario; P1 `p1tgt=STATION` con
+
   distancia coherente en APPROACHING; puertas vía Lua/DMI (sin OCR).
+
 - **HTTP:** refresh ~2 s sin bloquear tick; entre polls `stations[].distance_m` baja con marcha;
+
   en pausa / probe stale no avanza (`probe_motion_frozen` / `telemetry_age_ms`).
+
 - **Sin regresión** filtro HUD (parada correcta del servicio, no vía contraria — §4.6).
 
 **Reapertura C2 (no es cierre §4.4):** sesión donde fin de plataforma + `v×dt` falla el tablón;
@@ -789,7 +907,9 @@ Igual que **§3**, más checklist de cableado:
 - `extract_signal_red` en probe; claves solo si rojo y `dist_cm > 0`.
 - Parser GetData → `TrainState` → `speed_decider` → coordinator.
 - `evaluate_signal_brake` deja de ser stub; tests fixture `signal_red=1` (D7).
-- Cross-City 323: rojo a distancia conocida → P1 frena (plan o emergencia); GetData ~20 Hz sin freeze.
+- Cross-City 323: rojo a distancia conocida → P1 frena (plan o emergencia); GetData ~20 Hz sin
+
+  freeze.
 
 Validación: tarjeta **C1** · §3 · [DRIVERAID_API.md](../reference/DRIVERAID_API.md) señales.
 
@@ -806,7 +926,8 @@ Referencia código: `tsw6/braking/v2/policy.py` (`station_waits_for_approach_lim
 `next_sign_is_reduction_beyond_station`, `should_defer_station_brake`, `skip_defer`),
 `hud_timetable.py` (`merge_schedule_stations`, `source: hud_geo`),
 `driver_aid_parser.py` (`filter_stations_by_stop_names`), `governor_station.py` / FSM.
-Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) · [HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
+Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) ·
+[HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
 
 **Dos fenómenos (no uno solo):**
 
@@ -819,9 +940,12 @@ Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) · [HUD_TIMET
 
 - **`tsw_hud.db`** → orden de paradas (`2R17`, `stop_names`) = hacia dónde vamos.
 - **`PlayerInfo.geoLocation`** (HTTP) + `car_stop_signs` → `hud_geo` si TrackData trae marker de la
+
   dirección mala.
+
 - **`filter_stations_by_stop_names`** → solo andenes del horario, no la vía contraria.
 - Entre polls HTTP, `_tick_station_distances` resta `v×dt` (§4.4). **`odo_m` no valida sentido**
+
   hoy — solo documentar si en sesión hace falta más adelante.
 
 **Cabina / reversa en Lua:** no cablear en v2 inmediato; F9 en segundo plano.
@@ -857,19 +981,29 @@ Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) · [HUD_TIMET
 ##### Criterio de cierre §4.6
 
 - **Hoy:** comportamiento Cross-City 323 **aceptable** con stack actual — no hay deuda de código
+
   obligatoria en esta sección.
+
 - **Tests:** `test_brake_policy` (waits/defer); C.2 Four Oaks en `test_speed_decider` /
+
   `test_station_fsm` verdes.
-- **Documentación:** casos Four Oaks / Sutton en [BRAKE_V2.md](../v1/BRAKE_V2.md); esta sección + §4.4
+
+- **Documentación:** casos Four Oaks / Sutton en [BRAKE_V2.md](../v1/BRAKE_V2.md); esta sección +
+
+  §4.4
   como referencia de sentido.
-- **Reapertura:** solo tras sesión donde falle algo **no** explicado por las reglas de arriba; entonces
+
+- **Reapertura:** solo tras sesión donde falle algo **no** explicado por las reglas de arriba;
+
+  entonces
   decidir planning vs P1 vs cabina — no anticipar.
 
 Validación: fase 3 (servicio pasajeros) · sin tarjeta C dedicada hasta incidente documentado.
 
 ### 4.7 Proceso Python + GUI
 
-**Postura v2:** para 323 **funciona hoy** (hilo de control + snapshot). El refactor `agent/` (D1) es
+**Postura v2:** para 323 **funciona hoy** (hilo de control + snapshot). El bucle en `V2/tsw6v2/` (D1)
+es
 **cuando toque la ejecución**, no urgencia in-game — misma API mental (`tick` / `step` → snapshot).
 Sidecar (dos procesos) solo si medición lo pide; no por defecto.
 
@@ -886,7 +1020,8 @@ Referencia código: `tsw6/autopilot/autopilot_gui.py` (`_control_loop`, `_UI_MS=
 | Bucle decisión | `AutopilotEngine.tick()` ~20 Hz | `agent.step()` — mismo contrato |
 | GUI tkinter | Hilo control + pintado ~20 Hz (`_UI_MS=50`) | Visor + toggles → **config**; sin P1/policy |
 
-**Hoy:** `autopilot_gui.py` lanza un **hilo** que llama `engine.tick()` (`_LOOP_HZ = 20`) y la ventana
+**Hoy:** `autopilot_gui.py` lanza un **hilo** que llama `engine.tick()` (`_LOOP_HZ = 20`) y la
+ventana
 refresca el último `AutopilotSnapshot` cada **~50 ms** (~20 Hz). Motor, FSM y P1 siguen en
 `autopilot_core`; la GUI también cambia flags (learn, holgura, pausa) vía métodos del engine — en v2
 eso pasa a ser solo **config del agente**, sin importar `policy` ni coordinator.
@@ -894,12 +1029,6 @@ eso pasa a ser solo **config del agente**, sin importar `policy` ni coordinator.
 **v2 (elegido):** dos roles en **un proceso**:
 
 ```text
-  Agente (bucle ~20 Hz)              GUI (visor, ~20 Hz pintado)
-  ─────────────────────              ───────────────────────────
-  Leer GetData (TelemetryReader)     Leer snapshot (copia bajo lock)
-  TrainState → P1 → IPC              Mostrar: vel, lim, andén, llegada, P1, ack
-  Learner (EMA)                      Toggles: ON/OFF, holgura, pausa → config
-  NO tkinter                         NO decide freno ni escribe SendCommand
 ```
 
 | Pieza | Hace | No hace |
@@ -907,7 +1036,10 @@ eso pasa a ser solo **config del agente**, sin importar `policy` ni coordinator.
 | **Agente** | Telemetría, física, objetivos, mandos | Pintar ventanas |
 | **GUI** | Datos útiles para el conductor / depurar | `v²/2a`, policy, cluster |
 
-**Por qué:** el tick no depende del pintado normal (hilo aparte). Un `messagebox` de error **para**
+##### Por qué
+
+**Por qué:** el tick no depende del pintado normal (hilo aparte). Un `messagebox` de error **para
+
 el bucle de control — aceptable. Misma filosofía que Lua = solo I/O en el probe.
 
 `--console` (`tsw_autopilot.py`) usa el **mismo** `tick()` que la GUI (tests, logs sin ventana).
@@ -929,12 +1061,17 @@ detalle fino sigue en `logs/autopilot_*.log`, no en pantalla.
 **`effective_limit` (límite efectivo):**
 
 - En **motor P1** sigue siendo necesario: techo interno (`min` vía, crucero, APPROACHING, marcador
+
   DMI, etc.) — ver §4.3 (`speed_limit_ms` → `effective_limit`).
+
 - En **GUI no aporta** al conductor habitual; posible resto de crucero/aceleración temprana. **No**
-  mostrar en visor (o solo en modo depuración si algún día hiciera falta). **Quitar de pestaña Estado**
+
+mostrar en visor (o solo en modo depuración si algún día hiciera falta). **Quitar de pestaña
+Estado**
   cuando se retoque la GUI — **sin** tocar `speed_decider` / coordinator.
 
-**Modo ligero:** `--console` (cero tkinter) o, más adelante, pintado GUI a 10 Hz con control a 20 Hz.
+**Modo ligero:** `--console` (cero tkinter) o, más adelante, pintado GUI a 10 Hz con control a 20
+Hz.
 
 ##### Estado v2
 
@@ -942,12 +1079,12 @@ detalle fino sigue en `logs/autopilot_*.log`, no en pantalla.
 | --- | --- | --- |
 | **En producción** | Hilo control + `AutopilotSnapshot` + telem/mandos async | — |
 | **Suficiente por ahora** | 323 Cross-City con GUI abierta | Ninguno — no ticket activo |
-| **Aplazado (D1)** | Carpeta `agent/` + GUI solo visor | § [Orden](#orden-de-implementación) pasos 2–3 |
+| **Aplazado (D1)** | `V2/tsw6v2/` + GUI solo visor | § [Orden](#orden-de-implementación) pasos 2–3 |
 | **Fuera v2** | Sidecar sin medición; GUI que llama P1 directo | — |
 
 | Alternativa | Cuándo |
 | --- | --- |
-| **Un proceso, agente + GUI visor (elegida)** | D1 — `agent/` con `step()` → snapshot |
+| **Un proceso, agente + GUI visor (elegida)** | D1 — `V2/tsw6v2/` con `step()` → snapshot |
 | **`--console` / headless** | Sesión ligera; mismo `tick()`, sin ventana |
 | GUI pintado 10 Hz (control 20 Hz) | Menos CPU UI; opcional |
 | Sidecar (dos procesos) | Solo si `work_ms` / `loop_hz` empeoran con ventana abierta |
@@ -956,16 +1093,20 @@ detalle fino sigue en `logs/autopilot_*.log`, no en pantalla.
 
 | Duda | Por qué importa | Cuándo mirarla |
 | --- | --- | --- |
-| ¿`agent/` o endurecer `autopilot_core`? | D1 **elegido** — carpeta nueva | Solo si ejecución paso 2 demuestra bloqueo |
+| ¿`V2/tsw6v2/` o endurecer `autopilot_core`? | D1 **elegido** — carpeta nueva | Solo si paso 2 demuestra bloqueo |
 | ¿Umbral para sidecar? | Evitar over-engineering | Tras medir con GUI + `autopilot_perf.bat` |
 | ¿Learner en hilo de control? | CPU del tick | Solo si `work_ms` sube |
 
 ##### Criterio de cierre §4.7
 
 - **Hoy:** `loop_hz` ≥ 18 con GUI abierta (ver [CANAL_CONTROL.md](../CANAL_CONTROL.md)); mismo
+
   comportamiento `--console` y GUI.
-- **D1 implementado:** `agent/` con API mínima `step()` → snapshot; GUI sin imports de `braking/v2`
+
+- **D1 implementado:** `V2/tsw6v2/` con API mínima `step()` → snapshot; GUI sin imports de v1
+
   (solo snapshot + config).
+
 - **Sidecar:** solo tras sesión documentada donde tkinter sea el cuello — no anticipar.
 
 Validación: tarjeta **D1** · § [Orden](#orden-de-implementación) pasos 2–3.
@@ -980,7 +1121,8 @@ Referencia código: `tsw6/learning/control_layout.py` (`detect_control_layout`: 
 plantilla `data/control_schemas/freight_na_railbridge_v3.json`. Freight operativo:
 [FREIGHT_NA.md](../v1/FREIGHT_NA.md).
 
-**Glosario:** en el plan **split** = en código **`freight_na`** (tracción + auto + dyn + ind). Unificar
+**Glosario:** en el plan **split** = en código **`freight_na`** (tracción + auto + dyn + ind).
+Unificar
 vocabulario al crear `data/vehicles/<id>.json`.
 
 **No es** “pasajero vs mercancías” como único eje. Son **dos ejes** que se combinan:
@@ -991,7 +1133,6 @@ vocabulario al crear `data/vehicles/<id>.json`.
 | **Layout** (G-B) | **Cómo** se escribe el mando en UE | combined vs split (`freight_na`) |
 
 ```text
-servicio (G-A) × layout (G-B) → JSON (nombres UE) + objetivos en el tick
 ```
 
 | Tren | Servicio | Layout | Escritura IPC |
@@ -1042,7 +1183,9 @@ Misma física `v²/2a` (§2); learner por eje/peso en freight.
 - **323:** sin regresión combined; mandos solo por nombres del paquete/heurística actual.
 - **JSON:** al menos un `data/vehicles/<id>.json` validado (323 o SD40) con tests de escritura IPC.
 - **Freight:** sesión SD40 con F-D anotada antes de marcar P1 multi-eje en producción.
-- **blended** / **MasterController** (Acela, DE): documentar en JSON cuando haya tren; no bloquean 323.
+- **blended** / **MasterController** (Acela, DE): documentar en JSON cuando haya tren; no bloquean
+
+  323.
 
 Validación: fase 6 (freight) · [FREIGHT_NA.md](../v1/FREIGHT_NA.md) · §2 G-B.
 
@@ -1050,98 +1193,27 @@ Validación: fase 6 (freight) · [FREIGHT_NA.md](../v1/FREIGHT_NA.md) · §2 G-B
 
 ## Árbol v2
 
-Diagrama: [esqueleto_v2.svg](../assets/esqueleto_v2.svg) · fuente [esqueleto_v2.dot](../assets/esqueleto_v2.dot) ·
+Diagrama: [esqueleto_v2.svg](../assets/esqueleto_v2.svg) · fuente
+[esqueleto_v2.dot](../assets/esqueleto_v2.dot) ·
 HTML: [esqueleto_v2.html](../assets/esqueleto_v2.html).
 
-**Leyenda:** `*` = pendiente cablear (C1 señal, F-B masa, `is_slipping`). Tachado mental = no entra en v2.
+**Leyenda:** `*` = pendiente cablear (C1 señal, F-B masa, `is_slipping`). Tachado mental = no entra
+en v2.
 
 ```text
-TSW6 producto v2 — dos bandas + canales laterales
-══════════════════════════════════════════════════════════════════════════════
-
-┌─ UNA VEZ (vehicle= / arranque / cambio de tren) ────────────────────────────┐
-│  vehicle= en GetData                                                         │
-│    → Paquete G-B (objetivo: data/vehicles/<id>.json)                         │
-│        layout: combined | freight_na (split) | blended* | MasterController*  │
-│        nombres UE (323 PowerBrakeHandle · 375 PowerHandle · SD40 Throttle…) │
-│        mapa muesca→eje · semilla fill_s / a inicial                          │
-│    → Hoy: detect_control_layout + freight_na_railbridge_v3.json              │
-│    → Learner EMA → logs/profiles/<veh>.json (a viva, no en JSON del tren)    │
-│  Pasajeros G-A: match tsw_hud.db (servicio, stop_names, car_stop_signs)      │
-│  Freight G-A: sin HUD por defecto · holgura OFF                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │ layout/palancas (G-B)              │ horario/paradas (G-A)
-         ▼                                    ▼
-
-┌─ PROBE Lua ~20 Hz (§4.1) — SOLO I/O, sin P1, sin pairs en hot path ─────────┐
-│  TelemetryProbeMod · ReceiveTick · pcall · WRITE_INTERVAL ~50 ms             │
-│  ESCRIBE GetData.txt (overwrite):                                            │
-│    seq speed_ms power handle_notch lever_notch                               │
-│    train_brake loco_brake dyn_brake accel_ms2 gradient_pct                   │
-│    speed_limit_ms dist_limit_cm next_limit_ms  (1 cartel — §4.3)             │
-│    odo_m doors_telem doors_dmi brake_cyl_bar is_slipping vehicle=              │
-│    signal_red signal_dist_cm  (* C1 — solo si rojo adelante)                  │
-│  LEE SendCommand.txt + TSW6ApplyCommands.flag → aplica HUD → SendCommandAck  │
-│  NO: nextSignals[] TArray · lim2 · markers[] · reglas de frenado              │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │ GetData.txt                              ▲ SendCommand.txt + ack
-         ▼                                            │
-┌─ IPC %TEMP%\TSW6Bridge\ (§4.2) ─────────────────────────────────────────────┐
-│  TelemetryReader ~20 Hz (hilo) · AsyncCommandWriter + reassert ack           │
-│  Sin HTTP para mandos (D3 señales tick = Lua, no HTTP)                       │
-│  SHM · sidecar: aplazado                                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌─ HTTP DriverAid ~2 s (hilo planning — §4.4) ────────────────────────────────┐
-│  TrackData.markers → estaciones + dist (v×dt entre polls)                    │
-│  PlayerInfo.geoLocation + hud_geo si marker mal                              │
-│  Formación → masa total F-B (* poll 5 min — §2, ruta ClampPowerInput.Mass)    │
-│  NO alimenta P1 límites si F7 ON (skip_limit_keys)                          │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │ merge planning
-         ▼
-┌─ AGENTE Python ~20 Hz (D1: agent/ — hoy AutopilotEngine.tick) ────────────────┐
-│  ProbeSnapshot → TrainState                                                  │
-│  G-A objetivos: LIMIT | STATION | SIGNAL* (solo rojo §3)                     │
-│  G-B escritura: nombres del paquete (combined vs freight_na)                 │
-│  physics.py: s = v²/(2a) · gradiente probe · learner a · massFactor* HTTP      │
-│  P1 coordinator:                                                             │
-│    limit_brake (1 cartel + C.3a odo si cm plano)                             │
-│    station_plan + FSM puertas (pasajeros)                                    │
-│    evaluate_signal_brake* (stub → C1) · policy station_waits skip_defer       │
-│  RELEASE/APPLY: un mando/tick · política TSW (D5)                            │
-│  Holgura ETA: schedule_slack (* D9 TimeOfDay — OFF por defecto)              │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │ AutopilotSnapshot
-         ▼
-┌─ GUI / --console (§4.7) — visor, no decide ─────────────────────────────────┐
-│  Núcleo: velocidad · límite vía · acción/muesca · plan P1* · probe seq/Hz    │
-│  Planning: 2–3 paradas (dist + arr/dep) · sin pestaña Depuración (log file)  │
-│  Sin límite efectivo en pantalla (sigue en motor)                            │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌─ FUERA v2 / horizonte (no bloquean 323) ────────────────────────────────────┐
-│  SHM · lim2/cola HTTP · ámbar/verde (D8) · SPAD escenario · OCR tablón       │
-│  sidecar 2 procesos · tick Rust/C++ · Dynamic HUD in-game                    │
-│  blended/Acela · MasterController DE · adherencia learner fase 2             │
-│  ApiExplorerMod (L0) — ver PLAN_API_EXPLORER.md · laboratorio, no tick P1    │
-└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Flujo resumido (cada tick):**
 
 ```text
-UE → Probe → GetData → TrainState → [G-A objetivos + G-B nombres] → physics → P1 → IPC → Probe → UE
-                              ↑
-                    HTTP ~2s (estaciones, masa*)
 ```
 
 **Ahorro v2:** no `FindAllOf` / `pairs(driverAid)` en caliente; nombres UE en caché (paquete).
 
 **No ahorro:** `v²/2a` cada tick (velocidad y distancias cambian).
 
-**Añadir campo nuevo** (señal, lim2, slip): contrato GetData (D2) + F9 + tests (D7) — no un `if` suelto en Lua.
+**Añadir campo nuevo** (señal, lim2, slip): contrato GetData (D2) + F9 + tests (D7) — no un `if`
+suelto en Lua.
 
 **Mapa plan → árbol:**
 
@@ -1169,7 +1241,7 @@ pendiente · `Abierto` = falta medición o proceso · `Aplazado` = fuera del cam
 
 | ID | Tema | Estado | Detalle |
 | --- | --- | --- | --- |
-| **D1** | Agente nuevo `agent/` + migración por pruebas | **Elegido** | Debates, §4.7, ejecución pasos 2–3 |
+| **D1** | Producto Python `V2/tsw6v2/` desde cero + migración por pruebas | **Elegido** | Debates, §4.7, ejecución pasos 2–3 |
 | **D2** | Schema GetData versionado (señal, lim2, …) | **En curso** — contrato en [CANAL_CONTROL](../CANAL_CONTROL.md); falta C1 en probe + checklist Fase 0 | [CANAL_CONTROL](../CANAL_CONTROL.md#contrato-getdata-v2) |
 | **D3** | Señales en tick: Lua vs HTTP | **Cerrado** S-Lua | §3 |
 | **D4** | Agente sin GUI en el rewrite | **Elegido** | §4.7, `--console` |
@@ -1192,17 +1264,35 @@ pendiente · `Abierto` = falta medición o proceso · `Aplazado` = fuera del cam
 
 **Elegido: A con migración por pruebas** — no es “copiar pegando” ni “borrar y olvidar”:
 
-1. **Nuevo esqueleto** (`agent/` o similar): snapshot → objetivos → un mando → IPC. GUI solo visor
-   (§4.7). Probe **no** se toca salvo claves nuevas (señal, etc.).
-2. **Portar por rebanadas** lo que **ya funciona** y tiene test: `physics.py`, learner, parser
-   GetData, reglas TSW que validasteis (hold bajada, Four Oaks, `station_waits`) — como **módulos**
-   llamados desde el agente nuevo, no copiando el coordinador entero.
+1. **Nuevo esqueleto** en **`V2/tsw6v2/`** (p. ej. `loop.py`): snapshot → objetivos → un mando → IPC.
+
+   GUI solo visor (§4.7). Probe **no** se toca salvo claves nuevas (señal, etc.).
+
+2. **Portar por rebanadas** lo que **ya funciona** y tiene test — **reescribir dentro de
+
+   `V2/tsw6v2/`**,
+
+   no copiar el árbol coordinator/policy de v1. v1 solo referencia hasta que el test pase en v2.
+
+   **Cartel P1:** diseño **desde cero** en `V2/tsw6v2/` — ver [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
+
+   Solo **ideas** de `tsw6/braking/v2/limit_brake.py` (física, muescas UK, capas trace); **no** paridad
+
+   de comportamiento. Módulos actuales: `limit_state`, `limit_notch`, `limit_containment`, `limits`
+
+   (transitorio → `limit_planner.py`). Cambios = `V2/tests/` + JSONL.
+
 3. **Reimplementar** donde el plan dice v2 distinto: un RELEASE, paquete tren, `PassengerService`,
+
    señales desde el diseño.
+
 4. **Criterio de hecho:** mismo escenario pytest / Cross-City que antes; si falla, o se porta la
+
    regla o se documenta por qué v2 cambia.
 
-Mal: refactor infinito del `coordinator.py` actual. Mal: wipe sin pytest ni sesión 323.
+Mal: refactor infinito del `coordinator.py` actual. Mal: wipe sin pytest ni sesión 323. Mal: ampliar
+
+`autopilot_core` en lugar de `V2/tsw6v2/`.
 
 **Implementación:** pendiente — § [Orden](#orden-de-implementación) pasos 2–3.
 
@@ -1214,7 +1304,8 @@ momentos.
 **Elegido:** cambio **atómico** por campo — misma entrega actualiza contrato documentado, probe (si
 aplica), parser Python y fixture pytest (D7). No “primero Lua y el parser otro día”.
 
-**Criterio de cierre:** Fase 0 checklist; claves canónicas en [CANAL_CONTROL § Contrato GetData](../CANAL_CONTROL.md#contrato-getdata-v2);
+**Criterio de cierre:** Fase 0 checklist; claves canónicas en [CANAL_CONTROL § Contrato
+GetData](../CANAL_CONTROL.md#contrato-getdata-v2);
 proceso [D2 — añadir campo](../CANAL_CONTROL.md#d2--añadir-campo); C1 cableado + fixture.
 
 **Detalle:** §4.1, §4.3, Fase 0.
@@ -1228,7 +1319,8 @@ planning (~2 s): estaciones, geo, masa.
 
 **Problema:** mezclar tkinter con P1 complica tests y el tick.
 
-**Elegido:** un proceso, dos roles — **agente** (`step()` → IPC) y **GUI visor** (snapshot + config).
+**Elegido:** un proceso, dos roles — **agente** (`step()` → IPC) y **GUI visor** (snapshot +
+config).
 `--console` usa el mismo bucle sin ventana. La GUI no importa `braking/v2` ni escribe mandos.
 
 **Criterio de cierre:** §4.7 — GUI sin policy/coordinator; `loop_hz` ≥ 18 con ventana abierta.
@@ -1261,7 +1353,8 @@ el contrato SendCommand permite para ese layout. Sin `pace` ni ritmo en Lua.
 
 **Problema:** cablear señal o lim2 solo in-game retrasa el diseño y rompe CI.
 
-**Elegido:** fixtures GetData en `tests/` **antes** o **en el mismo PR** que el parser/probe. Escenarios
+**Elegido:** fixtures GetData en `tests/` **antes** o **en el mismo PR** que el parser/probe.
+Escenarios
 sintéticos de señal (`signal_red=1`, distancia) aunque C1 aún no esté en Lua.
 
 **Criterio de cierre:** pytest verde sin TSW abierto; Fase 4 ítem tests; tarjeta C1 no bloqueada por
@@ -1283,7 +1376,8 @@ falta de fixture.
 **Elegido por defecto:** holgura **OFF** en producción hasta cerrar D9. Si se activa sin medir, solo
 como experimento documentado.
 
-**Criterio de cierre:** Fase 3 — `schedule_slack` con `now` = escenario, o holgura sigue OFF con nota
+**Criterio de cierre:** Fase 3 — `schedule_slack` con `now` = escenario, o holgura sigue OFF con
+nota
 en GUI.
 
 **Detalle:** §1, [TIMEOFDAY_API](../reference/TIMEOFDAY_API.md), ejecución paso 8.
@@ -1297,18 +1391,19 @@ en GUI.
 | Capa | Qué responde | Dónde |
 | --- | --- | --- |
 | **Fases 0–6** | Qué capacidades debe tener el producto (comportamiento) | Abajo |
-| **Transversal** | Tests, revisiones y mantenimiento **en cada entrega** | [§ Transversal](#transversal--revisión-tests-y-mantenimiento) |
+| **Transversal** | Tests, revisiones y mantenimiento **en cada entrega** | [MANTENIMIENTO.md](MANTENIMIENTO.md) · resumen abajo |
 | **Orden de implementación** | En qué secuencia codificar (PRs, prefijos, deltas) | [§ Orden](#orden-de-implementación) |
 
 Las fases **no** son cronológicas 1→2→3. El orden real al codificar es la tabla numerada
-(agente antes que paquete JSON; C1 en paralelo o tras esqueleto `agent/`).
+(agente en `V2/tsw6v2/` antes que paquete JSON; C1 en paralelo o tras esqueleto paso 2).
 
 Criterio de fase = comportamiento validado (pytest o sesión in-game), no solo archivos nuevos.
 **Cada paso** del § Orden incluye el checklist transversal (como mínimo pytest + delta si aplica).
 
 ### Transversal — revisión, tests y mantenimiento
 
-Corre **en paralelo** a las fases 0–6; no es una fase “al final”.
+Corre **en paralelo** a las fases 0–6; no es una fase “al final”. Checklist operativo (comandos,
+síntomas, sesión in-game): **[MANTENIMIENTO.md](MANTENIMIENTO.md)**. Resumen:
 
 #### Tests (sin juego — D7)
 
@@ -1318,7 +1413,7 @@ Corre **en paralelo** a las fases 0–6; no es una fase “al final”.
 | Tras tocar GetData / probe | Parser + fixtures | `test_tsw_ue4ss_reader`, `test_telemetry_source`, fixture `tests/` (D7) |
 | Tras tocar IPC / mandos | Canal async | `test_control_channel`, `test_tsw_ipc_bus`, `test_tsw_monitor_ipc` |
 | Tras tocar P1 / policy | Frenado v2 | `test_brake_*`, `test_speed_decider`, `test_station_fsm` |
-| Tras `agent/` | Regresión 323 | Mismos tests que hoy en Four Oaks / carteles (paso 3) |
+| Tras `V2/tsw6v2/` paso 3 | Regresión 323 | Mismos tests que hoy en Four Oaks / carteles |
 | Campo nuevo en contrato | Atómico con código | Fixture GetData + parser + probe en **mismo PR** (D2) |
 
 **Prefacio P2:** `pytest` verde en `braking/v2/` + telemetría antes de marcar un paso hecho.
@@ -1374,10 +1469,11 @@ revisión JSON vs `detect_control_layout` hoy.
 **Hoy en `autopilot_core` (323):** bajada y carteles con una política de soltar — lecciones 323 sí;
 estructura Dastsc no obligatoria.
 
-**Pendiente D1:** carpeta `agent/` + GUI visor; portar módulos con test (physics, learner, parser);
+**Pendiente D1:** `V2/tsw6v2/` + GUI visor; portar comportamiento con test (physics, learner, parser);
 mismo comportamiento Cross-City / Four Oaks.
 
-**Validación:** `test_physics`, `test_online_learner`, `test_brake_release`, `test_brake_coordinator`,
+**Validación:** `test_physics`, `test_online_learner`, `test_brake_release`,
+`test_brake_coordinator`,
 `test_brake_v2`; `--console` y GUI mismo snapshot; `loop_hz` ≥ 18 (§4.7).
 
 ### Fase 3 — Servicio pasajeros
@@ -1412,10 +1508,15 @@ no activar lim2 por dump HTTP solo.
 
 ### Fase 6 — Física selectiva + freight
 
-- [x] Masa F-B — ruta validada lab `213100Z` (§2); pendiente cablear Python poll + `physics.py` (paso **9**).
+- [x] Masa F-B — ruta validada lab `213100Z` (§2); pendiente cablear Python poll + `physics.py`
+
+  (paso **9**).
+
 - [ ] Patinaje **9b-a** — probe `is_slipping` (+ opcional `traction_locked`); log sin handler.
 - [ ] Patinaje **9b-b** — matriz S1–S4 en 323; luego handler P1.
-- [ ] Freight: selector de eje ([FREIGHT_NA](../v1/FREIGHT_NA.md), sesión F-D); no un 323 con tres palancas.
+- [ ] Freight: selector de eje ([FREIGHT_NA](../v1/FREIGHT_NA.md), sesión F-D); no un 323 con tres
+
+  palancas.
 
 **Validación:** `test_freight_learner`, `test_learn_monitor_freight`; sesión SD40 documentada;
 revisión [FREIGHT_NA](../v1/FREIGHT_NA.md) vs comportamiento.
@@ -1424,16 +1525,17 @@ revisión [FREIGHT_NA](../v1/FREIGHT_NA.md) vs comportamiento.
 
 ## Orden de implementación
 
-Al codificar: **un paso** por entrega; prefacio cumplido; checklist [transversal](#transversal--revisión-tests-y-mantenimiento);
+Al codificar: **un paso** por entrega; prefacio cumplido; checklist
+[transversal](#transversal--revisión-tests-y-mantenimiento);
 matiz → tabla **Deltas** (no reescribir debates salvo cambio de producto).
 
 ### Prefacios globales
 
 | # | Requisito | Estado |
 | --- | --- | --- |
-| P0 | **D1** decidido; implementación `agent/` | ✅ decisión · ⬜ código |
+| P0 | **D1** decidido; implementación `V2/tsw6v2/` | ✅ decisión · ⬜ código (`__init__.py` creado) |
 | P1 | Probe estable ~20 Hz (§4.1) | ✅ |
-| P2 | pytest verde en ámbito del paso (+ suite completa antes de merge) | ⬜ verificar |
+| P2 | pytest verde en ámbito del paso (+ suite completa antes de merge) | ✅ suite `tests/` (verificar en cada paso) |
 | P3 | Plan repasado (§1–4, debates, árbol) | ✅ |
 | P4 | Revisión doc: CANAL_CONTROL / delta si el paso tocó contrato | ⬜ por paso |
 
@@ -1443,36 +1545,44 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 
 | # | Entrega | Prefacio | Fase | Validación mínima |
 | --- | --- | --- | --- | --- |
-| 1 | Contrato GetData en [CANAL_CONTROL](../CANAL_CONTROL.md) | P1, P3 | 0 | ✅ doc · ⬜ C1 probe + fixture |
-| 2 | Esqueleto `agent/` (snapshot → un mando → IPC), GUI visor | D1, P0 | 2 | `test_control_channel`; `--console` |
-| 3 | Portar `physics.py`, learner, parser GetData al agente | P2 | 2 | Four Oaks / carteles pytest |
-| 4 | `extract_signal_red` + fixture pytest | Sesión **C1**, P2 | 4 | `signal_red=1` fixture |
+| 1 | Contrato GetData en [CANAL_CONTROL](../CANAL_CONTROL.md) | P1, P3 | 0 | ✅ doc · ✅ C1+9b-a probe · fixture |
+| 2 | Esqueleto `V2/tsw6v2/` (`loop.py`: snapshot → un mando → IPC), GUI visor | D1, P0 | 2 | ✅ `V2/tests/` · `test-ipc` in-game · `--console`/`gui` |
+| 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | Four Oaks / carteles pytest |
+| 4 | `extract_signal_red` + fixture pytest | Sesión **C1**, P2 | 4 | ✅ probe `20260902a` · fixture |
 | 5 | Quitar stub `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | emergencia rojo + C1 in-game |
 | 6 | Paquete JSON `data/vehicles/` + caché palancas G-B | 323 validado, P2 | 1 | `test_control_layout` + IPC |
 | 7 | `PassengerService` genérico + FSM puertas | Paso 6, P2 | 3 | `test_station_fsm` + andén |
 | 8 | TimeOfDay → holgura (o OFF documentado) | D9 medición, P4 | 1, 3 | nota en GUI + §1 |
-| 9 | Masa F-B (HTTP `ClampPowerInput.Mass`) | Evidencia `213100Z`, P2 | 6 | log `mass_kg` + `mass_factor` |
-| 9b-a | Probe `is_slipping` (+ `traction_locked` opc.) | Evidencia `213100Z`, P2 | 6 | GetData en partida; **sin** cambio mando |
+| 9 | Masa F-B (HTTP `ClampPowerInput.Mass`) | Conteo 3/6 coches **no cuadra** | 6 | **F-B off** — log opcional; `mass_factor=1.0` |
+| 9b-a | Probe `is_slipping` (+ `traction_locked` opc.) | Evidencia `213100Z`+`214213Z` (slip en marcha) | 6 | GetData en partida; **sin** cambio mando |
 | 9b-b | Handler slip P1 (matriz estudio) | Sesiones S1–S4 323 | 6 | pytest + in-game mojado/hojas |
-| 10 | Freight `brake_selector` + SD40 | Sesión **F-D**, P2 | 6 | [FREIGHT_NA](../v1/FREIGHT_NA.md) |
+| 10 | Freight `brake_selector` + SD40 | Sesión **F-D**, P2 | 6 | [FREIGHT_NA](../v1/FREIGHT_NA.md) · masa: probe multi-eje `CurrentFormation/N` |
 
-**Paralelo (laboratorio):** tarjeta **L0** — [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) (`ApiExplorerMod`);
+**Paralelo (laboratorio):** tarjeta **L0** — [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md)
+(`ApiExplorerMod`);
 desbloquea C1/G-B sin hinchar el probe. No sustituye pasos 1–10.
 
-**Sesión actual:** objetivo = arrancar v2 · **siguiente** = paso 2 (`agent/`) o terminar paso 1 (C1
-probe) · bloqueos = ninguno de producto.
+**Sesión actual:** paso **3** — `command` + `decision` + RELEASE en bucle; **46 tests** `V2/tests/`.
+Validación in-game: `V2\run.bat console --limit-brake`. Paso 2 cerrado (`test-ipc` PASS 323).
 
 ### Deltas (cambios al codificar)
 
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
+| 2026-09-03 | 3 | Física/learner/carteles | `physics`, `plan`, `limits`, `command`, `decision`, `learner` · bucle APPLY/RELEASE/COAST · `V2/tests/` 46 tests |
+| 2026-09-03 | 2 | Cierre in-game | `test-ipc` PASS (lever 6→3, train_brake 0.33; neutro 4) · ACK 37–63 ms |
+| 2026-09-02 | paso 2 | Esqueleto V2 | `loop`, `bridge`, `channel`, `gui`, `console`/`gui` CLI · `V2/tests/` 24 tests |
+| 2026-09-01 | doc | Carpeta código v2 | Todo Python producto nuevo en `V2/tsw6v2/`; v1 solo referencia — [CODIGO_V2](CODIGO_V2.md) |
 | 2026-08-31 | doc | 9 / 9b-a cablear | Contrato + stubs parser/constants; sin comportamiento en partida |
+| 2026-08-31 | lab | L0.4b señales UK 323 | `signalAspectClass` 0/1/2 + distancia Lua; rojo=2 confirmado in-game |
+| 2026-09-01 | lab / paso 9 | F-B masa en frenado | Cross-City **3** coches 45 550 kg · nieve **6** coches 44 430 kg — **no correlación**; `mass_factor` permanece 1.0 |
+| 2026-09-01 | lab | Masa por eje 323 | `Axle_*` 1 000+1 000 kg fijo; suma ejes no sirve pasajeros — anotado para freight paso 10 |
 
 ---
 
 ## Prioridad (resumen)
 
-1. **Pasos 2–3** — `agent/` + portar lo que ya tiene test (D1); P2 verde.
+1. **Paso 3** — física/learner en `V2/tsw6v2/`; P2 verde.
 2. **Pasos 4–5 / C1** — señal roja; fixture + sesión in-game.
 3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisión `tsw_hud.db` si falla match.
 4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.
@@ -1486,6 +1596,8 @@ probe) · bloqueos = ninguno de producto.
 - No obliga a no tocar `tsw6/braking`.
 - Sí obliga a **no** meter P1 en Lua.
 
-**Siguiente código:** paso 2 (`agent/`) o cerrar paso 1 (C1 en probe). Tarjetas in-game: **C1**
-señales · **C2** andén. Canal: [CANAL_CONTROL](../CANAL_CONTROL.md) · probe:
+#### Siguiente código
+
+**Siguiente código:** paso **3** (física/learner en `V2/tsw6v2/`). Tarjetas in-game:
+**C1** señales · **C2** andén. Canal: [CANAL_CONTROL](../CANAL_CONTROL.md) · probe:
 [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).

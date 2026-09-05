@@ -1,8 +1,10 @@
 # Freight NA — SD40-2 y multi-mando
 
-Trenes diesel norteamericanos con **tracción + 3 frenos** separados (layout **`freight_na`** / split).
+Trenes diesel norteamericanos con **tracción + 3 frenos** separados (layout **`freight_na`** /
+split).
 
-**Producto v2:** [v2/PLAN_V2.md](../v2/PLAN_V2.md) (G-A servicio + G-B layout, §2 F-D, §4.8). Este doc es la
+**Producto v2:** [v2/PLAN_V2.md](../v2/PLAN_V2.md) (G-A servicio + G-B layout, §2 F-D, §4.8). Este
+doc es la
 referencia técnica del layout NA; no usar el plan archivado v1 como guía de producto.
 
 ---
@@ -38,27 +40,38 @@ Plantilla esquema: `logs/control_schemas/freight_na_railbridge_v3.json` (nombre 
 
 ### `combined` (UK EMU — solo referencia)
 
-Un handle 0–8 (323: `PowerBrakeHandle`). No es freight; ver [PLAN_V2.md](../v2/PLAN_V2.md) §1 y §4.8.
+Un handle 0–8 (323: `PowerBrakeHandle`). No es freight; ver [PLAN_V2.md](../v2/PLAN_V2.md) §1 y
+§4.8.
 
 ---
 
 ## Física (misma que pasajeros)
 
 - **Un** `physics.py`: `s = v²/(2a)`. Freight = más metros porque **`a` es menor** y hay **qué eje**
+
   usar (F-D), no otro motor de distancia.
+
 - **Learner por eje:** `FreightLearner` + `logs/profiles/<vehículo>.json` (matrices tracción /
+
   auto / dyn / ind).
-- **Masa (F-B, [PLAN_V2](../v2/PLAN_V2.md) §2):** HTTP peso **total** formación, arranque + cada 5 min
+
+- **Masa (F-B, [PLAN_V2](../v2/PLAN_V2.md) §2):** HTTP peso **total** formación, arranque + cada 5
+
+  min
   (igual que pasajeros). `massFactor` = `mass_now / mass_ref`; no sumar por vagón en el tick.
+
 - **Longitud formación:** no entra al plan (parada en objetivo / andén / cartel).
-- **Patinaje ([PLAN_V2](../v2/PLAN_V2.md) §2):** fase 1 elegida — slip en APPLY → −1 muesca en el eje
+- **Patinaje ([PLAN_V2](../v2/PLAN_V2.md) §2):** fase 1 elegida — slip en APPLY → −1 muesca en el
+
+  eje
   activo, plan intacto; sin +metros inventados. Fase 2 learner mojado aplazada.
 
 ---
 
 ## Selector de frenos (F-D — investigar in-game)
 
-**Elegido en producto v2** ([PLAN_V2](../v2/PLAN_V2.md) §2, opción F-D). Implementación: fase 4 de este
+**Elegido en producto v2** ([PLAN_V2](../v2/PLAN_V2.md) §2, opción F-D). Implementación: fase 4 de
+este
 doc → [PLAN_V2](../v2/PLAN_V2.md) fase 6.
 
 | Situación | Hipótesis v2 | Validar en TSW |
@@ -98,10 +111,15 @@ TSW no modela slack.
 
 #### SD40-2 (EMD)
 
-- Palanca dyn: **OFF → SETUP → 1…8 (FULL)**; throttle en **IDLE** y reversora en marcha para salir de OFF.
+- Palanca dyn: **OFF → SETUP → 1…8 (FULL)**; throttle en **IDLE** y reversora en marcha para salir
+
+  de OFF.
+
 - **Pausa ~10 s** en IDLE al pasar de tracción a dyn (evita pico de retención / flashover en motor).
 - Subir/bajar muescas dyn **despacio**; pausa en mínima retención para que el tren ajuste slack.
-- Medidor de carga / esfuerzo: más amperaje de retención = más fuerza (útil para calibrar learner dyn).
+- Medidor de carga / esfuerzo: más amperaje de retención = más fuerza (útil para calibrar learner
+
+  dyn).
 
 #### Comportamiento vs velocidad (aprox.)
 
@@ -117,16 +135,6 @@ Fuentes divergen en el piso exacto (&lt;9 mph vs &lt;10 mph); **medir en TSW** c
 #### Implicaciones para el autopilot (borrador `brake_selector`)
 
 ```text
-objetivo = cartel | andén | señal
-si gradiente < umbral y no hay parada cercana → solo automático (o combined UK)
-si bajada y control de velocidad (no parada inminente):
-    eje = dyn; throttle idle; respetar pausa tracción→dyn si el sim lo exige
-    si v > objetivo + banda → subir dyn 1 muesca (rate-limited)
-    si v sigue subiendo con dyn alto → blended: automático ligero + dyn
-si distancia a parada/límite/rojo en ventana APPLY:
-    eje = automático (a del learner auto); reducir dyn
-    por debajo de V_STOP → automático hasta 0; ind fuera
-slip en eje activo → −1 muesca (PLAN_V2 §2), sin cambiar objetivo
 ```
 
 **Fuera de v1/v2 inicial:** slack run-in, bail off del ind, recarga del tubo, DP remoto, hand brakes
@@ -134,11 +142,28 @@ tras emergencia en pendiente.
 
 #### Referencias web
 
-- [SD40-2 Operator Manual §2](https://www.rr-fallenflags.org/manual/sd40-2s2.html) — palanca dyn, pausa 10 s.
-- [Train Handling When Operating with Dynamic Brakes (UP, PDF)](https://lawblet13.org/wp-content/uploads/2022/08/su-2020-02T.pdf) — orden preferencia, buff forces.
-- [BNSF Air Brake and Train Handling Rules (NTSB docket PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=BNSF+Airbrake+and+Train+Handling+Rules-Rel.pdf&ID=7480227) — blended, grades, no ind en dyn.
-- [CP Locomotive Engineer Training (NTSB docket PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=CP+Loco+Eng+Training-Rel.pdf&ID=13320063) — combinación dyn+auto en bajada.
-- [NAP — Long Freight Trains, cap. 5](https://www.nationalacademies.org/read/27807/chapter/5) — límites dyn, emergencia con aire.
+- [SD40-2 Operator Manual §2](https://www.rr-fallenflags.org/manual/sd40-2s2.html) — palanca dyn,
+
+  pausa 10 s.
+
+- [Train Handling When Operating with Dynamic Brakes (UP,
+
+  PDF)](https://lawblet13.org/wp-content/uploads/2022/08/su-2020-02T.pdf) — orden preferencia, buff
+  forces.
+
+- [BNSF Air Brake and Train Handling Rules (NTSB docket
+
+  PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=BNSF+Airbrake+and+Train+Handling+Rules-Rel.pdf&ID=7480227)
+  — blended, grades, no ind en dyn.
+
+- [CP Locomotive Engineer Training (NTSB docket
+
+  PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=CP+Loco+Eng+Training-Rel.pdf&ID=13320063)
+  — combinación dyn+auto en bajada.
+
+- [NAP — Long Freight Trains, cap. 5](https://www.nationalacademies.org/read/27807/chapter/5) —
+
+  límites dyn, emergencia con aire.
 
 ---
 
@@ -206,4 +231,6 @@ actualizar learner durante patinaje ([PLAN_V2](../v2/PLAN_V2.md) §2).
 - [PLAN_V2.md](../v2/PLAN_V2.md) — producto v2 (G-A/G-B, §2 física, fase 6 freight)
 - [BRAKE_V2.md](BRAKE_V2.md) — P1 compartido
 - [CURRENTFORMATION_API.md](../reference/CURRENTFORMATION_API.md) — masa / patinaje HTTP
-- Plan histórico v1 (solo archivo): [archive/docs/FREIGHT_NA_PLAN.md](../archive/docs/FREIGHT_NA_PLAN.md)
+- Plan histórico v1 (solo archivo):
+
+  [archive/docs/FREIGHT_NA_PLAN.md](../archive/docs/FREIGHT_NA_PLAN.md)

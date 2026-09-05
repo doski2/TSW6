@@ -34,10 +34,10 @@ ApiExplorerMod : 1
 
 | Tecla | Modo | Salida |
 | --- | --- | --- |
-| F5 | `hud_batch` | `HUD_Get*` + `http_guess` |
+| F5 | `hud_batch` | HUD 16× incl. **amperímetro** — ver [LAB_CAPTURA_AMPS.md](../../docs/v2/LAB_CAPTURA_AMPS.md) |
 | F6 | `controls` | inventario palancas + `layout_hint` |
 | F7 | `driver_aid` | DriverAid escalares + C1 candidatos |
-| Shift+F5 | `formation` | cilindros / Simulation |
+| Shift+F5 | `formation` | cilindros / Simulation / **tracción Axle** |
 | Shift+F6 | `reflect_shallow` | props y funcs del drivable |
 | Shift+F7 | `correlate_tick` | marca para correlator Python |
 

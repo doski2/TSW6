@@ -1,12 +1,10 @@
 """
-Frenado v2 — módulo único de frenado TSW6.
+Frenado v2 — orquestación P1 (autopilot v1).
 
-- ``physics`` / ``plan`` — cinemática y tipos de plan
-- ``policy``             — cluster cartel↔andén y prioridad
+- ``physics`` / ``plan`` / ``command`` / ``limit_brake`` — **shims** → ``V2/tsw6v2/``
+- ``policy``             — cluster cartel↔andén y prioridad (v1)
 - ``objectives``         — andén (vía station_plan), señal stub, emergencia
 - ``station_plan``       — perfil B1–B3 a 0 mph (HUD + ETA)
-- ``limit_brake``        — cartel activo (estado latch)
-- ``command``            — BrakeCommand + BrakeTargetResult
 - ``coordinator``        — un tick P1
 """
 

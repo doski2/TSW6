@@ -72,6 +72,26 @@ for _node in (
             continue
         FORMATION_PROBE_SPECS.append((_node, _field, _kind))
 
+FORMATION_TRACTION_SPECS: list[tuple[str, str, str]] = []
+for _axle in ("Axle_1_1", "Axle_2_1"):
+    for _sub in ("Axle", "Wheel"):
+        for _field in (
+            "NetTractiveEffort",
+            "LocalTractiveEffort",
+            "NetTorque_NM",
+            "Power_KW",
+            "NetForce_N",
+        ):
+            FORMATION_TRACTION_SPECS.append((_axle, _sub, _field))
+    for _field in (
+        "NetTractiveEffort",
+        "LocalTractiveEffort",
+        "NetTorque_NM",
+        "Power_KW",
+        "NetForce_N",
+    ):
+        FORMATION_TRACTION_SPECS.append((_axle, "direct", _field))
+
 
 @dataclass
 class GuessRow:
@@ -118,6 +138,7 @@ class FormationProbeRow:
     scope: str
     node: str
     field: str
+    subnode: str = ""
     actual: Any = None
     api_path: Optional[str] = None
     status: Literal["ok", "http_error", "no_data", "skipped"] = "skipped"
@@ -277,6 +298,7 @@ def default_formation_probe_defs() -> list[dict[str, str]]:
                 "scope": "formation",
                 "node": node,
                 "field": field,
+                "subnode": "",
             }
         )
         rows.append(
@@ -284,6 +306,32 @@ def default_formation_probe_defs() -> list[dict[str, str]]:
                 "path": f"CurrentDrivableActor/Simulation/{node}.{field}",
                 "scope": "drivable",
                 "node": node,
+                "field": field,
+                "subnode": "",
+            }
+        )
+    for node, subnode, field in FORMATION_TRACTION_SPECS:
+        if subnode == "direct":
+            path_f = f"CurrentFormation/0/Simulation/{node}.{field}"
+            path_d = f"CurrentDrivableActor/Simulation/{node}.{field}"
+        else:
+            path_f = f"CurrentFormation/0/Simulation/{node}/{subnode}.{field}"
+            path_d = f"CurrentDrivableActor/Simulation/{node}/{subnode}.{field}"
+        rows.append(
+            {
+                "path": path_f,
+                "scope": "formation",
+                "node": node,
+                "subnode": subnode,
+                "field": field,
+            }
+        )
+        rows.append(
+            {
+                "path": path_d,
+                "scope": "drivable",
+                "node": node,
+                "subnode": subnode,
                 "field": field,
             }
         )
@@ -310,6 +358,7 @@ def collect_formation_probe_defs(session_dir: Path) -> tuple[list[dict[str, str]
                         "scope": str(item.get("scope") or ""),
                         "node": str(item.get("node") or ""),
                         "field": str(item.get("field") or ""),
+                        "subnode": str(item.get("subnode") or ""),
                     }
                 )
             if cleaned:
@@ -319,9 +368,21 @@ def collect_formation_probe_defs(session_dir: Path) -> tuple[list[dict[str, str]
 
 def attach_lua_probe_context(rows: list[FormationProbeRow], formation_meta: dict[str, Any]) -> None:
     lua_probe = formation_meta.get("lua", {}).get("lua_probe")
-    if not isinstance(lua_probe, dict):
-        return
+    traction_probe = formation_meta.get("lua", {}).get("traction_probe")
     for row in rows:
+        if isinstance(traction_probe, dict) and row.subnode:
+            axle_info = traction_probe.get(row.node)
+            if isinstance(axle_info, dict):
+                row.lua_index_ok = bool(axle_info.get("index_ok"))
+                via_bucket = axle_info.get("fields_by_via")
+                if isinstance(via_bucket, dict):
+                    fields = via_bucket.get(row.subnode)
+                    if isinstance(fields, dict):
+                        row.lua_fields = fields
+            if row.lua_fields:
+                continue
+        if not isinstance(lua_probe, dict):
+            continue
         node_info = lua_probe.get(row.node)
         if not isinstance(node_info, dict):
             continue
@@ -354,6 +415,7 @@ def fetch_formation_snapshot(
                 scope=item.get("scope") or "",
                 node=item.get("node") or "",
                 field=item.get("field") or "",
+                subnode=item.get("subnode") or "",
             )
         )
     attach_lua_probe_context(rows, formation_meta)
@@ -422,6 +484,32 @@ def formation_lua_diagnosis(snapshot: FormationSnapshot) -> list[str]:
     if best:
         path, bar = best
         lines.append(f"- Presión cilindro HTTP: **{bar:.3g} BAR** vía `{path}`")
+
+    traction_ok = [
+        r
+        for r in snapshot.rows
+        if r.subnode and r.status == "ok" and isinstance(r.actual, (int, float))
+    ]
+    if traction_ok:
+        sample = traction_ok[0]
+        lines.append(
+            f"- Tracción HTTP: **{len(traction_ok)}** rutas legibles "
+            f"(ej. `{sample.path}` = {sample.actual})"
+        )
+    traction_lua = [
+        r
+        for r in snapshot.rows
+        if r.subnode and r.lua_fields and r.field in r.lua_fields
+    ]
+    if traction_ok and not traction_lua:
+        lines.append(
+            "- **Tracción HTTP sí, Lua no:** `Axle_1_1/Axle.NetTractiveEffort` existe en HTTPAPI "
+            "pero `traction_probe` no leyó el subnodo en UE4SS."
+        )
+    elif traction_lua:
+        lines.append(
+            "- **Tracción Lua legible:** revisar `lua.traction_probe` y cablear en TelemetryProbeMod."
+        )
     return lines
 
 

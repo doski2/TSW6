@@ -1,0 +1,1 @@
+seq=1 speed_ms=6.414022937e-05 power=-3 power_neg=0 handle_notch=1 lever_notch=1 last_cmd_id=0 last_ack_ok=1 train_brake=1 loco_brake=0 dyn_brake=1 accel_ms2=-0.0002460816177 brake_cyl_bar=4.283247188 max_speed_ms=0 speed_limit_ms=0 gradient_pct=0 vehicle=RVM_BCC_WRM_Class323_DMS_A_C
