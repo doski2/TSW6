@@ -4,7 +4,7 @@ estudiado documento estado:
 1. una vez terminado plan v2 revisar documentacion y sincronizar el resto de doc con plan v2
 2 cameraMode insertar y probar mas adelante
 3.patinaje ver si hay un valor que a partir de eso patina? en dastsc si estaba añadir reglas
-4.
+4.todo en v2
 5.
 6. falta añadir fuerza en lua estudiar
 7.
