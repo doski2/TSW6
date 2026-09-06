@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 coordinator.py — Un tick P1: policy + objetivos + limit_brake → BrakeCommand.
+
+.. deprecated::
+    Orquestador legacy v1. P1 canónico: ``V2/tsw6v2/decision.py``.
+    Mantener solo para tests ``tests/test_brake_coordinator.py``.
 """
 
 from __future__ import annotations

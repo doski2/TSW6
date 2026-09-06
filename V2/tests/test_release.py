@@ -18,7 +18,7 @@ def test_is_brake_applied():
 
 def test_resolve_release_when_at_target():
     cmd = resolve_release_command(
-        speed_mph=50.2,
+        speed_mph=49.2,
         handle_notch=2,
         effective_limit=75.0,
         next_limit_mph=50.0,
@@ -28,6 +28,20 @@ def test_resolve_release_when_at_target():
     assert cmd is not None
     assert cmd.kind == "RELEASE"
     assert cmd.target_notch == 4
+
+
+def test_release_after_slow_zone_when_next_limit_rises():
+    """35→60: en banda @34 soltar aunque el next sea 60."""
+    cmd = resolve_release_command(
+        speed_mph=34.2,
+        handle_notch=3,
+        effective_limit=35.0,
+        next_limit_mph=60.0,
+        distance_next_m=520.0,
+        gradient_pct=-1.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
 
 
 def test_no_release_when_slightly_above_limit():
@@ -68,6 +82,77 @@ def test_release_at_limit_speed_on_downhill():
         next_limit_mph=45.0,
         distance_next_m=200.0,
         gradient_pct=-1.0,
+    )
+    assert cmd is None
+
+
+def test_release_downhill_55_to_45_at_coast_floor():
+    """55→45 bajada: soltar ~44.5 en horizonte, no arrastrar B1 hasta 40."""
+    cmd = resolve_release_command(
+        speed_mph=44.5,
+        handle_notch=3,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=120.0,
+        gradient_pct=-1.0,
+        latch_ops_target=44.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+
+
+def test_release_in_zone_45_after_sign():
+    """Zona 45: con B1 puesto @44, soltar hacia banda 44.5."""
+    cmd = resolve_release_command(
+        speed_mph=44.0,
+        handle_notch=3,
+        effective_limit=45.0,
+        next_limit_mph=35.0,
+        distance_next_m=800.0,
+        gradient_pct=-1.0,
+        latch_ops_target=44.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+
+
+def test_no_release_55_zone_still_approaching_45():
+    cmd = resolve_release_command(
+        speed_mph=50.0,
+        handle_notch=3,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=400.0,
+        gradient_pct=-1.0,
+        latch_ops_target=44.0,
+    )
+    assert cmd is None
+
+
+def test_release_downhill_zone_coast_far_from_next_sign():
+    """60→55 lejos: tras contener zona, soltar en banda ~59.5 (no hasta @54)."""
+    cmd = resolve_release_command(
+        speed_mph=59.5,
+        handle_notch=3,
+        effective_limit=60.0,
+        next_limit_mph=55.0,
+        distance_next_m=650.0,
+        gradient_pct=-1.0,
+        latch_ops_target=54.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+
+
+def test_no_zone_release_downhill_when_still_over_ceiling():
+    cmd = resolve_release_command(
+        speed_mph=60.8,
+        handle_notch=3,
+        effective_limit=60.0,
+        next_limit_mph=55.0,
+        distance_next_m=650.0,
+        gradient_pct=-1.0,
+        latch_ops_target=54.0,
     )
     assert cmd is None
 

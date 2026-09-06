@@ -32,7 +32,7 @@ from tsw6.paths import LOGS_DIR
 from tsw6.telemetry.tsw_api_client import TswApiClient, client_from_key_file
 from tsw6.telemetry.tsw_ue4ss_reader import default_getdata_path, parse_probe_line
 
-from tsw6.braking.v2.physics import PRESSURE_BRAKING_MIN_BAR
+from tsw6v2.physics import PRESSURE_BRAKING_MIN_BAR
 
 BRAKE_EFFORT_MAX_VALID_N = 50_000.0
 MPH_TO_MS = 0.44704

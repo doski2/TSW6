@@ -30,7 +30,7 @@ from typing import Optional
 from tsw6.autopilot.control_actions import (
     BRAKE, BRAKE_FAST, COAST, EMERGENCY, HOLD, PAUSED,
 )
-from tsw6.braking.v2.command import BrakeCommand
+from tsw6v2.command import BrakeCommand
 from tsw6.governor.governor_constants import (
     CONTROL_INTERVAL, CONTROL_INTERVAL_BRAKE, CONTROL_INTERVAL_FAST,
     CONTROL_INTERVAL_RPC,
@@ -40,7 +40,7 @@ from tsw6.governor.governor_constants import (
     SERVICE_MAX_BRAKE,
 )
 from tsw6.autopilot.tsw_keys import VK_A, VK_D, KEY_HOLD_MS, KEY_TAP_MS, send_key
-from tsw6.braking.v2.command import clamp_brake_handle
+from tsw6v2.command import clamp_brake_handle
 from tsw6.autopilot.train_state import TrainState
 
 _log = logging.getLogger("tsw.controller")

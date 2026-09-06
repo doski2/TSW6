@@ -45,6 +45,18 @@ def test_learner_persists_fill(tmp_path) -> None:
     assert loaded.brake_fill_s > 1.5
 
 
+def test_air_ready_coast_idle_gauge() -> None:
+    air = BrakeAirTracker()
+    assert air.air_ready(1.03, lever=4) is True
+    assert air.air_ready(2.6, lever=4) is False
+
+
+def test_air_ready_service_needs_pressure() -> None:
+    air = BrakeAirTracker()
+    assert air.air_ready(1.2, lever=3) is False
+    assert air.air_ready(2.6, lever=3) is True
+
+
 def test_pressure_for_handle_b1() -> None:
     assert pressure_for_handle(3) >= 2.4
 

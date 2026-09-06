@@ -39,8 +39,13 @@ class LearnerProfile:
     ) -> None:
         self._air.observe(lever, brake_cyl_bar, now=now)
 
-    def air_ready(self, brake_cyl_bar: float | None) -> bool:
-        return self._air.air_ready(brake_cyl_bar)
+    def air_ready(
+        self,
+        brake_cyl_bar: float | None,
+        *,
+        lever: int | None = None,
+    ) -> bool:
+        return self._air.air_ready(brake_cyl_bar, lever=lever)
 
     def inhibit_reapply(
         self,

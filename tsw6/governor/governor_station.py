@@ -15,12 +15,12 @@ import math
 import time
 from typing import Optional, Tuple
 
-from tsw6.braking.v2.physics import (
+from tsw6v2.physics import (
     MPH_TO_MS,
     apply_zone_margin_m,
     brake_reaction_margin_m,
 )
-from tsw6.braking.v2.policy import (
+from tsw6.governor.limit_station_cluster import (
     merged_approach_overspeed,
     station_waits_for_approach_limit,
 )

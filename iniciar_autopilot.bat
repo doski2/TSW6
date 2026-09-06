@@ -3,7 +3,7 @@ chcp 65001 >nul
 title TSW6 Autopilot
 
 cd /d "%~dp0"
-set "PYTHONPATH=%CD%"
+set "PYTHONPATH=%CD%;%CD%\V2"
 
 :: ── Detectar Python 3.9+ ─────────────────────────────────────────────────────
 set "PY="

@@ -45,6 +45,7 @@ G_MSS = 9.80665
 DEFAULT_MAX_BRAKE_DECEL = MAX_DECEL_MS2
 APPLY_NOW_MARGIN_M = 150.0
 APPLY_NOW_MARGIN_MIN_M = 25.0
+APPLY_ZONE_SPEED_S = 2.0  # ~2 s de marcha en ventana APPLY
 TARGET_CLUSTER_GAP_M = 350.0
 DOWNHILL_LIMIT_GRADIENT_PCT = -0.3  # ‰ -3 en Dastsc
 STATION_COAST_CUTOFF_M = 100.0
@@ -72,6 +73,35 @@ class BrakePhysicsContext:
 def gravity_acceleration_ms2(gradient_pct: float) -> float:
     """Componente de g a lo largo de la vía (pendiente en %, no ‰)."""
     return G_MSS * (gradient_pct / 100.0)
+
+
+def is_downhill_gradient(gradient_pct: float) -> bool:
+    """Pendiente suficiente para reglas HOLD_DH / coast trim (Dastsc ‰ −3)."""
+    return gradient_pct < DOWNHILL_LIMIT_GRADIENT_PCT
+
+
+def coast_trim_covers_overspeed(
+    *,
+    speed_mph: float,
+    target_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+) -> bool:
+    """
+    ¿Coast + gravedad en bajada bastan para quitar el exceso antes del cartel?
+
+    Si sí, no comprometer B1 todavía (Vigilar / coast).
+    """
+    if distance_m <= 0:
+        return False
+    overspeed_ms = max(0.0, speed_mph - target_mph) * MPH_TO_MS
+    if overspeed_ms <= 0:
+        return False
+    coast_a = effective_decel_ms2(COAST_DECEL_MS2, gradient_pct)
+    if coast_a <= 0.03:
+        return False
+    bleed_m = overspeed_ms ** 2 / (2.0 * coast_a)
+    return bleed_m <= distance_m
 
 
 def effective_decel_ms2(
@@ -201,7 +231,7 @@ def brake_ctx_for_decel(
 
 
 def apply_zone_margin_m(speed_ms: float, apply_at_remaining_m: float) -> float:
-    speed_based = speed_ms * 2.5
+    speed_based = speed_ms * APPLY_ZONE_SPEED_S
     remaining_based = apply_at_remaining_m * 0.12
     return min(
         APPLY_NOW_MARGIN_M,
@@ -382,20 +412,25 @@ def should_emit_brake_command(
     speed_mph: float,
     distance_to_target_m: Optional[float] = None,
     apply_at_remaining_m: Optional[float] = None,
+    brake_committed: bool = False,
 ) -> bool:
     """
     ¿Emitir APPLY/COAST_THROTTLE?
 
     1. Ventana simétrica ±zona (velocidad + distancia de frenado).
     2. Tarde (``dist_start < 0``) pero aún dentro del envelope ``distance <= apply_at``.
+    3. Con freno comprometido: ventana algo más amplia para no soltar entre ticks.
     """
     del apply_now
-    if is_in_brake_action_window(
-        dist_start,
+    zone = brake_command_apply_zone_m(
         speed_mph=speed_mph,
         distance_to_target_m=distance_to_target_m,
         apply_at_remaining_m=apply_at_remaining_m,
-    ):
+        dist_start=dist_start,
+    )
+    if brake_committed and dist_start > 0:
+        zone *= 1.35
+    if is_in_apply_zone(dist_start, zone):
         return True
     apply_at = _coherent_apply_at_remaining_m(
         distance_to_target_m=distance_to_target_m,

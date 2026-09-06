@@ -1,40 +1,33 @@
-"""HOLD_DH — mantener límite vigente en bajada (solo misma zona; ver REGLAS_FRENOS_P1)."""
+"""HOLD_DH y contención bajada — ver REGLAS_FRENOS_P1.md."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from tsw6v2.constants import passenger_ops_target_mph
+from tsw6v2.constants import (
+    posted_zone_hold_ceiling_mph,
+    posted_zone_coast_floor_mph,
+)
+from tsw6v2.planning import is_ascending_limit_exit, is_descending_limit_zone
+from tsw6v2.limit_notch import apply_notch_hysteresis, phase_for_handle
+from tsw6v2.limit_state import LIMIT_REACTION_S, LimitBrakeState
 from tsw6v2.physics import (
     DEFAULT_MAX_BRAKE_DECEL,
-    DOWNHILL_LIMIT_GRADIENT_PCT,
     MPH_TO_MS,
     apply_zone_margin_m,
     brake_ctx_for_decel,
+    is_downhill_gradient,
     kinematic_horizon_m,
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
-from tsw6v2.target import (
-    LIMIT_CONTAIN_ESCALATE_OVER_MPH,
-    LIMIT_SCORING_MAX_OVER_MPH,
-    BrakeTargetResult,
-)
-from tsw6v2.limit_notch import apply_notch_hysteresis
-from tsw6v2.limit_state import LIMIT_REACTION_S, LimitBrakeState
+from tsw6v2.target import BrakeTargetResult
 
 
-def passenger_hold_target_mph(posted_limit_mph: float) -> float:
-    """Techo operativo HOLD_DH (ej. cartel 60 → mantener ~59)."""
-    return passenger_ops_target_mph(posted_limit_mph)
-
-
-def _downhill_contain_trigger_over_mph(gradient_pct: float) -> float:
-    """Repunte sobre techo operativo antes de B1 en HOLD_DH."""
-    if gradient_pct <= -1.0:
-        return 0.20
-    if gradient_pct <= -0.6:
-        return 0.28
-    return 0.35
+def _hold_detail(posted_limit_mph: float, hold_target: float) -> str:
+    return (
+        f"Mantener bajada @{hold_target:.1f} mph "
+        f"(posted {posted_limit_mph:.0f})"
+    )
 
 
 def next_limit_brake_horizon_m(
@@ -56,6 +49,113 @@ def next_limit_brake_horizon_m(
     return horizon if horizon == horizon else 0.0
 
 
+def _within_next_brake_horizon(
+    *,
+    speed_mph: float,
+    next_limit_mph: float,
+    next_distance_m: float,
+    gradient_pct: float,
+) -> bool:
+    horizon = next_limit_brake_horizon_m(speed_mph, next_limit_mph, gradient_pct)
+    return next_distance_m <= horizon
+
+
+def _build_downhill_hold_result(
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    hold_target: float,
+    gradient_pct: float,
+    next_distance_m: Optional[float],
+    detail: str,
+) -> BrakeTargetResult:
+    speed_ms = speed_mph * MPH_TO_MS
+    start_handle = 3
+    handle, phase = apply_notch_hysteresis(
+        state,
+        handle=start_handle,
+        phase=phase_for_handle(start_handle),
+        dist_start=0.0,
+        apply_now=True,
+        apply_zone_m=apply_zone_margin_m(speed_ms, 0.0),
+        speed_mph=speed_mph,
+        limit_mph=hold_target,
+        gradient_pct=gradient_pct,
+    )
+    return BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=next_distance_m if next_distance_m is not None else 0.0,
+        target_speed_mph=hold_target,
+        handle_notch=handle,
+        phase=phase,
+        dist_start=0.0,
+        apply_now=True,
+        downhill_hold=True,
+        detail=detail,
+    )
+
+
+def _hold_if_over_zone_ceiling(
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    posted_limit_mph: float,
+    gradient_pct: float,
+    next_distance_m: Optional[float],
+) -> Optional[BrakeTargetResult]:
+    hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph)
+    if speed_mph <= hold_target:
+        return None
+    return _build_downhill_hold_result(
+        state,
+        speed_mph=speed_mph,
+        hold_target=hold_target,
+        gradient_pct=gradient_pct,
+        next_distance_m=next_distance_m,
+        detail=_hold_detail(posted_limit_mph, hold_target),
+    )
+
+
+def try_current_zone_downhill_contain(
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    posted_limit_mph: float,
+    gradient_pct: float,
+    next_limit_mph: Optional[float] = None,
+    next_distance_m: Optional[float] = None,
+) -> Optional[BrakeTargetResult]:
+    """
+    Bajada 60→55 lejos del cartel: si superas posted+0.5, B1 suave antes del 55.
+    """
+    if not is_downhill_gradient(gradient_pct):
+        return None
+
+    if is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
+        return None
+
+    if (
+        next_limit_mph is not None
+        and next_distance_m is not None
+        and is_descending_limit_zone(posted_limit_mph, next_limit_mph)
+        and _within_next_brake_horizon(
+            speed_mph=speed_mph,
+            next_limit_mph=next_limit_mph,
+            next_distance_m=next_distance_m,
+            gradient_pct=gradient_pct,
+        )
+    ):
+        return None
+
+    return _hold_if_over_zone_ceiling(
+        state,
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        gradient_pct=gradient_pct,
+        next_distance_m=next_distance_m,
+    )
+
+
 def try_posted_downhill_hold(
     state: LimitBrakeState,
     *,
@@ -66,59 +166,105 @@ def try_posted_downhill_hold(
     next_distance_m: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     """
-    HOLD_DH — solo si el cartel siguiente **no baja** (60→55 usa solo BRAKE_LIMIT).
+    HOLD_DH — cartel siguiente no baja (60→60).
 
-    Techo operativo pasajeros: posted − 1 mph (60 → 59).
+    En 60→55 lejos del cartel usar ``try_current_zone_downhill_contain``.
     """
-    if gradient_pct >= DOWNHILL_LIMIT_GRADIENT_PCT:
+    if not is_downhill_gradient(gradient_pct):
         return None
 
-    if (
-        next_limit_mph is not None
-        and next_limit_mph < posted_limit_mph - 0.5
-    ):
+    if is_descending_limit_zone(posted_limit_mph, next_limit_mph):
+        return None
+
+    if is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
         return None
 
     if next_limit_mph is not None and next_distance_m is not None:
-        horizon = next_limit_brake_horizon_m(
-            speed_mph, next_limit_mph, gradient_pct)
-        if next_distance_m <= horizon:
+        if _within_next_brake_horizon(
+            speed_mph=speed_mph,
+            next_limit_mph=next_limit_mph,
+            next_distance_m=next_distance_m,
+            gradient_pct=gradient_pct,
+        ):
             return None
 
-    hold_target = passenger_hold_target_mph(posted_limit_mph)
-    trigger = _downhill_contain_trigger_over_mph(gradient_pct)
-    if speed_mph <= hold_target + trigger:
+    return _hold_if_over_zone_ceiling(
+        state,
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        gradient_pct=gradient_pct,
+        next_distance_m=next_distance_m,
+    )
+
+
+def pick_downhill_containment(
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    posted_limit_mph: float,
+    gradient_pct: float,
+    next_limit_mph: Optional[float] = None,
+    next_distance_m: Optional[float] = None,
+) -> Optional[BrakeTargetResult]:
+    """Contención bajada: zona vigente (60→55 lejos) o HOLD_DH (60→60)."""
+    zone = try_current_zone_downhill_contain(
+        state,
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        gradient_pct=gradient_pct,
+        next_limit_mph=next_limit_mph,
+        next_distance_m=next_distance_m,
+    )
+    if zone is not None:
+        return zone
+    return try_posted_downhill_hold(
+        state,
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        gradient_pct=gradient_pct,
+        next_limit_mph=next_limit_mph,
+        next_distance_m=next_distance_m,
+    )
+
+
+def downhill_brake_release_floor_mph(
+    *,
+    speed_mph: float,
+    effective_limit: float,
+    next_limit_mph: float,
+    distance_next_m: float,
+    gradient_pct: float,
+    release_over_mph: float,
+) -> Optional[float]:
+    """
+    Suelo RELEASE en bajada (ops + 0.5).
+
+    - Acercándose al cartel next (55→45): soltar ~44.5, también en horizonte.
+    - Zona vigente lejos del next (60→55): coast ~59.5.
+    - En banda zona vigente tras frenar (45 @ ~44.5): no seguir con B1 hasta 40.
+    """
+    if not is_downhill_gradient(gradient_pct):
+        return None
+    if is_ascending_limit_exit(effective_limit, next_limit_mph):
         return None
 
-    over = speed_mph - hold_target
-    speed_ms = speed_mph * MPH_TO_MS
-    if over >= LIMIT_SCORING_MAX_OVER_MPH or over >= LIMIT_CONTAIN_ESCALATE_OVER_MPH:
-        handle, phase = 2, "B2"
-    else:
-        handle, phase = 3, "B1"
+    next_floor = posted_zone_coast_floor_mph(next_limit_mph)
+    if speed_mph <= next_floor + release_over_mph:
+        return next_floor
 
-    handle, phase = apply_notch_hysteresis(
-        state,
-        handle=handle,
-        phase=phase,
-        dist_start=0.0,
-        apply_now=True,
-        apply_zone_m=apply_zone_margin_m(speed_ms, 0.0),
+    if not _within_next_brake_horizon(
         speed_mph=speed_mph,
-        limit_mph=hold_target,
-    )
+        next_limit_mph=next_limit_mph,
+        next_distance_m=distance_next_m,
+        gradient_pct=gradient_pct,
+    ):
+        eff_floor = posted_zone_coast_floor_mph(effective_limit)
+        ceiling = posted_zone_hold_ceiling_mph(effective_limit)
+        if eff_floor <= speed_mph <= ceiling:
+            return eff_floor
 
-    return BrakeTargetResult(
-        target_kind="SPEED_LIMIT",
-        distance_m=next_distance_m if next_distance_m is not None else 0.0,
-        target_speed_mph=hold_target,
-        handle_notch=handle,
-        phase=phase,
-        dist_start=0.0,
-        apply_now=True,
-        downhill_hold=True,
-        detail=(
-            f"Mantener bajada @{hold_target:.0f} mph "
-            f"(posted {posted_limit_mph:.0f})"
-        ),
-    )
+    eff_floor = posted_zone_coast_floor_mph(effective_limit)
+    if eff_floor - 1.0 <= speed_mph <= eff_floor + release_over_mph:
+        return eff_floor
+
+    return None

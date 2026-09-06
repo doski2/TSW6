@@ -9,12 +9,12 @@
 
 | Sí | No |
 | --- | --- |
-| Diseñar reglas en `V2/tsw6v2/` con tests + JSONL | Copiar o “igualar” `tsw6/braking/v2/limit_brake.py` |
+| Diseñar reglas en `V2/tsw6v2/` con tests + JSONL | Copiar orquestación v1 (`archive/braking_v1_autopilot/`) |
 | Tomar de v1 solo **ideas** validadas (física, capas, UK 323) | Heredar capas paralelas legacy (contención ×3, prioridades opacas) |
 | Cada regla: motivo + capa trace + test | Paridad ciega con v1 “porque antes estaba” |
 | Perfeccionar con sesiones Cross-City | Ampliar `tsw6/autopilot/` ni `tsw6/braking/` |
 
-**v1** (`limit_brake.py`, coordinator) = **archivo muerto** para producto nuevo. Solo laboratorio histórico.
+**v1** (`archive/braking_v1_autopilot/`) = **referencia histórica** para producto nuevo.
 
 ---
 
@@ -27,9 +27,49 @@ Ideas que **sí** entran en el diseño V2 — reimplementadas, no pegadas.
 - Una distancia: **`s = (v² − u²) / (2a_eff)`** (+ margen reacción + fill aire).
 - **`a`** de learner si hay perfil; si no, fracciones B1/B2/B3 UK.
 - Pendiente: **una vez** — en `a` aprendida **o** en `g` en la fórmula, nunca las dos.
-- TSW penaliza **> límite + 1 mph** → techo operativo **+0,9 mph** en plan.
+- TSW penaliza **> límite + 1 mph** → en plan usamos **+0,9 mph** sobre el cartel **vigente** (techo de scoring).
+- El cartel **siguiente** (BRAKE_LIMIT) usa **−1 mph** sobre su posted (UK pasajeros).
 
-### 2. Objetivos claros por tick
+### 2. Dos techos mph (no mezclar)
+
+| Capa | Intención | Fórmula | Ej. zona 60, next 55 |
+| --- | --- | --- | --- |
+| **Zona vigente** — HOLD_DH, contención bajada | No superar el límite **actual** en bajada | `posted + 0.5` | **60.5** |
+| **Cartel siguiente** — BRAKE_LIMIT (latch) | Llegar al **next** con margen UK | `posted_next − 1` | **54** (cartel 55) |
+| **Penalización TSW** (histéresis / scoring) | Límite duro juego | `posted + 0.9` | **60.9** |
+
+Código (`constants.py`):
+
+| Función | Uso |
+| --- | --- |
+| `posted_zone_hold_ceiling_mph(posted)` | Techo HOLD_DH / contención (60→**60.5**) |
+| `posted_zone_coast_floor_mph(posted)` | Suelo coast tras contener (60→**59.5**) |
+| `posted_scoring_ceiling_mph(posted)` | Penalización TSW (60→60.9) |
+| `passenger_ops_target_mph(posted)` | Solo BRAKE_LIMIT al cartel siguiente |
+| `downhill_ops_coast_ceiling_mph(posted)` | Defer BRAKE_LIMIT (= techo zona 60.5) |
+
+**Prioridad** en `evaluate_limit_brake` (`limits.py`):
+
+1. **BRAKE_LIMIT** con `apply_now` → gana (dentro del horizonte del next).
+2. **Contención bajada** (`pick_downhill_containment`) si superas el techo de la zona vigente.
+3. **BRAKE_LIMIT** en WATCH (lejos, bajo techo de zona).
+
+**Caso 60→55 en bajada** (tests: `test_h1_downhill.py`):
+
+| Velocidad | Dist. al cartel 55 | Modo | Objetivo |
+| --- | --- | --- | --- |
+| ≤ 60.5 | Lejos (> horizonte) | WATCH | — |
+| > 60.5 | Lejos | HOLD_DH / zone_contain | **60.5**, B1 suave; RELEASE ~**59.5** |
+| Cualquiera | ≤ horizonte | BRAKE_LIMIT | **54**, B1 primero; escalar solo cerca de 54+2 mph |
+
+Excepciones:
+
+- **60→55**: contención @ **60.5** fuera del horizonte; soltar en **59.5** si hay presión/coast eficiente.
+- **55→45** (y cualquier bajada): RELEASE al cartel next en **ops+0.5** (45→**44.5**); no arrastrar B1 hasta ~40.
+- **60→60** (misma zona): HOLD_DH si `spd > 60.5`.
+- **35→60** (subida de límite): sin contención — dejar acelerar (`is_ascending_limit_exit`).
+
+### 3. Objetivos claros por tick
 
 Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 
@@ -37,23 +77,23 @@ Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 | --- | --- |
 | **NONE** | Sin cartel / sin plan |
 | **WATCH** | Cartel lejos; calcular pero no mandar |
-| **HOLD_DH** | Bajada: sujetar **límite vigente** hasta horizonte del **siguiente** cartel |
-| **BRAKE_LIMIT** | Frenar al **siguiente** cartel (latch + muesca mínima) |
+| **HOLD_DH** | Bajada: sujetar **zona vigente** (`posted + 0.9`) hasta horizonte del **siguiente** cartel |
+| **BRAKE_LIMIT** | Frenar al **siguiente** cartel (`posted_next − 1`; latch + muesca mínima) |
 | **RELEASE** | En banda; soltar (con excepciones bajada) |
 | **COAST_PWR** | Quitar tracción antes de freno |
 
-### 3. Muescas UK pasajeros
+### 4. Muescas UK pasajeros
 
 - Servicio B1→B3 (handle 3→1); **un escalón por tick** (IPC + aire).
 - Elegir la **más débil que basta**; subir si tarde o corto de distancia.
 - Emergencia (notch 0) solo pegado al objetivo.
 
-### 4. Aire (L4 lite)
+### 5. Aire (L4 lite)
 
 - No APPLY sin presión; no bombar tras soltar; escalón acorde a `brake_cyl_bar`.
 - Depende de probe — sin presión, modo degradado documentado.
 
-### 5. Trazabilidad
+### 6. Trazabilidad
 
 - Cada decisión → `p1.reason` + capa (`p1_layers`) + JSONL para debatir tuning.
 
@@ -67,7 +107,7 @@ Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 | Posted hold sin tope de distancia al next cartel | H1: solo **fuera** del horizonte del next |
 | `apply_now=True` B1 continuo lejos del cartel | HOLD_DH: coast / B1 **si repunte** |
 | Prioridad posted vs next opaca | Regla explícita: **next gana dentro del horizonte** |
-| `SAFETY_MARGIN` 1.40 | V2 tuning **1.20** (validar JSONL) |
+| `SAFETY_MARGIN` 1.40 | V2 tuning **1.10** (validar JSONL; sesión 20260906) |
 | Comparar con v1 en mantenimiento | Criterio = tests V2 + sesión aceptada |
 
 ---
@@ -102,8 +142,8 @@ limit_plan_tick(snapshot, state)
 │
 ├─ horizon_next = f(spd, next_limit, grad, fill)
 │
-├─ SI bajada Y dist_next > horizon_next Y spd > posted + trigger
-│     → HOLD_DH  (Fase 1 — H1 ✅)
+├─ SI bajada Y dist_next > horizon_next Y spd > posted_zone_hold_ceiling (posted + 0.5)
+│     → HOLD_DH / zone_contain  (Fase 1 — H1 ✅)
 │
 ├─ SI spd > next_limit + banda Y dist_next ≤ horizon_next
 │     → BRAKE_LIMIT (latch + muesca mínima + histéresis + L4)
@@ -114,14 +154,15 @@ limit_plan_tick(snapshot, state)
 └─ command_layer: COAST_PWR si power → APPLY / RELEASE → IPC
 ```
 
-**Eliminar** en el rediseño final: `try_downhill_containment` y `try_downhill_approach_hold` como rutas separadas del latch — su efecto bueno se absorbe en **HOLD_DH** + **RELEASE bajada**.
+**Eliminar** en el rediseño final: rutas legacy `try_downhill_approach_hold` separadas del latch. La contención de zona (`try_current_zone_downhill_contain`) + **HOLD_DH** (`try_posted_downhill_hold`) comparten `_build_downhill_hold_result`; el efecto bueno se absorbe en **HOLD_DH** + **BRAKE_LIMIT**.
 
 ### H1 (implementado — primer bloque del diseño nuevo)
 
-| Fase | Condición | Modo |
-| --- | --- | --- |
-| 1 | `dist_next > horizon`, bajada, sobre posted | **HOLD_DH** (+ **COAST_PWR** si power) |
-| 2 | `dist_next ≤ horizon` | **BRAKE_LIMIT** al next |
+| Fase | Condición | Modo | Objetivo |
+| --- | --- | --- | --- |
+| 1a | `dist_next > horizon`, bajada, `spd > posted + 0.5`, next baja (60→55) | **zone_contain** | **60.5** → coast **59.5** |
+| 1b | `dist_next > horizon`, bajada, `spd > posted + 0.5`, misma zona (60→60) | **HOLD_DH** | **60.5** |
+| 2 | `dist_next ≤ horizon` | **BRAKE_LIMIT** al next | **posted_next − 1** (55→54) |
 
 Código actual: `limit_containment.py`, `limits.py`, `decision.py` · tests: `V2/tests/test_h1_downhill.py`.
 
@@ -133,10 +174,14 @@ Todas en `constants.py` o sección `P1_LIMIT_TUNING` (pendiente agrupar).
 
 | Constante | Valor V2 | Notas |
 | --- | --- | --- |
-| `SAFETY_MARGIN` | 1.20 | Validar JSONL |
-| `LIMIT_SCORING_MAX_OVER_MPH` | 0.9 | Penalización TSW |
+| `SAFETY_MARGIN` | 1.10 | Validar JSONL (era 1.20) |
+| `LIMIT_ZONE_HOLD_OVER_MPH` | 0.5 | Techo zona vigente HOLD (60→60.5) |
+| `LIMIT_ZONE_COAST_OVER_OPS_MPH` | 0.5 | Suelo coast tras contener (59→59.5) |
+| `LIMIT_SCORING_MAX_OVER_MPH` | 0.9 | Penalización TSW (histéresis) |
 | `DOWNHILL_LIMIT_GRADIENT_PCT` | −0.3 | Umbral bajada |
-| `PASSENGER_OPS_MARGIN_MPH` | 1.0 | HOLD_DH y **BRAKE_LIMIT** (60→59, 55→54) |
+| `PASSENGER_OPS_MARGIN_MPH` | 1.0 | Solo **BRAKE_LIMIT** al next (55→54); no HOLD_DH |
+| `LIMIT_DOWNHILL_COAST_TRIM_MPH` | 2.0 | Coast/defer cerca del ops del next; tope escalada B2/B3 en bajada |
+| `LIMIT_CONTAIN_ESCALATE_OVER_MPH` | 0.65 | Subir muesca en HOLD si `spd > techo + 0.65` |
 | Trigger repunte bajada | 0.20 / 0.28 / 0.35 mph | Según pendiente |
 | `LIMIT_REACTION_S` | 1.5 | + `brake_fill_s` |
 | `LIMIT_COAST_BAND_MPH` | 0.25 | Revisar |
@@ -150,7 +195,7 @@ Cambiar solo con test + sesión documentada.
 | Paso | Qué | Estado |
 | --- | --- | --- |
 | **0** | Este documento + política “ideas sí, port no” | ✅ |
-| **1** | H1 HOLD_DH + horizonte; sin HOLD en bajada 60→55; techo **59** (posted−1) | ✅ |
+| **1** | H1 HOLD_DH + horizonte; contención 60→55 lejos @ **60.5**; RELEASE ~**59.5**; BRAKE_LIMIT @ **54** en horizonte | ✅ |
 | **2** | Fusionar legacy contain/approach en HOLD_DH + BRAKE_LIMIT | ✅ |
 | **3** | Un módulo `limit_planner.py` (modos explícitos); `limits.py` = fachada fina | ⬜ |
 | **4** | RELEASE/coast reescritos con mismos modos (sin duplicar bajada) | ⬜ |
@@ -183,24 +228,26 @@ Tras H1, repetir sesión y comparar capas `HOLD_DH` vs `BRAKE`.
 
 ## Apéndice A — Inventario legacy (solo referencia histórica)
 
-Detalle regla a regla del port antiguo (`limit_brake.py` + `command.py`): ver commit anterior o `tsw6/braking/v2/limit_brake.py`. **No usar para implementar V2.**
+Detalle regla a regla del port antiguo: `archive/braking_v1_autopilot/`. **No usar para implementar V2.**
 
 IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD_DH / BRAKE_LIMIT / RELEASE / COAST_PWR**.
 
 ---
 
-## Apéndice B — Mapa código actual (transitorio)
+## Apéndice B — Mapa código cartel (paso 3)
 
-Hasta el paso 3 del roadmap, la lógica sigue repartida:
-
-| Módulo | Rol transitorio |
+| Módulo | Rol |
 | --- | --- |
-| `limit_containment.py` | HOLD_DH + `next_limit_brake_horizon_m` |
+| `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE) |
+| `planning.py` | GetData, `is_ascending_limit_exit`, `resolve_limit_objective` |
+| `limit_containment.py` | HOLD_DH + zone_contain + `next_limit_brake_horizon_m` |
 | `limit_state.py` | Latch BRAKE_LIMIT |
 | `limit_notch.py` | Muesca + histéresis |
-| `limits.py` | Orquestación (a simplificar) |
-| `command.py` | RELEASE / COAST |
-| `decision.py` | Tick + L4 |
+| `limits.py` | Fachada `evaluate_limit_brake` |
+| `target.py` | `BrakeTargetResult` |
+| `command.py` | RELEASE / COAST / APPLY |
+| `decision.py` | Tick + L4 aire |
+| `autopilot_limit.py` | Puente autopilot GUI → `evaluate_limit_tick` |
 | `physics.py` | `s = v²/2a` |
 
 ---
@@ -215,6 +262,8 @@ Hasta el paso 3 del roadmap, la lógica sigue repartida:
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-06 | Techo zona **60.5** + coast **59.5**; RELEASE lejos del horizonte (sesión 155756Z) |
+| 2026-09-06 | Archive v1; `planning.py` + `constants.py` umbrales; doc alineado |
 | 2026-09-04 | Inventario legacy + sesión Cross-City |
 | 2026-09-04 | H1 implementado (`HOLD_DH`, `downhill_hold`) |
-| 2026-09-04 | **H1b** — sin HOLD_DH en 60→55; techo pasajeros posted−1 mph (59) |
+| 2026-09-04 | H1b (obsoleto): techo posted−1 en HOLD — sustituido por posted+0.9 en zona vigente |

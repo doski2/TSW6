@@ -1,6 +1,4 @@
-"""
-Módulo de frenado TSW6 — todo en ``tsw6.braking.v2``.
-"""
+"""Frenado TSW6 — re-export desde ``tsw6v2``."""
 
 from tsw6.braking.v2 import BrakeCoordinatorV2, BrakeTargetKind, BrakeTargetResult
 

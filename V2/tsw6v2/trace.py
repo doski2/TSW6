@@ -52,7 +52,7 @@ class JsonlTrace:
         ipc_cmd_id: Optional[int] = None,
     ) -> None:
         p1: dict[str, Any] = {}
-        if snap.p1_cmd or snap.p1_phase or snap.p1_detail:
+        if snap.p1_cmd or snap.p1_phase or snap.p1_detail or snap.p1_reason:
             p1 = {
                 "cmd": snap.p1_cmd or None,
                 "phase": snap.p1_phase or None,

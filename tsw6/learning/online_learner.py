@@ -125,7 +125,7 @@ def _gravity_compensation(grad_pct: float) -> float:
 
 
 from tsw6.paths import LOGS_DIR
-from tsw6.braking.v2.physics import (
+from tsw6v2.physics import (
     BRAKE_FILL_CLAMP,
     DEFAULT_BRAKE_FILL_S,
     PRESSURE_BRAKING_MIN_BAR,

@@ -9,9 +9,17 @@ from tsw6v2.physics import (
     apply_zone_margin_m,
     brake_ctx_for_decel,
     braking_distance_mph,
+    coast_trim_covers_overspeed,
+    is_downhill_gradient,
     is_in_apply_zone,
 )
 from tsw6v2.plan import notch_strength
+from tsw6v2.planning import is_descending_limit_zone
+from tsw6v2.constants import (
+    LIMIT_CONTAIN_ESCALATE_OVER_MPH,
+    LIMIT_DOWNHILL_COAST_TRIM_MPH,
+    downhill_ops_coast_ceiling_mph,
+)
 from tsw6v2.target import (
     LIMIT_SCORING_MAX_OVER_MPH,
     SERVICE_HANDLES_WEAK_TO_STRONG,
@@ -27,6 +35,98 @@ def phase_for_handle(handle: int) -> str:
     return _PHASE_BY_HANDLE.get(handle, "B1")
 
 
+def _in_apply_window(
+    *,
+    apply_now: bool,
+    dist_start: float,
+    apply_zone_m: float,
+) -> bool:
+    return apply_now or is_in_apply_zone(dist_start, apply_zone_m)
+
+
+def _downhill_coast_trim_active(
+    *,
+    speed_mph: float,
+    limit_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+) -> bool:
+    """Exceso ≤2 mph sobre techo operativo y coast/gravedad bastan."""
+    if not is_downhill_gradient(gradient_pct):
+        return False
+    overspeed = speed_mph - limit_mph
+    if overspeed <= 0 or overspeed > LIMIT_DOWNHILL_COAST_TRIM_MPH:
+        return False
+    return coast_trim_covers_overspeed(
+        speed_mph=speed_mph,
+        target_mph=limit_mph,
+        distance_m=distance_m,
+        gradient_pct=gradient_pct,
+    )
+
+
+def downhill_defer_brake_commit(
+    *,
+    speed_mph: float,
+    ops_target_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+    dist_start: float,
+    current_posted_mph: float | None = None,
+    next_posted_mph: float | None = None,
+) -> bool:
+    """
+    Bajada: no comprometer B1 todavía.
+
+    - 60→55 lejos: diferir BRAKE_LIMIT si aún vas en banda operativa zona vigente.
+    - Cerca del techo operativo del cartel siguiente: coast si exceso ≤2 mph.
+
+    Solo aplica antes del primer compromiso de muesca (``committed_handle is None``).
+    """
+    if not is_downhill_gradient(gradient_pct):
+        return False
+    if dist_start <= 0:
+        return False
+    if (
+        current_posted_mph is not None
+        and next_posted_mph is not None
+        and is_descending_limit_zone(current_posted_mph, next_posted_mph)
+        and speed_mph <= downhill_ops_coast_ceiling_mph(current_posted_mph)
+    ):
+        return True
+    return _downhill_coast_trim_active(
+        speed_mph=speed_mph,
+        limit_mph=ops_target_mph,
+        distance_m=distance_m,
+        gradient_pct=gradient_pct,
+    )
+
+
+def _downhill_escalation_allowed(
+    gradient_pct: float,
+    speed_mph: float,
+    limit_mph: float,
+) -> bool:
+    """En bajada no subir a B2/B3 hasta estar a ≤2 mph del techo operativo."""
+    if not is_downhill_gradient(gradient_pct):
+        return True
+    return speed_mph <= limit_mph + LIMIT_DOWNHILL_COAST_TRIM_MPH
+
+
+def _step_stronger(
+    state: LimitBrakeState,
+    prev: int,
+    *,
+    escalate_cap: Callable[[int, int], int] | None,
+) -> tuple[int, str]:
+    stepped = _ONE_STRONGER[prev]
+    if escalate_cap is not None:
+        stepped = escalate_cap(prev, stepped)
+    state.committed_handle = stepped
+    state.committed_phase = phase_for_handle(stepped)
+    return stepped, state.committed_phase
+
+
 def apply_notch_hysteresis(
     state: LimitBrakeState,
     *,
@@ -37,16 +137,28 @@ def apply_notch_hysteresis(
     apply_zone_m: float,
     speed_mph: float,
     limit_mph: float,
+    gradient_pct: float = 0.0,
+    defer_commit: bool = False,
     escalate_cap: Callable[[int, int], int] | None = None,
 ) -> tuple[int, str]:
     """
     Muesca de menos a más (B1→B2→B3) y de más a menos (B3→B2→B1).
     Un escalón por tick: no saltar a B3 de golpe.
+
+    ``defer_commit``: no comprometer B1 (coast trim / zona vigente legal).
+    Escalada en bajada: solo si ``speed ≤ techo_operativo + 2 mph``.
     """
     prev = state.committed_handle
-    in_window = apply_now or is_in_apply_zone(dist_start, apply_zone_m)
+    in_window = _in_apply_window(
+        apply_now=apply_now,
+        dist_start=dist_start,
+        apply_zone_m=apply_zone_m,
+    )
+    may_escalate = _downhill_escalation_allowed(
+        gradient_pct, speed_mph, limit_mph
+    )
     if prev is None:
-        if in_window:
+        if in_window and not defer_commit:
             start = 3
             state.committed_handle = start
             state.committed_phase = phase_for_handle(start)
@@ -56,12 +168,9 @@ def apply_notch_hysteresis(
     prev_s = notch_strength(prev)
     new_s = notch_strength(handle)
     if new_s > prev_s:
-        stepped = _ONE_STRONGER[prev]
-        if escalate_cap is not None:
-            stepped = escalate_cap(prev, stepped)
-        state.committed_handle = stepped
-        state.committed_phase = phase_for_handle(stepped)
-        return stepped, state.committed_phase
+        if not may_escalate:
+            return prev, state.committed_phase or phase
+        return _step_stronger(state, prev, escalate_cap=escalate_cap)
 
     if new_s < prev_s:
         at_target = speed_mph <= limit_mph + LIMIT_SCORING_MAX_OVER_MPH
@@ -71,6 +180,14 @@ def apply_notch_hysteresis(
             state.committed_handle = stepped
             state.committed_phase = phase_for_handle(stepped)
             return stepped, state.committed_phase
+
+    if (
+        in_window
+        and may_escalate
+        and speed_mph > limit_mph + LIMIT_CONTAIN_ESCALATE_OVER_MPH
+        and prev > 1
+    ):
+        return _step_stronger(state, prev, escalate_cap=escalate_cap)
 
     return prev, state.committed_phase or phase
 
@@ -97,7 +214,7 @@ def pick_weakest_sufficient_notch(
             latch.limit_mph,
             decel_ms2=decel,
             ctx=ctx,
-            apply_margin=True,
+            apply_margin=False,
         )
         apply_at = bd + latch.reaction_margin_m
         dist_start = distance_m - apply_at

@@ -6,9 +6,9 @@
 Checklist operativo que acompaña **cada paso** del § Orden en [PLAN_V2](PLAN_V2.md#orden-de-implementación).
 Las **fases** (0–6, capacidades del producto) están en el mismo doc: [§ Fases 0–6](PLAN_V2.md#fase-0--contrato-io).
 
-**Estado rápido (2026-09-04):** paso **3** en curso — cartel P1 en `V2/tsw6v2/` (**79** tests V2);
-`physics` / `plan` / `command` / `limit_brake` en `tsw6/braking/v2/` son **shims** → V2 (sin lógica duplicada).
-Autopilot v1 (`iniciar_autopilot.bat`) usa el mismo motor cartel vía esos shims.
+**Estado rápido (2026-09-06):** paso **3** — cartel P1 en `V2/tsw6v2/` (**87** tests V2).
+Orquestación v1 en `archive/braking_v1_autopilot/`. Autopilot GUI (`iniciar_autopilot.bat`) usa
+`tsw6v2.autopilot_limit` → mismo `evaluate_limit_tick` que `run_p1_session.bat`.
 
 No sustituye el plan de producto; lo hace ejecutable.
 
@@ -65,8 +65,9 @@ python -m pytest tests/ -q
 | IPC / mandos (contrato) | `test_control_channel`, `test_tsw_ipc_bus` |
 | **`V2/tsw6v2/`** | **`V2/tests/`** (criterio producto) |
 | Monitor CLI (v1, delega v2) | `tests/test_tsw_monitor_ipc` (solo parse args) |
-| P1 coordinator (v1, shims V2) | `test_brake_coordinator`, `test_brake_release` (cartel = V2) |
-| P1 policy/estación (solo v1) | `test_brake_policy`, `test_brake_station` |
+| P1 cartel V2 | `V2/tests/test_release`, `test_decision`, `test_h1_downhill`, `test_command` |
+| Autopilot GUI (cartel) | `tests/test_speed_decider` (`autopilot_limit` → V2) |
+| P1 estación/policy (archive v1) | `archive/braking_v1_autopilot/` — portar con paso 6–7 |
 | Paquete tren G-B | `test_control_layout`, `test_vehicles_json_from_lab`, `test_compare_lab_controls` |
 | Lab / correlator | `test_api_correlator`, `test_lab_serialize`, `test_summarize_hud_amps` |
 | Campo nuevo D2 | **mismo PR:** Lua + parser + `ProbeSnapshot` + fixture línea GetData |
@@ -205,7 +206,7 @@ Cada línea: `tick=… seq=… mph=… lever=… target=… ipc=… p1=<CMD>/<FA
 | B | **Ventana APPLY** | Acercarse al 55 mph; distancia ~200–400 m | `p1=APPLY/B1` (o B2); `lever` baja a 3+; `train_brake` ≥ 0.25 en B1 |
 | C | **RELEASE en cartel** | Tras frenar, velocidad ≤ límite + ~0.4 mph | `p1=RELEASE/NEU`; `target=4`; palanca vuelve a 4 |
 | D | **No RELEASE al arrancar** | Parado, freno puesto, cartel lejos | **No** `RELEASE` con spd ≈ 0 y cartel a cientos de m |
-| E | **HOLD_DH bajada** | Cartel 60, spd ~59.5, pendiente −1%, **misma zona** (60→60) | `p1=APPLY/B1` con `Mantener bajada @59`; no soltar hasta pasar cartel |
+| E | **HOLD_DH bajada** | Cartel 60, spd ~61.0, pendiente −1%, **misma zona** (60→60) | `p1=APPLY/B1` con `Mantener bajada @60.5`; RELEASE ~59.5 lejos del 55 |
 | F | **Tracción + cartel** | Palanca > 4 acercándose a cartel | Primero `COAST_THROTTLE` o neutro, luego `APPLY` |
 | G | **IPC estable** | Cualquier APPLY | ACK en log probe; sin errores `ipc_ok=False` repetidos |
 
@@ -222,7 +223,7 @@ Mercancías (futuro): mantener margen alto y `a` menor en learner, no el mismo 1
 - [ ] A y B: planifica tarde, frena suave (B1 habitual en 60→55 plano).
 - [ ] C: suelta a neutro al cumplir cartel (sin oscilar B1↔RELEASE cada tick).
 - [ ] D: no suelta freno al inicio de escenario parado.
-- [ ] E: HOLD_DH en misma zona (techo posted−1 mph); 60→55 usa solo BRAKE_LIMIT en horizonte.
+- [ ] E: HOLD_DH @60.5; RELEASE coast ~59.5 lejos del next; BRAKE_LIMIT @54 solo en horizonte.
 - [ ] G: IPC responde (como paso 2); sin mandos cuando `p1` vacío lejos del cartel.
 - [ ] Anotar ruta, variante y `PROBE_BUILD` en delta [PLAN_V2](PLAN_V2.md#deltas-cambios-al-codificar).
 
@@ -232,7 +233,7 @@ Mercancías (futuro): mantener margen alto y `a` menor en learner, no el mismo 1
 | --- | --- |
 | `p1` siempre vacío | GetData sin `dist_limit_cm` / `next_limit_ms`; probe Lua |
 | Frena muy pronto (B3 lejos) | JSONL: ¿`HOLD_DH` en 60→55? (no debe). `SAFETY_MARGIN` en `constants.py` |
-| Frena muy tarde (spd > lim al cartel) | `SAFETY_MARGIN` en `V2/tsw6v2/constants.py` (hoy **1.20**; subir si hace falta) |
+| Frena muy tarde (spd > lim al cartel) | `SAFETY_MARGIN` en `V2/tsw6v2/constants.py` (hoy **1.10**; subir si hace falta) |
 | No suelta (lever < 4 siempre) | RELEASE bloqueado por bajada o spd > límite + 0.4 |
 | `ipc=False` con `target≠lever` | `test-ipc`; ACK timeout; juego en pausa |
 | Cartel “salta” / distancia fija | C.3a odometría — anotar `odo_m` y sesión para delta |
@@ -324,7 +325,7 @@ Para no inflar el backlog ni duplicar PLAN_V2:
 | Doc rota / enlace | PR pequeño o `fix_markdownlint.py` |
 | Herramienta CLI nueva | `scripts/tools/` + test + una fila en este doc |
 
-**No es mantenimiento v2:** reescribir `coordinator.py` sin paso D1; refactors cosméticos sin test;
+**No es mantenimiento v2:** reabrir `archive/braking_v1_autopilot/coordinator.py` sin paso D1; refactors cosméticos sin test;
 migrar todo `docs/v1/` de golpe.
 
 ---
@@ -351,26 +352,21 @@ Regla práctica: si el diff no explica el arreglo en &lt; 30 s de lectura, proba
 
 Frenada por cartel — diseño V2 desde cero: [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
 
-**Fuente única de verdad:** `V2/tsw6v2/`. Los módulos homónimos en `tsw6/braking/v2/` son **shims**
-(re-export) para que el autopilot v1 (`coordinator`, `speed_decider`) siga importando la ruta antigua
-sin duplicar lógica.
+**Fuente única de verdad:** `V2/tsw6v2/`. `tsw6/braking/v2/` — solo `__init__.py` (re-export tipos /
+`LimitP1Adapter`). Orquestación legacy: `archive/braking_v1_autopilot/`.
 
 | Módulo V2 | Responsabilidad |
 | --- | --- |
+| `planning.py` | GetData cartel, `is_ascending_limit_exit`, `resolve_limit_objective` |
 | `limits.py` | Fachada: `evaluate_limit_brake` (HOLD_DH + BRAKE_LIMIT) |
 | `limit_state.py` | Latch, `decel` por muesca, margen reacción + `fill_s` |
 | `limit_notch.py` | Escalón B1→B2→B3, muesca mínima suficiente |
-| `limit_containment.py` | HOLD_DH + horizonte BRAKE_LIMIT (sin contención legacy) |
+| `limit_containment.py` | HOLD_DH + horizonte BRAKE_LIMIT |
+| `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE) |
+| `decision.py` | Tick → `BrakeCommand` |
+| `autopilot_limit.py` | Puente `speed_decider` → `evaluate_limit_tick` |
 
-| Shim v1 (`tsw6/braking/v2/`) | Apunta a |
-| --- | --- |
-| `physics.py` | `tsw6v2.physics` |
-| `plan.py` | `tsw6v2.plan` |
-| `command.py` | `tsw6v2.command` |
-| `limit_brake.py` | `tsw6v2.limits` + `limit_*` |
-
-Cambiar comportamiento cartel → **solo** `V2/tsw6v2/` + `V2/tests/`. No reimplementar en shims.
-Coordinator/estación/señal (`policy`, `objectives`, `station_plan`) siguen en v1 hasta pasos 4–7.
+Cambiar comportamiento cartel → **solo** `V2/tsw6v2/` + `V2/tests/`. Estación/señal: archive v1 hasta pasos 6–7 / C1.
 
 ### Líneas de depuración
 
@@ -394,7 +390,7 @@ dejar `print` en `loop.py` / `ipc.py`.
 | **Consecutivas** | Misma línea dos veces seguidas (import, asignación, comentario de sección) | Borrar la copia; un solo bloque |
 | **Lógica** | Misma condición o mapeo en dos módulos (`power_to_notch`, `_MS_TO_MPH`, parser GetData) | Una función en `V2/tsw6v2/` (p. ej. `bridge/getdata.py`) |
 | **Docs** | Mismo párrafo en `PLAN_V2` y otro `.md` | Fuente única en PLAN; enlace desde el resto |
-| **Archivos** | Dos rutas con el mismo rol (`tsw6/braking/v2/physics.py` vs `V2/tsw6v2/physics.py`) | Solo `V2/tsw6v2/` — v1 = shim de compatibilidad |
+| **Archivos** | Dos rutas con el mismo rol (código cartel fuera de `V2/tsw6v2/`) | Solo `V2/tsw6v2/` — archive v1 = referencia |
 
 **Líneas consecutivas iguales** — PowerShell (carpeta o archivo):
 

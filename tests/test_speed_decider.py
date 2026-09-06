@@ -105,7 +105,7 @@ class TestBrakeOnly:
 
 class TestBrakeCommand:
     def test_brake_command_only_from_p1(self):
-        from tsw6.braking.v2.command import BrakeCommand
+        from tsw6v2.command import BrakeCommand
 
         d = _decider()
         s = _state(speed_mph=56.0, limit_mph=50.0, handle_notch=4)
@@ -188,10 +188,10 @@ class TestDashboardProperties:
 
 class TestP1V2Integration:
     def test_decider_uses_brake_coordinator_v2(self):
-        from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+        from tsw6v2.autopilot_limit import LimitP1Adapter
 
         d = _decider()
-        assert isinstance(d._braking, BrakeCoordinatorV2)
+        assert isinstance(d._braking, LimitP1Adapter)
 
     def test_p1_limit_produces_brake_command(self):
         d = _decider()
@@ -209,7 +209,7 @@ class TestP1V2Integration:
         assert "v2" in d.p1_debug
 
     def test_p1_reset_when_fsm_approaching_slow(self):
-        from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+        from tsw6v2.autopilot_limit import LimitP1Adapter
 
         d = _decider()
         d._braking.last_debug = "prev"
@@ -220,7 +220,7 @@ class TestP1V2Integration:
             distance_next_m=500.0,
         )
         d.decide(s)
-        assert isinstance(d._braking, BrakeCoordinatorV2)
+        assert isinstance(d._braking, LimitP1Adapter)
         assert d._braking.last_debug == "p1off:APPROACHING"
 
     def test_p1_stays_active_approaching_with_brake_handle(self):

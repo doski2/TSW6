@@ -25,13 +25,13 @@ de state.handle_notch (telemetría como fuente de verdad).
 import logging
 from typing import Optional
 
-from tsw6.braking.v2.policy import merged_approach_overspeed
-from tsw6.braking.v2.coordinator import BrakeCoordinatorV2
+from tsw6.governor.limit_station_cluster import merged_approach_overspeed
+from tsw6v2.autopilot_limit import LimitP1Adapter
 from tsw6.telemetry.driver_aid_parser import station_base_name, station_distance_m
 from tsw6.autopilot.control_actions import (
     BRAKE, BRAKE_FAST, COAST, HOLD, PAUSED, RELEASE,
 )
-from tsw6.braking.v2.command import (
+from tsw6v2.command import (
     platform_door_brake_command,
     release_brake_command,
 )
@@ -60,7 +60,7 @@ class SpeedDecider:
     def __init__(self, target_mph: float = 0.0) -> None:
         self._physics   = TrainPhysics()
         self._fsm       = StationFSM()
-        self._braking   = BrakeCoordinatorV2()
+        self._braking   = LimitP1Adapter()
 
         self.target_mph: float = target_mph
         self.paused:     bool  = False

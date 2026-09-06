@@ -12,7 +12,7 @@ def test_release_via_decision_tick():
     snap = ProbeSnapshot.from_dict(
         {
             "seq": 1,
-            "speed_ms": 22.35,
+            "speed_ms": 21.99,  # ~49.2 mph — banda @49 (posted 50)
             "lever_notch": 2,
             "dist_limit_cm": 20000.0,
             "next_limit_ms": 22.352,
@@ -65,7 +65,16 @@ def _over_limit_snap(*, brake_cyl_bar: float | None = None) -> ProbeSnapshot:
 def test_air_fill_blocks_apply_without_pressure():
     from tsw6v2.learner import LearnerProfile
 
-    snap = _over_limit_snap(brake_cyl_bar=1.2)
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 26.8,
+            "lever_notch": 3,
+            "dist_limit_cm": 400.0,
+            "next_limit_ms": 24.5872,
+            "brake_cyl_bar": 1.2,
+        }
+    )
     decision = evaluate_limit_tick(
         LimitBrakeState(),
         BrakeReleaseState(),
@@ -77,10 +86,34 @@ def test_air_fill_blocks_apply_without_pressure():
     assert "presión" in (decision.detail or "").lower()
 
 
+def test_air_fill_allows_apply_from_coast_idle_gauge():
+    from tsw6v2.learner import LearnerProfile
+
+    snap = _over_limit_snap(brake_cyl_bar=1.03)
+    decision = evaluate_limit_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        learner=LearnerProfile(),
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+    assert decision.reason == "plan"
+
+
 def test_air_fill_allows_apply_when_pressure_ready():
     from tsw6v2.learner import LearnerProfile
 
-    snap = _over_limit_snap(brake_cyl_bar=2.6)
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 26.8,
+            "lever_notch": 3,
+            "dist_limit_cm": 400.0,
+            "next_limit_ms": 24.5872,
+            "brake_cyl_bar": 2.6,
+        }
+    )
     decision = evaluate_limit_tick(
         LimitBrakeState(),
         BrakeReleaseState(),

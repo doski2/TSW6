@@ -52,12 +52,12 @@
   <line x1="230" y1="480" x2="280" y2="520" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="5,3"/>
 
   <!-- AGENTE -->
-  <rect x="30" y="430" width="900" height="520" rx="10" fill="#fff" stroke="#2b6cb0" stroke-width="2"/>
-  <text x="480" y="452" text-anchor="middle" font-size="11" font-weight="700" fill="#2b6cb0">AGENTE Python ~20 Hz (D1: agent/ - hoy autopilot_core)</text>
+  <rect x="30" y="430" width="900" height="538" rx="10" fill="#fff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="480" y="452" text-anchor="middle" font-size="11" font-weight="700" fill="#2b6cb0">AGENTE Python ~20 Hz (AgentLoop V2/tsw6v2 | GUI: autopilot_core visor)</text>
 
   <rect x="280" y="468" width="400" height="40" rx="6" fill="#ebf8ff" stroke="#3182ce"/>
-  <text x="480" y="484" text-anchor="middle" font-size="11">TelemetryReader -&gt; ProbeSnapshot -&gt; TrainState</text>
-  <text x="480" y="500" text-anchor="middle" font-size="9" fill="#666">planning cache v x dt estaciones</text>
+  <text x="480" y="484" text-anchor="middle" font-size="11">loop.step: ProbeSnapshot -&gt; decision -&gt; IPC</text>
+  <text x="480" y="500" text-anchor="middle" font-size="9" fill="#666">run_p1_session | autopilot_limit (cartel GUI)</text>
 
   <line x1="480" y1="508" x2="480" y2="524" stroke="#333" stroke-width="1.5"/>
   <rect x="80" y="524" width="360" height="56" rx="6" fill="#e6fffa" stroke="#38b2ac"/>
@@ -75,35 +75,42 @@
   <text x="480" y="632" text-anchor="middle" font-size="9" fill="#666">gradiente probe | learner a | massFactor* HTTP</text>
 
   <line x1="480" y1="644" x2="480" y2="660" stroke="#c53030" stroke-width="2"/>
-  <rect x="60" y="660" width="840" height="100" rx="8" fill="#fff5f5" stroke="#c53030" stroke-width="2"/>
-  <text x="480" y="682" text-anchor="middle" font-size="11" font-weight="700" fill="#c53030">P1 coordinator</text>
-  <rect x="90" y="692" width="180" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
-  <text x="180" y="714" text-anchor="middle" font-size="10">limit_brake</text>
-  <text x="180" y="730" text-anchor="middle" font-size="8" fill="#666">1 cartel | C.3a odo</text>
-  <rect x="290" y="692" width="180" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
-  <text x="380" y="714" text-anchor="middle" font-size="10">station_plan</text>
-  <text x="380" y="730" text-anchor="middle" font-size="8" fill="#666">FSM puertas</text>
-  <rect x="490" y="692" width="200" height="52" rx="6" fill="#fff" stroke="#e53e3e" stroke-width="2"/>
-  <text x="590" y="714" text-anchor="middle" font-size="10">signal* (C1)</text>
-  <text x="590" y="730" text-anchor="middle" font-size="8" fill="#666">evaluate_signal_brake stub</text>
-  <rect x="710" y="692" width="170" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
-  <text x="795" y="714" text-anchor="middle" font-size="10">policy</text>
-  <text x="795" y="730" text-anchor="middle" font-size="8" fill="#666">waits skip_defer</text>
+  <rect x="60" y="660" width="840" height="118" rx="8" fill="#fff5f5" stroke="#c53030" stroke-width="2"/>
+  <text x="480" y="682" text-anchor="middle" font-size="11" font-weight="700" fill="#c53030">P1 cartel (V2/tsw6v2 — sin coordinator v1)</text>
+  <rect x="80" y="692" width="155" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="157" y="712" text-anchor="middle" font-size="10" font-weight="600">planning</text>
+  <text x="157" y="728" text-anchor="middle" font-size="8" fill="#666">GetData + 35-60</text>
+  <rect x="250" y="692" width="155" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="327" y="712" text-anchor="middle" font-size="10" font-weight="600">limits + limit_*</text>
+  <text x="327" y="728" text-anchor="middle" font-size="8" fill="#666">HOLD_DH BRAKE_LIMIT</text>
+  <rect x="420" y="692" width="120" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="480" y="712" text-anchor="middle" font-size="10" font-weight="600">decision</text>
+  <text x="480" y="728" text-anchor="middle" font-size="8" fill="#666">tick + L4 aire</text>
+  <rect x="555" y="692" width="120" height="52" rx="6" fill="#fff" stroke="#fc8181"/>
+  <text x="615" y="712" text-anchor="middle" font-size="10" font-weight="600">command</text>
+  <text x="615" y="728" text-anchor="middle" font-size="8" fill="#666">APPLY RELEASE COAST</text>
+  <line x1="235" y1="718" x2="250" y2="718" stroke="#c53030" stroke-width="1.2"/>
+  <line x1="405" y1="718" x2="420" y2="718" stroke="#c53030" stroke-width="1.2"/>
+  <line x1="540" y1="718" x2="555" y2="718" stroke="#c53030" stroke-width="1.2"/>
+  <rect x="690" y="692" width="190" height="52" rx="6" fill="#fff" stroke="#a0aec0" stroke-dasharray="4,3"/>
+  <text x="785" y="712" text-anchor="middle" font-size="10" fill="#718096">estacion · senal*</text>
+  <text x="785" y="728" text-anchor="middle" font-size="8" fill="#888">pendiente 6-7 / C1</text>
+  <text x="480" y="762" text-anchor="middle" font-size="8" fill="#888">archive/braking_v1_autopilot — referencia, no producto</text>
 
-  <line x1="480" y1="760" x2="480" y2="776" stroke="#333" stroke-width="1.5"/>
-  <rect x="280" y="776" width="400" height="40" rx="6" fill="#fed7d7" stroke="#c53030"/>
-  <text x="480" y="794" text-anchor="middle" font-size="11" font-weight="600">RELEASE / APPLY - un mando por tick</text>
-  <text x="480" y="808" text-anchor="middle" font-size="9" fill="#666">politica TSW D5</text>
+  <line x1="480" y1="778" x2="480" y2="794" stroke="#333" stroke-width="1.5"/>
+  <rect x="280" y="794" width="400" height="40" rx="6" fill="#fed7d7" stroke="#c53030"/>
+  <text x="480" y="812" text-anchor="middle" font-size="11" font-weight="600">RELEASE / APPLY — un mando por tick</text>
+  <text x="480" y="826" text-anchor="middle" font-size="9" fill="#666">politica TSW D5 | ipc.py</text>
 
   <!-- feedback to probe -->
-  <path d="M 680 796 L 860 796 L 860 320 L 760 320" fill="none" stroke="#2b6cb0" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <path d="M 680 814 L 860 814 L 860 320 L 760 320" fill="none" stroke="#2b6cb0" stroke-width="1.5" stroke-dasharray="6,4"/>
   <text x="872" y="560" font-size="10" fill="#2b6cb0" transform="rotate(90 872 560)">SendCommand</text>
 
   <!-- GUI -->
-  <line x1="480" y1="816" x2="480" y2="832" stroke="#718096" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <rect x="200" y="832" width="560" height="56" rx="6" fill="#edf2f7" stroke="#718096" stroke-dasharray="5,3"/>
-  <text x="480" y="854" text-anchor="middle" font-size="11" font-weight="600">GUI / --console (s4.7 visor)</text>
-  <text x="480" y="872" text-anchor="middle" font-size="9" fill="#666">vel | limite | accion | plan P1* | probe Hz | sin limite efectivo en pantalla</text>
+  <line x1="480" y1="834" x2="480" y2="850" stroke="#718096" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <rect x="200" y="850" width="560" height="56" rx="6" fill="#edf2f7" stroke="#718096" stroke-dasharray="5,3"/>
+  <text x="480" y="872" text-anchor="middle" font-size="11" font-weight="600">GUI / --console (s4.7 visor)</text>
+  <text x="480" y="890" text-anchor="middle" font-size="9" fill="#666">AgentSnapshot | JSONL | sin escribir mandos</text>
 
   <!-- FUERA v2 -->
   <rect x="30" y="970" width="900" height="70" rx="8" fill="#f7fafc" stroke="#a0aec0" stroke-dasharray="4,4"/>
@@ -112,7 +119,8 @@
   <text x="480" y="1026" text-anchor="middle" font-size="9" fill="#888">* = pendiente cablear (C1 senal, F-B masa, D9 holgura)</text>
 
   <!-- notas pie -->
-  <text x="480" y="1070" text-anchor="middle" font-size="10" fill="#444">Flujo: UE -&gt; Probe -&gt; GetData -&gt; TrainState -&gt; G-A/G-B -&gt; physics -&gt; P1 -&gt; IPC -&gt; Probe -&gt; UE</text>
-  <text x="480" y="1090" text-anchor="middle" font-size="9" fill="#666">Ahorro v2 = cache palanca (paquete G-B). No ahorro = v^2/2a cada tick.</text>
-  <text x="480" y="1110" text-anchor="middle" font-size="9" fill="#666">Campo nuevo = contrato GetData (D2) + F9 + tests (D7) - no if suelto en Lua.</text>
+  <text x="480" y="1088" text-anchor="middle" font-size="10" fill="#444">Flujo: UE -&gt; Probe -&gt; GetData -&gt; AgentLoop -&gt; planning -&gt; limit_* -&gt; decision -&gt; command -&gt; IPC</text>
+  <text x="480" y="1108" text-anchor="middle" font-size="9" fill="#666">Meta: un solo bucle (AgentLoop); GUI solo visor. Cartel hoy en V2; estacion/senal pendiente.</text>
+  <text x="480" y="1128" text-anchor="middle" font-size="9" fill="#666">Ahorro v2 = cache palanca (paquete G-B). No ahorro = v^2/2a cada tick.</text>
+  <text x="480" y="1148" text-anchor="middle" font-size="9" fill="#666">Campo nuevo = contrato GetData (D2) + F9 + tests (D7) - no if suelto en Lua.</text>
 </svg>

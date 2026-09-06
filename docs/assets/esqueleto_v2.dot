@@ -48,30 +48,39 @@ digraph TSW6_V2 {
   }
 
   subgraph cluster_tick {
-    label="AGENTE Python  ~20 Hz  (D1: agent/ — hoy autopilot_core)";
+    label="AGENTE Python  ~20 Hz  (AgentLoop V2/tsw6v2 | GUI: autopilot_core visor)";
     style="rounded";
     color="#2b6cb0";
-    read [label="TelemetryReader\nparse GetData → ProbeSnapshot", fillcolor="#ebf8ff"];
-    state [label="TrainState\n+ planning cache (v×dt estaciones)", fillcolor="#f7fafc"];
+    read [label="loop.step\nProbeSnapshot → decision → IPC", fillcolor="#ebf8ff"];
     ga [label="G-A Servicio\npassenger: ETA andén puertas FSM\nfreight: vía sin horario", fillcolor="#e6fffa"];
     gb [label="G-B Layout (caché)\ncombined | freight_na", fillcolor="#e6fffa"];
     phys [label="physics.py\ns = v²/(2a)\ngradiente probe; massFactor HTTP*", fillcolor="#c6f6d5"];
-    p1 [label="P1 coordinator\nlimit_brake | station_plan | signal*\npolicy station_waits skip_defer", fillcolor="#fff5f5"];
-    rel [label="RELEASE / APPLY\nun mando por tick", fillcolor="#fed7d7"];
-    read -> state;
-    state -> ga;
-    state -> gb;
+    subgraph cluster_p1 {
+      label="P1 cartel (V2/tsw6v2 — sin coordinator v1)";
+      style="rounded";
+      color="#c53030";
+      p1_plan [label="planning\nGetData + 35→60", fillcolor="#fff5f5"];
+      p1_lim [label="limits + limit_*\nHOLD_DH BRAKE_LIMIT", fillcolor="#fff5f5"];
+      p1_dec [label="decision\ntick + L4 aire", fillcolor="#fff5f5"];
+      p1_cmd [label="command\nAPPLY RELEASE COAST", fillcolor="#fff5f5"];
+      p1_pending [label="estación · señal*\n(pendiente 6-7 / C1)", fillcolor="#f7fafc", style="rounded,dashed,filled"];
+      p1_plan -> p1_lim -> p1_dec -> p1_cmd;
+    }
+    rel [label="RELEASE / APPLY\nun mando por tick\nipc.py", fillcolor="#fed7d7"];
+    read -> ga;
+    read -> gb;
     ga -> phys;
     gb -> phys [style=dashed];
-    phys -> p1;
-    p1 -> rel;
+    phys -> p1_plan;
+    p1_cmd -> rel;
+    ga -> p1_pending [style=dashed, constraint=false];
   }
 
   subgraph cluster_gui {
     label="GUI / consola  (visor — §4.7)";
     style="rounded,dashed";
     color="#718096";
-    gui [label="AutopilotSnapshot\nvel lim acción P1* probe Hz\n--console sin tkinter", fillcolor="#edf2f7"];
+    gui [label="AgentSnapshot / JSONL\nvisor — sin escribir mandos\n--console sin tkinter", fillcolor="#edf2f7"];
   }
 
   subgraph cluster_out {
@@ -90,7 +99,7 @@ digraph TSW6_V2 {
   pkg -> gb [style=dotted, constraint=false];
   pkg_today -> gb [style=dotted, constraint=false];
   learn -> phys [style=dotted, constraint=false];
-  http -> state [style=dashed, label="~2s"];
-  p1 -> gui [style=dashed, constraint=false];
+  http -> read [style=dashed, label="~2s"];
+  p1_cmd -> gui [style=dashed, constraint=false];
   read -> gui [style=dashed, constraint=false];
 }

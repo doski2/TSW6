@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-command.py — BrakeCommand, BrakeTargetResult, APPLY/RELEASE (Dastsc commandBus).
+command.py — BrakeCommand y mandos IPC (APPLY / COAST / RELEASE).
+
+RELEASE: solo ``resolve_release_command`` (``decision.py`` lo llama con freno puesto).
+Plan cartel: ``target.py`` (``BrakeTargetResult``).
 """
 
 from __future__ import annotations
@@ -10,8 +13,8 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from tsw6v2.physics import (
-    DOWNHILL_LIMIT_GRADIENT_PCT,
     brake_command_apply_zone_m,
+    is_downhill_gradient,
     should_emit_brake_command,
     speed_limit_pre_coast_horizon_m,
 )
@@ -19,9 +22,24 @@ from tsw6v2.plan import BrakePlan, profile_cap_from_plan
 from tsw6v2.constants import (
     EMERGENCY_BRAKE_HANDLE,
     EMERGENCY_BRAKE_MAX_DIST_M,
+    LIMIT_COAST_BAND_MPH,
+    LIMIT_CONTAIN_ESCALATE_OVER_MPH,
+    LIMIT_OVER_ACTIVE_MPH,
+    LIMIT_RELEASE_MAX_OVER_MPH,
+    LIMIT_RELEASE_MIN_SPEED_BAND_MPH,
+    LIMIT_SCORING_MAX_OVER_MPH,
+    LIMIT_SIGN_PASSED_M,
     NEUTRAL_NOTCH,
     SERVICE_MAX_BRAKE,
     SERVICE_MIN_HANDLE,
+    passenger_ops_target_mph,
+)
+from tsw6v2.limit_containment import downhill_brake_release_floor_mph
+from tsw6v2.planning import is_ascending_limit_exit
+from tsw6v2.target import (
+    BrakeTargetKind,
+    BrakeTargetResult,
+    SERVICE_HANDLES_WEAK_TO_STRONG,
 )
 
 _log = logging.getLogger("tsw6v2.command")
@@ -34,14 +52,6 @@ GOV_COAST = "COAST"
 GOV_EMERGENCY = "EMERGENCY"
 GOV_HOLD = "HOLD"
 RELEASE_MARGIN_MPH = 2.0          # parada en andén (spd muy baja)
-# TSW penaliza si spd > límite + 1 mph; techo operativo del autopilot.
-LIMIT_SCORING_MAX_OVER_MPH = 0.9
-LIMIT_OVER_ACTIVE_MPH = 0.5       # ya por encima del límite publicado (cola / P1)
-LIMIT_RELEASE_MAX_OVER_MPH = 0.4  # cartel: soltar si spd <= target + esto
-LIMIT_SIGN_PASSED_M = 8.0         # cartel ya pasado (mismo umbral DriverAid)
-LIMIT_COAST_BAND_MPH = 0.25       # bajada: coast si spd <= limit + esto
-LIMIT_CONTAIN_ESCALATE_OVER_MPH = 0.65  # B2 si repunte cerca del techo
-LIMIT_RELEASE_MIN_SPEED_BAND_MPH = 5.0  # no soltar si spd << cartel (parado al arrancar)
 COAST_REBRAKE_MARGIN_MPH = 0.9
 COAST_CLEAR_OVERSHOOT_MPH = 2.0
 
@@ -110,14 +120,12 @@ def command_from_target(
     apply_at_remaining_m: Optional[float] = None,
     detail: str = "",
     gradient_pct: float = 0.0,
+    brake_committed: bool = False,
 ) -> Optional[BrakeCommand]:
     """
-    Un solo camino APPLY / RELEASE / COAST (P1 v2).
+    APPLY / COAST desde plan (sin RELEASE — ver ``resolve_release_command``).
 
-    Cartel: tres capas — *aware* (plan, sin mando) → *pre-coast* (~8 s) →
-    *APPLY* en ventana cinemática. No frenar porque spd > siguiente límite
-    a kilómetros (sesión 2026-08-28: 60→50 @ 4 km → B3).
-    Andén/señal: muesca del plan; no forzar B3 por target=0.
+    Cartel: *aware* → *pre-coast* → *APPLY* en ventana cinemática.
     """
     in_window = should_emit_brake_command(
         apply_now=apply_now,
@@ -125,23 +133,11 @@ def command_from_target(
         speed_mph=speed_mph,
         distance_to_target_m=distance_m,
         apply_at_remaining_m=apply_at_remaining_m,
+        brake_committed=brake_committed,
     )
     traction = throttle_notch > 0 or current_notch > 4
-    release_over = limit_release_over_mph()
 
     if target_kind == "SPEED_LIMIT":
-        hold_downhill = should_hold_limit_brake_downhill(
-            gradient_pct=gradient_pct,
-            distance_next_m=distance_m,
-            speed_mph=speed_mph,
-            target_mph=target_speed_mph,
-        )
-        if (
-            current_notch < 4
-            and speed_mph <= target_speed_mph + release_over
-            and not hold_downhill
-        ):
-            return release_brake_command(at_target=True)
         coast_h = speed_limit_pre_coast_horizon_m(
             speed_mph=speed_mph,
             distance_to_target_m=distance_m,
@@ -175,18 +171,6 @@ def command_from_target(
             return None
 
     target = int(handle_notch)
-    if target_kind == "SPEED_LIMIT":
-        late_zone_m = brake_command_apply_zone_m(
-            speed_mph=speed_mph,
-            distance_to_target_m=distance_m,
-            apply_at_remaining_m=apply_at_remaining_m,
-            dist_start=dist_start,
-        )
-        late = dist_start < -late_zone_m
-        if in_window and speed_mph > target_speed_mph + 8:
-            target = SERVICE_MIN_HANDLE
-        elif late and speed_mph > target_speed_mph + RELEASE_MARGIN_MPH:
-            target = SERVICE_MIN_HANDLE
     target = clamp_brake_handle(target, distance_m)
     return BrakeCommand(
         kind="APPLY",
@@ -290,7 +274,7 @@ def is_downhill_limit_approach(
     distance_next_m: Optional[float],
 ) -> bool:
     return (
-        gradient_pct < DOWNHILL_LIMIT_GRADIENT_PCT
+        is_downhill_gradient(gradient_pct)
         and distance_next_m is not None
         and distance_next_m > 0
     )
@@ -311,16 +295,32 @@ def should_hold_limit_brake_downhill(
     return speed_mph > target_mph - 1.0
 
 
-def target_speed_mph(
-    plan: Optional[BrakePlan],
-    next_limit_mph: Optional[float],
+def release_target_mph(
+    *,
+    speed_mph: float,
     effective_limit: float,
+    next_limit_mph: Optional[float],
+    latch_ops_target: Optional[float] = None,
+    gradient_pct: float = 0.0,
 ) -> float:
-    if plan is not None and plan.target_kind == "STATION":
-        return 0.0
+    """
+    Objetivo para RELEASE.
+
+    Si el cartel siguiente sube (35→60) y ya vamos en banda del límite vigente,
+    soltar respecto al posted actual (@34), no al next lejano (@59).
+    """
+    ops_effective = passenger_ops_target_mph(effective_limit)
+    release_over = limit_release_over_mph(gradient_pct)
+    if (
+        is_ascending_limit_exit(effective_limit, next_limit_mph)
+        and speed_mph <= ops_effective + release_over
+    ):
+        return ops_effective
+    if latch_ops_target is not None:
+        return latch_ops_target
     if next_limit_mph is not None:
-        return float(next_limit_mph)
-    return float(effective_limit)
+        return passenger_ops_target_mph(next_limit_mph)
+    return ops_effective
 
 
 @dataclass
@@ -392,6 +392,7 @@ def resolve_release_command(
     distance_next_m: Optional[float],
     gradient_pct: float,
     plan: Optional[BrakePlan] = None,
+    latch_ops_target: Optional[float] = None,
 ) -> Optional[BrakeCommand]:
     if is_brake_released(handle_notch):
         return None
@@ -406,12 +407,41 @@ def resolve_release_command(
     if speed_mph > effective_limit + LIMIT_OVER_ACTIVE_MPH:
         return None
 
-    target = target_speed_mph(plan, next_limit_mph, effective_limit)
-    if should_hold_limit_brake_downhill(
+    target = release_target_mph(
+        speed_mph=speed_mph,
+        effective_limit=effective_limit,
+        next_limit_mph=next_limit_mph,
+        latch_ops_target=latch_ops_target,
+        gradient_pct=gradient_pct,
+    )
+    zone_release_target = None
+    release_over = limit_release_over_mph(gradient_pct)
+    if next_limit_mph is not None and distance_next_m is not None:
+        zone_release_target = downhill_brake_release_floor_mph(
+            speed_mph=speed_mph,
+            effective_limit=effective_limit,
+            next_limit_mph=next_limit_mph,
+            distance_next_m=distance_next_m,
+            gradient_pct=gradient_pct,
+            release_over_mph=release_over,
+        )
+        if zone_release_target is not None:
+            target = zone_release_target
+    ops_effective = passenger_ops_target_mph(effective_limit)
+    ascending_exit = (
+        is_ascending_limit_exit(effective_limit, next_limit_mph)
+        and speed_mph <= ops_effective + release_over
+    )
+    hold_target = (
+        passenger_ops_target_mph(next_limit_mph)
+        if next_limit_mph is not None
+        else target
+    )
+    if not ascending_exit and zone_release_target is None and should_hold_limit_brake_downhill(
         gradient_pct=gradient_pct,
         distance_next_m=distance_next_m,
         speed_mph=speed_mph,
-        target_mph=target,
+        target_mph=hold_target,
     ):
         return None
     if speed_mph > target + limit_release_over_mph():
@@ -433,55 +463,39 @@ def resolve_release_command(
     return cmd
 
 
-BrakeTargetKind = Literal["SPEED_LIMIT", "STATION", "SIGNAL"]
-
-# Handle UK servicio: 3=B1 (suave) … 1=B3 (fuerte)
-SERVICE_HANDLES_WEAK_TO_STRONG: tuple[tuple[int, str], ...] = (
-    (3, "B1"),
-    (2, "B2"),
-    (1, "B3"),
-)
-
-
-@dataclass
-class BrakeTargetResult:
-    """Resultado de un planificador por objetivo (antes de prioridad)."""
-
-    target_kind: BrakeTargetKind
-    distance_m: float
-    target_speed_mph: float
-    handle_notch: int
-    phase: str
-    dist_start: float
-    apply_now: bool
-    detail: str = ""
-    downhill_hold: bool = False
-
-    @property
-    def urgency(self) -> float:
-        """Menor dist_start = frenar antes (Dastsc)."""
-        return self.dist_start
-
-    def to_brake_command(
-        self,
-        *,
-        throttle_notch: int = 0,
-        current_notch: int = 4,
-        speed_mph: float = 0.0,
-        gradient_pct: float = 0.0,
-    ) -> Optional[BrakeCommand]:
-        return command_from_target(
-            target_kind=self.target_kind,
-            distance_m=self.distance_m,
-            target_speed_mph=self.target_speed_mph,
-            handle_notch=self.handle_notch,
-            phase=self.phase,
-            dist_start=self.dist_start,
-            apply_now=self.apply_now,
-            throttle_notch=throttle_notch,
-            current_notch=current_notch,
-            speed_mph=speed_mph,
-            apply_at_remaining_m=self.distance_m - self.dist_start,
-            detail=self.detail,
-            gradient_pct=gradient_pct,
-        )
+__all__ = [
+    "BrakeCommand",
+    "BrakeCommandKind",
+    "BrakeReleaseState",
+    "BrakeTargetKind",
+    "BrakeTargetResult",
+    "COAST_CLEAR_OVERSHOOT_MPH",
+    "COAST_REBRAKE_MARGIN_MPH",
+    "GOV_COAST",
+    "GOV_EMERGENCY",
+    "GOV_HOLD",
+    "GOV_RELEASE",
+    "LIMIT_COAST_BAND_MPH",
+    "LIMIT_CONTAIN_ESCALATE_OVER_MPH",
+    "LIMIT_OVER_ACTIVE_MPH",
+    "LIMIT_RELEASE_MAX_OVER_MPH",
+    "LIMIT_RELEASE_MIN_SPEED_BAND_MPH",
+    "LIMIT_SCORING_MAX_OVER_MPH",
+    "LIMIT_SIGN_PASSED_M",
+    "RELEASE_MARGIN_MPH",
+    "SERVICE_HANDLES_WEAK_TO_STRONG",
+    "SpeedLimitCoastLatch",
+    "clamp_brake_handle",
+    "command_from_target",
+    "governor_action_for_command",
+    "is_brake_applied",
+    "is_brake_released",
+    "is_downhill_limit_approach",
+    "limit_release_over_mph",
+    "plan_to_brake_command",
+    "platform_door_brake_command",
+    "release_brake_command",
+    "release_target_mph",
+    "resolve_release_command",
+    "should_hold_limit_brake_downhill",
+]

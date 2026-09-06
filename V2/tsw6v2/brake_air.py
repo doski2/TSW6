@@ -76,11 +76,24 @@ class BrakeAirTracker:
 
         self._last_lever = lever
 
-    def air_ready(self, brake_cyl_bar: float | None) -> bool:
-        """¿Hay presión suficiente para medir/aplicar freno?"""
+    def air_ready(
+        self,
+        brake_cyl_bar: float | None,
+        *,
+        lever: int | None = None,
+    ) -> bool:
+        """
+        ¿Listo para mandar/escalar freno según presión?
+
+        - En costa (muesca ≥ neutro): HUD 323 ~1 bar en reposo → listo si p ≤ idle.
+        - En servicio (muesca < neutro): esperar p ≥ mínimo (air_fill tras APPLY).
+        """
         if brake_cyl_bar is None:
             return True
-        return float(brake_cyl_bar) >= PRESSURE_BRAKING_MIN_BAR
+        p = float(brake_cyl_bar)
+        if lever is not None and int(lever) >= _COAST_NOTCH:
+            return p <= PRESSURE_IDLE_MAX_BAR
+        return p >= PRESSURE_BRAKING_MIN_BAR
 
     def inhibit_reapply(
         self,

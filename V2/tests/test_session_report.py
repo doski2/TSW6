@@ -97,11 +97,10 @@ def test_html_shows_ds_zero_and_apply_zone(tmp_path: Path) -> None:
     html = tmp_path / "out.html"
     write_html_replay(p, html)
     text = html.read_text(encoding="utf-8")
-    assert "ds=0" in text
+    assert "ds=0" in text or "Margen cinemático" in text
     assert "464 m</td>" in text
-    assert "Cruces ds=0" in text
+    assert "Marcas cinemáticas" in text
     assert '<path d="' in text
-    assert "ds=0 (ideal frenar)" in text
 
 
 def test_finalize_skips_short_session(tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ from tsw6.learning.online_learner import (
     _GRAD_BANDS, GRAD_FLAT_THRESHOLD, _gravity_compensation,
     MIN_STABLE_S, MIN_SAMPLES,
 )
-from tsw6.braking.v2.physics import BRAKE_FILL_CLAMP
+from tsw6v2.physics import BRAKE_FILL_CLAMP
 
 
 class TestSignCoherence(unittest.TestCase):

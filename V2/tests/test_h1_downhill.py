@@ -25,7 +25,27 @@ def test_h1_no_hold_on_descending_zone_60_to_55():
         gradient_pct=-1.0,
         posted_limit_mph=60.0,
     )
-    assert r is None or not r.downhill_hold
+    assert r is not None
+    assert not r.downhill_hold
+    assert not r.apply_now
+
+
+def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
+    """60→55 lejos: > posted+0.5 → B1 suave a @60.5, no al 55 todavía."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=62.5,
+        limit_mph=55.0,
+        distance_m=520.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert r.target_speed_mph == 60.5
+    assert r.handle_notch == 3
+    assert r.phase == "B1"
 
 
 def test_h1_brake_limit_inside_horizon_60_to_55():
@@ -71,27 +91,51 @@ def test_h1_60_to_55_downhill_distance_profile():
     assert near.apply_now
 
 
-def test_h1_hold_same_zone_uses_ops_59():
-    """Zona 60→60 en bajada: HOLD_DH al techo 59 (posted 60)."""
-    r = evaluate_limit_brake(
+def test_h1_hold_same_zone_uses_scoring_ceiling():
+    """Zona 60→60 en bajada: HOLD_DH solo si superas posted+0.5 (60.5)."""
+    under = evaluate_limit_brake(
         LimitBrakeState(),
-        speed_mph=59.5,
+        speed_mph=60.5,
         limit_mph=60.0,
         distance_m=2000.0,
         gradient_pct=-1.0,
         posted_limit_mph=60.0,
     )
-    assert r is not None
-    assert r.downhill_hold
-    assert "posted 60" in r.detail
-    assert "@59" in r.detail
+    assert under is None or not under.downhill_hold
+
+    over = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=61.2,
+        limit_mph=60.0,
+        distance_m=2000.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert over is not None
+    assert over.downhill_hold
+    assert over.target_speed_mph == 60.5
+    assert "posted 60" in over.detail
+    assert "@60.5" in over.detail
+
+
+def test_h1_no_hold_on_ascending_exit():
+    """35→60 en bajada: no contener zona vigente; dejar subir."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=36.5,
+        limit_mph=60.0,
+        distance_m=2000.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=35.0,
+    )
+    assert r is None or not getattr(r, "downhill_hold", False)
 
 
 def test_h1_posted_hold_far_from_next_sign():
-    """Misma zona 60→60: HOLD_DH con techo 59, no latch."""
+    """Misma zona 60→60: HOLD_DH solo sobre 60.5, sin latch."""
     r = evaluate_limit_brake(
         LimitBrakeState(),
-        speed_mph=59.5,
+        speed_mph=61.0,
         limit_mph=60.0,
         distance_m=700.0,
         gradient_pct=-1.0,
@@ -99,7 +143,7 @@ def test_h1_posted_hold_far_from_next_sign():
     )
     assert r is not None
     assert r.downhill_hold
-    assert "@59" in r.detail
+    assert "@60.5" in r.detail
     assert "latched" not in r.detail
 
 
@@ -144,11 +188,70 @@ def test_h1_inside_horizon_uses_next_plan_not_posted():
     assert not r.downhill_hold
 
 
+def test_h1_no_hold_when_next_limit_rises():
+    """35→60: sin HOLD_DH al salir de zona lenta."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=34.3,
+        limit_mph=60.0,
+        distance_m=520.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=35.0,
+    )
+    assert r is None or not r.downhill_hold
+
+
+def test_h1_hold_escalates_via_hysteresis_when_overspeed():
+    """HOLD_DH: B1 al entrar; B2 si sigue > techo + 0.65 mph."""
+    state = LimitBrakeState()
+    first = evaluate_limit_brake(
+        state,
+        speed_mph=61.8,
+        limit_mph=60.0,
+        distance_m=2000.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert first is not None
+    assert first.downhill_hold
+    assert first.handle_notch == 3
+    assert first.phase == "B1"
+
+    second = evaluate_limit_brake(
+        state,
+        speed_mph=61.8,
+        limit_mph=60.0,
+        distance_m=1990.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert second is not None
+    assert second.downhill_hold
+    assert second.handle_notch == 2
+    assert second.phase == "B2"
+
+
+def test_h1_downhill_coast_trim_defers_b1_near_target():
+    """Bajada: +1.5 mph sobre techo → Vigilar, sin comprometer B1."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=55.5,
+        limit_mph=55.0,
+        distance_m=800.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert r is not None
+    assert not r.apply_now
+    assert r.handle_notch == 3
+    assert r.phase == "B1"
+
+
 def test_h1_coast_pwr_before_hold_with_power():
     snap = ProbeSnapshot.from_dict(
         {
             "seq": 1,
-            "speed_ms": 26.6,  # ~59.5 mph
+            "speed_ms": 27.38,  # ~61.2 mph — sobre 60.9, con tracción
             "lever_notch": 6,
             "dist_limit_cm": 200000.0,
             "next_limit_ms": 26.8224,  # 60 mph
@@ -170,7 +273,7 @@ def test_h1_hold_dh_layer_on_neutral():
     snap = ProbeSnapshot.from_dict(
         {
             "seq": 1,
-            "speed_ms": 26.6,
+            "speed_ms": 27.38,  # ~61.2 mph
             "lever_notch": 4,
             "dist_limit_cm": 200000.0,
             "next_limit_ms": 26.8224,

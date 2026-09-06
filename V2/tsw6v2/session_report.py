@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+import math
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -127,13 +128,44 @@ def _apply_zone_m(*, spd_mph: float, lim_dist_m: float, dist_start_m: float) -> 
     return apply_zone_margin_m(float(spd_mph) * MPH_TO_MS, apply_at)
 
 
+def _append_kinematic_marker(
+    markers: list[dict[str, Any]],
+    *,
+    t_s: float,
+    lim_mph: Any,
+    spd: float,
+    lim_dist_m: float,
+    ds: float,
+    kind: str,
+) -> None:
+    apply_at = max(0.0, lim_dist_m - ds)
+    zone = _apply_zone_m(
+        spd_mph=spd,
+        lim_dist_m=lim_dist_m,
+        dist_start_m=ds,
+    )
+    markers.append(
+        {
+            "t": round(t_s, 2),
+            "kind": kind,
+            "lim_mph": lim_mph,
+            "spd": round(spd, 1),
+            "lim_dist_m": round(lim_dist_m, 1),
+            "dist_start_m": round(ds, 1),
+            "apply_at_m": round(apply_at, 1),
+            "zone_m": round(zone, 1),
+        }
+    )
+
+
 def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Cruces ds=0 (punto cinemático ideal de frenar) por cartel."""
+    """Cruces ds=0 y primer APPLY por cartel (ideal vs real)."""
     markers: list[dict[str, Any]] = []
     prev_ds: float | None = None
     prev_t_s: float | None = None
     prev_lim_dist: float | None = None
     prev_spd: float | None = None
+    seen_apply: set[str] = set()
 
     for t in ticks:
         p1 = t.get("p1") or {}
@@ -151,6 +183,7 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         lim_f = float(lim_dist)
         spd_f = float(spd)
         t_s = float(t["t_ms"]) / 1000.0
+        detail = str(p1.get("detail") or "")
 
         if prev_ds is not None and prev_ds > 0 and ds_f <= 0:
             if prev_ds != ds_f and prev_t_s is not None:
@@ -162,25 +195,32 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 spd_cross = spd_f
                 if prev_spd is not None:
                     spd_cross = prev_spd + frac * (spd_f - prev_spd)
+                ds_cross = 0.0
             else:
                 cross_t = t_s
                 lim_cross = lim_f
                 spd_cross = spd_f
-            apply_at_cross = lim_cross
-            zone_cross = _apply_zone_m(
-                spd_mph=spd_cross,
+                ds_cross = ds_f
+            _append_kinematic_marker(
+                markers,
+                t_s=cross_t,
+                lim_mph=t.get("lim_mph"),
+                spd=spd_cross,
                 lim_dist_m=lim_cross,
-                dist_start_m=0.0,
+                ds=ds_cross,
+                kind="ds0",
             )
-            markers.append(
-                {
-                    "t": round(cross_t, 2),
-                    "lim_mph": t.get("lim_mph"),
-                    "spd": round(spd_cross, 1),
-                    "lim_dist_m": round(lim_cross, 1),
-                    "apply_at_m": round(apply_at_cross, 1),
-                    "zone_m": round(zone_cross, 1),
-                }
+
+        if p1.get("apply_now") is True and detail and detail not in seen_apply:
+            seen_apply.add(detail)
+            _append_kinematic_marker(
+                markers,
+                t_s=t_s,
+                lim_mph=t.get("lim_mph"),
+                spd=spd_f,
+                lim_dist_m=lim_f,
+                ds=ds_f,
+                kind="apply",
             )
 
         prev_ds = ds_f
@@ -189,6 +229,27 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         prev_spd = spd_f
 
     return markers
+
+
+def _ds_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
+    """Escala legible para dist_start (evita aplastar por valores lejanos al cartel)."""
+    raw = [float(p["ds"]) for p in series if p.get("ds") is not None]
+    if not raw:
+        return -50.0, 120.0
+    core = [v for v in raw if -120.0 <= v <= 200.0]
+    pool = core or raw
+    lo = min(pool)
+    hi = max(pool)
+    pad = max(12.0, (hi - lo) * 0.12)
+    return min(-50.0, lo - pad), max(120.0, hi + pad)
+
+
+def _dist_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
+    raw = [float(p["dist"]) for p in series if p.get("dist") is not None]
+    if not raw:
+        return 0.0, 500.0
+    hi = max(raw)
+    return 0.0, max(200.0, hi * 1.05)
 
 
 _CHART_LAYER_COL: dict[str, str] = {
@@ -205,40 +266,107 @@ _CHART_LAYER_COL: dict[str, str] = {
     "IDLE": "#0f1115",
 }
 
+_CHART_W = 1100
+_CHART_PAD_L = 76
+_CHART_PAD_R = 14
+_CHART_PAD_TOP = 10
+
+
+def _nice_axis_ticks(lo: float, hi: float, *, max_ticks: int = 5) -> list[float]:
+    if hi <= lo:
+        return [lo]
+    span = hi - lo
+    raw = span / max(1, max_ticks - 1)
+    if raw <= 0:
+        return [lo, hi]
+    mag = 10 ** math.floor(math.log10(raw)) if raw > 0 else 1.0
+    step = max(mag, math.ceil(raw / mag) * mag)
+    start = math.floor(lo / step) * step
+    ticks: list[float] = []
+    v = start
+    while v <= hi + step * 0.01:
+        if v >= lo - step * 0.01:
+            ticks.append(v)
+        v += step
+    if not ticks:
+        return [lo, hi]
+    return ticks[: max_ticks + 2]
+
+
+def _fmt_axis(v: float) -> str:
+    av = abs(v)
+    if av >= 100:
+        return f"{v:.0f}"
+    if av >= 10:
+        return f"{v:.0f}"
+    return f"{v:.1f}"
+
+
+def _marker_badge_slots(
+    markers: list[dict[str, Any]],
+    x_t,
+    *,
+    min_gap: float = 26.0,
+) -> dict[int, int]:
+    """Asigna carril vertical (0..2) por marcador para evitar solapar números."""
+    lanes: dict[int, int] = {}
+    last_x: list[float] = [-999.0, -999.0, -999.0]
+    for idx, m in enumerate(sorted(markers, key=lambda row: float(row["t"]))):
+        if m.get("kind") != "apply":
+            continue
+        cx = x_t(float(m["t"]))
+        lane = 0
+        for try_lane in range(3):
+            if cx - last_x[try_lane] >= min_gap:
+                lane = try_lane
+                break
+        else:
+            lane = int(idx % 3)
+        last_x[lane] = cx
+        lanes[idx] = lane
+    return lanes
+
 
 def _render_chart_svg(
     series: list[dict[str, Any]],
     markers: list[dict[str, Any]],
 ) -> str:
-    """SVG embebido en HTML (no depende de JavaScript / file://)."""
+    """SVG embebido: 4 paneles apilados con ejes y sin texto superpuesto."""
     if not series:
         return '<text x="40" y="40" fill="#94a3b8" font-size="12">Sin datos</text>'
 
-    w, h, h2, h3, pad = 1000, 200, 60, 44, 40
+    w = _CHART_W
+    pad_l = _CHART_PAD_L
+    pad_r = _CHART_PAD_R
+    plot_w = w - pad_l - pad_r
+
+    h_spd = 168
+    h_dist = 108
+    h_ds = 88
+    h_layers = 34
+    gap = 10
+    y_spd = _CHART_PAD_TOP
+    y_dist = y_spd + h_spd + gap
+    y_ds = y_dist + h_dist + gap
+    y_layers = y_ds + h_ds + gap
+    total_h = y_layers + h_layers + 8
+
     t0 = float(series[0]["t"])
     t1 = float(series[-1]["t"])
     t_span = max(0.1, t1 - t0)
 
     def x_t(t: float) -> float:
-        return pad + (float(t) - t0) / t_span * (w - 2 * pad)
+        return pad_l + (float(t) - t0) / t_span * plot_w
+
+    def y_in_panel(v: float, lo: float, hi: float, y_top: float, height: float) -> float:
+        span = max(hi - lo, 1e-6)
+        inner = height - 16
+        return y_top + 8 + (1.0 - (float(v) - lo) / span) * inner
 
     y_max = max(max(p.get("spd") or 0, p.get("eff") or 0, p.get("lim") or 0) for p in series) + 5
     y_min = min(p.get("spd") or 0 for p in series) - 2
-    y_span = max(y_max - y_min, 1.0)
-
-    def y_v(v: float) -> float:
-        return pad + (1.0 - (float(v) - y_min) / y_span) * (h - 2 * pad)
-
-    ds_vals = [float(p["ds"]) for p in series if p.get("ds") is not None]
-    ds_min = min(-30.0, *(ds_vals or [0.0]))
-    ds_max = max(50.0, *(ds_vals or [50.0]))
-    ds_span = max(ds_max - ds_min, 1.0)
-
-    def y_ds(v: float) -> float:
-        return h + pad + (1.0 - (float(v) - ds_min) / ds_span) * (h2 - 2 * pad)
-
-    def y_layers() -> float:
-        return h + h2 + pad + 8
+    ds_min, ds_max = _ds_chart_bounds(series)
+    dist_min, dist_max = _dist_chart_bounds(series)
 
     def line_path(key: str, yfn) -> str:
         parts: list[str] = []
@@ -251,52 +379,87 @@ def _render_chart_svg(
             return ""
         return f'<path d="{" ".join(parts)}" fill="none" stroke-width="1.5"/>'
 
-    total_h = h + h2 + h3 + pad
     out: list[str] = [
-        f'<rect x="0" y="0" width="{w}" height="{total_h}" fill="#1a1f28"/>',
+        f'<rect x="0" y="0" width="{w}" height="{total_h}" fill="#1a1f28" rx="8"/>',
     ]
+
+    def panel_frame(y: float, height: float, title: str, bg: str = "#151a22") -> None:
+        out.append(
+            f'<rect x="{pad_l - 4}" y="{y:.1f}" width="{plot_w + 8}" height="{height:.1f}" '
+            f'fill="{bg}" stroke="#2a3140" stroke-width="1" rx="4"/>'
+        )
+        out.append(
+            f'<text x="8" y="{y + 14:.1f}" fill="#94a3b8" font-size="11" font-weight="600">{title}</text>'
+        )
+
+    def draw_axis(
+        y_top: float,
+        height: float,
+        lo: float,
+        hi: float,
+        unit: str,
+        *,
+        zero_line: bool = False,
+    ) -> None:
+        ticks = _nice_axis_ticks(lo, hi)
+        for tick in ticks:
+            yy = y_in_panel(tick, lo, hi, y_top, height)
+            out.append(
+                f'<line x1="{pad_l}" y1="{yy:.1f}" x2="{pad_l + plot_w}" y2="{yy:.1f}" '
+                f'stroke="#2a3140" stroke-width="1"/>'
+            )
+            out.append(
+                f'<text x="{pad_l - 8}" y="{yy + 3:.1f}" fill="#cbd5e1" font-size="10" '
+                f'text-anchor="end">{_fmt_axis(tick)}{unit}</text>'
+            )
+        if zero_line and lo < 0 < hi:
+            yz = y_in_panel(0.0, lo, hi, y_top, height)
+            out.append(
+                f'<line x1="{pad_l}" y1="{yz:.1f}" x2="{pad_l + plot_w}" y2="{yz:.1f}" '
+                f'stroke="#cbd5e1" stroke-width="1" stroke-dasharray="5,4" opacity="0.7"/>'
+            )
+
+    panel_frame(y_spd, h_spd, "Velocidad (mph)")
+    draw_axis(y_spd, h_spd, y_min, y_max, "")
     for key, color in (("spd", "#7eb6ff"), ("eff", "#6bcf7f"), ("lim", "#e8a87c")):
-        path = line_path(key, y_v)
+        path = line_path(
+            key,
+            lambda v, lo=y_min, hi=y_max, yt=y_spd, ht=h_spd: y_in_panel(v, lo, hi, yt, ht),
+        )
         if path:
             out.append(path.replace('stroke-width="1.5"', f'stroke="{color}" stroke-width="1.5"'))
 
+    panel_frame(y_dist, h_dist, "Distancia al cartel (m)", bg="#121820")
+    draw_axis(y_dist, h_dist, dist_min, dist_max, "m")
+    dist_path = line_path(
+        "dist",
+        lambda v, lo=dist_min, hi=dist_max, yt=y_dist, ht=h_dist: y_in_panel(v, lo, hi, yt, ht),
+    )
+    if dist_path:
+        out.append(dist_path.replace('stroke-width="1.5"', 'stroke="#38bdf8" stroke-width="2"'))
+
+    panel_frame(y_ds, h_ds, "Margen cinemático ds (m)")
+    draw_axis(y_ds, h_ds, ds_min, ds_max, "m", zero_line=True)
     for i in range(len(series) - 1):
         a, b = series[i], series[i + 1]
         if a.get("zone") is None or a.get("ds") is None:
             continue
-        y_top = y_ds(float(a["zone"]))
-        y_bot = y_ds(-float(a["zone"]))
+        z = float(a["zone"])
+        y_top = y_in_panel(z, ds_min, ds_max, y_ds, h_ds)
+        y_bot = y_in_panel(-z, ds_min, ds_max, y_ds, h_ds)
         width = max(1.0, x_t(b["t"]) - x_t(a["t"]))
         out.append(
             f'<rect x="{x_t(a["t"]):.1f}" y="{y_top:.1f}" width="{width:.1f}" '
-            f'height="{(y_bot - y_top):.1f}" fill="#22c55e" opacity="0.14"/>'
+            f'height="{(y_bot - y_top):.1f}" fill="#22c55e" opacity="0.12"/>'
         )
-
-    y_zero = y_ds(0.0)
-    out.append(
-        f'<line x1="{pad}" y1="{y_zero:.1f}" x2="{w - pad}" y2="{y_zero:.1f}" '
-        f'stroke="#cbd5e1" stroke-width="1" stroke-dasharray="5,4" opacity="0.75"/>'
+    ds_path = line_path(
+        "ds",
+        lambda v, lo=ds_min, hi=ds_max, yt=y_ds, ht=h_ds: y_in_panel(v, lo, hi, yt, ht),
     )
-    out.append(
-        f'<text x="{pad + 4}" y="{y_zero - 4:.1f}" fill="#94a3b8" font-size="10">'
-        f"ds=0 (ideal frenar)</text>"
-    )
-    ds_path = line_path("ds", y_ds)
     if ds_path:
         out.append(ds_path.replace('stroke-width="1.5"', 'stroke="#c9a0ff" stroke-width="1.5"'))
 
-    for m in markers:
-        cx = x_t(float(m["t"]))
-        dist = round(float(m.get("lim_dist_m") or m.get("apply_at_m") or 0))
-        out.append(
-            f'<line x1="{cx:.1f}" y1="{h}" x2="{cx:.1f}" y2="{total_h}" '
-            f'stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.8"/>'
-        )
-        out.append(
-            f'<text x="{cx + 2:.1f}" y="{h + 12}" fill="#38bdf8" font-size="9">'
-            f"ds=0 @{m['t']}s · {dist} m al cartel</text>"
-        )
-
+    panel_frame(y_layers, h_layers, "Capa P1", bg="#12151b")
     for i in range(len(series) - 1):
         a, b = series[i], series[i + 1]
         lay = a.get("layer") or "IDLE"
@@ -305,21 +468,98 @@ def _render_chart_svg(
         col = _CHART_LAYER_COL.get(lay, "#444")
         width = max(1.0, x_t(b["t"]) - x_t(a["t"]))
         out.append(
-            f'<rect x="{x_t(a["t"]):.1f}" y="{y_layers():.1f}" width="{width:.1f}" '
-            f'height="28" fill="{col}" opacity="0.85"/>'
+            f'<rect x="{x_t(a["t"]):.1f}" y="{y_layers + 6:.1f}" width="{width:.1f}" '
+            f'height="{h_layers - 12:.1f}" fill="{col}" opacity="0.9" rx="2"/>'
+        )
+
+    apply_markers = [m for m in markers if m.get("kind") == "apply"]
+    badge_lanes = _marker_badge_slots(apply_markers, x_t)
+    for idx, m in enumerate(sorted(apply_markers, key=lambda row: float(row["t"]))):
+        cx = x_t(float(m["t"]))
+        lane = badge_lanes.get(idx, 0)
+        badge_y = y_spd + 16 + lane * 16
+        lim_m = m.get("lim_dist_m")
+        out.append(
+            f'<line x1="{cx:.1f}" y1="{y_spd}" x2="{cx:.1f}" y2="{y_layers + h_layers}" '
+            f'stroke="#38bdf8" stroke-width="1" stroke-dasharray="3,4" opacity="0.45"/>'
+        )
+        out.append(f'<circle cx="{cx:.1f}" cy="{badge_y:.1f}" r="9" fill="#0ea5e9" opacity="0.95"/>')
+        out.append(
+            f'<text x="{cx:.1f}" y="{badge_y + 4:.1f}" fill="#0f172a" font-size="10" '
+            f'font-weight="700" text-anchor="middle">{idx + 1}</text>'
+        )
+        if lim_m is not None:
+            lim_label = f"{int(round(float(lim_m)))}m"
+            out.append(
+                f'<text x="{cx:.1f}" y="{badge_y + 22:.1f}" fill="#38bdf8" font-size="9" '
+                f'font-weight="600" text-anchor="middle">{lim_label}</text>'
+            )
+            dist_start_m = m.get("dist_start_m")
+            if dist_start_m is not None:
+                ds_lbl = f"ds {int(round(float(dist_start_m)))}m"
+                out.append(
+                    f'<text x="{cx:.1f}" y="{y_ds + h_ds - 4:.1f}" fill="#c9a0ff" font-size="9" '
+                    f'text-anchor="middle">{ds_lbl}</text>'
+                )
+            dist_y = y_in_panel(
+                float(lim_m),
+                dist_min,
+                dist_max,
+                y_dist,
+                h_dist,
+            )
+            out.append(
+                f'<circle cx="{cx:.1f}" cy="{dist_y:.1f}" r="4" fill="#38bdf8" stroke="#0f172a" '
+                f'stroke-width="1"/>'
+            )
+
+    for m in markers:
+        if m.get("kind") == "apply":
+            continue
+        cx = x_t(float(m["t"]))
+        out.append(
+            f'<line x1="{cx:.1f}" y1="{y_ds}" x2="{cx:.1f}" y2="{y_ds + h_ds}" '
+            f'stroke="#67e8f9" stroke-width="1.5" stroke-dasharray="2,3" opacity="0.65"/>'
         )
 
     for p in series:
         if p.get("cmd") not in ("APPLY", "RELEASE"):
             continue
-        col = "#ff6b6b" if p.get("cmd") == "APPLY" else "#ffd166"
+        col = "#ef4444" if p.get("cmd") == "APPLY" else "#eab308"
         cx = x_t(p["t"])
         out.append(
-            f'<line x1="{cx:.1f}" y1="0" x2="{cx:.1f}" y2="{total_h}" '
-            f'stroke="{col}" stroke-width="1" opacity="0.4"/>'
+            f'<line x1="{cx:.1f}" y1="{y_spd}" x2="{cx:.1f}" y2="{y_layers + h_layers}" '
+            f'stroke="{col}" stroke-width="1.25" opacity="0.22"/>'
         )
 
+    out.append(
+        f'<text x="{pad_l + plot_w - 4}" y="{y_spd + 14:.1f}" fill="#7eb6ff" font-size="10" '
+        f'text-anchor="end">spd</text>'
+    )
+    out.append(
+        f'<text x="{pad_l + plot_w - 4}" y="{y_spd + 26:.1f}" fill="#6bcf7f" font-size="10" '
+        f'text-anchor="end">eff</text>'
+    )
+    out.append(
+        f'<text x="{pad_l + plot_w - 4}" y="{y_spd + 38:.1f}" fill="#e8a87c" font-size="10" '
+        f'text-anchor="end">lim</text>'
+    )
+
     return "".join(out)
+
+
+def _chart_view_height() -> int:
+    return _CHART_PAD_TOP + 168 + 10 + 108 + 10 + 88 + 10 + 34 + 16
+
+
+def _apply_marker_numbers(markers: list[dict[str, Any]]) -> dict[float, int]:
+    out: dict[float, int] = {}
+    for idx, m in enumerate(sorted(
+        [row for row in markers if row.get("kind") == "apply"],
+        key=lambda row: float(row["t"]),
+    )):
+        out[float(m["t"])] = idx + 1
+    return out
 
 
 def _session_warning_html(summary: dict[str, Any]) -> str:
@@ -386,17 +626,23 @@ def session_ready_for_browser(data: dict[str, Any]) -> bool:
 
 def _render_ds0_rows(markers: list[dict[str, Any]]) -> str:
     if not markers:
-        return '<tr><td colspan="5">Sin cruce ds=0 en sesión</td></tr>'
+        return '<tr><td colspan="7">Sin marcas cinemáticas en sesión</td></tr>'
+    badge = _apply_marker_numbers(markers)
     rows: list[str] = []
-    for m in markers:
+    for m in sorted(markers, key=lambda row: float(row["t"])):
         dist = round(float(m.get("lim_dist_m") or m.get("apply_at_m") or 0))
         zone = round(float(m.get("zone_m") or 0))
         spd = m.get("spd")
         spd_s = f"{float(spd):.1f}" if isinstance(spd, (int, float)) else str(spd)
+        ds = m.get("dist_start_m")
+        ds_s = f"{float(ds):.0f}" if isinstance(ds, (int, float)) else ""
+        kind = "APPLY real" if m.get("kind") == "apply" else "ds=0 ideal"
+        num = badge.get(float(m["t"]), "")
+        num_s = f'<b>{num}</b>' if num else "—"
         rows.append(
-            f'<tr><td>{m["t"]}</td><td>{spd_s}</td>'
+            f'<tr><td>{num_s}</td><td>{kind}</td><td>{m["t"]}</td><td>{spd_s}</td>'
             f'<td>{m.get("lim_mph")} mph</td><td>{dist} m</td>'
-            f'<td>±{zone} m</td></tr>'
+            f'<td>{ds_s} / ±{zone} m</td></tr>'
         )
     return "".join(rows)
 
@@ -471,6 +717,7 @@ def write_html_replay(path: Path, out: Path) -> None:
     warn_html = _session_warning_html(summary)
     meta_html = _meta_line(summary)
     stats_html, layer_stats_html = _stats_html(summary, layers_meta)
+    chart_h = _chart_view_height()
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -500,16 +747,16 @@ def write_html_replay(path: Path, out: Path) -> None:
 {warn_html}
 <div class="meta" id="meta">{meta_html}</div>
 <div class="stats" id="stats">{stats_html}</div>
-<p class="leg">Arriba: spd · eff · lim. Medio: dist_start (ds) con banda APPLY ±zona y línea ds=0. Abajo: capa.</p>
-<p class="leg">Cian vertical = cruce ds=0 (ideal frenar). Rojo/amarillo = APPLY/RELEASE real.</p>
-<svg id="chart" viewBox="0 0 1000 400" height="400" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
+<p class="leg">Cuatro paneles: <b>velocidad</b> · <b>m al cartel</b> (cian) · <b>ds</b> (violeta, línea punteada = 0) · <b>capa</b>.</p>
+<p class="leg">Círculos numerados = primer APPLY por cartel; debajo <b>Xm</b> = metros al cartel en ese momento. Punto cian en panel distancia = misma marca.</p>
+<svg id="chart" viewBox="0 0 {_CHART_W} {chart_h}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
 <h2>Capas (tiempo en sesión)</h2>
 <div class="stats" id="layer-stats">{layer_stats_html}</div>
-<h2>Cruces ds=0 (ideal frenar)</h2>
+<h2>Marcas cinemáticas (ideal vs APPLY)</h2>
 <table id="ds0"><thead><tr>
-<th>t(s)</th><th>spd</th><th>cartel</th><th>m al cartel</th><th>zona ±m</th>
+<th>#</th><th>tipo</th><th>t(s)</th><th>spd</th><th>cartel</th><th>m al cartel</th><th>ds / zona</th>
 </tr></thead><tbody id="ds0-body">{ds0_rows}</tbody></table>
-<p class="leg">En ds=0 faltan <b>m al cartel</b> = distancia de frenado planificada (apply_at), no metros ya recorridos frenando.</p>
+<p class="leg">El <b>#</b> coincide con el círculo en el gráfico. <b>m al cartel</b> = probe. <b>ds</b> = margen al punto cinemático (0 = ideal).</p>
 <h2>Eventos Frenar / Soltar</h2>
 <table id="events"><thead><tr>
 <th>t(s)</th><th>spd</th><th>capa</th><th>cmd</th><th>lim@dist</th><th>ds</th><th>apply</th><th>ipc</th>
@@ -551,11 +798,11 @@ document.querySelector('#events tbody').innerHTML = rows.map(e =>
   `<td>${{e.dist_start_m?.toFixed?.(0)??''}}</td><td>${{e.apply_now?'Y':'N'}}</td><td>${{e.ipc?'Y':''}}</td></tr>`).join('');
 
 const mk = DATA.markers||[];
+const applyN = mk.filter(m=>m.kind==='apply').length;
 document.getElementById('note').innerHTML =
-  '<b>Debate:</b> la línea cian marca cuándo ds cruza 0 (punto cinemático). '+
-  'La banda verde en el gráfico ds es la ventana APPLY (±zona). '+
-  'Si FRENAR (rojo) va después del cian, llegamos tarde; si mucho antes, margen alto. '+
-  (mk.length ? `Cruces ds=0: ${{mk.length}}.` : 'Sin cruce ds=0 en sesión (¿manual / sin plan?).') +
+  '<b>Debate:</b> panel distancia baja hacia el cartel; ds cruza 0 = ideal. '+
+  'Si el círculo APPLY va antes de ds=0, el margen de zona adelanta el freno. '+
+  (applyN ? `Marcas APPLY numeradas: ${{applyN}}.` : 'Sin APPLY en sesión.') +
   ' <a href="../../docs/v2/p1_limit_capas.html">Diagrama concepto</a>.';
 </script>
 </body>

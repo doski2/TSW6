@@ -13,11 +13,12 @@ from tsw6v2.command import (
     resolve_release_command,
 )
 from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
 from tsw6v2.ipc import probe_lever
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
+from tsw6v2.target import BrakeTargetResult
 
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
@@ -64,34 +65,102 @@ class LimitBrakeDecision:
         )
 
 
+@dataclass(frozen=True)
+class _TickCtx:
+    dist_m: Optional[float]
+    next_limit_mph: Optional[float]
+    effective: float
+    speed_mph: float
+    grad: float
+    lever: int
+    cyl: Optional[float]
+
+    def decide(
+        self,
+        command: Optional[BrakeCommand],
+        reason: str,
+        *,
+        phase: str = "",
+        dist_start_m: Optional[float] = None,
+        apply_now: Optional[bool] = None,
+        detail: str = "",
+        handle_notch: Optional[int] = None,
+    ) -> LimitBrakeDecision:
+        return LimitBrakeDecision(
+            command,
+            phase=phase,
+            limit_dist_m=self.dist_m,
+            limit_mph=self.next_limit_mph,
+            effective_mph=self.effective,
+            speed_mph=self.speed_mph,
+            dist_start_m=dist_start_m,
+            apply_now=apply_now,
+            detail=detail,
+            reason=reason,
+            handle_notch=handle_notch,
+        )
+
+    def idle(self, reason: str, target: Optional[BrakeTargetResult] = None, **kw) -> LimitBrakeDecision:
+        if target is not None:
+            kw.setdefault("phase", target.phase)
+            kw.setdefault("dist_start_m", target.dist_start)
+            kw.setdefault("apply_now", target.apply_now)
+            kw.setdefault("detail", target.detail)
+        return self.decide(None, reason, **kw)
+
+    def from_target(self, cmd: BrakeCommand, target: BrakeTargetResult, reason: str) -> LimitBrakeDecision:
+        return self.decide(
+            cmd,
+            reason,
+            phase=target.phase or (cmd.phase or ""),
+            dist_start_m=target.dist_start,
+            apply_now=target.apply_now,
+            detail=target.detail,
+            handle_notch=cmd.target_notch,
+        )
+
+
 def _throttle_notch(lever: int) -> int:
     return max(0, int(lever) - NEUTRAL_NOTCH)
 
 
-def _from_target(
+def _escalate_cap_fn(
+    learner: LearnerProfile,
+    cyl: Optional[float],
+) -> Callable[[int, int], int]:
+    def _cap(prev: int, stepped: int) -> int:
+        return learner.cap_escalation(
+            committed=prev,
+            requested=stepped,
+            brake_cyl_bar=cyl,
+        )
+
+    return _cap
+
+
+def _air_apply_block(
+    learner: Optional[LearnerProfile],
     cmd: BrakeCommand,
-    *,
-    target_phase: str,
-    target,
-    effective: float,
-    speed_mph: float,
-    dist_m: Optional[float],
-    next_limit_mph: Optional[float],
-    reason: str,
-) -> LimitBrakeDecision:
-    return LimitBrakeDecision(
-        cmd,
-        phase=target_phase or (cmd.phase or ""),
-        limit_dist_m=dist_m,
-        limit_mph=next_limit_mph,
-        effective_mph=effective,
-        speed_mph=speed_mph,
-        dist_start_m=target.dist_start,
-        apply_now=target.apply_now,
-        detail=target.detail,
-        reason=reason,
-        handle_notch=cmd.target_notch,
-    )
+    cyl: Optional[float],
+    lever: int,
+) -> Optional[tuple[str, str]]:
+    if learner is None or cmd.kind != "APPLY":
+        return None
+    if learner.inhibit_reapply(cyl):
+        return ("air_recharge", "Esperar recarga aire tras soltar")
+    if not learner.air_ready(cyl, lever=lever):
+        return ("air_fill", "Esperando presión cilindro")
+    return None
+
+
+def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
+    if cmd.kind == "RELEASE":
+        return "release"
+    if cmd.kind == "COAST_THROTTLE":
+        return "coast_throttle"
+    if target.downhill_hold and cmd.kind == "APPLY":
+        return "downhill_hold"
+    return "plan"
 
 
 def evaluate_limit_tick(
@@ -107,74 +176,62 @@ def evaluate_limit_tick(
         return LimitBrakeDecision.idle(reason="no_speed")
 
     dist_m, next_limit_mph = next_speed_limit(snap)
-    speed_mph = float(snap.speed_ms) * MS_TO_MPH
     lever = probe_lever(snap)
     if lever is None:
         lever = NEUTRAL_NOTCH
-    effective = effective_limit_mph(snap)
-    grad = float(snap.gradient_pct or 0.0)
-    predict = predict_decel or (learner.predict_decel if learner else None)
-    brake_fill_s = learner.brake_fill_s if learner else None
 
-    fill_s = brake_fill_s if brake_fill_s is not None else DEFAULT_BRAKE_FILL_S
-    cyl = snap.brake_cyl_bar
+    ctx = _TickCtx(
+        dist_m=dist_m,
+        next_limit_mph=next_limit_mph,
+        effective=effective_limit_mph(snap),
+        speed_mph=float(snap.speed_ms) * MS_TO_MPH,
+        grad=float(snap.gradient_pct or 0.0),
+        lever=lever,
+        cyl=snap.brake_cyl_bar,
+    )
 
-    if learner is not None and lever is not None:
-        learner.observe_air(int(lever), cyl)
-
-    escalate_cap: Callable[[int, int], int] | None = None
     if learner is not None:
+        learner.observe_air(lever, ctx.cyl)
 
-        def _escalate_cap(prev: int, stepped: int) -> int:
-            return learner.cap_escalation(
-                committed=prev,
-                requested=stepped,
-                brake_cyl_bar=cyl,
-            )
+    escalate_cap = _escalate_cap_fn(learner, ctx.cyl) if learner else None
+    fill_s = learner.brake_fill_s if learner else DEFAULT_BRAKE_FILL_S
+    predict = predict_decel or (learner.predict_decel if learner else None)
 
-        escalate_cap = _escalate_cap
-
-    release_state.update(speed_mph, next_limit_mph)
+    release_state.update(ctx.speed_mph, next_limit_mph)
     if is_brake_applied(lever):
+        latch_ops = (
+            limit_state.latch.limit_mph if limit_state.latch is not None else None
+        )
         rel = resolve_release_command(
-            speed_mph=speed_mph,
+            speed_mph=ctx.speed_mph,
             handle_notch=lever,
-            effective_limit=effective,
+            effective_limit=ctx.effective,
             next_limit_mph=next_limit_mph,
             distance_next_m=dist_m,
-            gradient_pct=grad,
+            gradient_pct=ctx.grad,
+            latch_ops_target=latch_ops,
         )
         if rel is not None:
             if next_limit_mph is not None:
                 release_state.latch(next_limit_mph)
-            return LimitBrakeDecision(
+            return ctx.decide(
                 rel,
+                "release",
                 phase=rel.phase or "NEU",
-                limit_dist_m=dist_m,
-                limit_mph=next_limit_mph,
-                effective_mph=effective,
-                speed_mph=speed_mph,
                 detail=rel.reason,
-                reason="release",
                 handle_notch=rel.target_notch,
             )
 
     if next_limit_mph is None or dist_m is None:
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            reason="no_limit_sign",
-        )
+        return ctx.idle("no_limit_sign")
 
-    posted = effective_limit_mph(snap) if snap.speed_limit_ms else None
+    posted = ctx.effective if snap.speed_limit_ms else None
     target = evaluate_limit_brake(
         limit_state,
-        speed_mph=speed_mph,
+        speed_mph=ctx.speed_mph,
         limit_mph=next_limit_mph,
         distance_m=dist_m,
-        gradient_pct=grad,
+        gradient_pct=ctx.grad,
         accel_ms2=snap.accel_ms2,
         predict_decel=predict,
         posted_limit_mph=posted,
@@ -182,40 +239,25 @@ def evaluate_limit_tick(
         escalate_cap=escalate_cap,
     )
     if target is None:
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            reason="no_plan",
-        )
+        return ctx.idle("no_plan")
 
     if release_state.should_inhibit_limit_rebrake(
-        speed_mph=speed_mph,
+        speed_mph=ctx.speed_mph,
         next_limit_mph=next_limit_mph,
         handle_notch=lever,
         plan=None,
-        gradient_pct=grad,
+        gradient_pct=ctx.grad,
         distance_next_m=dist_m,
-        effective_limit=effective,
+        effective_limit=ctx.effective,
     ):
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            phase=target.phase,
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail=target.detail,
-            reason="coast_latch",
-        )
+        return ctx.idle("coast_latch", target=target)
 
     cmd = target.to_brake_command(
         throttle_notch=_throttle_notch(lever),
         current_notch=lever,
-        speed_mph=speed_mph,
-        gradient_pct=grad,
+        speed_mph=ctx.speed_mph,
+        gradient_pct=ctx.grad,
+        brake_committed=limit_state.committed_handle is not None,
     )
     if (
         target.downhill_hold
@@ -228,87 +270,24 @@ def evaluate_limit_tick(
             target_notch=NEUTRAL_NOTCH,
             reason="Quitar tracción (mantener bajada)",
         )
-        return LimitBrakeDecision(
+        return ctx.decide(
             coast,
+            "coast_throttle",
             phase="NEU",
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
             dist_start_m=target.dist_start,
             apply_now=target.apply_now,
             detail=target.detail,
-            reason="coast_throttle",
             handle_notch=coast.target_notch,
         )
+
     if cmd is None:
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            phase=target.phase,
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail=target.detail,
-            reason="command_none",
-        )
+        return ctx.idle("command_none", target=target)
     if cmd.kind == "APPLY" and not target.apply_now:
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            phase=target.phase,
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail=target.detail,
-            reason="apply_deferred",
-        )
-    if (
-        learner is not None
-        and cmd.kind == "APPLY"
-        and learner.inhibit_reapply(cyl)
-    ):
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            phase=target.phase,
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail="Esperar recarga aire tras soltar",
-            reason="air_recharge",
-        )
-    if (
-        learner is not None
-        and cmd.kind == "APPLY"
-        and not learner.air_ready(cyl)
-    ):
-        return LimitBrakeDecision.idle(
-            limit_dist_m=dist_m,
-            limit_mph=next_limit_mph,
-            effective_mph=effective,
-            speed_mph=speed_mph,
-            phase=target.phase,
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail="Esperando presión cilindro",
-            reason="air_fill",
-        )
-    reason = "release" if cmd.kind == "RELEASE" else "plan"
-    if cmd.kind == "COAST_THROTTLE":
-        reason = "coast_throttle"
-    elif target.downhill_hold and cmd.kind == "APPLY":
-        reason = "downhill_hold"
-    return _from_target(
-        cmd,
-        target_phase=target.phase,
-        target=target,
-        effective=effective,
-        speed_mph=speed_mph,
-        dist_m=dist_m,
-        next_limit_mph=next_limit_mph,
-        reason=reason,
-    )
+        return ctx.idle("apply_deferred", target=target)
+
+    air_block = _air_apply_block(learner, cmd, ctx.cyl, lever)
+    if air_block is not None:
+        reason, detail = air_block
+        return ctx.idle(reason, target=target, detail=detail)
+
+    return ctx.from_target(cmd, target, _plan_reason(cmd, target))

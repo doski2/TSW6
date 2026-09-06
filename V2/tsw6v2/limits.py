@@ -16,8 +16,12 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from tsw6v2.constants import passenger_ops_target_mph
-from tsw6v2.limit_containment import try_posted_downhill_hold
-from tsw6v2.limit_notch import apply_notch_hysteresis, pick_weakest_sufficient_notch
+from tsw6v2.limit_containment import pick_downhill_containment
+from tsw6v2.limit_notch import (
+    apply_notch_hysteresis,
+    downhill_defer_brake_commit,
+    pick_weakest_sufficient_notch,
+)
 from tsw6v2.limit_state import (
     LimitBrakeLatch,
     LimitBrakeState,
@@ -57,9 +61,9 @@ def evaluate_limit_brake(
     escalate_cap: Callable[[int, int], int] | None = None,
 ) -> Optional[BrakeTargetResult]:
     """Planifica frenada al cartel. Re-latch si cambia el límite objetivo."""
-    posted_hold = None
+    downhill_contain = None
     if posted_limit_mph is not None and limit_mph is not None and distance_m is not None:
-        posted_hold = try_posted_downhill_hold(
+        downhill_contain = pick_downhill_containment(
             state,
             speed_mph=speed_mph,
             posted_limit_mph=posted_limit_mph,
@@ -81,13 +85,14 @@ def evaluate_limit_brake(
             predict_decel=predict_decel,
             brake_fill_s=brake_fill_s,
             escalate_cap=escalate_cap,
+            current_posted_mph=posted_limit_mph,
         )
 
     # H1: dentro del horizonte del cartel siguiente → plan latch gana.
     if next_r is not None and next_r.apply_now:
         return next_r
-    if posted_hold is not None:
-        return posted_hold
+    if downhill_contain is not None:
+        return downhill_contain
     return next_r
 
 
@@ -103,6 +108,7 @@ def _evaluate_next_limit_brake(
     predict_decel: Optional[PredictDecelFn],
     brake_fill_s: float,
     escalate_cap: Callable[[int, int], int] | None = None,
+    current_posted_mph: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     """BRAKE_LIMIT — latch al cartel siguiente (techo operativo posted−1 mph)."""
     ops_target_mph = passenger_ops_target_mph(limit_mph)
@@ -114,19 +120,7 @@ def _evaluate_next_limit_brake(
         state.reset()
         return None
 
-    if limit_changed(state.last_limit_mph, limit_mph):
-        latch_limit_target(
-            state,
-            posted_limit_mph=limit_mph,
-            distance_m=distance_m,
-            speed_mph=speed_mph,
-            gradient_pct=gradient_pct,
-            accel_ms2=accel_ms2,
-            base_decel=base_decel,
-            predict_decel=predict_decel,
-            brake_fill_s=brake_fill_s,
-        )
-    elif state.latch is None:
+    if limit_changed(state.last_limit_mph, limit_mph) or state.latch is None:
         latch_limit_target(
             state,
             posted_limit_mph=limit_mph,
@@ -158,6 +152,20 @@ def _evaluate_next_limit_brake(
         distance_m=distance_m,
         latch=latch,
     )
+    defer_commit = (
+        state.committed_handle is None
+        and downhill_defer_brake_commit(
+            speed_mph=speed_mph,
+            ops_target_mph=latch.limit_mph,
+            distance_m=distance_m,
+            gradient_pct=gradient_pct,
+            dist_start=dist_start,
+            current_posted_mph=current_posted_mph,
+            next_posted_mph=latch.posted_limit_mph,
+        )
+    )
+    if defer_commit:
+        apply_now = False
     apply_at = max(0.0, distance_m - dist_start)
     apply_zone_m = apply_zone_margin_m(speed_mph * MPH_TO_MS, apply_at)
     handle, phase = apply_notch_hysteresis(
@@ -169,6 +177,8 @@ def _evaluate_next_limit_brake(
         apply_zone_m=apply_zone_m,
         speed_mph=speed_mph,
         limit_mph=latch.limit_mph,
+        gradient_pct=gradient_pct,
+        defer_commit=defer_commit,
         escalate_cap=escalate_cap,
     )
 
