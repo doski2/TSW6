@@ -6,7 +6,7 @@
 Checklist operativo que acompaña **cada paso** del § Orden en [PLAN_V2](PLAN_V2.md#orden-de-implementación).
 Las **fases** (0–6, capacidades del producto) están en el mismo doc: [§ Fases 0–6](PLAN_V2.md#fase-0--contrato-io).
 
-**Estado rápido (2026-09-06):** paso **3** — cartel P1 en `V2/tsw6v2/` (**87** tests V2).
+**Estado rápido (2026-09-06):** paso **3** — cartel P1 en `V2/tsw6v2/` (**112** tests V2).
 Orquestación v1 en `archive/braking_v1_autopilot/`. Autopilot GUI (`iniciar_autopilot.bat`) usa
 `tsw6v2.autopilot_limit` → mismo `evaluate_limit_tick` que `run_p1_session.bat`.
 
@@ -155,7 +155,7 @@ Alcance: solo **cartel** (`dist_limit_cm` / `next_limit_ms`); sin estación ni s
 - [ ] Probe instalado (`scripts\ue4ss\install_ue4ss_probe.bat`) y juego con UE4SS.
 - [ ] Partida **Class 323** en marcha (recomendado: Cross-City, tramo con carteles 60→55 o 55→45).
 - [ ] Palanca en **neutro (4)** o tracción moderada; sin freno manual al iniciar el agente.
-- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **79** tests).
+- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **112** tests).
 - [ ] Opcional: copiar una línea GetData a fixture si encuentras un caso raro.
 
 #### Comandos
@@ -176,12 +176,34 @@ V2\run.bat console --mode limit --investigate --log --route cross-city
 REM Estación / señal (trace ya; P1 cuando pasos 4-7):
 V2\run_p1_session.bat signal four-oaks
 
-REM 3) Con perfil aprendido (si existe)
-V2\run.bat console --limit-brake --profile logs\profiles\class_323.json
+REM 3) Perfil aprendido — auto si existe logs\profiles\<vehicle>.json (campo vehicle= en GetData)
+REM     Forzar ruta explícita:
+V2\run.bat console --limit-brake --profile logs\profiles\rvm_bcc_wrm_class323_dms_a_c.json
 
 REM 4) Visor solo lectura (comprobar seq / mph en paralelo)
 V2\run_gui.bat
 ```
+
+#### Perfil learner (`logs/profiles/`)
+
+Sin `--profile`, el agente intenta cargar **`logs/profiles/<vehicle>.json`** en el **primer tick**
+cuando GetData trae `vehicle=…`. El nombre del fichero es el slug del probe: minúsculas, espacios
+→ `_`. Ejemplo Class 323: `vehicle=rvm_bcc_wrm_class323_dms_a_c` →
+`logs/profiles/rvm_bcc_wrm_class323_dms_a_c.json`.
+
+| Acción | Comportamiento |
+| --- | --- |
+| Archivo existe | Consola: `perfil <- …` · campo `profile` en metadatos JSONL |
+| Formato v1 (`ema` / `ema_bands`) | Sí — `LearnerProfile` predice por banda velocidad + gradiente |
+| Formato v2 (`decel_by_notch`) | Sí — lookup plano por muesca |
+| No existe | Fracciones UK B1/B2/B3 (`physics.py`); sin error |
+| `--profile PATH` | Esa ruta gana; **no** auto-carga |
+| Al cerrar sesión | Si hubo aprendizaje de aire (`brake_fill_n` nuevo), actualiza solo `brake_fill_*` en JSON v1 |
+
+`V2\run_p1_session.bat` no pasa `--profile`; usa auto-carga si el JSON está en `logs/profiles/`.
+Calibrar: `aprender.bat` / `learn_monitor.py` (v1) o copiar el JSON desde otra máquina.
+
+Código: `learner.py` · `learner_v1.py` · `AgentLoop.auto_profile` · `cli.run_console`.
 
 GetData vivo: `%TEMP%\TSW6Bridge\GetData.txt` — comprobar que `seq` sube ~20 Hz y existen
 `dist_limit_cm` y `next_limit_ms` cuando hay cartel adelante.
@@ -253,6 +275,7 @@ Cada tick → una línea JSON en `logs/v2/<timestamp>_<route>_limit.jsonl` (o ru
 | `p1.apply_now` | ¿En ventana cinemática? |
 | `p1.reason` | `plan`, `release`, `apply_deferred`, `coast_latch`, … |
 | `p1.detail` | Texto del plan (contención bajada, latch, …) |
+| `brake_fill_s` | Tiempo de llenado aire aprendido (perfil activo) |
 | `ipc` | Mandos enviados y ACK |
 
 Valores de `p1.reason`:

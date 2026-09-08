@@ -1,7 +1,7 @@
 -- TelemetryProbeMod v2 — constantes (solo I/O GetData + IPC).
 local M = {}
 
-M.PROBE_BUILD = "20260905b"
+M.PROBE_BUILD = "20260908c"
 M.PROBE_AUTO_START = true
 
 M.HOOK_PATH =

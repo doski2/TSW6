@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path, read_probe_file
+from tsw6v2.bridge.ipc_bus import purge_lua_commands
 from tsw6v2.command import BrakeCommand, BrakeReleaseState
 from tsw6v2.constants import AGENT_ACK_TIMEOUT_S, MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.decision import evaluate_limit_tick
@@ -143,6 +144,8 @@ class AgentLoop:
     post_ipc_sleep_s: float = 0.02
     limit_brake_enabled: bool = False
     learner: Optional[LearnerProfile] = None
+    auto_profile: bool = True
+    profiles_dir: Optional[Path] = None
 
     _target_notch: Optional[int] = field(default=None, init=False, repr=False)
     _next_cmd_id: int = field(default=1, init=False, repr=False)
@@ -150,10 +153,37 @@ class AgentLoop:
     _limit_state: LimitBrakeState = field(default_factory=LimitBrakeState, init=False, repr=False)
     _release_state: BrakeReleaseState = field(default_factory=BrakeReleaseState, init=False, repr=False)
     _learner: LearnerProfile = field(default_factory=LearnerProfile, init=False, repr=False)
+    _learner_explicit: bool = field(default=False, init=False, repr=False)
+    _profile_path: Optional[Path] = field(default=None, init=False, repr=False)
+    _auto_profile_tried: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.learner is not None:
             self._learner = self.learner
+            self._learner_explicit = True
+
+    @property
+    def loaded_profile_path(self) -> Optional[Path]:
+        return self._profile_path
+
+    @property
+    def active_learner(self) -> LearnerProfile:
+        return self._learner
+
+    def _try_auto_load_profile(self, vehicle: str) -> None:
+        if self._auto_profile_tried or self._learner_explicit or not self.auto_profile:
+            return
+        self._auto_profile_tried = True
+        if not vehicle or vehicle == "?":
+            return
+        path = LearnerProfile.resolve_profile_path(
+            vehicle, profiles_dir=self.profiles_dir
+        )
+        if path is None:
+            return
+        loaded = LearnerProfile.from_json(path)
+        self._learner = loaded
+        self._profile_path = path
 
     def request_notch(self, notch: int) -> None:
         self._target_notch = max(0, min(8, int(notch)))
@@ -162,6 +192,8 @@ class AgentLoop:
         self.request_notch(self.neutral_notch)
 
     def clear_target(self) -> None:
+        if self._target_notch is not None:
+            purge_lua_commands()
         self._target_notch = None
 
     @property
@@ -180,9 +212,22 @@ class AgentLoop:
         elif cmd.kind == "APPLY":
             self.request_notch(notch)
 
+    def _maybe_release_driver_control(self, lever: Optional[int]) -> None:
+        """Suelta ``target`` IPC si la palanca ya alcanzó el objetivo."""
+        if self._target_notch is None or lever is None:
+            return
+        target = int(self._target_notch)
+        lev = int(lever)
+        neutral = int(self.neutral_notch)
+        reached = lev >= target if target >= neutral else lev <= target
+        if reached:
+            self.clear_target()
+
     def step(self) -> AgentSnapshot:
         self._tick += 1
         snap = self.read_probe()
+        if snap is not None and snap.vehicle:
+            self._try_auto_load_profile(snap.vehicle)
         limit_mph: Optional[float] = None
         limit_dist_m: Optional[float] = None
         effective_limit_mph: Optional[float] = None
@@ -215,6 +260,8 @@ class AgentLoop:
             if decision.command is not None:
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(decision.command)
+            else:
+                self._maybe_release_driver_control(probe_lever(snap))
             p1_layer = classify_layer(
                 reason=p1_reason,
                 cmd=p1_cmd or None,

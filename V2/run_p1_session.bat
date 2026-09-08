@@ -26,6 +26,7 @@ if %ERR% NEQ 0 (
     echo [OK] Sesion cerrada — JSONL + replay HTML en logs\v2\
     echo      HTML solo si ^>=15 ticks y ^>=5s; navegador si ^>=40 ticks y ^>=12s
     echo      Concepto capas: docs\v2\p1_limit_capas.html
+    echo      Perfil frenado: logs\profiles\^<vehiculo^>.json si existe ^(auto^)
 )
 pause
 exit /b %ERR%

@@ -16,10 +16,10 @@ def test_h1_horizon_positive():
 
 
 def test_h1_no_hold_on_descending_zone_60_to_55():
-    """60→55: sin HOLD_DH; solo WATCH/BRAKE_LIMIT dentro del horizonte."""
+    """60→55 @ −1%%: bajo techo HOLD (60.2); solo WATCH/BRAKE_LIMIT en horizonte."""
     r = evaluate_limit_brake(
         LimitBrakeState(),
-        speed_mph=60.22,
+        speed_mph=60.1,
         limit_mph=55.0,
         distance_m=474.0,
         gradient_pct=-1.0,
@@ -30,8 +30,17 @@ def test_h1_no_hold_on_descending_zone_60_to_55():
     assert not r.apply_now
 
 
+def test_zone_hold_ceiling_scales_with_gradient():
+    from tsw6v2.constants import posted_zone_hold_ceiling_mph, zone_hold_over_mph
+
+    assert zone_hold_over_mph(0.0) == 0.5
+    assert abs(zone_hold_over_mph(-1.0) - 0.2) < 0.01
+    assert posted_zone_hold_ceiling_mph(60.0, -1.0) == 60.2
+    assert posted_zone_hold_ceiling_mph(60.0, -0.2) == 60.5
+
+
 def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
-    """60→55 lejos: > posted+0.5 → B1 suave a @60.5, no al 55 todavía."""
+    """60→55 lejos: > techo HOLD (60.2 @ −1%%) → B1 suave, no al 55 todavía."""
     r = evaluate_limit_brake(
         LimitBrakeState(),
         speed_mph=62.5,
@@ -43,7 +52,7 @@ def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
     assert r is not None
     assert r.downhill_hold
     assert r.apply_now
-    assert r.target_speed_mph == 60.5
+    assert r.target_speed_mph == 60.2
     assert r.handle_notch == 3
     assert r.phase == "B1"
 
@@ -92,10 +101,10 @@ def test_h1_60_to_55_downhill_distance_profile():
 
 
 def test_h1_hold_same_zone_uses_scoring_ceiling():
-    """Zona 60→60 en bajada: HOLD_DH solo si superas posted+0.5 (60.5)."""
+    """Zona 60→60 @ −1%%: HOLD_DH si superas 60.2 (techo HOLD fuerte)."""
     under = evaluate_limit_brake(
         LimitBrakeState(),
-        speed_mph=60.5,
+        speed_mph=60.1,
         limit_mph=60.0,
         distance_m=2000.0,
         gradient_pct=-1.0,
@@ -113,9 +122,9 @@ def test_h1_hold_same_zone_uses_scoring_ceiling():
     )
     assert over is not None
     assert over.downhill_hold
-    assert over.target_speed_mph == 60.5
+    assert over.target_speed_mph == 60.2
     assert "posted 60" in over.detail
-    assert "@60.5" in over.detail
+    assert "@60.2" in over.detail
 
 
 def test_h1_no_hold_on_ascending_exit():
@@ -143,7 +152,7 @@ def test_h1_posted_hold_far_from_next_sign():
     )
     assert r is not None
     assert r.downhill_hold
-    assert "@60.5" in r.detail
+    assert "@60.2" in r.detail
     assert "latched" not in r.detail
 
 

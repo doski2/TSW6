@@ -103,7 +103,7 @@ def _hold_if_over_zone_ceiling(
     gradient_pct: float,
     next_distance_m: Optional[float],
 ) -> Optional[BrakeTargetResult]:
-    hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph)
+    hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct)
     if speed_mph <= hold_target:
         return None
     return _build_downhill_hold_result(
@@ -259,7 +259,7 @@ def downhill_brake_release_floor_mph(
         gradient_pct=gradient_pct,
     ):
         eff_floor = posted_zone_coast_floor_mph(effective_limit)
-        ceiling = posted_zone_hold_ceiling_mph(effective_limit)
+        ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
         if eff_floor <= speed_mph <= ceiling:
             return eff_floor
 

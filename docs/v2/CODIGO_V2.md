@@ -37,7 +37,7 @@ V2/
     decision.py          tick cartel → BrakeCommand
     loop.py              AgentLoop (~20 Hz)
     autopilot_limit.py   puente speed_decider → evaluate_limit_tick (solo cartel)
-    learner.py / brake_air.py
+    learner.py / learner_v1.py / brake_air.py
     trace.py / session_report.py
     ipc.py / probe.py / channel.py / diagnostic.py
     gui.py / cli.py / p1_mode.py / p1_layers.py
@@ -64,6 +64,9 @@ V2\test_ipc.bat
 
 `PYTHONPATH` debe incluir la raíz del repo **y** `V2/` (los `.bat` lo configuran).
 
+Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesión si existe; ver
+[MANTENIMIENTO § Perfil learner](MANTENIMIENTO.md#perfil-learner-logsprofiles)).
+
 ## v1 vs V2
 
 | Situación | Qué hacer |
@@ -80,7 +83,7 @@ V2\test_ipc.bat
 | --- | --- | --- |
 | 1 | Contrato GetData | Casi cerrado |
 | 2 | Esqueleto `V2/tsw6v2/` | **Cerrado** (pytest + `test-ipc` in-game) |
-| **3** | Física / learner / carteles en V2 | **pytest verde** (87 tests `V2/tests/`) · validar in-game `run_p1_session` |
+| **3** | Física / learner / carteles en V2 | **pytest verde** (112 tests `V2/tests/`) · validar in-game `run_p1_session` |
 
 Módulos cartel: `planning` · `limit_state` · `limit_notch` · `limit_containment` · `limits` · `decision` — ver [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_).
 

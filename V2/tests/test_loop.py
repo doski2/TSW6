@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import NEUTRAL_NOTCH
+from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop, AgentSnapshot
 from tsw6v2.testdata import write_getdata_line
 
@@ -42,6 +43,114 @@ class TestAgentLoop:
         loop = AgentLoop()
         loop.request_neutral()
         assert loop.target_notch == NEUTRAL_NOTCH
+
+    def test_clear_target_when_driver_accelerates(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=6)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_neutral()
+        with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+            out = loop.step()
+        assert loop.target_notch is None
+        assert not out.ipc_sent
+        ipc.assert_not_called()
+
+    def test_holds_neutral_ipc_while_brake_releasing(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=3)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0)
+        loop.request_neutral()
+        with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+            loop.step()
+        ipc.assert_called_once()
+
+    def test_holds_brake_target_while_handle_at_neutral(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=4)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_notch(3)
+        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision.idle(reason="apply_deferred")
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+                loop.step()
+        assert loop.target_notch == 3
+        ipc.assert_called_once()
+
+    def test_clear_brake_target_when_handle_reached_b1(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=3)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_notch(3)
+        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision.idle(reason="command_none")
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+                loop.step()
+        assert loop.target_notch is None
+        ipc.assert_not_called()
+
+    def test_clear_brake_target_when_handle_stronger_than_target(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=2)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_notch(3)
+        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision.idle(reason="command_none")
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+                loop.step()
+        assert loop.target_notch is None
+        ipc.assert_not_called()
+
+    def test_clear_target_at_neutral_after_release(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=4)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_neutral()
+        with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+            loop.step()
+        assert loop.target_notch is None
+        ipc.assert_not_called()
+
+    def test_auto_profile_load(self, tmp_path: Path) -> None:
+        profiles = tmp_path / "profiles"
+        profiles.mkdir()
+        profile = profiles / "class323.json"
+        profile.write_text('{"decel_by_notch": {"3": 0.44}}', encoding="utf-8")
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=6, vehicle="Class323")
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            profiles_dir=profiles,
+        )
+        out = loop.step()
+        assert loop.loaded_profile_path == profile
+        assert loop.active_learner.predict_decel(3, 50.0, 0.0) == 0.44
+        assert out.vehicle == "Class323"
+
+    def test_auto_profile_skipped_when_explicit(self, tmp_path: Path) -> None:
+        profiles = tmp_path / "profiles"
+        profiles.mkdir()
+        profile = profiles / "class323.json"
+        profile.write_text('{"decel_by_notch": {"3": 0.99}}', encoding="utf-8")
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=6, vehicle="Class323")
+        explicit = LearnerProfile()
+        loop = AgentLoop(
+            getdata_path=gd,
+            learner=explicit,
+            auto_profile=True,
+            profiles_dir=profiles,
+            post_ipc_sleep_s=0.0,
+        )
+        loop.step()
+        assert loop.loaded_profile_path is None
+        assert loop.active_learner is explicit
 
 
 if __name__ == "__main__":

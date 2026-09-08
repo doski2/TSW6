@@ -45,9 +45,15 @@ def run_console(
         print(exc, file=sys.stderr)
         return 2
 
-    learner = LearnerProfile.from_json(profile_path) if profile_path else LearnerProfile()
-    loop = AgentLoop(learner=learner)
+    learner = LearnerProfile.from_json(profile_path) if profile_path else None
+    loop = AgentLoop(
+        learner=learner,
+        auto_profile=profile_path is None,
+    )
     loop.post_ipc_sleep_s = 0.0
+    profile_note: Optional[str] = None
+    if profile_path is not None:
+        profile_note = str(profile_path)
     for note in apply_p1_mode(loop, p1_mode):
         print(f"AVISO: {note}", file=sys.stderr)
 
@@ -57,14 +63,6 @@ def run_console(
 
     trace: Optional[JsonlTrace] = None
     if log_path is not None:
-        trace = JsonlTrace(
-            log_path,
-            session_meta(
-                mode=session_trace_mode(p1_mode),
-                route=route,
-                profile=str(profile_path) if profile_path else None,
-            ),
-        )
         print(f"log -> {log_path.resolve()}")
 
     print(f"TSW6 V2 agent - modo={p1_mode} - Ctrl+C para salir")
@@ -73,6 +71,18 @@ def run_console(
             if duration_s is not None and (time.monotonic() - t0) >= duration_s:
                 break
             snap = loop.step()
+            if profile_note is None and loop.loaded_profile_path is not None:
+                profile_note = str(loop.loaded_profile_path)
+                print(f"perfil <- {loop.loaded_profile_path.resolve()}")
+            if trace is None and log_path is not None:
+                trace = JsonlTrace(
+                    log_path,
+                    session_meta(
+                        mode=session_trace_mode(p1_mode),
+                        route=route,
+                        profile=profile_note,
+                    ),
+                )
             t_ms = (time.monotonic() - t0) * 1000.0
             if use_investigate:
                 print(format_investigate(snap))
@@ -115,10 +125,12 @@ def run_console(
                     )
             except (OSError, ValueError) as exc:
                 print(f"AVISO: no se pudo generar replay HTML: {exc}", file=sys.stderr)
-        if profile_path is not None and learner.brake_fill_n > 0:
+        save_path = profile_path or loop.loaded_profile_path
+        active = loop.active_learner
+        if save_path is not None and active.brake_fill_n > 0:
             try:
-                learner.save_json(profile_path)
-                print(f"perfil -> {profile_path.resolve()} (fill={learner.brake_fill_s:.2f}s)")
+                active.save_json(save_path)
+                print(f"perfil -> {save_path.resolve()} (fill={active.brake_fill_s:.2f}s)")
             except OSError as exc:
                 print(f"AVISO: no se pudo guardar perfil: {exc}", file=sys.stderr)
     return 0

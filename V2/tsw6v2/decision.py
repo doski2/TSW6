@@ -212,6 +212,9 @@ def evaluate_limit_tick(
             latch_ops_target=latch_ops,
         )
         if rel is not None:
+            # Tras RELEASE, permitir coast/defer de nuevo; si no, BRAKE_LIMIT
+            # re-compromete B1 al tick siguiente (caza APPLY↔RELEASE ~59.5 mph).
+            limit_state.clear_commitment()
             if next_limit_mph is not None:
                 release_state.latch(next_limit_mph)
             return ctx.decide(

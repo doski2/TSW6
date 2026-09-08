@@ -28,6 +28,44 @@ def test_release_via_decision_tick():
     assert decision.command.kind == "RELEASE"
 
 
+def test_release_clears_committed_handle_to_avoid_reapply_chatter():
+    """60→55 bajada: RELEASE no debe re-comprometer B1 al tick siguiente."""
+    state = LimitBrakeState()
+    state.committed_handle = 3
+    state.committed_phase = "B1"
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 26.59,  # ~59.5 mph — banda coast zona 60
+            "lever_notch": 3,
+            "dist_limit_cm": 150000.0,
+            "next_limit_ms": 24.5872,  # 55 mph
+            "speed_limit_ms": 26.8224,  # 60 mph vigente
+            "gradient_pct": -1.0,
+        }
+    )
+    release = BrakeReleaseState()
+    rel = evaluate_limit_tick(state, release, snap)
+    assert rel.command is not None
+    assert rel.command.kind == "RELEASE"
+    assert state.committed_handle is None
+
+    snap2 = ProbeSnapshot.from_dict(
+        {
+            "seq": 2,
+            "speed_ms": 26.59,
+            "lever_notch": 4,
+            "dist_limit_cm": 150000.0,
+            "next_limit_ms": 24.5872,
+            "speed_limit_ms": 26.8224,
+            "gradient_pct": -1.0,
+        }
+    )
+    follow = evaluate_limit_tick(state, release, snap2)
+    assert follow.command is None
+    assert follow.reason in ("apply_deferred", "command_none")
+
+
 def test_apply_when_over_limit_close():
     snap = ProbeSnapshot.from_dict(
         {

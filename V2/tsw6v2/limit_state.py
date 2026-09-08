@@ -48,6 +48,10 @@ class LimitBrakeState:
     def reset(self) -> None:
         self.latch = None
         self.last_limit_mph = None
+        self.clear_commitment()
+
+    def clear_commitment(self) -> None:
+        """Suelta muesca comprometida (p. ej. tras RELEASE) sin borrar el latch."""
         self.committed_handle = None
         self.committed_phase = None
 

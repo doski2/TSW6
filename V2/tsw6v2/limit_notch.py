@@ -91,7 +91,9 @@ def downhill_defer_brake_commit(
         current_posted_mph is not None
         and next_posted_mph is not None
         and is_descending_limit_zone(current_posted_mph, next_posted_mph)
-        and speed_mph <= downhill_ops_coast_ceiling_mph(current_posted_mph)
+        and speed_mph <= downhill_ops_coast_ceiling_mph(
+            current_posted_mph, gradient_pct
+        )
     ):
         return True
     return _downhill_coast_trim_active(

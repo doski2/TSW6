@@ -100,9 +100,21 @@ class BrakeCommand:
 
 
 def limit_release_over_mph(gradient_pct: float = 0.0) -> float:
-    """Banda RELEASE plana: en bajada no adelantar (g acelera)."""
-    del gradient_pct
-    return LIMIT_RELEASE_MAX_OVER_MPH
+    """
+    Banda RELEASE sobre el suelo objetivo.
+
+    Llano: ``LIMIT_RELEASE_MAX_OVER_MPH`` (0.4).
+    Bajada: más ancha cuanto más pendiente — soltar un poco antes; ``g`` corrige
+    después (``physics.py`` cabecera). Sesión 323 Cross-City: ~−1 %%.
+    """
+    if not is_downhill_gradient(gradient_pct):
+        return LIMIT_RELEASE_MAX_OVER_MPH
+    g = min(1.0, abs(float(gradient_pct)))
+    if g <= 0.3:
+        return LIMIT_RELEASE_MAX_OVER_MPH
+    # −0.3 %% → 0.40 mph; −1.0 %% → 0.55 mph
+    t = (g - 0.3) / 0.7
+    return LIMIT_RELEASE_MAX_OVER_MPH + t * 0.15
 
 
 def command_from_target(
@@ -366,9 +378,9 @@ class BrakeReleaseState:
         distance_next_m: Optional[float],
         effective_limit: float,
     ) -> bool:
-        if self._coast_latch is None or plan is None:
+        if self._coast_latch is None:
             return False
-        if plan.target_kind != "SPEED_LIMIT":
+        if plan is not None and plan.target_kind != "SPEED_LIMIT":
             return False
         if is_downhill_limit_approach(gradient_pct, distance_next_m):
             return False
@@ -444,7 +456,7 @@ def resolve_release_command(
         target_mph=hold_target,
     ):
         return None
-    if speed_mph > target + limit_release_over_mph():
+    if speed_mph > target + release_over:
         return None
     # Parado con freno del jugador al iniciar escenario: spd=0 y cartel lejos no es
     # «objetivo alcanzado» — solo soltar si vamos cerca de la velocidad del cartel.

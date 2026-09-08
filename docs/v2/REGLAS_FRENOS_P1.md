@@ -25,7 +25,7 @@ Ideas que **sí** entran en el diseño V2 — reimplementadas, no pegadas.
 ### 1. Física única
 
 - Una distancia: **`s = (v² − u²) / (2a_eff)`** (+ margen reacción + fill aire).
-- **`a`** de learner si hay perfil; si no, fracciones B1/B2/B3 UK.
+- **`a`** de learner si hay perfil (`logs/profiles/<vehicle>.json`, auto-carga en sesión); si no, fracciones B1/B2/B3 UK.
 - Pendiente: **una vez** — en `a` aprendida **o** en `g` en la fórmula, nunca las dos.
 - TSW penaliza **> límite + 1 mph** → en plan usamos **+0,9 mph** sobre el cartel **vigente** (techo de scoring).
 - El cartel **siguiente** (BRAKE_LIMIT) usa **−1 mph** sobre su posted (UK pasajeros).
@@ -34,7 +34,7 @@ Ideas que **sí** entran en el diseño V2 — reimplementadas, no pegadas.
 
 | Capa | Intención | Fórmula | Ej. zona 60, next 55 |
 | --- | --- | --- | --- |
-| **Zona vigente** — HOLD_DH, contención bajada | No superar el límite **actual** en bajada | `posted + 0.5` | **60.5** |
+| **Zona vigente** — HOLD_DH, contención bajada | No superar el límite **actual** en bajada | `posted + zone_hold_over(grad)` | **60.2** @ −1 %% / **60.5** suave |
 | **Cartel siguiente** — BRAKE_LIMIT (latch) | Llegar al **next** con margen UK | `posted_next − 1` | **54** (cartel 55) |
 | **Penalización TSW** (histéresis / scoring) | Límite duro juego | `posted + 0.9` | **60.9** |
 
@@ -175,14 +175,18 @@ Todas en `constants.py` o sección `P1_LIMIT_TUNING` (pendiente agrupar).
 | Constante | Valor V2 | Notas |
 | --- | --- | --- |
 | `SAFETY_MARGIN` | 1.10 | Validar JSONL (era 1.20) |
-| `LIMIT_ZONE_HOLD_OVER_MPH` | 0.5 | Techo zona vigente HOLD (60→60.5) |
+| `LIMIT_ZONE_HOLD_OVER_MPH` | 0.5 | Techo HOLD bajada suave (60→60.5) |
+| `LIMIT_ZONE_HOLD_OVER_STEEP_MPH` | 0.2 | Techo HOLD bajada fuerte −1 %% (60→60.2) |
+| `zone_hold_over_mph(grad)` | 0.5→0.2 | Interpola según pendiente |
 | `LIMIT_ZONE_COAST_OVER_OPS_MPH` | 0.5 | Suelo coast tras contener (59→59.5) |
 | `LIMIT_SCORING_MAX_OVER_MPH` | 0.9 | Penalización TSW (histéresis) |
 | `DOWNHILL_LIMIT_GRADIENT_PCT` | −0.3 | Umbral bajada |
 | `PASSENGER_OPS_MARGIN_MPH` | 1.0 | Solo **BRAKE_LIMIT** al next (55→54); no HOLD_DH |
 | `LIMIT_DOWNHILL_COAST_TRIM_MPH` | 2.0 | Coast/defer cerca del ops del next; tope escalada B2/B3 en bajada |
 | `LIMIT_CONTAIN_ESCALATE_OVER_MPH` | 0.65 | Subir muesca en HOLD si `spd > techo + 0.65` |
-| Trigger repunte bajada | 0.20 / 0.28 / 0.35 mph | Según pendiente |
+| `LIMIT_RELEASE_MAX_OVER_MPH` | 0.4 | RELEASE en llano |
+| `limit_release_over_mph(grad)` | 0.4→0.55 | Bajada: banda más ancha si más pendiente (−1 %% → ~0.55) |
+| Trigger repunte bajada | 0.20 / 0.28 / 0.35 mph | **Pendiente** — no cableado aún |
 | `LIMIT_REACTION_S` | 1.5 | + `brake_fill_s` |
 | `LIMIT_COAST_BAND_MPH` | 0.25 | Revisar |
 
@@ -262,7 +266,7 @@ IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD
 
 | Fecha | Qué |
 | --- | --- |
-| 2026-09-06 | Techo zona **60.5** + coast **59.5**; RELEASE lejos del horizonte (sesión 155756Z) |
+| 2026-09-06 | HOLD techo escala con pendiente: `zone_hold_over_mph` 0.5→0.2 @ −1 %% |
 | 2026-09-06 | Archive v1; `planning.py` + `constants.py` umbrales; doc alineado |
 | 2026-09-04 | Inventario legacy + sesión Cross-City |
 | 2026-09-04 | H1 implementado (`HOLD_DH`, `downhill_hold`) |

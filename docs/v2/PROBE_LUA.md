@@ -1,6 +1,6 @@
 # Probe Lua v2 — auditoría y mapa
 
-**Build:** `20260905b` · **Plan:** [PLAN_V2 §4.1](PLAN_V2.md#41-tick-lua-ue4ss) ·
+**Build:** `20260908c` (revert sync visual VHID; ver nota abajo) · **Plan:** [PLAN_V2 §4.1](PLAN_V2.md#41-tick-lua-ue4ss) ·
 **Contrato:** [CANAL_CONTROL](../CANAL_CONTROL.md)
 
 ## Resumen
@@ -20,7 +20,12 @@
 | `util.lua` | `unwrap_number`, muescas, helpers UE |
 | `bridge.lua` | `%TEMP%\TSW6Bridge\` — GetData, IPC, ACK |
 | `telemetry.lua` | Lectura HUD + DriverAid + `build_line` / `collect_sample` |
-| `ipc.lua` | Mandos IPC — PBH directo en actor (323) |
+| `ipc.lua` | Mandos IPC — PBH directo en actor (323); solo OutputValue + fallback VHID |
+
+**Nota `20260908c`:** los builds `20260908a/b` llamaban `BeginChangingVHID` en cada paso
+(incluso en ACK «already») y **bloqueaban el teclado** del jugador. Revertido a `20260905b`.
+Si la palanca 3D no sigue al tren, es limitación conocida de `SetCurrentOutputValue` — no reactivar
+sync visual sin prueba en cabina.
 | `main.lua` | Hook ReceiveTick, F7/F8, auto-start |
 
 ## GetData v2 (probe escribe)

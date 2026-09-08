@@ -35,7 +35,9 @@ LIMIT_SCORING_MAX_OVER_MPH = 0.9
 LIMIT_COAST_BAND_MPH = 0.25
 
 # HOLD_DH / contención zona vigente (más conservador que scoring TSW)
-LIMIT_ZONE_HOLD_OVER_MPH = 0.5  # posted 60 → tope 60.5; reaccionar antes
+LIMIT_ZONE_HOLD_OVER_MPH = 0.5  # bajada suave (−0.3 %%): posted 60 → 60.5
+LIMIT_ZONE_HOLD_OVER_STEEP_MPH = 0.2  # bajada fuerte (−1 %%): posted 60 → 60.2
+LIMIT_DOWNHILL_GRADIENT_PCT = -0.3  # umbral bajada (igual que physics.py)
 LIMIT_ZONE_COAST_OVER_OPS_MPH = 0.5  # ops 59 → suelo coast 59.5
 
 # HOLD_DH (Fase 1 bajada)
@@ -66,9 +68,29 @@ def posted_scoring_ceiling_mph(posted_limit_mph: float) -> float:
     return float(posted_limit_mph) + LIMIT_SCORING_MAX_OVER_MPH
 
 
-def posted_zone_hold_ceiling_mph(posted_limit_mph: float) -> float:
-    """Techo operativo zona vigente en bajada (posted + 0.5; 60 → 60.5)."""
-    return float(posted_limit_mph) + LIMIT_ZONE_HOLD_OVER_MPH
+def zone_hold_over_mph(gradient_pct: float = 0.0) -> float:
+    """
+    Margen HOLD sobre posted: menor en bajada fuerte (reaccionar antes).
+
+    −0.3 %% → 0.5 mph; −1.0 %% → 0.2 mph (Cross-City 323).
+    """
+    g = abs(float(gradient_pct))
+    if gradient_pct >= LIMIT_DOWNHILL_GRADIENT_PCT:
+        return LIMIT_ZONE_HOLD_OVER_MPH
+    if g <= 0.3:
+        return LIMIT_ZONE_HOLD_OVER_MPH
+    t = (g - 0.3) / 0.7
+    return LIMIT_ZONE_HOLD_OVER_MPH - t * (
+        LIMIT_ZONE_HOLD_OVER_MPH - LIMIT_ZONE_HOLD_OVER_STEEP_MPH
+    )
+
+
+def posted_zone_hold_ceiling_mph(
+    posted_limit_mph: float,
+    gradient_pct: float = 0.0,
+) -> float:
+    """Techo HOLD zona vigente en bajada (posted + margen según pendiente)."""
+    return float(posted_limit_mph) + zone_hold_over_mph(gradient_pct)
 
 
 def posted_zone_coast_floor_mph(posted_limit_mph: float) -> float:
@@ -76,6 +98,9 @@ def posted_zone_coast_floor_mph(posted_limit_mph: float) -> float:
     return passenger_ops_target_mph(posted_limit_mph) + LIMIT_ZONE_COAST_OVER_OPS_MPH
 
 
-def downhill_ops_coast_ceiling_mph(posted_limit_mph: float) -> float:
+def downhill_ops_coast_ceiling_mph(
+    posted_limit_mph: float,
+    gradient_pct: float = 0.0,
+) -> float:
     """Defer/coast BRAKE_LIMIT mientras no superas el techo de la zona vigente."""
-    return posted_zone_hold_ceiling_mph(posted_limit_mph)
+    return posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct)

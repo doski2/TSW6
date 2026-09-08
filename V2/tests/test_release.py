@@ -16,6 +16,18 @@ def test_is_brake_applied():
     assert not is_brake_applied(4)
 
 
+def test_limit_release_over_flat_vs_steep_downhill():
+    from tsw6v2.command import limit_release_over_mph
+
+    assert limit_release_over_mph(0.0) == 0.4
+    assert limit_release_over_mph(-0.2) == 0.4  # no bajada (< −0.3)
+    mild = limit_release_over_mph(-0.35)
+    steep = limit_release_over_mph(-1.0)
+    assert mild > 0.4
+    assert steep > mild
+    assert abs(steep - 0.55) < 0.01
+
+
 def test_resolve_release_when_at_target():
     cmd = resolve_release_command(
         speed_mph=49.2,
@@ -75,8 +87,9 @@ def test_release_at_limit_speed_on_downhill():
         speed_mph=45.0,
         target_mph=45.0,
     ) is True
+    # Aún por encima del suelo coast 44.5 + banda bajada fuerte
     cmd = resolve_release_command(
-        speed_mph=45.0,
+        speed_mph=48.0,
         handle_notch=1,
         effective_limit=55.0,
         next_limit_mph=45.0,
@@ -84,6 +97,17 @@ def test_release_at_limit_speed_on_downhill():
         gradient_pct=-1.0,
     )
     assert cmd is None
+    cmd_near = resolve_release_command(
+        speed_mph=44.5,
+        handle_notch=3,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=120.0,
+        gradient_pct=-1.0,
+        latch_ops_target=44.0,
+    )
+    assert cmd_near is not None
+    assert cmd_near.kind == "RELEASE"
 
 
 def test_release_downhill_55_to_45_at_coast_floor():
@@ -178,8 +202,17 @@ def test_brake_limit_latch_on_downhill_close():
 def test_coast_latch_inhibits_rebrake():
     state = BrakeReleaseState()
     state.latch(50.0)
-    assert not state.should_inhibit_limit_rebrake(
+    assert state.should_inhibit_limit_rebrake(
         speed_mph=50.5,
+        next_limit_mph=50.0,
+        handle_notch=4,
+        plan=None,
+        gradient_pct=0.0,
+        distance_next_m=300.0,
+        effective_limit=75.0,
+    )
+    assert not state.should_inhibit_limit_rebrake(
+        speed_mph=52.0,
         next_limit_mph=50.0,
         handle_notch=4,
         plan=None,
