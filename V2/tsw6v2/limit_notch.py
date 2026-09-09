@@ -65,6 +65,71 @@ def _downhill_coast_trim_active(
     )
 
 
+def next_brake_overrides_zone_hold(
+    *,
+    speed_mph: float,
+    ops_target_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+    current_posted_mph: float,
+    next_posted_mph: float,
+) -> bool:
+    """
+    ¿No diferir el compromiso B1 hacia el cartel siguiente (60→55)?
+
+    Solo lo usa ``downhill_defer_brake_commit`` — **no** la prioridad en
+    ``limits.evaluate_limit_brake`` (ahí gana HOLD_DH si ``apply_now`` es false).
+
+    - Dentro del horizonte del next: no diferir.
+    - Fuera: banda ``ops_next+2`` … ``ceiling_zona+2`` (p. ej. 56–62.2 mph @ 60
+      con techo 60.2 @ −1 %% — sesión 20260908T200808Z).
+    - Por encima de ``ceiling+2``: puede diferir; la prioridad devuelve HOLD_DH
+      si superas el techo de zona (sesión 20260908T210357Z).
+    """
+    if not is_downhill_gradient(gradient_pct):
+        return False
+    if not is_descending_limit_zone(current_posted_mph, next_posted_mph):
+        return False
+    from tsw6v2.limit_containment import next_limit_brake_horizon_m
+
+    if distance_m <= next_limit_brake_horizon_m(
+        speed_mph, next_posted_mph, gradient_pct
+    ):
+        return True
+    ceiling = downhill_ops_coast_ceiling_mph(current_posted_mph, gradient_pct)
+    if speed_mph <= ops_target_mph + LIMIT_DOWNHILL_COAST_TRIM_MPH:
+        return False
+    return speed_mph <= ceiling + LIMIT_DOWNHILL_COAST_TRIM_MPH
+
+
+def _defer_descending_zone_brake(
+    *,
+    speed_mph: float,
+    ops_target_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+    current_posted_mph: float,
+    next_posted_mph: float,
+) -> bool:
+    """
+    60→55 lejos: solo diferir si aún vas lento en banda de la zona vigente.
+
+    No diferir si BRAKE_LIMIT al next debe ganar (``next_brake_overrides_zone_hold``).
+    """
+    if next_brake_overrides_zone_hold(
+        speed_mph=speed_mph,
+        ops_target_mph=ops_target_mph,
+        distance_m=distance_m,
+        gradient_pct=gradient_pct,
+        current_posted_mph=current_posted_mph,
+        next_posted_mph=next_posted_mph,
+    ):
+        return False
+    return speed_mph <= downhill_ops_coast_ceiling_mph(
+        current_posted_mph, gradient_pct
+    )
+
+
 def downhill_defer_brake_commit(
     *,
     speed_mph: float,
@@ -78,7 +143,7 @@ def downhill_defer_brake_commit(
     """
     Bajada: no comprometer B1 todavía.
 
-    - 60→55 lejos: diferir BRAKE_LIMIT si aún vas en banda operativa zona vigente.
+    - 60→55 lejos y lento: diferir BRAKE_LIMIT si aún en banda zona vigente.
     - Cerca del techo operativo del cartel siguiente: coast si exceso ≤2 mph.
 
     Solo aplica antes del primer compromiso de muesca (``committed_handle is None``).
@@ -91,8 +156,13 @@ def downhill_defer_brake_commit(
         current_posted_mph is not None
         and next_posted_mph is not None
         and is_descending_limit_zone(current_posted_mph, next_posted_mph)
-        and speed_mph <= downhill_ops_coast_ceiling_mph(
-            current_posted_mph, gradient_pct
+        and _defer_descending_zone_brake(
+            speed_mph=speed_mph,
+            ops_target_mph=ops_target_mph,
+            distance_m=distance_m,
+            gradient_pct=gradient_pct,
+            current_posted_mph=current_posted_mph,
+            next_posted_mph=next_posted_mph,
         )
     ):
         return True
@@ -126,6 +196,7 @@ def _step_stronger(
         stepped = escalate_cap(prev, stepped)
     state.committed_handle = stepped
     state.committed_phase = phase_for_handle(stepped)
+    state.weak_decel_ticks = 0
     return stepped, state.committed_phase
 
 
@@ -181,6 +252,7 @@ def apply_notch_hysteresis(
             stepped = _ONE_WEAKER[prev]
             state.committed_handle = stepped
             state.committed_phase = phase_for_handle(stepped)
+            state.weak_decel_ticks = 0
             return stepped, state.committed_phase
 
     if (

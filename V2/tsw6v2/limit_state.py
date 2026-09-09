@@ -44,6 +44,7 @@ class LimitBrakeState:
     last_limit_mph: Optional[float] = None
     committed_handle: Optional[int] = None
     committed_phase: Optional[str] = None
+    weak_decel_ticks: int = 0
 
     def reset(self) -> None:
         self.latch = None
@@ -54,6 +55,7 @@ class LimitBrakeState:
         """Suelta muesca comprometida (p. ej. tras RELEASE) sin borrar el latch."""
         self.committed_handle = None
         self.committed_phase = None
+        self.weak_decel_ticks = 0
 
 
 def limit_changed(

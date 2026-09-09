@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 MIN_SAMPLES = 3
+EMA_ALPHA = 0.10
+MIN_OBSERVE_SPEED_MPH = 5.0
+MAX_OBSERVE_GRAD_PCT = 3.0
 _SPEED_BANDS = ((0, 30), (30, 60), (60, 200))
 _BRAKE_HANDLES = (0, 1, 2, 3)
 
@@ -110,3 +113,74 @@ class V1LearnerData:
         if accel is None or accel >= -0.05:
             return None
         return abs(accel)
+
+    def observe_brake_accel(
+        self,
+        *,
+        notch: int,
+        speed_mph: float,
+        grad_pct: float,
+        accel_ms2: float,
+    ) -> bool:
+        """
+        EMA online de aceleración de freno (negativa), normalizada a plano.
+
+        Igual convención que v1 ``online_learner`` (``ema_bands`` + ``ema`` combinada).
+        """
+        handle = int(notch)
+        if handle not in _BRAKE_HANDLES:
+            return False
+        if float(speed_mph) < MIN_OBSERVE_SPEED_MPH:
+            return False
+        if abs(float(grad_pct)) > MAX_OBSERVE_GRAD_PCT:
+            return False
+        measured = float(accel_ms2)
+        if measured >= -0.05:
+            return False
+
+        measured_norm = measured - gravity_compensation(grad_pct)
+        if measured_norm > 0.0:
+            return False
+
+        band = speed_band_index(speed_mph)
+        band_ema = self.ema_bands[band]
+        band_n = self.n_bands[band]
+        if handle not in band_ema:
+            band_ema[handle] = measured_norm
+            band_n[handle] = 1
+        else:
+            band_ema[handle] = (
+                EMA_ALPHA * measured_norm + (1.0 - EMA_ALPHA) * band_ema[handle]
+            )
+            band_n[handle] = min(band_n.get(handle, 0) + 1, 9999)
+
+        self._recalculate_combined()
+        return True
+
+    def _recalculate_combined(self) -> None:
+        all_notches: set[int] = set()
+        for band_ema in self.ema_bands:
+            all_notches.update(band_ema.keys())
+        for notch in all_notches:
+            total_n = 0
+            weighted = 0.0
+            for i in range(len(_SPEED_BANDS)):
+                n = self.n_bands[i].get(notch, 0)
+                if n > 0 and notch in self.ema_bands[i]:
+                    total_n += n
+                    weighted += self.ema_bands[i][notch] * n
+            if total_n > 0:
+                self.ema[notch] = weighted / total_n
+                self.n[notch] = total_n
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ema": {str(k): v for k, v in self.ema.items()},
+            "n": {str(k): v for k, v in self.n.items()},
+            "ema_bands": [
+                {str(k): v for k, v in band.items()} for band in self.ema_bands
+            ],
+            "n_bands": [
+                {str(k): v for k, v in band.items()} for band in self.n_bands
+            ],
+        }

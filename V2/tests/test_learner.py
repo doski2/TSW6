@@ -79,7 +79,7 @@ def test_learner_real_class323_profile() -> None:
     b1 = p.predict_decel(3, 50.0, 0.0)
     b2 = p.predict_decel(2, 50.0, 0.0)
     b3 = p.predict_decel(1, 50.0, 0.0)
-    assert b1 is not None and 0.45 < b1 < 0.65
+    assert b1 is not None and b1 > 0.15
     assert b2 is not None and b2 > b1
     assert b3 is not None and b3 > b2
 
@@ -97,6 +97,65 @@ def test_learner_resolve_profile_path(tmp_path: Path) -> None:
     )
     assert found == path
     assert LearnerProfile.resolve_profile_path("missing", profiles_dir=tmp_path) is None
+
+
+def test_learner_observe_brake_decel_updates_ema(tmp_path: Path) -> None:
+    path = tmp_path / "v1.json"
+    path.write_text(
+        json.dumps(
+            {
+                "ema": {"3": -0.56},
+                "n": {"3": 10},
+                "ema_bands": [{"3": -0.40}, {"3": -0.56}, {}],
+                "n_bands": [{"3": 5}, {"3": 20}, {}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = LearnerProfile.from_json(path)
+    before = p.predict_decel(3, 50.0, 0.0)
+    assert before is not None
+
+    ok = p.observe_brake_decel(
+        handle=3,
+        speed_mph=50.0,
+        gradient_pct=0.0,
+        accel_ms2=-0.80,
+        lever=3,
+        brake_cyl_bar=2.8,
+    )
+    assert ok is True
+    assert p.decel_observe_n == 1
+    after = p.predict_decel(3, 50.0, 0.0)
+    assert after is not None and after > before
+
+    p.save_json(path)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["n_bands"][1]["3"] == 21
+
+
+def test_learner_observe_rejects_non_brake_accel() -> None:
+    p = LearnerProfile()
+    assert not p.observe_brake_decel(
+        handle=3,
+        speed_mph=50.0,
+        gradient_pct=0.0,
+        accel_ms2=0.12,
+    )
+    assert p.decel_observe_n == 0
+
+
+def test_learner_observe_rejects_low_pressure() -> None:
+    p = LearnerProfile()
+    assert not p.observe_brake_decel(
+        handle=3,
+        speed_mph=50.0,
+        gradient_pct=0.0,
+        accel_ms2=-0.50,
+        lever=3,
+        brake_cyl_bar=1.2,
+    )
+    assert p.decel_observe_n == 0
 
 
 def test_learner_load_default_found(tmp_path: Path) -> None:

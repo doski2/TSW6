@@ -36,6 +36,10 @@ class LimitBrakeDecision:
     detail: str = ""
     reason: str = ""
     handle_notch: Optional[int] = None
+    fb_a_pred_ms2: Optional[float] = None
+    fb_a_obs_ms2: Optional[float] = None
+    fb_shortfall: bool = False
+    fb_escalated: bool = False
 
     @classmethod
     def idle(
@@ -85,6 +89,10 @@ class _TickCtx:
         apply_now: Optional[bool] = None,
         detail: str = "",
         handle_notch: Optional[int] = None,
+        fb_a_pred_ms2: Optional[float] = None,
+        fb_a_obs_ms2: Optional[float] = None,
+        fb_shortfall: bool = False,
+        fb_escalated: bool = False,
     ) -> LimitBrakeDecision:
         return LimitBrakeDecision(
             command,
@@ -98,6 +106,10 @@ class _TickCtx:
             detail=detail,
             reason=reason,
             handle_notch=handle_notch,
+            fb_a_pred_ms2=fb_a_pred_ms2,
+            fb_a_obs_ms2=fb_a_obs_ms2,
+            fb_shortfall=fb_shortfall,
+            fb_escalated=fb_escalated,
         )
 
     def idle(self, reason: str, target: Optional[BrakeTargetResult] = None, **kw) -> LimitBrakeDecision:
@@ -106,17 +118,28 @@ class _TickCtx:
             kw.setdefault("dist_start_m", target.dist_start)
             kw.setdefault("apply_now", target.apply_now)
             kw.setdefault("detail", target.detail)
+            kw.setdefault("fb_a_pred_ms2", target.fb_a_pred_ms2)
+            kw.setdefault("fb_a_obs_ms2", target.fb_a_obs_ms2)
+            kw.setdefault("fb_shortfall", target.fb_shortfall)
+            kw.setdefault("fb_escalated", target.fb_escalated)
         return self.decide(None, reason, **kw)
 
     def from_target(self, cmd: BrakeCommand, target: BrakeTargetResult, reason: str) -> LimitBrakeDecision:
+        fb_reason = reason
+        if target.fb_escalated:
+            fb_reason = "decel_feedback"
         return self.decide(
             cmd,
-            reason,
+            fb_reason,
             phase=target.phase or (cmd.phase or ""),
             dist_start_m=target.dist_start,
             apply_now=target.apply_now,
             detail=target.detail,
             handle_notch=cmd.target_notch,
+            fb_a_pred_ms2=target.fb_a_pred_ms2,
+            fb_a_obs_ms2=target.fb_a_obs_ms2,
+            fb_shortfall=target.fb_shortfall,
+            fb_escalated=target.fb_escalated,
         )
 
 
@@ -210,6 +233,9 @@ def evaluate_limit_tick(
             distance_next_m=dist_m,
             gradient_pct=ctx.grad,
             latch_ops_target=latch_ops,
+            accel_ms2=snap.accel_ms2,
+            brake_fill_s=fill_s,
+            predict_decel=predict,
         )
         if rel is not None:
             # Tras RELEASE, permitir coast/defer de nuevo; si no, BRAKE_LIMIT
@@ -240,6 +266,9 @@ def evaluate_limit_tick(
         posted_limit_mph=posted,
         brake_fill_s=fill_s,
         escalate_cap=escalate_cap,
+        learner=learner,
+        lever=lever,
+        brake_cyl_bar=ctx.cyl,
     )
     if target is None:
         return ctx.idle("no_plan")
@@ -281,6 +310,10 @@ def evaluate_limit_tick(
             apply_now=target.apply_now,
             detail=target.detail,
             handle_notch=coast.target_notch,
+            fb_a_pred_ms2=target.fb_a_pred_ms2,
+            fb_a_obs_ms2=target.fb_a_obs_ms2,
+            fb_shortfall=target.fb_shortfall,
+            fb_escalated=target.fb_escalated,
         )
 
     if cmd is None:

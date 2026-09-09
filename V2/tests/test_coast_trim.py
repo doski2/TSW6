@@ -32,11 +32,78 @@ def test_coast_trim_defers_while_legal_in_current_zone() -> None:
     from tsw6v2.limit_notch import downhill_defer_brake_commit
 
     assert downhill_defer_brake_commit(
-        speed_mph=60.0,
+        speed_mph=55.0,
         ops_target_mph=54.0,
-        distance_m=500.0,
+        distance_m=800.0,
         gradient_pct=-1.0,
         dist_start=80.0,
+        current_posted_mph=60.0,
+        next_posted_mph=55.0,
+    )
+
+
+def test_descending_zone_no_defer_when_fast_approach_60_to_55() -> None:
+    """Sesión 20260908T200808Z: 59–60 mph @ ~740 m no debe bloquear B1 al 55."""
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert not downhill_defer_brake_commit(
+        speed_mph=59.5,
+        ops_target_mph=54.0,
+        distance_m=740.0,
+        gradient_pct=-1.0,
+        dist_start=565.0,
+        current_posted_mph=60.0,
+        next_posted_mph=55.0,
+    )
+
+
+def test_hold_dh_over_watch_outside_horizon_session_210357() -> None:
+    """60.53 mph @ 717 m: HOLD_DH @60.2, no WATCH con tracción (sesión 210357Z)."""
+    from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=60.53,
+        limit_mph=55.0,
+        distance_m=717.4,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert r.target_speed_mph == 60.2
+    assert r.handle_notch == 3
+
+
+def test_next_brake_overrides_hold_dh_session_profile() -> None:
+    """Dentro del horizonte: BRAKE_LIMIT al 55 gana sobre HOLD_DH zona 60."""
+    from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=60.0,
+        limit_mph=55.0,
+        distance_m=280.0,
+        gradient_pct=-1.0,
+        posted_limit_mph=60.0,
+    )
+    assert r is not None
+    assert not r.downhill_hold
+    assert r.target_speed_mph == 54.0
+    assert r.apply_now
+    assert "55" in r.detail
+
+
+def test_descending_zone_no_defer_inside_brake_horizon() -> None:
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert not downhill_defer_brake_commit(
+        speed_mph=58.0,
+        ops_target_mph=54.0,
+        distance_m=80.0,
+        gradient_pct=-1.0,
+        dist_start=10.0,
         current_posted_mph=60.0,
         next_posted_mph=55.0,
     )

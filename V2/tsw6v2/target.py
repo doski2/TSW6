@@ -38,6 +38,10 @@ class BrakeTargetResult:
     apply_now: bool
     detail: str = ""
     downhill_hold: bool = False
+    fb_a_pred_ms2: Optional[float] = None
+    fb_a_obs_ms2: Optional[float] = None
+    fb_shortfall: bool = False
+    fb_escalated: bool = False
 
     @property
     def urgency(self) -> float:

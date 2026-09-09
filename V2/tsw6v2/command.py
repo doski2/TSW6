@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 from tsw6v2.physics import (
+    DEFAULT_BRAKE_FILL_S,
     brake_command_apply_zone_m,
     is_downhill_gradient,
+    limit_release_speed_ready,
     should_emit_brake_command,
     speed_limit_pre_coast_horizon_m,
 )
+
+PredictDecelFn = Callable[[int, float, float], Optional[float]]
 from tsw6v2.plan import BrakePlan, profile_cap_from_plan
 from tsw6v2.constants import (
     EMERGENCY_BRAKE_HANDLE,
@@ -298,11 +302,18 @@ def should_hold_limit_brake_downhill(
     distance_next_m: Optional[float],
     speed_mph: float,
     target_mph: float,
+    latch_ops_target: Optional[float] = None,
 ) -> bool:
     """No soltar el cartel en bajada hasta pasarlo: g recupera velocidad."""
     if not is_downhill_limit_approach(gradient_pct, distance_next_m):
         return False
     if distance_next_m is None or distance_next_m <= LIMIT_SIGN_PASSED_M:
+        return False
+    if (
+        latch_ops_target is not None
+        and speed_mph <= latch_ops_target + 2.0
+    ):
+        # BRAKE_LIMIT final: RELEASE cinemático decide (no arrastrar B1 hasta ~target−1).
         return False
     return speed_mph > target_mph - 1.0
 
@@ -405,6 +416,9 @@ def resolve_release_command(
     gradient_pct: float,
     plan: Optional[BrakePlan] = None,
     latch_ops_target: Optional[float] = None,
+    accel_ms2: Optional[float] = None,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    predict_decel: Optional[PredictDecelFn] = None,
 ) -> Optional[BrakeCommand]:
     if is_brake_released(handle_notch):
         return None
@@ -454,9 +468,25 @@ def resolve_release_command(
         distance_next_m=distance_next_m,
         speed_mph=speed_mph,
         target_mph=hold_target,
+        latch_ops_target=latch_ops_target,
     ):
         return None
-    if speed_mph > target + release_over:
+    decel_ms2 = None
+    decel_includes_gradient = False
+    if predict_decel is not None:
+        decel_ms2 = predict_decel(int(handle_notch), float(speed_mph), float(gradient_pct))
+        decel_includes_gradient = decel_ms2 is not None
+    if not limit_release_speed_ready(
+        speed_mph=speed_mph,
+        target_mph=target,
+        release_over_mph=release_over,
+        accel_ms2=accel_ms2,
+        decel_ms2=decel_ms2,
+        gradient_pct=gradient_pct,
+        brake_fill_s=brake_fill_s,
+        kinematic=zone_release_target is None,
+        decel_includes_gradient=decel_includes_gradient,
+    ):
         return None
     # Parado con freno del jugador al iniciar escenario: spd=0 y cartel lejos no es
     # «objetivo alcanzado» — solo soltar si vamos cerca de la velocidad del cartel.

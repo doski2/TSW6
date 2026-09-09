@@ -127,10 +127,17 @@ def run_console(
                 print(f"AVISO: no se pudo generar replay HTML: {exc}", file=sys.stderr)
         save_path = profile_path or loop.loaded_profile_path
         active = loop.active_learner
-        if save_path is not None and active.brake_fill_n > 0:
+        if save_path is not None and (
+            active.brake_fill_n > 0 or active.decel_observe_n > 0
+        ):
             try:
                 active.save_json(save_path)
-                print(f"perfil -> {save_path.resolve()} (fill={active.brake_fill_s:.2f}s)")
+                parts: list[str] = []
+                if active.brake_fill_n > 0:
+                    parts.append(f"fill={active.brake_fill_s:.2f}s")
+                if active.decel_observe_n > 0:
+                    parts.append(f"decel_n={active.decel_observe_n}")
+                print(f"perfil -> {save_path.resolve()} ({', '.join(parts)})")
             except OSError as exc:
                 print(f"AVISO: no se pudo guardar perfil: {exc}", file=sys.stderr)
     return 0

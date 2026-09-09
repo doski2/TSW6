@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from tsw6v2.brake_air import BrakeAirTracker
+from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready
 from tsw6v2.learner_v1 import V1LearnerData
 
 
@@ -26,6 +26,48 @@ class LearnerProfile:
         self._air = air or BrakeAirTracker()
         self._v1 = v1
         self._v1_snapshot = v1_snapshot
+        self._decel_observe_n = 0
+
+    @property
+    def decel_observe_n(self) -> int:
+        return self._decel_observe_n
+
+    def _ensure_v1(self) -> V1LearnerData:
+        if self._v1 is None:
+            self._v1 = V1LearnerData()
+            if self._v1_snapshot is None:
+                self._v1_snapshot = {}
+        return self._v1
+
+    def observe_brake_decel(
+        self,
+        *,
+        handle: int,
+        speed_mph: float,
+        gradient_pct: float,
+        accel_ms2: Optional[float],
+        lever: int | None = None,
+        brake_cyl_bar: float | None = None,
+    ) -> bool:
+        """Registra ``accel_ms2`` del probe en EMA v1 (solo muescas freno)."""
+        if accel_ms2 is None:
+            return False
+        if not brake_decel_sample_ready(
+            handle=handle,
+            lever=lever,
+            brake_cyl_bar=brake_cyl_bar,
+        ):
+            return False
+        v1 = self._ensure_v1()
+        if not v1.observe_brake_accel(
+            notch=handle,
+            speed_mph=speed_mph,
+            grad_pct=gradient_pct,
+            accel_ms2=float(accel_ms2),
+        ):
+            return False
+        self._decel_observe_n += 1
+        return True
 
     @property
     def brake_fill_s(self) -> float:
@@ -109,8 +151,11 @@ class LearnerProfile:
 
     def save_json(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if self._v1_snapshot is not None:
-            data = copy.deepcopy(self._v1_snapshot)
+        if self._v1 is not None:
+            data = copy.deepcopy(self._v1_snapshot) if self._v1_snapshot else {}
+            data.update(self._v1.to_dict())
+            if self._by_notch:
+                data["decel_by_notch"] = {str(k): v for k, v in self._by_notch.items()}
             data.update(self._air.to_dict())
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             self._v1_snapshot = data

@@ -64,6 +64,15 @@ class JsonlTrace:
                 "layer": snap.p1_layer or None,
                 "layer_label": layer_label(snap.p1_layer) if snap.p1_layer else None,
             }
+        fb: dict[str, Any] = {}
+        if snap.fb_a_pred_ms2 is not None:
+            fb["a_pred_ms2"] = _round_opt(snap.fb_a_pred_ms2, 3)
+        if snap.fb_a_obs_ms2 is not None:
+            fb["a_obs_ms2"] = _round_opt(snap.fb_a_obs_ms2, 3)
+        if snap.fb_shortfall:
+            fb["shortfall"] = True
+        if snap.fb_escalated:
+            fb["escalated"] = True
         row: dict[str, Any] = {
             "type": "tick",
             "tick": snap.tick,
@@ -81,6 +90,7 @@ class JsonlTrace:
             "lim_dist_m": _round_opt(snap.limit_dist_m, 1),
             "vehicle": snap.vehicle,
             "p1": p1 or None,
+            "fb": fb or None,
             "ipc": {
                 "sent": snap.ipc_sent,
                 "ok": snap.ipc_ok,
@@ -154,6 +164,8 @@ def format_investigate(snap: AgentSnapshot) -> str:
         parts.append(f"P={snap.brake_cyl_bar:.1f}bar")
     if snap.brake_fill_s is not None:
         parts.append(f"fill={snap.brake_fill_s:.1f}s")
+    if snap.fb_a_pred_ms2 is not None and snap.fb_a_obs_ms2 is not None:
+        parts.append(f"a={snap.fb_a_obs_ms2:.2f}/{snap.fb_a_pred_ms2:.2f}")
     return " ".join(parts)
 
 

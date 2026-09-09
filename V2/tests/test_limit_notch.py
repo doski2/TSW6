@@ -116,12 +116,12 @@ def test_evaluate_limit_brake_escalates_after_b1_committed() -> None:
 
 
 def test_evaluate_limit_brake_defers_apply_while_legal_in_current_zone() -> None:
-    state = _latched_state(speed_mph=59.8, distance_m=340.0)
+    state = _latched_state(speed_mph=55.5, distance_m=800.0)
     result = evaluate_limit_brake(
         state,
-        speed_mph=59.8,
+        speed_mph=55.5,
         limit_mph=55.0,
-        distance_m=340.0,
+        distance_m=800.0,
         gradient_pct=-1.0,
         posted_limit_mph=60.0,
     )

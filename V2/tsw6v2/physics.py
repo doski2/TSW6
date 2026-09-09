@@ -34,8 +34,6 @@ from tsw6v2.constants import (
     BRAKE_TRANSITION_S,
     COAST_DECEL_MS2,
     MAX_DECEL_MS2,
-    P1_ACK_GUARD_S,
-    P1_REACT_S,
     SAFETY_MARGIN,
 )
 
@@ -110,6 +108,77 @@ def effective_decel_ms2(
     coast_floor: float = COAST_DECEL_MS2,
 ) -> float:
     return max(decel_ms2 + gravity_acceleration_ms2(gradient_pct), coast_floor)
+
+
+_RELEASE_PROJECT_MIN_DECEL_MS2 = 0.08
+
+
+def projected_speed_mph_after_brake_fill(
+    speed_mph: float,
+    *,
+    accel_ms2: Optional[float],
+    decel_ms2: Optional[float],
+    gradient_pct: float,
+    brake_fill_s: float,
+    decel_includes_gradient: bool = False,
+) -> Optional[float]:
+    """
+    Velocidad estimada tras seguir con el freno actual ``brake_fill_s`` (fill aire).
+
+    Usa ``accel_ms2`` del probe si hay frenado neto; si no, ``decel_ms2`` del perfil.
+    Si ``decel_includes_gradient`` (learner_v1), no volver a sumar ``g`` en la rampa.
+    """
+    fill = float(brake_fill_s)
+    if fill <= 0.0:
+        return float(speed_mph)
+    speed_ms = float(speed_mph) * MPH_TO_MS
+    a_net: Optional[float] = None
+    if accel_ms2 is not None and float(accel_ms2) < -_RELEASE_PROJECT_MIN_DECEL_MS2:
+        a_net = float(accel_ms2)
+    elif decel_ms2 is not None and float(decel_ms2) >= _RELEASE_PROJECT_MIN_DECEL_MS2:
+        d = float(decel_ms2)
+        if decel_includes_gradient:
+            a_net = -d
+        else:
+            a_net = -effective_decel_ms2(d, gradient_pct)
+    if a_net is None or a_net >= -0.02:
+        return None
+    v_after_ms = max(0.0, speed_ms + a_net * fill)
+    return v_after_ms / MPH_TO_MS
+
+
+def limit_release_speed_ready(
+    *,
+    speed_mph: float,
+    target_mph: float,
+    release_over_mph: float,
+    accel_ms2: Optional[float],
+    decel_ms2: Optional[float],
+    gradient_pct: float,
+    brake_fill_s: float,
+    kinematic: bool,
+    decel_includes_gradient: bool = False,
+) -> bool:
+    """
+    ¿Soltar ahora sin pasarse del objetivo tras el lag de aire?
+
+    BRAKE_LIMIT: ``v + a_net·fill ≤ target + banda``.
+    Contención zona (59.5): banda fija en mph sin proyección.
+    """
+    ceiling = float(target_mph) + float(release_over_mph)
+    if not kinematic:
+        return float(speed_mph) <= ceiling
+    projected = projected_speed_mph_after_brake_fill(
+        speed_mph,
+        accel_ms2=accel_ms2,
+        decel_ms2=decel_ms2,
+        gradient_pct=gradient_pct,
+        brake_fill_s=brake_fill_s,
+        decel_includes_gradient=decel_includes_gradient,
+    )
+    if projected is None:
+        return float(speed_mph) <= ceiling
+    return projected <= ceiling
 
 
 def braking_distance_m(
@@ -251,7 +320,12 @@ def is_in_brake_action_window(
     distance_to_target_m: Optional[float] = None,
     apply_at_remaining_m: Optional[float] = None,
 ) -> bool:
-    """¿``dist_start`` está en la ventana de acción del plan (metros, vía física)?"""
+    """
+    ¿``dist_start`` está en la ventana de acción del plan (metros, vía física)?
+
+    Reservado para estación/señal (pasos 4–7); P1 cartel usa ``is_in_apply_zone`` vía
+    ``limit_notch`` / ``command.py``.
+    """
     zone = brake_command_apply_zone_m(
         speed_mph=speed_mph,
         distance_to_target_m=distance_to_target_m,
@@ -321,26 +395,6 @@ def should_brake_for_target(
         apply_margin=True,
     )
     return distance_m <= bd + react_m
-
-
-def should_coast_throttle_before_brake(
-    speed_mph: float,
-    target_mph: float,
-    distance_m: float,
-    *,
-    ctx: Optional[BrakePhysicsContext] = None,
-    react_s: float = P1_REACT_S + P1_ACK_GUARD_S,
-    decel_ms2: Optional[float] = None,
-) -> bool:
-    """Perfil activo pero aún sin muesca — ¿soltar tracción ya?"""
-    return should_brake_for_target(
-        speed_mph,
-        target_mph,
-        distance_m,
-        ctx=ctx,
-        react_s=react_s,
-        decel_ms2=decel_ms2,
-    )
 
 
 def brake_command_apply_zone_m(

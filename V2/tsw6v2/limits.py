@@ -16,11 +16,14 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from tsw6v2.constants import passenger_ops_target_mph
+from tsw6v2.brake_feedback import apply_weak_decel_feedback
+from tsw6v2.learner import LearnerProfile
 from tsw6v2.limit_containment import pick_downhill_containment
 from tsw6v2.limit_notch import (
     apply_notch_hysteresis,
     downhill_defer_brake_commit,
     pick_weakest_sufficient_notch,
+    _in_apply_window,
 )
 from tsw6v2.limit_state import (
     LimitBrakeLatch,
@@ -59,6 +62,9 @@ def evaluate_limit_brake(
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
     posted_limit_mph: Optional[float] = None,
     escalate_cap: Callable[[int, int], int] | None = None,
+    learner: Optional[LearnerProfile] = None,
+    lever: int | None = None,
+    brake_cyl_bar: float | None = None,
 ) -> Optional[BrakeTargetResult]:
     """Planifica frenada al cartel. Re-latch si cambia el límite objetivo."""
     downhill_contain = None
@@ -86,12 +92,17 @@ def evaluate_limit_brake(
             brake_fill_s=brake_fill_s,
             escalate_cap=escalate_cap,
             current_posted_mph=posted_limit_mph,
+            learner=learner,
+            lever=lever,
+            brake_cyl_bar=brake_cyl_bar,
         )
 
     # H1: dentro del horizonte del cartel siguiente → plan latch gana.
     if next_r is not None and next_r.apply_now:
         return next_r
     if downhill_contain is not None:
+        # No dejar que WATCH (apply_now=false) bloquee HOLD_DH fuera del horizonte
+        # (sesión 20260908T210357Z: 56–62 mph con P3 y sin COAST_PWR).
         return downhill_contain
     return next_r
 
@@ -109,6 +120,9 @@ def _evaluate_next_limit_brake(
     brake_fill_s: float,
     escalate_cap: Callable[[int, int], int] | None = None,
     current_posted_mph: Optional[float] = None,
+    learner: Optional[LearnerProfile] = None,
+    lever: int | None = None,
+    brake_cyl_bar: float | None = None,
 ) -> Optional[BrakeTargetResult]:
     """BRAKE_LIMIT — latch al cartel siguiente (techo operativo posted−1 mph)."""
     ops_target_mph = passenger_ops_target_mph(limit_mph)
@@ -181,6 +195,39 @@ def _evaluate_next_limit_brake(
         defer_commit=defer_commit,
         escalate_cap=escalate_cap,
     )
+    handle, phase, fb = apply_weak_decel_feedback(
+        state,
+        handle=handle,
+        phase=phase,
+        speed_mph=speed_mph,
+        limit_mph=latch.limit_mph,
+        gradient_pct=gradient_pct,
+        accel_ms2=accel_ms2,
+        apply_now=apply_now,
+        dist_start=dist_start,
+        apply_zone_m=apply_zone_m,
+        predict_decel=predict_decel,
+        escalate_cap=escalate_cap,
+        lever=lever,
+        brake_cyl_bar=brake_cyl_bar,
+    )
+    if (
+        learner is not None
+        and state.committed_handle is not None
+        and _in_apply_window(
+            apply_now=apply_now,
+            dist_start=dist_start,
+            apply_zone_m=apply_zone_m,
+        )
+    ):
+        learner.observe_brake_decel(
+            handle=state.committed_handle,
+            speed_mph=speed_mph,
+            gradient_pct=gradient_pct,
+            accel_ms2=accel_ms2,
+            lever=lever,
+            brake_cyl_bar=brake_cyl_bar,
+        )
 
     posted = latch.posted_limit_mph
     return BrakeTargetResult(
@@ -195,4 +242,8 @@ def _evaluate_next_limit_brake(
             f"Límite {posted:.0f} mph → @{latch.limit_mph:.0f} "
             f"(latched @{latch.latched_speed_mph:.0f})"
         ),
+        fb_a_pred_ms2=fb.a_pred_ms2,
+        fb_a_obs_ms2=fb.a_obs_ms2,
+        fb_shortfall=fb.shortfall,
+        fb_escalated=fb.escalated,
     )

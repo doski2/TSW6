@@ -252,19 +252,18 @@ def downhill_brake_release_floor_mph(
     if speed_mph <= next_floor + release_over_mph:
         return next_floor
 
-    if not _within_next_brake_horizon(
+    in_horizon = _within_next_brake_horizon(
         speed_mph=speed_mph,
         next_limit_mph=next_limit_mph,
         next_distance_m=distance_next_m,
         gradient_pct=gradient_pct,
-    ):
+    )
+    if not in_horizon:
         eff_floor = posted_zone_coast_floor_mph(effective_limit)
         ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
         if eff_floor <= speed_mph <= ceiling:
             return eff_floor
-
-    eff_floor = posted_zone_coast_floor_mph(effective_limit)
-    if eff_floor - 1.0 <= speed_mph <= eff_floor + release_over_mph:
-        return eff_floor
+        if eff_floor - 1.0 <= speed_mph <= eff_floor + release_over_mph:
+            return eff_floor
 
     return None

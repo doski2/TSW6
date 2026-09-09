@@ -4,7 +4,7 @@ import _path  # noqa: F401
 
 import time
 
-from tsw6v2.brake_air import BrakeAirTracker, pressure_for_handle
+from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready, pressure_for_handle
 from tsw6v2.learner import LearnerProfile
 
 
@@ -59,6 +59,13 @@ def test_air_ready_service_needs_pressure() -> None:
 
 def test_pressure_for_handle_b1() -> None:
     assert pressure_for_handle(3) >= 2.4
+
+
+def test_brake_decel_sample_ready() -> None:
+    assert brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=2.8)
+    assert not brake_decel_sample_ready(handle=3, lever=6, brake_cyl_bar=2.8)
+    assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.5)
+    assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=None)
 
 
 if __name__ == "__main__":

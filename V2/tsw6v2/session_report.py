@@ -120,7 +120,52 @@ def summarize(path: Path) -> dict[str, Any]:
         "apply_now_true": sum(
             1 for t in ticks if (t.get("p1") or {}).get("apply_now") is True
         ),
+        "fb_ticks": sum(1 for t in ticks if (t.get("fb") or {}).get("a_obs_ms2") is not None),
+        "fb_shortfall": sum(1 for t in ticks if (t.get("fb") or {}).get("shortfall")),
+        "fb_escalated": sum(1 for t in ticks if (t.get("fb") or {}).get("escalated")),
+        "air_fill_ticks": reasons.get("air_fill", 0),
+        "air_recharge_ticks": reasons.get("air_recharge", 0),
+        "fb_events": _fb_event_rows(ticks),
     }
+
+
+def _fb_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
+    """Ticks con feedback decel o shortfall (para tabla HTML)."""
+    rows: list[dict[str, Any]] = []
+    for t in ticks:
+        fb = t.get("fb") or {}
+        if not fb.get("a_obs_ms2") and not fb.get("shortfall") and not fb.get("escalated"):
+            continue
+        p1 = t.get("p1") or {}
+        rows.append(
+            {
+                "tick": t["tick"],
+                "t_s": round(t["t_ms"] / 1000, 1),
+                "spd": t.get("spd_mph"),
+                "p_bar": t.get("brake_cyl_bar"),
+                "a_obs": fb.get("a_obs_ms2"),
+                "a_pred": fb.get("a_pred_ms2"),
+                "shortfall": bool(fb.get("shortfall")),
+                "escalated": bool(fb.get("escalated")),
+                "reason": p1.get("reason"),
+                "phase": p1.get("phase"),
+            }
+        )
+    if len(rows) > limit:
+        shortfall = [r for r in rows if r["shortfall"] or r["escalated"]]
+        rest = [r for r in rows if not r["shortfall"] and not r["escalated"]]
+        keep = shortfall[:limit]
+        if len(keep) < limit:
+            keep.extend(rest[: limit - len(keep)])
+        return keep
+    return rows
+
+
+def _pressure_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
+    raw = [float(p["p"]) for p in series if p.get("p") is not None]
+    if not raw:
+        return 0.0, 5.0
+    return 0.0, max(3.0, max(raw) * 1.1)
 
 
 def _apply_zone_m(*, spd_mph: float, lim_dist_m: float, dist_start_m: float) -> float:
@@ -343,12 +388,16 @@ def _render_chart_svg(
     h_spd = 168
     h_dist = 108
     h_ds = 88
+    h_p = 64
+    h_decel = 56
     h_layers = 34
     gap = 10
     y_spd = _CHART_PAD_TOP
     y_dist = y_spd + h_spd + gap
     y_ds = y_dist + h_dist + gap
-    y_layers = y_ds + h_ds + gap
+    y_p = y_ds + h_ds + gap
+    y_decel = y_p + h_p + gap
+    y_layers = y_decel + h_decel + gap
     total_h = y_layers + h_layers + 8
 
     t0 = float(series[0]["t"])
@@ -367,6 +416,18 @@ def _render_chart_svg(
     y_min = min(p.get("spd") or 0 for p in series) - 2
     ds_min, ds_max = _ds_chart_bounds(series)
     dist_min, dist_max = _dist_chart_bounds(series)
+    p_min, p_max = _pressure_chart_bounds(series)
+    decel_max = max(
+        0.6,
+        max(
+            (float(p["a_obs"]) for p in series if p.get("a_obs") is not None),
+            default=0.0,
+        ),
+        max(
+            (float(p["a_pred"]) for p in series if p.get("a_pred") is not None),
+            default=0.0,
+        ),
+    ) * 1.15
 
     def line_path(key: str, yfn) -> str:
         parts: list[str] = []
@@ -459,6 +520,54 @@ def _render_chart_svg(
     if ds_path:
         out.append(ds_path.replace('stroke-width="1.5"', 'stroke="#c9a0ff" stroke-width="1.5"'))
 
+    panel_frame(y_p, h_p, "Presión cilindro (bar)")
+    draw_axis(y_p, h_p, p_min, p_max, "bar")
+    p_path = line_path(
+        "p",
+        lambda v, lo=p_min, hi=p_max, yt=y_p, ht=h_p: y_in_panel(v, lo, hi, yt, ht),
+    )
+    if p_path:
+        out.append(p_path.replace('stroke-width="1.5"', 'stroke="#f59e0b" stroke-width="1.5"'))
+    out.append(
+        f'<text x="{pad_l + plot_w - 4}" y="{y_p + 14:.1f}" fill="#f59e0b" font-size="10" '
+        f'text-anchor="end">P bar</text>'
+    )
+
+    panel_frame(y_decel, h_decel, "Decel feedback (m/s²)")
+    draw_axis(y_decel, h_decel, 0.0, decel_max, "")
+    for key, color, dash in (
+        ("a_pred", "#94a3b8", "4,3"),
+        ("a_obs", "#fbbf24", ""),
+    ):
+        path = line_path(
+            key,
+            lambda v, lo=0.0, hi=decel_max, yt=y_decel, ht=h_decel: y_in_panel(
+                v, lo, hi, yt, ht
+            ),
+        )
+        if path:
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+            out.append(
+                path.replace(
+                    'stroke-width="1.5"',
+                    f'stroke="{color}" stroke-width="1.5"{dash_attr}',
+                )
+            )
+    for p in series:
+        if not p.get("fb_sf"):
+            continue
+        if p.get("a_obs") is None:
+            continue
+        cx = x_t(p["t"])
+        cy = y_in_panel(float(p["a_obs"]), 0.0, decel_max, y_decel, h_decel)
+        out.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="#ef4444" opacity="0.85"/>'
+        )
+    out.append(
+        f'<text x="{pad_l + 4}" y="{y_decel + 14:.1f}" fill="#94a3b8" font-size="9">'
+        f'— pred  ·  — obs  ·  ● shortfall</text>'
+    )
+
     panel_frame(y_layers, h_layers, "Capa P1", bg="#12151b")
     for i in range(len(series) - 1):
         a, b = series[i], series[i + 1]
@@ -549,7 +658,7 @@ def _render_chart_svg(
 
 
 def _chart_view_height() -> int:
-    return _CHART_PAD_TOP + 168 + 10 + 108 + 10 + 88 + 10 + 34 + 16
+    return _CHART_PAD_TOP + 168 + 10 + 108 + 10 + 88 + 10 + 64 + 10 + 56 + 10 + 34 + 16
 
 
 def _apply_marker_numbers(markers: list[dict[str, Any]]) -> dict[float, int]:
@@ -687,6 +796,10 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
                 "cmd": p1.get("cmd"),
                 "why": p1.get("reason"),
                 "layer": layer,
+                "p": t.get("brake_cyl_bar"),
+                "a_obs": (t.get("fb") or {}).get("a_obs_ms2"),
+                "a_pred": (t.get("fb") or {}).get("a_pred_ms2"),
+                "fb_sf": bool((t.get("fb") or {}).get("shortfall")),
             }
         )
     return out
@@ -747,7 +860,7 @@ def write_html_replay(path: Path, out: Path) -> None:
 {warn_html}
 <div class="meta" id="meta">{meta_html}</div>
 <div class="stats" id="stats">{stats_html}</div>
-<p class="leg">Cuatro paneles: <b>velocidad</b> · <b>m al cartel</b> (cian) · <b>ds</b> (violeta, línea punteada = 0) · <b>capa</b>.</p>
+<p class="leg">Seis paneles: <b>velocidad</b> · <b>m al cartel</b> · <b>ds</b> · <b>presión bar</b> · <b>decel obs/pred</b> · <b>capa</b>.</p>
 <p class="leg">Círculos numerados = primer APPLY por cartel; debajo <b>Xm</b> = metros al cartel en ese momento. Punto cian en panel distancia = misma marca.</p>
 <svg id="chart" viewBox="0 0 {_CHART_W} {chart_h}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
 <h2>Capas (tiempo en sesión)</h2>
@@ -757,6 +870,11 @@ def write_html_replay(path: Path, out: Path) -> None:
 <th>#</th><th>tipo</th><th>t(s)</th><th>spd</th><th>cartel</th><th>m al cartel</th><th>ds / zona</th>
 </tr></thead><tbody id="ds0-body">{ds0_rows}</tbody></table>
 <p class="leg">El <b>#</b> coincide con el círculo en el gráfico. <b>m al cartel</b> = probe. <b>ds</b> = margen al punto cinemático (0 = ideal).</p>
+<h2>Feedback decel / aire</h2>
+<table id="fb-air"><thead><tr>
+<th>t(s)</th><th>spd</th><th>P bar</th><th>a_obs</th><th>a_pred</th><th>shortfall</th><th>fase</th><th>why</th>
+</tr></thead><tbody id="fb-body"></tbody></table>
+<p class="leg">Muestra hasta 40 ticks con medición <code>fb</code> (prioriza shortfall). Esperas <code>air_fill</code> = sin presión suficiente para APPLY.</p>
 <h2>Eventos Frenar / Soltar</h2>
 <table id="events"><thead><tr>
 <th>t(s)</th><th>spd</th><th>capa</th><th>cmd</th><th>lim@dist</th><th>ds</th><th>apply</th><th>ipc</th>
@@ -777,9 +895,20 @@ meta.textContent = `modo=${{s.session?.mode}} ruta=${{s.session?.route}} git=${{
 const stats = [
   ['Frenar', s.apply_ticks], ['Soltar', s.release_ticks], ['IPC', s.ipc_sent],
   ['Vigilar', s.p1_layers?.WATCH||0], ['Revisar GAP', s.p1_layers?.GAP||0],
+  ['FB medido', s.fb_ticks||0], ['FB shortfall', s.fb_shortfall||0],
+  ['FB escaló', s.fb_escalated||0], ['Espera aire', s.air_fill_ticks||0],
 ];
 document.getElementById('stats').innerHTML = stats.map(([k,v]) =>
   `<div class="stat"><b>${{v}}</b>${{k}}</div>`).join('');
+
+const fbRows = s.fb_events || [];
+document.getElementById('fb-body').innerHTML = fbRows.map(e =>
+  `<tr><td>${{e.t_s}}</td><td>${{e.spd?.toFixed?.(1)??e.spd??''}}</td>`+
+  `<td>${{e.p_bar?.toFixed?.(1)??'—'}}</td>`+
+  `<td>${{e.a_obs?.toFixed?.(2)??'—'}}</td><td>${{e.a_pred?.toFixed?.(2)??'—'}}</td>`+
+  `<td>${{e.shortfall?'Y':''}}${{e.escalated?' ↑':''}}</td>`+
+  `<td>${{e.phase||''}}</td><td>${{e.reason||''}}</td></tr>`).join('') ||
+  '<tr><td colspan="8">Sin bloques fb en JSONL (frena en APPLY para ver medición)</td></tr>';
 
 const ls = s.p1_layers || {{}};
 document.getElementById('layer-stats').innerHTML = Object.entries(ls)

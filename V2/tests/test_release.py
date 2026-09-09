@@ -153,6 +153,32 @@ def test_no_release_55_zone_still_approaching_45():
     assert cmd is None
 
 
+def test_no_release_60_to_55_braking_inside_horizon():
+    """Sesión 205020Z: no soltar en suelo zona 60 con cartel 55 a 216 m."""
+    cmd = resolve_release_command(
+        speed_mph=59.91,
+        handle_notch=3,
+        effective_limit=60.0,
+        next_limit_mph=55.0,
+        distance_next_m=216.2,
+        gradient_pct=-1.0,
+    )
+    assert cmd is None
+
+
+def test_no_release_55_to_45_chatter_inside_horizon():
+    """Sesión 205020Z: APPLY→RELEASE a 54.77 mph / 324 m al cartel 45."""
+    cmd = resolve_release_command(
+        speed_mph=54.77,
+        handle_notch=3,
+        effective_limit=55.0,
+        next_limit_mph=45.0,
+        distance_next_m=323.7,
+        gradient_pct=-1.0,
+    )
+    assert cmd is None
+
+
 def test_release_downhill_zone_coast_far_from_next_sign():
     """60→55 lejos: tras contener zona, soltar en banda ~59.5 (no hasta @54)."""
     cmd = resolve_release_command(
@@ -220,6 +246,54 @@ def test_coast_latch_inhibits_rebrake():
         distance_next_m=300.0,
         effective_limit=75.0,
     )
+
+
+def test_kinematic_release_before_target_on_brake_limit():
+    """60→55: soltar antes de 54 si el fill seguiría frenando (evita undershoot)."""
+    cmd = resolve_release_command(
+        speed_mph=55.2,
+        handle_notch=3,
+        effective_limit=60.0,
+        next_limit_mph=55.0,
+        distance_next_m=120.0,
+        gradient_pct=-1.0,
+        latch_ops_target=54.0,
+        accel_ms2=-0.35,
+        brake_fill_s=2.5,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+
+
+def test_kinematic_no_release_when_projected_above_target():
+    """Aún lejos del objetivo: no soltar aunque la banda fija lo permitiría."""
+    cmd = resolve_release_command(
+        speed_mph=56.0,
+        handle_notch=3,
+        effective_limit=60.0,
+        next_limit_mph=55.0,
+        distance_next_m=180.0,
+        gradient_pct=-1.0,
+        latch_ops_target=54.0,
+        brake_fill_s=2.5,
+        predict_decel=lambda h, s, g: 0.35,
+    )
+    assert cmd is None
+
+
+def test_projected_speed_after_brake_fill():
+    from tsw6v2.physics import projected_speed_mph_after_brake_fill
+
+    v = projected_speed_mph_after_brake_fill(
+        55.0,
+        accel_ms2=-0.40,
+        decel_ms2=None,
+        gradient_pct=-1.0,
+        brake_fill_s=2.5,
+    )
+    assert v is not None
+    assert v < 54.5
+    assert v > 52.0
 
 
 if __name__ == "__main__":

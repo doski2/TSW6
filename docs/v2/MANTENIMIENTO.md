@@ -6,7 +6,8 @@
 Checklist operativo que acompaña **cada paso** del § Orden en [PLAN_V2](PLAN_V2.md#orden-de-implementación).
 Las **fases** (0–6, capacidades del producto) están en el mismo doc: [§ Fases 0–6](PLAN_V2.md#fase-0--contrato-io).
 
-**Estado rápido (2026-09-06):** paso **3** — cartel P1 en `V2/tsw6v2/` (**112** tests V2).
+**Estado rápido (2026-09-09):** paso **3** — cartel P1 en `V2/tsw6v2/` (**140** tests V2).
+Validación campo: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md).
 Orquestación v1 en `archive/braking_v1_autopilot/`. Autopilot GUI (`iniciar_autopilot.bat`) usa
 `tsw6v2.autopilot_limit` → mismo `evaluate_limit_tick` que `run_p1_session.bat`.
 
@@ -21,7 +22,7 @@ No sustituye el plan de producto; lo hace ejecutable.
 | Antes de abrir PR | [Checklist cierre](#checklist-cierre-de-paso) · [Tests](#tests) |
 | Tras cambiar `main.lua` | [Probe Lua](#probe-lua) |
 | Autopilot lento / mandos raros | [Depuración canal](#depuración-canal-ipc--getdata) |
-| Tras sesión in-game | [Sesión juego](#sesión-in-game) |
+| Tras sesión in-game | [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) · [Sesión juego](#sesión-in-game) |
 | Antes de PR / diff inflado | [Depurar líneas y duplicados](#depurar-líneas-y-líneas-duplicadas) |
 | Dudas lab vs probe | [Lab vs producción](#lab-vs-producción) |
 | Idea mejora sin paso claro | [Sugerencias](#sugerencias-y-mejoras) |
@@ -155,7 +156,7 @@ Alcance: solo **cartel** (`dist_limit_cm` / `next_limit_ms`); sin estación ni s
 - [ ] Probe instalado (`scripts\ue4ss\install_ue4ss_probe.bat`) y juego con UE4SS.
 - [ ] Partida **Class 323** en marcha (recomendado: Cross-City, tramo con carteles 60→55 o 55→45).
 - [ ] Palanca en **neutro (4)** o tracción moderada; sin freno manual al iniciar el agente.
-- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **112** tests).
+- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **140** tests).
 - [ ] Opcional: copiar una línea GetData a fixture si encuentras un caso raro.
 
 #### Comandos

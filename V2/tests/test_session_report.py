@@ -103,6 +103,47 @@ def test_html_shows_ds_zero_and_apply_zone(tmp_path: Path) -> None:
     assert '<path d="' in text
 
 
+def test_html_shows_fb_and_pressure(tmp_path: Path) -> None:
+    p = tmp_path / "fb.jsonl"
+    rows = [
+        {"type": "session", "mode": "limit", "route": "test"},
+        {
+            "type": "tick",
+            "tick": 1,
+            "t_ms": 1000,
+            "spd_mph": 55.0,
+            "lever": 3,
+            "brake_cyl_bar": 2.8,
+            "lim_mph": 50.0,
+            "lim_dist_m": 80.0,
+            "eff_mph": 55.0,
+            "p1": {
+                "cmd": "APPLY",
+                "phase": "B1",
+                "dist_start_m": 5.0,
+                "apply_now": True,
+                "reason": "plan",
+            },
+            "fb": {
+                "a_pred_ms2": 0.5,
+                "a_obs_ms2": 0.2,
+                "shortfall": True,
+            },
+            "ipc": {"sent": True},
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    data = summarize(p)
+    assert data["fb_ticks"] == 1
+    assert data["fb_shortfall"] == 1
+    html = tmp_path / "fb.html"
+    write_html_replay(p, html)
+    text = html.read_text(encoding="utf-8")
+    assert "Feedback decel" in text
+    assert "Presión cilindro" in text
+    assert "FB shortfall" in text
+
+
 def test_finalize_skips_short_session(tmp_path: Path) -> None:
     p = tmp_path / "short.jsonl"
     rows = [

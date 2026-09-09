@@ -17,7 +17,7 @@ EMA_ALPHA = 0.10
 MIN_FILL_SAMPLES = 3
 _COAST_NOTCH = NEUTRAL_NOTCH
 
-# 323 UK — escala lab (B1 ~2.6, B2 ~3.5, B3 ~4.3 bar parado)
+PRESSURE_CONFIRM_RATIO = 0.92
 _PRESSURE_FOR_HANDLE: dict[int, float] = {
     3: 2.5,  # B1
     2: 3.2,  # B2
@@ -28,6 +28,26 @@ _PRESSURE_FOR_HANDLE: dict[int, float] = {
 def pressure_for_handle(handle: int) -> float:
     """Presión mínima esperada en cilindro para esa muesca de servicio."""
     return _PRESSURE_FOR_HANDLE.get(int(handle), PRESSURE_BRAKING_MIN_BAR)
+
+
+def brake_decel_sample_ready(
+    *,
+    handle: int,
+    lever: int | None = None,
+    brake_cyl_bar: float | None = None,
+) -> bool:
+    """
+    ¿Palanca y presión confirman la muesca comprometida?
+
+    Usado por feedback decel y EMA online — ignora transitorio de aire / lag IPC.
+    Misma escala que ``cap_escalation`` (92 % de ``pressure_for_handle``).
+    """
+    h = int(handle)
+    if lever is not None and int(lever) != h:
+        return False
+    if brake_cyl_bar is None:
+        return False
+    return float(brake_cyl_bar) >= pressure_for_handle(h) * PRESSURE_CONFIRM_RATIO
 
 
 @dataclass
@@ -137,7 +157,7 @@ class BrakeAirTracker:
         if requested >= committed:
             return requested
         need = pressure_for_handle(committed)
-        if p < need * 0.92:
+        if p < need * PRESSURE_CONFIRM_RATIO:
             return committed
         return requested
 

@@ -53,6 +53,10 @@ class AgentSnapshot:
     p1_layer: str = ""
     ipc_cmd_id: Optional[int] = None
     brake_fill_s: Optional[float] = None
+    fb_a_pred_ms2: Optional[float] = None
+    fb_a_obs_ms2: Optional[float] = None
+    fb_shortfall: bool = False
+    fb_escalated: bool = False
 
     @classmethod
     def from_probe(
@@ -76,6 +80,10 @@ class AgentSnapshot:
         p1_layer: str = "",
         ipc_cmd_id: Optional[int] = None,
         brake_fill_s: Optional[float] = None,
+        fb_a_pred_ms2: Optional[float] = None,
+        fb_a_obs_ms2: Optional[float] = None,
+        fb_shortfall: bool = False,
+        fb_escalated: bool = False,
     ) -> AgentSnapshot:
         if snap is None:
             return cls(tick=tick, target_notch=target_notch, ipc_sent=ipc_sent)
@@ -115,6 +123,10 @@ class AgentSnapshot:
             p1_layer=p1_layer,
             ipc_cmd_id=ipc_cmd_id,
             brake_fill_s=brake_fill_s,
+            fb_a_pred_ms2=fb_a_pred_ms2,
+            fb_a_obs_ms2=fb_a_obs_ms2,
+            fb_shortfall=fb_shortfall,
+            fb_escalated=fb_escalated,
         )
         if ipc_result is not None:
             out.ipc_ok = bool(ipc_result.get("ok"))
@@ -240,6 +252,10 @@ class AgentLoop:
         p1_handle: Optional[int] = None
         p1_layer = ""
         ipc_cmd_id: Optional[int] = None
+        fb_a_pred_ms2: Optional[float] = None
+        fb_a_obs_ms2: Optional[float] = None
+        fb_shortfall = False
+        fb_escalated = False
 
         if snap is not None and self.limit_brake_enabled:
             decision = evaluate_limit_tick(
@@ -257,6 +273,10 @@ class AgentLoop:
             p1_detail = decision.detail
             p1_reason = decision.reason
             p1_handle = decision.handle_notch
+            fb_a_pred_ms2 = decision.fb_a_pred_ms2
+            fb_a_obs_ms2 = decision.fb_a_obs_ms2
+            fb_shortfall = decision.fb_shortfall
+            fb_escalated = decision.fb_escalated
             if decision.command is not None:
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(decision.command)
@@ -310,4 +330,8 @@ class AgentLoop:
             p1_layer=p1_layer,
             ipc_cmd_id=ipc_cmd_id,
             brake_fill_s=self._learner.brake_fill_s,
+            fb_a_pred_ms2=fb_a_pred_ms2,
+            fb_a_obs_ms2=fb_a_obs_ms2,
+            fb_shortfall=fb_shortfall,
+            fb_escalated=fb_escalated,
         )
