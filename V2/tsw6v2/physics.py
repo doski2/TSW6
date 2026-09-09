@@ -113,6 +113,31 @@ def effective_decel_ms2(
 _RELEASE_PROJECT_MIN_DECEL_MS2 = 0.08
 
 
+def projected_speed_mph_at_distance(
+    speed_mph: float,
+    distance_m: float,
+    *,
+    accel_ms2: Optional[float] = None,
+    gradient_pct: float = 0.0,
+) -> float:
+    """
+    Velocidad tras recorrer ``distance_m`` con aceleración aprox. constante.
+
+    Usa ``accel_ms2`` del probe si hay frenado neto; si no, coast + pendiente.
+    """
+    if distance_m <= 0 or speed_mph <= 0:
+        return max(0.0, float(speed_mph))
+    speed_ms = float(speed_mph) * MPH_TO_MS
+    if accel_ms2 is not None and float(accel_ms2) < -0.02:
+        a_net = float(accel_ms2)
+    else:
+        a_net = -effective_decel_ms2(COAST_DECEL_MS2, gradient_pct)
+    v2 = speed_ms * speed_ms + 2.0 * a_net * float(distance_m)
+    if v2 <= 0.0:
+        return 0.0
+    return math.sqrt(v2) / MPH_TO_MS
+
+
 def projected_speed_mph_after_brake_fill(
     speed_mph: float,
     *,

@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 
 from tsw6v2.loop import AgentSnapshot
-from tsw6v2.trace import JsonlTrace, format_investigate, session_meta
+from tsw6v2.trace import (
+    JsonlTrace,
+    default_log_path,
+    format_investigate,
+    resolve_session_log_path,
+    session_meta,
+)
 
 
 def test_format_investigate():
@@ -32,6 +38,19 @@ def test_format_investigate():
     assert "p1=APPLY/B1" in line
     assert "apply=Y" in line
     assert "why=plan" in line
+
+
+def test_format_investigate_station_fsm():
+    snap = AgentSnapshot(
+        tick=40,
+        speed_mph=0.8,
+        station_dist_m=18.0,
+        station_fsm="STOPPED",
+        p1_target_kind="LIMIT",
+    )
+    line = format_investigate(snap)
+    assert "stn=18" in line
+    assert "fsm=STOPPED" in line
 
 
 def test_format_investigate_brake_air_fields():
@@ -80,6 +99,34 @@ def test_jsonl_trace(tmp_path: Path):
     assert tick["ipc"]["cmd_id"] == 1
     assert tick["brake_cyl_bar"] == 3.2
     assert tick["brake_fill_s"] == 2.4
+
+
+def test_jsonl_trace_station_fields(tmp_path: Path):
+    path = tmp_path / "st.jsonl"
+    trace = JsonlTrace(path, session_meta(mode="station", route="test"))
+    snap = AgentSnapshot(
+        tick=2,
+        speed_mph=1.0,
+        station_dist_m=22.0,
+        station_fsm="DEPARTING",
+        p1_target_kind="LIMIT",
+    )
+    trace.write_tick(snap, t_ms=100.0)
+    trace.close()
+    tick = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[1])
+    assert tick["stn_dist_m"] == 22.0
+    assert tick["stn_fsm"] == "DEPARTING"
+    assert tick["p1_tgt"] == "LIMIT"
+
+
+def test_resolve_session_log_path() -> None:
+    assert resolve_session_log_path(None, trace_mode="limit", route="x") is None
+    default = resolve_session_log_path("", trace_mode="station", route="cross-city")
+    assert default is not None
+    assert default == default_log_path(mode="station", route="cross-city")
+    assert "_station.jsonl" in default.name
+    custom = resolve_session_log_path("/tmp/a.jsonl", trace_mode="limit", route="r")
+    assert custom == Path("/tmp/a.jsonl")
 
 
 if __name__ == "__main__":

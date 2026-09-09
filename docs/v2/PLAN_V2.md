@@ -11,8 +11,10 @@ referencia, no el producto v2.
 **Laboratorio Lua (diseño):** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — mod aparte, no mezclar
 con el probe.
 **Python v2:** todo código producto nuevo en **`V2/tsw6v2/`** — ver [CODIGO_V2.md](CODIGO_V2.md).
-**Python v1:** `tsw6/autopilot/` (GUI + FSM estación) — cartel vía `tsw6v2.autopilot_limit`;
-orquestación legacy en `archive/braking_v1_autopilot/`. No ampliar salvo bug crítico.
+**Python v1 (legacy, no producto):** `tsw6/autopilot/` — no usar en sesiones nuevas; `autopilot_limit`
+solo puente GUI v1 si alguien arranca `iniciar_autopilot.bat`. Perfil andén canónico:
+`V2/tsw6v2/station_plan.py` (archive `braking_v1_autopilot/station_plan.py` = shim re-export).
+No ampliar v1 salvo bug crítico.
 
 Dastsc es **cómo otro proyecto creció** (capas, un mando por tick, cluster). No es plantilla ni
 techo. Lo que no encaje en TSW (OCR, TSC, 2 mph de RELEASE, nunca OFF en bajada, React) no se copia.
@@ -935,10 +937,11 @@ Validación: tarjeta **C1** · §3 · [DRIVERAID_API.md](../reference/DRIVERAID_
 abrir rediseño ni `pace` nuevo; **documentar** casos y sesiones. Si un tramo futuro no encaja, se
 aborda entonces (sesión + patrón claro), no por teoría.
 
-Referencia código: `tsw6/governor/limit_station_cluster.py` (`station_waits_for_approach_limit`,
-`next_sign_is_reduction_beyond_station`, `should_defer_station_brake`, `skip_defer`),
-`hud_timetable.py` (`merge_schedule_stations`, `source: hud_geo`),
-`driver_aid_parser.py` (`filter_stations_by_stop_names`), `governor_station.py` / FSM.
+Referencia código V2: `V2/tsw6v2/limit_station_cluster.py` (`station_waits_for_approach_limit`,
+`will_be_below_limit_at_pass`, `merged_approach_overspeed`),
+`V2/tsw6v2/p1_policy.py` (`pick_p1_brake_target`, `should_defer_station_brake`,
+`should_prefer_station_in_approach`), `V2/tsw6v2/driver_aid_stations.py` (markers HTTP).
+Legacy v1 (solo referencia): `hud_timetable.py`, `governor_station.py` / FSM.
 Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) ·
 [HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
 
@@ -946,7 +949,8 @@ Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) ·
 
 | Fenómeno | Síntoma (ejemplo) | Capa que responde hoy |
 | --- | --- | --- |
-| **Distancias invertidas** | Andén HUD más cerca que cartel 55 (Four Oaks) | P1: `station_waits`, `skip_defer`, `next_sign_is_reduction_beyond_station` |
+| **Distancias invertidas** | Andén HUD más cerca que cartel 55 (Four Oaks) | P1: `station_waits`, `next_sign_is_reduction_beyond_station` |
+| **Cartel + andén, ya bajo el next** | spd ≤ 55 con cartel 55 delante; plan cartel APPLY pero no hace falta | P1: `will_be_below_limit_at_pass` → `p1tgt=STATION` (proyección al pasar) |
 | **Lista de paradas mala** | Sutton antes que Four Oaks en `markers[]` | Planning: `stop_names` del horario, `hud_geo`, `filter_stations_by_stop_names` |
 
 **Planning (sentido del servicio):**
@@ -970,7 +974,7 @@ Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) ·
 
 | Estado | Qué | Bloqueo |
 | --- | --- | --- |
-| **En producción** | `station_waits` / `skip_defer` + filtro HUD/geo | — |
+| **En producción** | `station_waits` + proyección `will_be_below_limit_at_pass` + filtro HUD/geo | — |
 | **Suficiente por ahora** | Cross-City 323 con reglas actuales | Ninguno — no ticket activo |
 | **Solo documentar** | Sesiones donde TrackData miente; orden vs horario | Cuando aparezca caso nuevo |
 | **Aplazado** | `odo_m` vs orden horario; cabina explícita en Lua | Sin patrón que lo exija aún |
@@ -1570,7 +1574,7 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 | --- | --- | --- | --- | --- |
 | 1 | Contrato GetData en [CANAL_CONTROL](../CANAL_CONTROL.md) | P1, P3 | 0 | ✅ doc · ✅ C1+9b-a probe · fixture |
 | 2 | Esqueleto `V2/tsw6v2/` (`loop.py`: snapshot → un mando → IPC), GUI visor | D1, P0 | 2 | ✅ `V2/tests/` · `test-ipc` in-game · `--console`/`gui` |
-| 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | Four Oaks / carteles pytest |
+| 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | pytest carteles · [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) in-game |
 | 4 | `extract_signal_red` + fixture pytest | Sesión **C1**, P2 | 4 | ✅ probe `20260902a` · fixture |
 | 5 | Quitar stub `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | emergencia rojo + C1 in-game |
 | 6 | Paquete JSON `data/vehicles/` + caché palancas G-B | 323 validado, P2 | 1 | `test_control_layout` + IPC |
@@ -1585,13 +1589,26 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 (`ApiExplorerMod`);
 desbloquea C1/G-B sin hinchar el probe. No sustituye pasos 1–10.
 
-**Sesión actual:** paso **3** — cartel en `V2/tsw6v2/`; **87 tests** `V2/tests/`.
-Validación in-game: `V2\run_p1_session.bat limit cross-city`. Paso 2 cerrado (`test-ipc` PASS 323).
+**Sesión actual:** paso **3** — cartel + **andén P1** en `V2/tsw6v2/`; **157 tests** `V2/tests/`.
+Stack: HOLD_DH / BRAKE_LIMIT, muesca + defer, feedback decel (`brake_feedback`), EMA online con filtro
+aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. Andén: `station_plan` + `station_brake` + `p1_policy` + `planning_poller`
+(HTTP `DriverAid.TrackData` ~2 s + `v×dt`; fallback `Planning.txt`). **Subfase:** validación campo cartel y andén
+([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) — checklist `station` + HTTP); sesión ref.
+cartel `20260908T225707Z`. Pasos
+**2** y **4** cerrados. Señal en P1 solo emergencia (`p1_emergency`); `evaluate_signal_brake` paso **5**.
+FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `run_p1_session.bat`
+— **no** `tsw6/autopilot/`. **Siguiente código:** cerrar validación paso 3 → paso **5** señal.
 
 ### Deltas (cambios al codificar)
 
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
+| 2026-09-10 | 3 / estación | HTTP solo en v1 telemetry | `planning_poller` + `driver_aid_stations` + `bridge/http_api` en V2; `StationPlanning` en `AgentLoop`; fallback `Planning.txt`; script `V2/scripts/write_planning.py` |
+| 2026-09-10 | 3 / estación | Prioridad cartel↔andén | `will_be_below_limit_at_pass`: bajo el next + proyección legal → STATION; doc [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos) |
+| 2026-09-10 | 3 / estación | P1 andén pendiente (paso 6–7) | Andén en `evaluate_p1_tick`: `station_plan`, `station_brake`, `p1_policy`, `limit_station_cluster`; modo `--mode station`; sin import `tsw6` en `V2/` |
+| 2026-09-10 | 3 | RELEASE solo banda 59.5 | RELEASE cinemático BRAKE_LIMIT (`v + a_net·fill`); `limit_release_speed_ready`; HOLD_DH no bloqueado por WATCH; [REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md) §8 |
+| 2026-09-09 | 3 | Feedback/EMA sin gate | `brake_decel_sample_ready` (palanca = muesca + P ≥ 92 %); feedback y EMA gated; fix prioridad WATCH vs HOLD_DH |
+| 2026-09-09 | 3 / archive | Archive v1 braking completo | Eliminados `coordinator`, `policy`, `command`, `physics`, `plan`, `limit_brake`; quedan `station_plan` + `objectives` (ref. pasos 5–7) |
 | 2026-09-06 | 3 / doc | Shims v1 + coordinator | Cartel solo `V2/tsw6v2/`; archive `braking_v1_autopilot/`; `autopilot_limit` + `planning.py`; umbrales en `constants.py`; 87 tests V2 |
 | 2026-09-03 | 3 | Física/learner/carteles | `physics`, `plan`, `limits`, `command`, `decision`, `learner` · bucle APPLY/RELEASE/COAST · `V2/tests/` 46 tests |
 | 2026-09-03 | 2 | Cierre in-game | `test-ipc` PASS (lever 6→3, train_brake 0.33; neutro 4) · ACK 37–63 ms |
@@ -1606,8 +1623,8 @@ Validación in-game: `V2\run_p1_session.bat limit cross-city`. Paso 2 cerrado (`
 
 ## Prioridad (resumen)
 
-1. **Paso 3** — física/learner en `V2/tsw6v2/`; P2 verde.
-2. **Pasos 4–5 / C1** — señal roja; fixture + sesión in-game.
+1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)); P2 verde (143 tests).
+2. **Paso 5 / C1** — señal roja en P1 (paso 4 probe cerrado); fixture + sesión in-game.
 3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisión `tsw_hud.db` si falla match.
 4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.
 5. **Siempre** — checklist transversal al cerrar cada paso (pytest, delta, probe si Lua).
@@ -1622,6 +1639,6 @@ Validación in-game: `V2\run_p1_session.bat limit cross-city`. Paso 2 cerrado (`
 
 #### Siguiente código
 
-**Siguiente código:** paso **3** (física/learner en `V2/tsw6v2/`). Tarjetas in-game:
-**C1** señales · **C2** andén. Canal: [CANAL_CONTROL](../CANAL_CONTROL.md) · probe:
-[PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).
+**Siguiente código:** cerrar validación **paso 3**; luego paso **5** (`evaluate_signal_brake`, rojo en P1).
+Tarjetas in-game: **C1** señales · **C2** andén (pasos 6–7). Canal: [CANAL_CONTROL](../CANAL_CONTROL.md) ·
+probe: [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).

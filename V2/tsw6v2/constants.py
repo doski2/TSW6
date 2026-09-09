@@ -10,6 +10,8 @@ IPC_ACK_TIMEOUT_S = 0.35
 IPC_STEP_PAUSE_S = 0.08
 AGENT_ACK_TIMEOUT_S = 0.12
 DEFAULT_LOOP_HZ = 20.0
+# Tras tocar la palanca contra el IPC, P1 no manda hasta que pase este tiempo (s).
+DRIVER_OVERRIDE_COOLDOWN_S = 12.0
 
 # Física frenado (Class 323 — PLAN_V2 §2)
 MAX_DECEL_MS2 = 1.071
@@ -24,6 +26,7 @@ SERVICE_MIN_HANDLE = 1
 SERVICE_MAX_BRAKE = 3
 EMERGENCY_BRAKE_HANDLE = 0
 EMERGENCY_BRAKE_MAX_DIST_M = 25.0
+P1_CRITICO_MPH = 10.0  # no CRÍTICO en creep (andén)
 
 # UK EMU pasajeros: operar ~1 mph bajo cartel publicado (60 → techo 59).
 PASSENGER_OPS_MARGIN_MPH = 1.0

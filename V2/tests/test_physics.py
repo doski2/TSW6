@@ -10,6 +10,7 @@ from tsw6v2.physics import (
     braking_distance_m,
     decel_for_notch,
     gravity_acceleration_ms2,
+    projected_speed_mph_at_distance,
 )
 from tsw6v2.planning import next_speed_limit
 from tsw6v2.bridge.getdata import ProbeSnapshot
@@ -88,6 +89,15 @@ class TestPlanning:
         assert dist_m == 400.0
         assert mph is not None
         assert abs(mph - 55.0) < 1.0
+
+
+def test_projected_speed_mph_at_distance_coasts_down() -> None:
+    v = projected_speed_mph_at_distance(
+        60.0,
+        200.0,
+        gradient_pct=0.0,
+    )
+    assert 50.0 < v < 60.0
 
 
 if __name__ == "__main__":

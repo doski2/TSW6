@@ -13,17 +13,21 @@ from tsw6v2.diagnostic import run_ipc_brake_test
 from tsw6v2.gui import run_gui
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop
-from tsw6v2.p1_mode import P1_MODES, apply_p1_mode, resolve_p1_mode, session_trace_mode
-from tsw6v2.session_report import (
-    finalize_session_report,
-    format_summary_line,
-    MIN_HTML_DURATION_S,
-    MIN_HTML_TICKS,
-    session_ready_for_browser,
-    session_ready_for_html,
-    summarize,
+from tsw6v2.p1_mode import (
+    GUI_P1_MODES,
+    P1_MODES,
+    apply_p1_mode,
+    gui_mode_to_loop_mode,
+    resolve_p1_mode,
+    session_trace_mode,
 )
-from tsw6v2.trace import JsonlTrace, default_log_path, format_investigate, session_meta
+from tsw6v2.session_log import (
+    SessionRecorder,
+    make_session_recorder,
+    save_learner_if_dirty,
+    session_profile_note,
+)
+from tsw6v2.trace import format_investigate, resolve_session_log_path
 
 
 def run_console(
@@ -51,9 +55,7 @@ def run_console(
         auto_profile=profile_path is None,
     )
     loop.post_ipc_sleep_s = 0.0
-    profile_note: Optional[str] = None
-    if profile_path is not None:
-        profile_note = str(profile_path)
+    auto_profile_announced = profile_path is not None
     for note in apply_p1_mode(loop, p1_mode):
         print(f"AVISO: {note}", file=sys.stderr)
 
@@ -61,7 +63,7 @@ def run_console(
     t0 = time.monotonic()
     use_investigate = investigate or p1_mode != "console"
 
-    trace: Optional[JsonlTrace] = None
+    recorder: Optional[SessionRecorder] = None
     if log_path is not None:
         print(f"log -> {log_path.resolve()}")
 
@@ -71,19 +73,20 @@ def run_console(
             if duration_s is not None and (time.monotonic() - t0) >= duration_s:
                 break
             snap = loop.step()
-            if profile_note is None and loop.loaded_profile_path is not None:
-                profile_note = str(loop.loaded_profile_path)
-                print(f"perfil <- {loop.loaded_profile_path.resolve()}")
-            if trace is None and log_path is not None:
-                trace = JsonlTrace(
-                    log_path,
-                    session_meta(
-                        mode=session_trace_mode(p1_mode),
+            profile_note = session_profile_note(loop, profile_path)
+            if not auto_profile_announced and profile_note is not None:
+                print(f"perfil <- {Path(profile_note).resolve()}")
+                auto_profile_announced = True
+            if log_path is not None:
+                if recorder is None:
+                    recorder = make_session_recorder(
+                        log_path,
+                        loop,
+                        trace_mode=session_trace_mode(p1_mode),
                         route=route,
-                        profile=profile_note,
-                    ),
-                )
-            t_ms = (time.monotonic() - t0) * 1000.0
+                        profile_path=profile_path,
+                    )
+                recorder.record(snap)
             if use_investigate:
                 print(format_investigate(snap))
             else:
@@ -93,53 +96,22 @@ def run_console(
                     f"lever={snap.lever_notch} target={snap.target_notch} "
                     f"ipc={snap.ipc_sent}"
                 )
-            if trace is not None:
-                trace.write_tick(snap, t_ms=t_ms, ipc_cmd_id=snap.ipc_cmd_id)
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\n(stop)")
     finally:
-        if trace is not None:
-            trace.close()
-        if log_path is not None and session_html and log_path.is_file():
-            try:
-                data = summarize(log_path)
-                print(format_summary_line(data))
-                html_out = finalize_session_report(log_path, summary=data)
-                if html_out is not None:
-                    print(f"replay -> {html_out.resolve()}")
-                    if open_html:
-                        import os
-
-                        if session_ready_for_browser(data):
-                            os.startfile(str(html_out.resolve()))  # type: ignore[attr-defined]
-                        else:
-                            print(
-                                "replay guardado (no se abre navegador: sesion corta; "
-                                "conduce 1-2 min antes de Ctrl+C)"
-                            )
-                else:
-                    print(
-                        f"replay omitido (<{MIN_HTML_TICKS} ticks o <{MIN_HTML_DURATION_S}s) "
-                        f"— JSONL: {log_path.resolve()}"
-                    )
-            except (OSError, ValueError) as exc:
-                print(f"AVISO: no se pudo generar replay HTML: {exc}", file=sys.stderr)
-        save_path = profile_path or loop.loaded_profile_path
-        active = loop.active_learner
-        if save_path is not None and (
-            active.brake_fill_n > 0 or active.decel_observe_n > 0
-        ):
-            try:
-                active.save_json(save_path)
-                parts: list[str] = []
-                if active.brake_fill_n > 0:
-                    parts.append(f"fill={active.brake_fill_s:.2f}s")
-                if active.decel_observe_n > 0:
-                    parts.append(f"decel_n={active.decel_observe_n}")
-                print(f"perfil -> {save_path.resolve()} ({', '.join(parts)})")
-            except OSError as exc:
-                print(f"AVISO: no se pudo guardar perfil: {exc}", file=sys.stderr)
+        loop.shutdown()
+        if recorder is not None:
+            result = recorder.finish(
+                open_html=open_html,
+                generate_html=session_html,
+            )
+            if result.message:
+                print(result.message)
+        profile_msg = save_learner_if_dirty(loop, profile_path)
+        if profile_msg is not None:
+            stream = sys.stderr if profile_msg.startswith("AVISO:") else sys.stdout
+            print(profile_msg, file=stream)
     return 0
 
 
@@ -197,7 +169,40 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     sub.add_parser("test-ipc", help="Prueba B1 vía IPC (interactiva)")
-    sub.add_parser("gui", help="Visor tkinter (snapshot agente, sin mandos)")
+    gui_p = sub.add_parser("gui", help="Visor tkinter + config P1 (Fase A)")
+    gui_p.add_argument(
+        "--mode",
+        default="p1",
+        help="off=probe; p1=cartel+andén (alias limit/station → p1). Valores: %(choices)s",
+        choices=list(GUI_P1_MODES),
+    )
+    gui_p.add_argument("--profile", type=Path, default=None, help="JSON learner")
+    gui_p.add_argument(
+        "--log",
+        nargs="?",
+        const="",
+        default="",
+        metavar="PATH",
+        help="JSONL al cerrar (por defecto logs/v2/…; PATH opcional)",
+    )
+    gui_p.add_argument("--no-log", action="store_true", help="No guardar JSONL/HTML al cerrar")
+    gui_p.add_argument(
+        "--route",
+        default="cross-city",
+        help="Etiqueta ruta en nombre de log y replay",
+    )
+    gui_p.add_argument(
+        "--open-html",
+        action="store_true",
+        help="Abrir replay HTML al cerrar si la sesión es larga",
+    )
+    gui_p.add_argument(
+        "--no-open-html",
+        action="store_false",
+        dest="open_html",
+        help="No abrir navegador al cerrar",
+    )
+    gui_p.set_defaults(open_html=True)
 
     args = parser.parse_args(argv)
     command: str | None = getattr(args, "command", None)
@@ -206,20 +211,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         mode_arg = getattr(args, "mode", None)
         route = str(getattr(args, "route", "") or "")
         p1_mode = mode_arg or ("limit" if getattr(args, "limit_brake", False) else "console")
-        log_path: Optional[Path] = None
-        if log_arg is not None:
-            log_path = (
-                default_log_path(mode=p1_mode, route=route or "session")
-                if log_arg == ""
-                else Path(log_arg)
-            )
+        console_log = resolve_session_log_path(
+            log_arg,
+            trace_mode=session_trace_mode(p1_mode),
+            route=route,
+            default_route="session",
+        )
         return run_console(
             hz=float(getattr(args, "hz", DEFAULT_LOOP_HZ)),
             duration_s=getattr(args, "duration", None),
             mode=p1_mode,
             limit_brake=bool(getattr(args, "limit_brake", False)),
             profile_path=getattr(args, "profile", None),
-            log_path=log_path,
+            log_path=console_log,
             investigate=bool(getattr(args, "investigate", False)),
             route=route,
             session_html=not bool(getattr(args, "no_session_html", False)),
@@ -228,7 +232,28 @@ def main(argv: Optional[list[str]] = None) -> int:
     if command == "test-ipc":
         return run_ipc_brake_test(interactive=True)
     if command == "gui":
-        return run_gui()
+        profile = getattr(args, "profile", None)
+        log_arg = getattr(args, "log", None)
+        gui_mode = str(getattr(args, "mode", "p1"))
+        gui_trace_mode = session_trace_mode(
+            gui_mode_to_loop_mode(gui_mode) if gui_mode != "off" else "console"
+        )
+        gui_log: Optional[Path] = None
+        if not getattr(args, "no_log", False):
+            gui_log = resolve_session_log_path(
+                log_arg,
+                trace_mode=gui_trace_mode,
+                route=str(getattr(args, "route", "") or "gui"),
+                default_route="gui",
+            )
+        return run_gui(
+            mode=str(getattr(args, "mode", "p1")),
+            profile_path=profile,
+            log_path=gui_log,
+            route=str(getattr(args, "route", "cross-city") or "cross-city"),
+            open_html=bool(getattr(args, "open_html", True)),
+            no_log=bool(getattr(args, "no_log", False)),
+        )
     parser.print_help()
     return 0
 

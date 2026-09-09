@@ -1,4 +1,4 @@
-"""Un tick P1 cartel: limit_brake + RELEASE/COAST (paso 3)."""
+"""Un tick P1: cartel + andén + RELEASE/COAST."""
 
 from __future__ import annotations
 
@@ -16,8 +16,12 @@ from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
+from tsw6v2.p1_emergency import EmergencyTargetKind, check_p1_emergency
+from tsw6v2.p1_policy import pick_p1_brake_target
+from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
+from tsw6v2.station_brake import evaluate_station_brake
 from tsw6v2.target import BrakeTargetResult
 
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
@@ -40,6 +44,8 @@ class LimitBrakeDecision:
     fb_a_obs_ms2: Optional[float] = None
     fb_shortfall: bool = False
     fb_escalated: bool = False
+    target_kind: str = ""
+    station_dist_m: Optional[float] = None
 
     @classmethod
     def idle(
@@ -93,6 +99,8 @@ class _TickCtx:
         fb_a_obs_ms2: Optional[float] = None,
         fb_shortfall: bool = False,
         fb_escalated: bool = False,
+        target_kind: str = "",
+        station_dist_m: Optional[float] = None,
     ) -> LimitBrakeDecision:
         return LimitBrakeDecision(
             command,
@@ -110,6 +118,8 @@ class _TickCtx:
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
+            target_kind=target_kind,
+            station_dist_m=station_dist_m,
         )
 
     def idle(self, reason: str, target: Optional[BrakeTargetResult] = None, **kw) -> LimitBrakeDecision:
@@ -122,6 +132,9 @@ class _TickCtx:
             kw.setdefault("fb_a_obs_ms2", target.fb_a_obs_ms2)
             kw.setdefault("fb_shortfall", target.fb_shortfall)
             kw.setdefault("fb_escalated", target.fb_escalated)
+            kw.setdefault("target_kind", target.target_kind)
+            if target.target_kind == "STATION":
+                kw.setdefault("station_dist_m", target.distance_m)
         return self.decide(None, reason, **kw)
 
     def from_target(self, cmd: BrakeCommand, target: BrakeTargetResult, reason: str) -> LimitBrakeDecision:
@@ -140,7 +153,22 @@ class _TickCtx:
             fb_a_obs_ms2=target.fb_a_obs_ms2,
             fb_shortfall=target.fb_shortfall,
             fb_escalated=target.fb_escalated,
+            target_kind=target.target_kind,
+            station_dist_m=(
+                target.distance_m if target.target_kind == "STATION" else None
+            ),
         )
+
+
+@dataclass(frozen=True)
+class _TickPrep:
+    ctx: _TickCtx
+    dist_m: Optional[float]
+    next_limit_mph: Optional[float]
+    lever: int
+    escalate_cap: Optional[Callable[[int, int], int]]
+    fill_s: float
+    predict: Optional[PredictDecelFn]
 
 
 def _throttle_notch(lever: int) -> int:
@@ -186,23 +214,17 @@ def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
     return "plan"
 
 
-def evaluate_limit_tick(
-    limit_state: LimitBrakeState,
-    release_state: BrakeReleaseState,
+def _prepare_tick(
     snap: ProbeSnapshot,
-    *,
-    learner: Optional[LearnerProfile] = None,
-    predict_decel: Optional[PredictDecelFn] = None,
-) -> LimitBrakeDecision:
-    """Cartel → ``BrakeCommand`` (APPLY / RELEASE / COAST) o sin mando."""
+    learner: Optional[LearnerProfile],
+    predict_decel: Optional[PredictDecelFn],
+) -> Optional[_TickPrep]:
     if snap.speed_ms is None:
-        return LimitBrakeDecision.idle(reason="no_speed")
-
+        return None
     dist_m, next_limit_mph = next_speed_limit(snap)
     lever = probe_lever(snap)
     if lever is None:
         lever = NEUTRAL_NOTCH
-
     ctx = _TickCtx(
         dist_m=dist_m,
         next_limit_mph=next_limit_mph,
@@ -212,73 +234,134 @@ def evaluate_limit_tick(
         lever=lever,
         cyl=snap.brake_cyl_bar,
     )
-
     if learner is not None:
         learner.observe_air(lever, ctx.cyl)
-
-    escalate_cap = _escalate_cap_fn(learner, ctx.cyl) if learner else None
-    fill_s = learner.brake_fill_s if learner else DEFAULT_BRAKE_FILL_S
-    predict = predict_decel or (learner.predict_decel if learner else None)
-
-    release_state.update(ctx.speed_mph, next_limit_mph)
-    if is_brake_applied(lever):
-        latch_ops = (
-            limit_state.latch.limit_mph if limit_state.latch is not None else None
-        )
-        rel = resolve_release_command(
-            speed_mph=ctx.speed_mph,
-            handle_notch=lever,
-            effective_limit=ctx.effective,
-            next_limit_mph=next_limit_mph,
-            distance_next_m=dist_m,
-            gradient_pct=ctx.grad,
-            latch_ops_target=latch_ops,
-            accel_ms2=snap.accel_ms2,
-            brake_fill_s=fill_s,
-            predict_decel=predict,
-        )
-        if rel is not None:
-            # Tras RELEASE, permitir coast/defer de nuevo; si no, BRAKE_LIMIT
-            # re-compromete B1 al tick siguiente (caza APPLY↔RELEASE ~59.5 mph).
-            limit_state.clear_commitment()
-            if next_limit_mph is not None:
-                release_state.latch(next_limit_mph)
-            return ctx.decide(
-                rel,
-                "release",
-                phase=rel.phase or "NEU",
-                detail=rel.reason,
-                handle_notch=rel.target_notch,
-            )
-
-    if next_limit_mph is None or dist_m is None:
-        return ctx.idle("no_limit_sign")
-
-    posted = ctx.effective if snap.speed_limit_ms else None
-    target = evaluate_limit_brake(
-        limit_state,
-        speed_mph=ctx.speed_mph,
-        limit_mph=next_limit_mph,
-        distance_m=dist_m,
-        gradient_pct=ctx.grad,
-        accel_ms2=snap.accel_ms2,
-        predict_decel=predict,
-        posted_limit_mph=posted,
-        brake_fill_s=fill_s,
-        escalate_cap=escalate_cap,
-        learner=learner,
+    return _TickPrep(
+        ctx=ctx,
+        dist_m=dist_m,
+        next_limit_mph=next_limit_mph,
         lever=lever,
-        brake_cyl_bar=ctx.cyl,
+        escalate_cap=_escalate_cap_fn(learner, ctx.cyl) if learner else None,
+        fill_s=learner.brake_fill_s if learner else DEFAULT_BRAKE_FILL_S,
+        predict=predict_decel or (learner.predict_decel if learner else None),
     )
-    if target is None:
-        return ctx.idle("no_plan")
 
-    if release_state.should_inhibit_limit_rebrake(
+
+def _signal_distance_m(snap: ProbeSnapshot) -> Optional[float]:
+    if snap.signal_red is not True or snap.signal_dist_cm is None:
+        return None
+    dist = float(snap.signal_dist_cm) / 100.0
+    return dist if dist > 0 else None
+
+
+def _decision_from_emergency(
+    prep: _TickPrep,
+    cmd: BrakeCommand,
+    *,
+    target_kind: EmergencyTargetKind,
+    distance_m: float,
+) -> LimitBrakeDecision:
+    station_dist = distance_m if target_kind == "STATION" else None
+    return prep.ctx.decide(
+        cmd,
+        "emergency",
+        phase=cmd.phase or "B3",
+        dist_start_m=distance_m,
+        apply_now=True,
+        detail=cmd.reason,
+        handle_notch=cmd.target_notch,
+        target_kind=target_kind,
+        station_dist_m=station_dist,
+    )
+
+
+def _attempt_p1_emergency(
+    prep: _TickPrep,
+    snap: ProbeSnapshot,
+    *,
+    station_distance_m: Optional[float] = None,
+) -> Optional[LimitBrakeDecision]:
+    checks: list[tuple[EmergencyTargetKind, float]] = []
+    if station_distance_m is not None and station_distance_m > 0:
+        checks.append(("STATION", float(station_distance_m)))
+    signal_dist = _signal_distance_m(snap)
+    if signal_dist is not None:
+        checks.append(("SIGNAL", signal_dist))
+    for kind, dist in checks:
+        cmd = check_p1_emergency(
+            target_kind=kind,
+            speed_mph=prep.ctx.speed_mph,
+            urgent_dist_m=dist,
+            gradient_pct=prep.ctx.grad,
+            brake_transition_s=prep.fill_s,
+            accel_ms2=snap.accel_ms2,
+        )
+        if cmd is not None:
+            return _decision_from_emergency(prep, cmd, target_kind=kind, distance_m=dist)
+    return None
+
+
+def _attempt_release(
+    prep: _TickPrep,
+    *,
+    limit_state: LimitBrakeState,
+    release_state: BrakeReleaseState,
+    snap: ProbeSnapshot,
+    limit_brake_enabled: bool = True,
+) -> Optional[LimitBrakeDecision]:
+    if not limit_brake_enabled or not is_brake_applied(prep.lever):
+        return None
+    release_state.update(prep.ctx.speed_mph, prep.next_limit_mph)
+    latch_ops = (
+        limit_state.latch.limit_mph if limit_state.latch is not None else None
+    )
+    rel = resolve_release_command(
+        speed_mph=prep.ctx.speed_mph,
+        handle_notch=prep.lever,
+        effective_limit=prep.ctx.effective,
+        next_limit_mph=prep.next_limit_mph,
+        distance_next_m=prep.dist_m,
+        gradient_pct=prep.ctx.grad,
+        latch_ops_target=latch_ops,
+        accel_ms2=snap.accel_ms2,
+        brake_fill_s=prep.fill_s,
+        predict_decel=prep.predict,
+    )
+    if rel is None:
+        return None
+    limit_state.clear_commitment()
+    if prep.next_limit_mph is not None:
+        release_state.latch(prep.next_limit_mph)
+    return prep.ctx.decide(
+        rel,
+        "release",
+        phase=rel.phase or "NEU",
+        detail=rel.reason,
+        handle_notch=rel.target_notch,
+        target_kind="SPEED_LIMIT",
+    )
+
+
+def _finalize_target_decision(
+    ctx: _TickCtx,
+    target: BrakeTargetResult,
+    *,
+    limit_state: LimitBrakeState,
+    release_state: BrakeReleaseState,
+    snap: ProbeSnapshot,
+    learner: Optional[LearnerProfile],
+    lever: int,
+    dist_m: Optional[float],
+    next_limit_mph: Optional[float],
+    grad: float,
+) -> LimitBrakeDecision:
+    """Convierte ``BrakeTargetResult`` ganador en ``LimitBrakeDecision``."""
+    if target.target_kind == "SPEED_LIMIT" and release_state.should_inhibit_limit_rebrake(
         speed_mph=ctx.speed_mph,
         next_limit_mph=next_limit_mph,
         handle_notch=lever,
         plan=None,
-        gradient_pct=ctx.grad,
+        gradient_pct=grad,
         distance_next_m=dist_m,
         effective_limit=ctx.effective,
     ):
@@ -288,8 +371,12 @@ def evaluate_limit_tick(
         throttle_notch=_throttle_notch(lever),
         current_notch=lever,
         speed_mph=ctx.speed_mph,
-        gradient_pct=ctx.grad,
-        brake_committed=limit_state.committed_handle is not None,
+        gradient_pct=grad,
+        brake_committed=(
+            limit_state.committed_handle is not None
+            if target.target_kind == "SPEED_LIMIT"
+            else False
+        ),
     )
     if (
         target.downhill_hold
@@ -314,6 +401,10 @@ def evaluate_limit_tick(
             fb_a_obs_ms2=target.fb_a_obs_ms2,
             fb_shortfall=target.fb_shortfall,
             fb_escalated=target.fb_escalated,
+            target_kind=target.target_kind,
+            station_dist_m=(
+                target.distance_m if target.target_kind == "STATION" else None
+            ),
         )
 
     if cmd is None:
@@ -326,4 +417,150 @@ def evaluate_limit_tick(
         reason, detail = air_block
         return ctx.idle(reason, target=target, detail=detail)
 
-    return ctx.from_target(cmd, target, _plan_reason(cmd, target))
+    decision = ctx.from_target(cmd, target, _plan_reason(cmd, target))
+    decision.target_kind = target.target_kind
+    decision.station_dist_m = (
+        target.distance_m if target.target_kind == "STATION" else None
+    )
+    return decision
+
+
+def evaluate_p1_tick(
+    limit_state: LimitBrakeState,
+    release_state: BrakeReleaseState,
+    snap: ProbeSnapshot,
+    *,
+    learner: Optional[LearnerProfile] = None,
+    predict_decel: Optional[PredictDecelFn] = None,
+    station_distance_m: Optional[float] = None,
+    station_eta: Optional[str] = None,
+    schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
+    limit_brake_enabled: bool = True,
+    station_brake_enabled: bool = True,
+) -> LimitBrakeDecision:
+    """Cartel + andén → un ``BrakeCommand`` o sin mando."""
+    if not limit_brake_enabled and not station_brake_enabled:
+        return LimitBrakeDecision.idle(reason="p1_off")
+
+    station_dist: Optional[float] = None
+    if (
+        station_brake_enabled
+        and station_distance_m is not None
+        and station_distance_m > 0
+    ):
+        station_dist = float(station_distance_m)
+
+    prep = _prepare_tick(snap, learner, predict_decel)
+    if prep is None:
+        return LimitBrakeDecision.idle(reason="no_speed")
+
+    emerg = _attempt_p1_emergency(prep, snap, station_distance_m=station_dist)
+    if emerg is not None:
+        return emerg
+
+    released = _attempt_release(
+        prep,
+        limit_state=limit_state,
+        release_state=release_state,
+        snap=snap,
+        limit_brake_enabled=limit_brake_enabled,
+    )
+    if released is not None:
+        return released
+
+    ctx = prep.ctx
+    limit_target: Optional[BrakeTargetResult] = None
+    if (
+        limit_brake_enabled
+        and prep.next_limit_mph is not None
+        and prep.dist_m is not None
+    ):
+        posted = ctx.effective if snap.speed_limit_ms else None
+        limit_target = evaluate_limit_brake(
+            limit_state,
+            speed_mph=ctx.speed_mph,
+            limit_mph=prep.next_limit_mph,
+            distance_m=prep.dist_m,
+            gradient_pct=ctx.grad,
+            accel_ms2=snap.accel_ms2,
+            predict_decel=prep.predict,
+            posted_limit_mph=posted,
+            brake_fill_s=prep.fill_s,
+            escalate_cap=prep.escalate_cap,
+            learner=learner,
+            lever=prep.lever,
+            brake_cyl_bar=ctx.cyl,
+        )
+
+    station_target: Optional[BrakeTargetResult] = None
+    if station_dist is not None:
+        station_target = evaluate_station_brake(
+            speed_mph=ctx.speed_mph,
+            station_distance_m=station_dist,
+            gradient_pct=ctx.grad,
+            predict_decel=prep.predict,
+            throttle_notch=_throttle_notch(prep.lever),
+            station_eta=station_eta,
+            schedule_slack_enabled=schedule_slack_enabled,
+            brake_fill_s=prep.fill_s,
+            base_decel=DEFAULT_MAX_BRAKE_DECEL,
+        )
+
+    if station_dist is None:
+        if not limit_brake_enabled or prep.next_limit_mph is None or prep.dist_m is None:
+            return ctx.idle("no_limit_sign")
+        if limit_target is None:
+            return ctx.idle("no_plan")
+        target = limit_target
+    else:
+        target = pick_p1_brake_target(
+            speed_mph=ctx.speed_mph,
+            limit_target=limit_target,
+            station_target=station_target,
+            limit_mph=prep.next_limit_mph,
+            limit_dist_m=prep.dist_m,
+            station_dist_m=station_dist,
+            effective_limit=ctx.effective,
+            gradient_pct=ctx.grad,
+            brake_fill_s=prep.fill_s,
+            accel_ms2=snap.accel_ms2,
+        )
+        if target is None:
+            if limit_target is None and station_target is None:
+                return ctx.idle("no_plan")
+            return ctx.idle("no_plan", target=limit_target or station_target)
+
+    decision = _finalize_target_decision(
+        ctx,
+        target,
+        limit_state=limit_state,
+        release_state=release_state,
+        snap=snap,
+        learner=learner,
+        lever=prep.lever,
+        dist_m=prep.dist_m,
+        next_limit_mph=prep.next_limit_mph,
+        grad=ctx.grad,
+    )
+    decision.target_kind = target.target_kind
+    return decision
+
+
+def evaluate_limit_tick(
+    limit_state: LimitBrakeState,
+    release_state: BrakeReleaseState,
+    snap: ProbeSnapshot,
+    *,
+    learner: Optional[LearnerProfile] = None,
+    predict_decel: Optional[PredictDecelFn] = None,
+) -> LimitBrakeDecision:
+    """Cartel → ``BrakeCommand`` (delega en ``evaluate_p1_tick``)."""
+    return evaluate_p1_tick(
+        limit_state,
+        release_state,
+        snap,
+        learner=learner,
+        predict_decel=predict_decel,
+        station_brake_enabled=False,
+        limit_brake_enabled=True,
+    )

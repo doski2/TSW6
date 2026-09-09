@@ -23,40 +23,45 @@ echo.
 echo === TSW6 V2 ===
 echo.
 echo   1  Sesion cartel P1 + log + HTML  ^(cross-city^)
-echo   2  Consola limit + investigate    ^(sin log^)
-echo   3  Consola limit + log + HTML     ^(ruta manual^)
-echo   4  Solo probe 15 s               ^(sin P1^)
-echo   5  test-ipc
-echo   6  gui
-echo   7  Ayuda CLI completa
+echo   2  Sesion anden P1 + log + HTML   ^(cross-city^)
+echo   3  Consola limit + investigate    ^(sin log^)
+echo   4  Consola limit + log + HTML     ^(ruta manual^)
+echo   5  Solo probe 15 s               ^(sin P1^)
+echo   6  test-ipc
+echo   7  GUI V2 P1 + log/HTML al cerrar ^(cross-city^)
+echo   8  Ayuda CLI completa
 echo   0  Salir
 echo.
 echo Desde cmd: V2\run.bat console --mode limit --investigate --log --route cross-city
 echo.
-set /p "CH=Opcion [0-7]: "
+set /p "CH=Opcion [0-8]: "
 if "%CH%"=="0" exit /b 0
 if "%CH%"=="1" (
     call "%~dp0run_p1_session.bat" limit cross-city
     exit /b %ERRORLEVEL%
 )
 if "%CH%"=="2" (
+    call "%~dp0run_p1_session.bat" station cross-city
+    exit /b %ERRORLEVEL%
+)
+if "%CH%"=="3" (
     python -m tsw6v2 console --mode limit --investigate
     goto done
 )
-if "%CH%"=="3" goto opt3_log
-if "%CH%"=="4" (
+if "%CH%"=="4" goto opt3_log
+if "%CH%"=="5" (
     python -m tsw6v2 console --duration 15
     goto done
 )
-if "%CH%"=="5" (
+if "%CH%"=="6" (
     call "%~dp0test_ipc.bat"
     exit /b %ERRORLEVEL%
 )
-if "%CH%"=="6" (
-    python -m tsw6v2 gui
+if "%CH%"=="7" (
+    python -m tsw6v2 gui --mode p1 --route cross-city --open-html
     goto done
 )
-if "%CH%"=="7" (
+if "%CH%"=="8" (
     python -m tsw6v2 --help
     echo.
     python -m tsw6v2 console --help

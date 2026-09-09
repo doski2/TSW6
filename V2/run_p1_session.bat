@@ -36,7 +36,7 @@ echo.
 echo V2\run_p1_session.bat MODE [ROUTE] [-- opciones extra]
 echo.
 echo   MODE   limit    carteles P1 ^(paso 3, activo^)
-echo          station  anden ^(paso 7 — trace hasta cablear P1^)
+echo          station  anden P1 ^(Planning.txt; validacion paso 3^)
 echo          signal   semaforo ^(paso 4-5 — trace hasta cablear P1^)
 echo          p1       todo P1 cuando exista
 echo   ROUTE  etiqueta en nombre de log ^(default: session^)

@@ -189,6 +189,69 @@ Módulos: `physics.projected_speed_mph_after_brake_fill`, `command.resolve_relea
 **No planificado (2026-09-10):** aprendizaje por distancia de parada integrada u observación en
 HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
 
+### 9. Prioridad cartel ↔ andén (dos objetivos)
+
+Modo `station`: cada tick hay hasta **dos planes** (`evaluate_limit_brake` + `evaluate_station_brake`);
+`pick_p1_brake_target` (`p1_policy.py`) elige **uno** para P1. Cluster: cartel **antes** del andén
+con gap ≤ `TARGET_CLUSTER_GAP_M` (350 m).
+
+```text
+limit_target + station_target
+  → station_waits_for_approach_limit?     → LIMIT (Four Oaks: recorte más allá del andén)
+  → merged_approach_overspeed?            → LIMIT (cluster y spd > next + 0.5)
+  → parada unificada y spd > next + 0.4?  → LIMIT (salvo proyección OK — abajo)
+  → should_prefer_station_in_approach?    → STATION
+  → should_defer_station_brake?           → LIMIT si APPLY; si no, None (sin objetivo fantasma)
+  → urgencia (dist_start menor gana)
+```
+
+| Regla | Cuándo | Objetivo |
+| --- | --- | --- |
+| `should_defer_station_brake` | Andén más lejos que `bd(v→0)` servicio + 15 m | Sin STATION todavía |
+| `station_waits_for_approach_limit` | Recorte HUD invertido o overspeed al cartel en cluster | LIMIT primero |
+| `merged_approach_overspeed` | Cluster, cartel > 50 m, spd > next + 0.5 | LIMIT |
+| `should_prefer_station_in_approach` | Andén < 600 m, spd > 15 mph, cartel no exige freno | **STATION** |
+| `station_may_ignore_limit_approach` | Cartel delante en cluster + proyección legal | **STATION** anticipado |
+
+#### Proyección al pasar el cartel (`station_may_ignore_limit_approach`)
+
+Implementación: `cluster_approach_in_range` → cartel delante del andén →
+`will_be_below_limit_at_pass` (velocidad ≤ posted+0.9 ahora y proyectada al pasar).
+
+Sesión `20260909T231617Z`: con **52 mph** y cartel **55** @ 98 m el plan de cartel pedía APPLY pero
+el tren ya iba legal; oscilaba `STATION↔LIMIT`.
+
+Condiciones (cartel **delante** del andén):
+
+1. `speed_mph ≤ posted_scoring_ceiling_mph(next)` (posted + 0.9 — techo TSW).
+2. `projected_speed_mph_at_distance(speed, limit_dist_m)` ≤ mismo techo.
+
+Proyección (`physics.projected_speed_mph_at_distance`):
+
+- Si `accel_ms2 < −0.02` (frenando): usa aceleración del probe.
+- Si no: coast (`COAST_DECEL_MS2` + pendiente).
+
+Si ambas se cumplen → **no esperar** el cartel (`station_waits` falso), **no** tratar como overspeed
+en cluster (`merged_approach_overspeed` falso), y `should_prefer_station_in_approach` devuelve
+**STATION** aunque el plan de cartel tenga `apply_now=True` (WATCH o APPLY).
+
+Entrada: `accel_ms2` del probe en `decision.evaluate_p1_tick` → `pick_p1_brake_target`.
+
+Tests: `V2/tests/test_station_brake.py` (`test_will_be_below_limit_at_pass_coasting`,
+`test_pick_station_when_below_limit_at_pass_despite_limit_apply`).
+
+Constantes (`p1_policy.py` / `physics.py`):
+
+| Constante | Valor | Notas |
+| --- | --- | --- |
+| `HORIZON_SLACK_M` | 15 m | Sobre `bd(v→0)` para defer STATION |
+| `STATION_APPROACH_PRIORITY_M` | 600 m | Horizonte preferencia andén |
+| `STATION_APPROACH_MIN_SPEED_MPH` | 15 | No robar creep en andén |
+| `TARGET_CLUSTER_GAP_M` | 350 m | Cluster cartel+andén |
+
+**No aplica** feedback decel en STATION (solo cartel en `limits.py`). Emergencia andén: `p1_emergency`
+independiente de esta prioridad.
+
 ---
 
 ## Qué descartamos de v1 (comportamiento malo o confuso)
@@ -341,7 +404,19 @@ RELEASE / COAST_PWR**.
 | `command.py` | RELEASE cinemático + COAST / APPLY |
 | `decision.py` | Tick + L4 aire + RELEASE con `accel_ms2` / perfil |
 | `autopilot_limit.py` | Puente autopilot GUI → `evaluate_limit_tick` |
-| `physics.py` | APPLY `s = v²/2a` + RELEASE `v + a·fill` |
+| `physics.py` | APPLY `s = v²/2a` + RELEASE `v + a·fill` + proyección `projected_speed_mph_at_distance` |
+
+## Apéndice C — Mapa código andén + prioridad (paso 3)
+
+| Módulo | Rol |
+| --- | --- |
+| `station_plan.py` | Perfil v→0 (B1/B2/B3); ETA desactivada por defecto |
+| `station_brake.py` | `evaluate_station_brake` → `BrakeTargetResult` STATION |
+| `limit_station_cluster.py` | Cluster 350 m, `will_be_below_limit_at_pass`, `station_waits` |
+| `p1_policy.py` | `pick_p1_brake_target`, defer horizonte, preferencia andén |
+| `planning_poller.py` / `planning_feed.py` | HTTP `DriverAid.TrackData` + anti-salto distancia |
+| `p1_emergency.py` | B3 si distancia crítica al andén / señal |
+| `decision.py` | `evaluate_p1_tick`: emergencia → release → pick objetivo → L4 |
 
 ---
 
@@ -356,6 +431,7 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-10 | §9 prioridad cartel↔andén; `will_be_below_limit_at_pass` + proyección al pasar cartel |
 | 2026-09-10 | RELEASE cinemático BRAKE_LIMIT (`v + a_net·fill`); doc validación actualizada |
 | 2026-09-09 | Doc validación multi-sesión; depurado `should_coast_throttle_before_brake` |
 | 2026-09-09 | Feedback/EMA gated por `brake_decel_sample_ready` (palanca + presión cilindro) |

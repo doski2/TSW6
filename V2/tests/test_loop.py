@@ -69,7 +69,7 @@ class TestAgentLoop:
         write_getdata_line(gd, seq=1, lever=4)
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         loop.request_notch(3)
-        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
             from tsw6v2.decision import LimitBrakeDecision
 
             eval_tick.return_value = LimitBrakeDecision.idle(reason="apply_deferred")
@@ -83,7 +83,7 @@ class TestAgentLoop:
         write_getdata_line(gd, seq=1, lever=3)
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         loop.request_notch(3)
-        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
             from tsw6v2.decision import LimitBrakeDecision
 
             eval_tick.return_value = LimitBrakeDecision.idle(reason="command_none")
@@ -97,13 +97,60 @@ class TestAgentLoop:
         write_getdata_line(gd, seq=1, lever=2)
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         loop.request_notch(3)
-        with patch("tsw6v2.loop.evaluate_limit_tick") as eval_tick:
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
             from tsw6v2.decision import LimitBrakeDecision
 
             eval_tick.return_value = LimitBrakeDecision.idle(reason="command_none")
             with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
                 loop.step()
         assert loop.target_notch is None
+        ipc.assert_not_called()
+
+    def test_manual_override_when_driver_brakes_from_neutral(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=4)
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            driver_override_cooldown_s=5.0,
+            limit_brake_enabled=True,
+        )
+        loop.request_neutral()
+        loop._last_lever = 4
+        write_getdata_line(gd, seq=2, lever=3)
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision.idle(reason="command_none")
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+                out = loop.step()
+        assert loop.target_notch is None
+        assert not out.ipc_sent
+        ipc.assert_not_called()
+        assert out.driver_override_s > 0.0
+
+    def test_manual_override_blocks_p1_ipc_while_active(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=3)
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            driver_override_cooldown_s=10.0,
+            limit_brake_enabled=True,
+        )
+        loop._arm_manual_override()
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+            from tsw6v2.command import BrakeCommand
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision(
+                command=BrakeCommand(kind="APPLY", target_notch=2),
+                reason="plan",
+            )
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+                out = loop.step()
+        assert loop.target_notch is None
+        assert not out.ipc_sent
         ipc.assert_not_called()
 
     def test_clear_target_at_neutral_after_release(self, tmp_path: Path) -> None:

@@ -31,6 +31,22 @@ def default_log_path(*, mode: str = "session", route: str = "session") -> Path:
     return Path("logs/v2") / f"{stamp}_{slug}_{mode_slug}.jsonl"
 
 
+def resolve_session_log_path(
+    log_arg: Optional[str],
+    *,
+    trace_mode: str,
+    route: str,
+    default_route: str = "session",
+) -> Optional[Path]:
+    """``None`` = sin log; ``""`` = ``default_log_path`` con ``trace_mode``."""
+    if log_arg is None:
+        return None
+    route_slug = route or default_route
+    if log_arg == "":
+        return default_log_path(mode=trace_mode, route=route_slug)
+    return Path(log_arg)
+
+
 class JsonlTrace:
     """Una línea JSON por evento; primera línea = metadatos de sesión."""
 
@@ -88,6 +104,9 @@ class JsonlTrace:
             "eff_mph": _round_opt(snap.effective_limit_mph, 2),
             "lim_mph": _round_opt(snap.limit_mph, 2),
             "lim_dist_m": _round_opt(snap.limit_dist_m, 1),
+            "stn_dist_m": _round_opt(snap.station_dist_m, 1),
+            "stn_fsm": snap.station_fsm or None,
+            "p1_tgt": snap.p1_target_kind or None,
             "vehicle": snap.vehicle,
             "p1": p1 or None,
             "fb": fb or None,
@@ -98,6 +117,8 @@ class JsonlTrace:
                 "error": snap.ipc_error or None,
             },
         }
+        if snap.driver_override_s > 0:
+            row["manual_s"] = round(snap.driver_override_s, 1)
         self.write(row)
 
     def close(self) -> None:
@@ -140,20 +161,30 @@ def format_investigate(snap: AgentSnapshot) -> str:
     phase = snap.p1_phase or "—"
     capa = format_layer_tag(snap.p1_layer) if snap.p1_layer else ""
     det = (snap.p1_detail or "")[:48]
+    stn = (
+        f"{snap.station_dist_m:.0f}"
+        if snap.station_dist_m is not None
+        else "—"
+    )
     parts = [
         f"tick={snap.tick}",
         f"spd={spd}",
         f"lim={lim}",
+        f"stn={stn}",
         f"eff={eff}",
         f"ds={ds}",
         f"apply={apply}",
     ]
+    if snap.station_fsm:
+        parts.append(f"fsm={snap.station_fsm}")
+    if snap.p1_target_kind:
+        parts.append(f"p1tgt={snap.p1_target_kind}")
     if capa:
         parts.append(f"capa={capa}")
     parts.extend([
         f"p1={p1}/{phase}",
         f"h={snap.lever_notch}",
-        f"tgt={snap.target_notch}",
+        f"ipc_tgt={snap.target_notch}",
         f"ipc={1 if snap.ipc_sent else 0}",
     ])
     if snap.p1_reason:
@@ -166,6 +197,8 @@ def format_investigate(snap: AgentSnapshot) -> str:
         parts.append(f"fill={snap.brake_fill_s:.1f}s")
     if snap.fb_a_pred_ms2 is not None and snap.fb_a_obs_ms2 is not None:
         parts.append(f"a={snap.fb_a_obs_ms2:.2f}/{snap.fb_a_pred_ms2:.2f}")
+    if snap.driver_override_s > 0:
+        parts.append(f"manual={snap.driver_override_s:.0f}s")
     return " ".join(parts)
 
 

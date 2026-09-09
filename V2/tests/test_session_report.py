@@ -170,5 +170,76 @@ def test_session_ready_for_browser_thresholds() -> None:
     assert not session_ready_for_browser(short)
 
 
+def test_html_shows_station_panel(tmp_path: Path) -> None:
+    p = tmp_path / "station.jsonl"
+    rows = [
+        {"type": "session", "mode": "station", "route": "cross-city"},
+        {
+            "type": "tick",
+            "tick": 1,
+            "t_ms": 0,
+            "spd_mph": 55.0,
+            "lever": 5,
+            "lim_mph": 55.0,
+            "lim_dist_m": 400.0,
+            "stn_dist_m": 800.0,
+            "eff_mph": 60.0,
+            "p1_tgt": "SPEED_LIMIT",
+            "p1": {"reason": "no_plan", "layer": "OK"},
+        },
+        {
+            "type": "tick",
+            "tick": 2,
+            "t_ms": 1000,
+            "spd_mph": 52.0,
+            "lever": 4,
+            "lim_mph": 55.0,
+            "lim_dist_m": 350.0,
+            "stn_dist_m": 420.0,
+            "eff_mph": 55.0,
+            "p1_tgt": "STATION",
+            "stn_fsm": "APPROACHING",
+            "p1": {
+                "cmd": "APPLY",
+                "phase": "B2",
+                "dist_start_m": 50.0,
+                "apply_now": True,
+                "reason": "emergency",
+                "detail": "P1-EMERGENCIA-STATION",
+            },
+            "ipc": {"sent": True},
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    data = summarize(p)
+    assert data["station_ticks"] == 2
+    assert data["p1_tgt_station_ticks"] == 1
+    html = tmp_path / "stn.html"
+    write_html_replay(p, html)
+    text = html.read_text(encoding="utf-8")
+    assert "cartel + andén" in text
+    assert "Distancia al andén" in text
+    assert "Andén (estación)" in text
+    assert "objetivo STATION" in text
+
+
+def test_station_event_rows_dedup_apply(tmp_path: Path) -> None:
+    from tsw6v2.session_report import _station_event_rows
+
+    ticks = [
+        {
+            "tick": i,
+            "t_ms": i * 1000,
+            "stn_dist_m": 100.0,
+            "p1_tgt": "STATION",
+            "p1": {"cmd": "APPLY", "reason": "emergency"},
+        }
+        for i in range(1, 6)
+    ]
+    rows = _station_event_rows(ticks)
+    apply_rows = [r for r in rows if r["event"] == "APPLY andén"]
+    assert len(apply_rows) == 1
+
+
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())

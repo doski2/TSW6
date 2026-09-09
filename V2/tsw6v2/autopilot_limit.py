@@ -7,10 +7,11 @@ from typing import Callable, Optional, Tuple
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import MPH_TO_MS
-from tsw6v2.decision import evaluate_limit_tick
+from tsw6v2.decision import evaluate_p1_tick
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.planning import resolve_limit_objective
-from tsw6v2.target import BrakeTargetResult
+from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED
+from tsw6v2.target import BrakeTargetKind, BrakeTargetResult
 from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
@@ -126,18 +127,41 @@ class LimitP1Adapter:
             handle_notch=handle_notch,
             accel_ms2=accel,
         )
-        decision = evaluate_limit_tick(
+        station_dist = kwargs.get("station_distance_m")
+        station_eta = kwargs.get("station_eta")
+        station_m = (
+            float(station_dist)
+            if station_dist is not None and float(station_dist) > 0
+            else None
+        )
+        decision = evaluate_p1_tick(
             self._limit_state,
             self._release,
             snap,
             predict_decel=predict_decel,
+            station_distance_m=station_m,
+            station_eta=station_eta,
+            schedule_slack_enabled=kwargs.get(
+                "schedule_slack_enabled", STATION_SCHEDULE_SLACK_ENABLED
+            ),
         )
         eff = effective_limit
-        if decision.limit_mph is not None and decision.limit_dist_m is not None:
+        kind: BrakeTargetKind = (
+            "STATION"
+            if decision.target_kind == "STATION"
+            else "SIGNAL"
+            if decision.target_kind == "SIGNAL"
+            else "SPEED_LIMIT"
+        )
+        dist_m = decision.station_dist_m
+        if dist_m is None and decision.limit_dist_m is not None:
+            dist_m = float(decision.limit_dist_m)
+        tgt_speed = 0.0 if kind == "STATION" else float(decision.limit_mph or 0.0)
+        if dist_m is not None and (decision.limit_mph is not None or kind == "STATION"):
             self.last_target = BrakeTargetResult(
-                target_kind="SPEED_LIMIT",
-                distance_m=float(decision.limit_dist_m),
-                target_speed_mph=float(decision.limit_mph),
+                target_kind=kind,
+                distance_m=float(dist_m),
+                target_speed_mph=tgt_speed,
                 handle_notch=int(decision.handle_notch or 3),
                 phase=decision.phase or "B1",
                 dist_start=float(decision.dist_start_m or 0.0),
@@ -151,15 +175,22 @@ class LimitP1Adapter:
             return None, eff
 
         self.last_brake_command = cmd
+        tgt_label = kind
+        dist_log = (
+            decision.station_dist_m
+            if kind == "STATION"
+            else decision.limit_dist_m
+        ) or 0.0
         self.last_debug = (
-            f"v2 SPEED_LIMIT {decision.phase or cmd.phase or ''} "
+            f"v2 {tgt_label} {decision.phase or cmd.phase or ''} "
             f"distStart={decision.dist_start_m or 0:.0f}m notch={cmd.target_notch}"
         ).strip()
         if cmd.kind == "APPLY":
             _log.info(
-                "P1v2 SPEED_LIMIT %s dist=%.0fm distStart=%.0fm → %s notch=%s",
+                "P1v2 %s %s dist=%.0fm distStart=%.0fm → %s notch=%s",
+                tgt_label,
                 decision.phase or cmd.phase,
-                decision.limit_dist_m or 0.0,
+                dist_log,
                 decision.dist_start_m or 0.0,
                 cmd.display_action(),
                 cmd.target_notch,

@@ -126,7 +126,86 @@ def summarize(path: Path) -> dict[str, Any]:
         "air_fill_ticks": reasons.get("air_fill", 0),
         "air_recharge_ticks": reasons.get("air_recharge", 0),
         "fb_events": _fb_event_rows(ticks),
+        "station_ticks": sum(1 for t in ticks if t.get("stn_dist_m") is not None),
+        "p1_tgt_station_ticks": sum(1 for t in ticks if t.get("p1_tgt") == "STATION"),
+        "station_events": _station_event_rows(ticks),
     }
+
+
+def _session_has_station(ticks: list[dict[str, Any]]) -> bool:
+    return any(t.get("stn_dist_m") is not None for t in ticks)
+
+
+def _station_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:
+    """Transiciones andén: planning, objetivo STATION, FSM."""
+    rows: list[dict[str, Any]] = []
+    seen_planning = False
+    prev_tgt: str | None = None
+    prev_fsm: str | None = None
+    prev_cmd: str | None = None
+    for t in ticks:
+        stn = t.get("stn_dist_m")
+        tgt = t.get("p1_tgt")
+        fsm = t.get("stn_fsm")
+        p1 = t.get("p1") or {}
+        cmd = p1.get("cmd")
+        if stn is not None and not seen_planning:
+            seen_planning = True
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "event": "planning",
+                    "stn_m": stn,
+                    "spd": t.get("spd_mph"),
+                    "p1_tgt": tgt,
+                    "fsm": fsm,
+                    "detail": "primera distancia andén",
+                }
+            )
+        if tgt == "STATION" and prev_tgt != "STATION":
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "event": "objetivo STATION",
+                    "stn_m": stn,
+                    "spd": t.get("spd_mph"),
+                    "p1_tgt": tgt,
+                    "fsm": fsm,
+                    "detail": p1.get("reason") or "",
+                }
+            )
+        if fsm and fsm != prev_fsm:
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "event": f"FSM {fsm}",
+                    "stn_m": stn,
+                    "spd": t.get("spd_mph"),
+                    "p1_tgt": tgt,
+                    "fsm": fsm,
+                    "detail": "",
+                }
+            )
+        if cmd == "APPLY" and tgt == "STATION" and prev_cmd != "APPLY":
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "event": "APPLY andén",
+                    "stn_m": stn,
+                    "spd": t.get("spd_mph"),
+                    "p1_tgt": tgt,
+                    "fsm": fsm,
+                    "detail": p1.get("detail") or p1.get("reason") or "",
+                }
+            )
+        prev_tgt = tgt
+        prev_fsm = fsm
+        prev_cmd = cmd
+    return rows[:limit]
 
 
 def _fb_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
@@ -297,6 +376,14 @@ def _dist_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
     return 0.0, max(200.0, hi * 1.05)
 
 
+def _stn_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
+    raw = [float(p["stn"]) for p in series if p.get("stn") is not None]
+    if not raw:
+        return 0.0, 500.0
+    hi = max(raw)
+    return 0.0, max(300.0, hi * 1.05)
+
+
 _CHART_LAYER_COL: dict[str, str] = {
     "WATCH": "#64748b",
     "WAIT": "#ca8a04",
@@ -375,8 +462,10 @@ def _marker_badge_slots(
 def _render_chart_svg(
     series: list[dict[str, Any]],
     markers: list[dict[str, Any]],
+    *,
+    show_station: bool = False,
 ) -> str:
-    """SVG embebido: 4 paneles apilados con ejes y sin texto superpuesto."""
+    """SVG embebido: paneles apilados (cartel + andén opcional)."""
     if not series:
         return '<text x="40" y="40" fill="#94a3b8" font-size="12">Sin datos</text>'
 
@@ -387,6 +476,7 @@ def _render_chart_svg(
 
     h_spd = 168
     h_dist = 108
+    h_stn = 88
     h_ds = 88
     h_p = 64
     h_decel = 56
@@ -394,7 +484,12 @@ def _render_chart_svg(
     gap = 10
     y_spd = _CHART_PAD_TOP
     y_dist = y_spd + h_spd + gap
-    y_ds = y_dist + h_dist + gap
+    if show_station:
+        y_stn = y_dist + h_dist + gap
+        y_ds = y_stn + h_stn + gap
+    else:
+        y_stn = 0.0
+        y_ds = y_dist + h_dist + gap
     y_p = y_ds + h_ds + gap
     y_decel = y_p + h_p + gap
     y_layers = y_decel + h_decel + gap
@@ -498,6 +593,32 @@ def _render_chart_svg(
     )
     if dist_path:
         out.append(dist_path.replace('stroke-width="1.5"', 'stroke="#38bdf8" stroke-width="2"'))
+
+    if show_station:
+        stn_min, stn_max = _stn_chart_bounds(series)
+        panel_frame(y_stn, h_stn, "Distancia al andén (m)", bg="#101a16")
+        draw_axis(y_stn, h_stn, stn_min, stn_max, "m")
+        stn_path = line_path(
+            "stn",
+            lambda v, lo=stn_min, hi=stn_max, yt=y_stn, ht=h_stn: y_in_panel(
+                v, lo, hi, yt, ht
+            ),
+        )
+        if stn_path:
+            out.append(stn_path.replace('stroke-width="1.5"', 'stroke="#34d399" stroke-width="2"'))
+        for i in range(len(series) - 1):
+            a, b = series[i], series[i + 1]
+            if a.get("p1_tgt") != "STATION":
+                continue
+            width = max(1.0, x_t(b["t"]) - x_t(a["t"]))
+            out.append(
+                f'<rect x="{x_t(a["t"]):.1f}" y="{y_stn + 4:.1f}" width="{width:.1f}" '
+                f'height="{h_stn - 8:.1f}" fill="#34d399" opacity="0.14" rx="2"/>'
+            )
+        out.append(
+            f'<text x="{pad_l + plot_w - 4}" y="{y_stn + 14:.1f}" fill="#34d399" font-size="10" '
+            f'text-anchor="end">stn</text>'
+        )
 
     panel_frame(y_ds, h_ds, "Margen cinemático ds (m)")
     draw_axis(y_ds, h_ds, ds_min, ds_max, "m", zero_line=True)
@@ -657,8 +778,9 @@ def _render_chart_svg(
     return "".join(out)
 
 
-def _chart_view_height() -> int:
-    return _CHART_PAD_TOP + 168 + 10 + 108 + 10 + 88 + 10 + 64 + 10 + 56 + 10 + 34 + 16
+def _chart_view_height(*, show_station: bool = False) -> int:
+    base = _CHART_PAD_TOP + 168 + 10 + 108 + 10 + 88 + 10 + 64 + 10 + 56 + 10 + 34 + 16
+    return base + (88 + 10 if show_station else 0)
 
 
 def _apply_marker_numbers(markers: list[dict[str, Any]]) -> dict[float, int]:
@@ -789,6 +911,9 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
                 "eff": t.get("eff_mph"),
                 "lim": t.get("lim_mph"),
                 "dist": t.get("lim_dist_m"),
+                "stn": t.get("stn_dist_m"),
+                "p1_tgt": t.get("p1_tgt"),
+                "stn_fsm": t.get("stn_fsm"),
                 "ds": ds,
                 "zone": zone,
                 "lev": t.get("lever"),
@@ -805,12 +930,30 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
     return out
 
 
+def _render_station_rows(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return '<tr><td colspan="7">Sin eventos andén (¿modo station? ¿HTTP planning?)</td></tr>'
+    rows: list[str] = []
+    for e in events:
+        stn = e.get("stn_m")
+        stn_s = f"{float(stn):.0f}" if isinstance(stn, (int, float)) else "—"
+        spd = e.get("spd")
+        spd_s = f"{float(spd):.1f}" if isinstance(spd, (int, float)) else "—"
+        rows.append(
+            f'<tr><td>{e.get("t_s")}</td><td>{e.get("event")}</td><td>{stn_s} m</td>'
+            f'<td>{spd_s}</td><td>{e.get("p1_tgt") or "—"}</td>'
+            f'<td>{e.get("fsm") or "—"}</td><td>{e.get("detail") or ""}</td></tr>'
+        )
+    return "".join(rows)
+
+
 def write_html_replay(path: Path, out: Path) -> None:
     """Replay visual (HTML estático) para debatir sesión sin TSW."""
     session, ticks = load_ticks(path)
     if not ticks:
         raise ValueError("sin ticks")
     summary = summarize(path)
+    has_station = _session_has_station(ticks)
     series = _downsample_series(ticks)
     markers = _kinematic_markers(ticks)
     layers_meta = {
@@ -826,11 +969,32 @@ def write_html_replay(path: Path, out: Path) -> None:
     }
     data_json = json.dumps(payload, ensure_ascii=False)
     ds0_rows = _render_ds0_rows(markers)
-    chart_svg = _render_chart_svg(series, markers)
+    station_rows = _render_station_rows(summary.get("station_events") or [])
+    chart_svg = _render_chart_svg(series, markers, show_station=has_station)
     warn_html = _session_warning_html(summary)
     meta_html = _meta_line(summary)
     stats_html, layer_stats_html = _stats_html(summary, layers_meta)
-    chart_h = _chart_view_height()
+    chart_h = _chart_view_height(show_station=has_station)
+    replay_title = "cartel + andén" if has_station else "cartel (capas)"
+    panel_leg = (
+        "Siete paneles: <b>velocidad</b> · <b>m al cartel</b> · <b>m al andén</b> · "
+        "<b>ds</b> · <b>presión bar</b> · <b>decel obs/pred</b> · <b>capa</b>."
+        if has_station
+        else "Seis paneles: <b>velocidad</b> · <b>m al cartel</b> · <b>ds</b> · "
+        "<b>presión bar</b> · <b>decel obs/pred</b> · <b>capa</b>."
+    )
+    station_section = ""
+    if has_station:
+        stn_ticks = int(summary.get("station_ticks") or 0)
+        stn_tgt = int(summary.get("p1_tgt_station_ticks") or 0)
+        station_section = f"""
+<h2>Andén (estación)</h2>
+<p class="leg">Ticks con <code>stn_dist_m</code>: <b>{stn_ticks}</b> · objetivo <code>p1_tgt=STATION</code>: <b>{stn_tgt}</b>.
+Franja verde en panel andén = P1 eligió parada. Si la curva no llega a 0, revisar WAIT aire / emergencia tardía.</p>
+<table id="station"><thead><tr>
+<th>t(s)</th><th>evento</th><th>stn</th><th>spd</th><th>p1_tgt</th><th>fsm</th><th>detalle</th>
+</tr></thead><tbody>{station_rows}</tbody></table>
+"""
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -855,14 +1019,15 @@ def write_html_replay(path: Path, out: Path) -> None:
 </style>
 </head>
 <body>
-<h1>Replay P1 — cartel (capas)</h1>
+<h1>Replay P1 — {replay_title}</h1>
 <p class="leg"><a href="../../docs/v2/p1_limit_capas.html">Diagrama concepto</a> — franja inferior = capa de decisión cada momento</p>
 {warn_html}
 <div class="meta" id="meta">{meta_html}</div>
 <div class="stats" id="stats">{stats_html}</div>
-<p class="leg">Seis paneles: <b>velocidad</b> · <b>m al cartel</b> · <b>ds</b> · <b>presión bar</b> · <b>decel obs/pred</b> · <b>capa</b>.</p>
+<p class="leg">{panel_leg}</p>
 <p class="leg">Círculos numerados = primer APPLY por cartel; debajo <b>Xm</b> = metros al cartel en ese momento. Punto cian en panel distancia = misma marca.</p>
 <svg id="chart" viewBox="0 0 {_CHART_W} {chart_h}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
+{station_section}
 <h2>Capas (tiempo en sesión)</h2>
 <div class="stats" id="layer-stats">{layer_stats_html}</div>
 <h2>Marcas cinemáticas (ideal vs APPLY)</h2>
@@ -897,6 +1062,7 @@ const stats = [
   ['Vigilar', s.p1_layers?.WATCH||0], ['Revisar GAP', s.p1_layers?.GAP||0],
   ['FB medido', s.fb_ticks||0], ['FB shortfall', s.fb_shortfall||0],
   ['FB escaló', s.fb_escalated||0], ['Espera aire', s.air_fill_ticks||0],
+  ...(s.station_ticks ? [['Andén ticks', s.station_ticks], ['STATION tgt', s.p1_tgt_station_ticks||0]] : []),
 ];
 document.getElementById('stats').innerHTML = stats.map(([k,v]) =>
   `<div class="stat"><b>${{v}}</b>${{k}}</div>`).join('');

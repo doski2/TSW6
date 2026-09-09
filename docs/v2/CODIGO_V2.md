@@ -35,8 +35,9 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 | Situación | Qué hacer |
 | --- | --- |
 | Feature nueva cartel/bajada | Solo `V2/tsw6v2/` + `V2/tests/` |
-| Sesión P1 cartel | `V2\run_p1_session.bat` → `decision.evaluate_limit_tick` |
-| Autopilot GUI (`iniciar_autopilot.bat`) | FSM estación v1; cartel vía `autopilot_limit` → mismo tick V2 |
+| Sesión P1 cartel / andén | `V2\run_p1_session.bat limit\|station` → `AgentLoop` + `evaluate_p1_tick` |
+| Planning andén sin HTTP | `V2\scripts\write_planning.py <metros>` → `%TEMP%\TSW6Bridge\Planning.txt` |
+| Legacy GUI v1 (`iniciar_autopilot.bat`) | No usar en producto v2 |
 | Bug en v1 producción | Arreglo mínimo **o** portar regla a V2 |
 | Import desde v1 en `tsw6v2/` | **Prohibido** — contrato D2 en `bridge/` |
 
@@ -46,10 +47,13 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 | --- | --- | --- |
 | 1 | Contrato GetData | Casi cerrado |
 | 2 | Esqueleto `V2/tsw6v2/` | **Cerrado** (pytest + `test-ipc` in-game) |
-| **3** | Física / learner / carteles en V2 | **pytest verde** (112 tests `V2/tests/`) · validar in-game `run_p1_session` |
+| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~198 tests `V2/tests/`) · `run_p1_session` limit/station |
 
 Módulos cartel: `planning` · `limit_state` · `limit_notch` · `limit_containment` · `limits` ·
-`decision` — ver [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_).
+`decision`. Andén: `station_plan` · `station_brake` · `p1_policy` · `limit_station_cluster` ·
+`planning_poller` (HTTP `DriverAid.TrackData` + fallback `Planning.txt`) — ver
+[MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_) y
+[REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos).
 
 **Reglas de frenado:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md). Umbrales mph en `constants.py`:
 zona vigente **posted+0.5** (`posted_zone_hold_ceiling_mph`); coast **59.5**

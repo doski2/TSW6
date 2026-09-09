@@ -28,6 +28,7 @@ from tsw6.learning.learn_monitor import learn_progress_summary
 from tsw6.hud.hud_timetable import schedule_times_for_station
 from tsw6.telemetry.driver_aid_parser import resolve_display_next_stop
 from tsw6.telemetry.tsw_telemetry_source import TswTelemetrySource
+from tsw6v2.planning_feed import write_planning_snapshot
 from tsw6.telemetry.channel_diagnostics import (
     ControllerMetrics,
     LoopMetrics,
@@ -481,6 +482,11 @@ class AutopilotEngine:
                 station_name=self.decider.station_name,
                 ocr_stop_dist_m=ocr_dist,
                 ocr_task=ocr_task,
+            )
+            write_planning_snapshot(
+                station_distance_m=state.next_stop_distance_m,
+                station_eta=state.next_stop_arrival,
+                station_name=state.next_stop_name,
             )
             action = self.decider.decide(state)
             override = self.watchdog.check(state)
