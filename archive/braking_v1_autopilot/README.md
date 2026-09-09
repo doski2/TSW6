@@ -1,13 +1,18 @@
 # Braking v1 autopilot (archivado)
 
-Orquestación P1 legacy eliminada del árbol activo (2026-09-06).
+Orquestación P1 legacy eliminada (2026-09-10). **No ejecutar en producción.**
 
-| Archivo | Sustituto |
+| Eliminado | Sustituto activo |
 | --- | --- |
-| `coordinator.py` | `V2/tsw6v2/autopilot_limit.py` + `decision.py` |
-| `policy.py` | `tsw6/governor/limit_station_cluster.py` (FSM) |
-| `station_plan.py` | `tsw6/autopilot/station_eta.py` (solo ETA); parada P1 pendiente V2 |
-| `objectives.py` | — (estación/señal P1 no migrado) |
+| `coordinator.py` | `V2/tsw6v2/decision.py` + `autopilot_limit.py` |
+| `policy.py` | `tsw6/governor/limit_station_cluster.py` (FSM GUI) |
 | `command.py`, `physics.py`, `plan.py`, `limit_brake.py` | `V2/tsw6v2/` |
 
-Sesiones cartel: `V2\run_p1_session.bat`.
+**Conservado** (referencia pasos 6–7 estación/señal; imports `tsw6v2`):
+
+| Archivo | Uso |
+| --- | --- |
+| `station_plan.py` | Perfil parada andén (ETA, distancia HUD) |
+| `objectives.py` | `evaluate_station_brake`, stub señal roja |
+
+Cartel P1: `V2\run_p1_session.bat` · reglas [docs/v2/REGLAS_FRENOS_P1.md](../../docs/v2/REGLAS_FRENOS_P1.md).

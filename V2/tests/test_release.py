@@ -266,9 +266,9 @@ def test_kinematic_release_before_target_on_brake_limit():
 
 
 def test_kinematic_no_release_when_projected_above_target():
-    """Aún lejos del objetivo: no soltar aunque la banda fija lo permitiría."""
+    """Aún lejos del objetivo: no soltar si el fill no alcanzaría el techo."""
     cmd = resolve_release_command(
-        speed_mph=56.0,
+        speed_mph=57.0,
         handle_notch=3,
         effective_limit=60.0,
         next_limit_mph=55.0,

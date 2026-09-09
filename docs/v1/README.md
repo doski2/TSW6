@@ -1,6 +1,7 @@
 # Documentación v1 — runtime actual
 
-Cómo funciona el autopilot **hoy** (`autopilot_core`, probe Class 323, P1 en `braking/v2/`).
+Cómo funciona el autopilot **hoy** (`autopilot_core`, probe Class 323). **P1 cartel:** `V2/tsw6v2/`
+(vía `tsw6v2.autopilot_limit` en GUI); ver [REGLAS_FRENOS_P1.md](../v2/REGLAS_FRENOS_P1.md).
 
 **Backlog y producto futuro:** [v2/PLAN_V2.md](../v2/PLAN_V2.md) — única lista de trabajo.
 
@@ -13,8 +14,8 @@ documentación](../v2/PLAN_V2.md#política-de-documentación).
 | [ARQUITECTURA.md](ARQUITECTURA.md) | Módulos, UE4SS, stack lectura/escritura |
 | [ESTADO.md](ESTADO.md) | Tablero visual — árbol cronológico 1–14 |
 | [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | Probe Lua — reglas, log, bitácora |
-| [BRAKE_V2.md](BRAKE_V2.md) | P1 activo — coordinator, physics, policy |
-| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | Ciclo P1 paso a paso |
+| [BRAKE_V2.md](BRAKE_V2.md) | **Histórico** — pre-2026-09; ver [REGLAS_FRENOS_P1](../v2/REGLAS_FRENOS_P1.md) |
+| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | **Histórico** — coordinator v1 (eliminado) |
 | [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) | Learner, distancias, fill-time |
 | [HUD_TIMETABLE.md](HUD_TIMETABLE.md) | `tsw_hud.db`, paradas UK |
 | [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 — layout split (fase 6 v2) |

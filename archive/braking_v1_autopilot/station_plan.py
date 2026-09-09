@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from tsw6.braking.v2.physics import (
+from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
     MPH_TO_MS,
@@ -24,7 +24,7 @@ from tsw6.braking.v2.physics import (
     braking_distance_m,
     is_in_apply_zone,
 )
-from tsw6.braking.v2.plan import (
+from tsw6v2.plan import (
     UK_SERVICE_PHASES,
     BrakePlan,
     BrakePlanStep,

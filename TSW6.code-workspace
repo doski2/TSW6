@@ -28,6 +28,7 @@
 			"ExecuteInGameThread",
 			"Key",
 			"ModifierKey"
-		]
+		],
+		"markdown.validate.enabled": true
 	}
 }

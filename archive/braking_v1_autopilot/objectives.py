@@ -9,8 +9,8 @@ import logging
 from typing import Literal, Optional, Tuple
 
 from tsw6.autopilot.control_actions import BRAKE, EMERGENCY
-from tsw6.braking.v2.command import BrakeCommand, BrakeTargetResult
-from tsw6.braking.v2.physics import (
+from tsw6v2.command import BrakeCommand
+from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
     braking_distance_mph,
@@ -18,8 +18,10 @@ from tsw6.braking.v2.physics import (
     decel_for_notch,
     should_emit_brake_command,
 )
-from tsw6.braking.v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
-from tsw6.braking.v2.station_plan import plan_brake_for_station
+from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+from tsw6v2.target import BrakeTargetResult
+
+from .station_plan import plan_brake_for_station
 from tsw6.governor.governor_constants import (
     EMERGENCY_BRAKE_HANDLE,
     EMERGENCY_BRAKE_MAX_DIST_M,

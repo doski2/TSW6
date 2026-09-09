@@ -11,7 +11,8 @@ referencia, no el producto v2.
 **Laboratorio Lua (diseño):** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — mod aparte, no mezclar
 con el probe.
 **Python v2:** todo código producto nuevo en **`V2/tsw6v2/`** — ver [CODIGO_V2.md](CODIGO_V2.md).
-**Python v1:** `tsw6/autopilot/` (GUI + FSM estación) — cartel vía `tsw6v2.autopilot_limit`; orquestación legacy en `archive/braking_v1_autopilot/`. No ampliar salvo bug crítico.
+**Python v1:** `tsw6/autopilot/` (GUI + FSM estación) — cartel vía `tsw6v2.autopilot_limit`;
+orquestación legacy en `archive/braking_v1_autopilot/`. No ampliar salvo bug crítico.
 
 Dastsc es **cómo otro proyecto creció** (capas, un mando por tick, cluster). No es plantilla ni
 techo. Lo que no encaje en TSW (OCR, TSC, 2 mph de RELEASE, nunca OFF en bajada, React) no se copia.
@@ -438,11 +439,16 @@ handler.
 El probe ya manda `brake_cyl_bar` en GetData. V2 lo usa para:
 
 1. **Aprender `brake_fill_s`** (EMA) — sustituye el `DEFAULT_BRAKE_FILL_S = 2.5` fijo en
+
    `brake_reaction_margin_m` cuando hay ≥3 muestras en `logs/profiles/`.
+
 2. **No APPLY hasta presión** (`p1.reason=air_fill`) — cilindro &lt; ~2 bar tras mandar freno.
 3. **Anti-bombeo** (`air_recharge`) — tras RELEASE, no re-frenar hasta vaciar cilindro (~1,5 bar)
+
    o pasar ~1,5× fill aprendido (tanques recargando).
+
 4. **Escalón con presión** — B1→B2→B3 un escalón por tick; no subir muesca si la presión actual
+
    no confirma la muesca comprometida (B1 ~2,5 bar, B2 ~3,2 bar, B3 ~4 bar en 323).
 
 **Estrategia de muescas (pasajeros UK):**
@@ -465,7 +471,8 @@ aire lento.
 
 ###### Nota cilindro (histórico lab)
 
-**Nota cilindro (histórico lab):** `Simulation` Lua 323 no leía presión; **`HUD_GetBrakeGauge_1`**
+###### Nota cilindro (histórico lab):** `Simulation` Lua 323 no leía presión; **`HUD_GetBrakeGauge_1`
+
 (`RedNeedle (Pa)` ÷ 100 000 ≈ bar) coincide con HTTP cilindro en `213100Z`. Producción: probe
 `brake_cyl_bar` en tick — ver [PROBE_LUA](PROBE_LUA.md) (`HUD_GetBrakeGauge_1`, no Simulation Lua).
 
@@ -504,7 +511,9 @@ falla in-game (residuo sistemático tras masa y fill).
 
   combined UK.
 
-- **No reabrir:** segundo `physics.py`, tablas precalculadas de metros, MR/reservoir HTTP en el tick.
+- **No reabrir:** segundo `physics.py`, tablas precalculadas de metros, MR/reservoir HTTP en el
+
+  tick.
 
 Investigación complementaria: [CURRENTFORMATION_API.md](../reference/CURRENTFORMATION_API.md),
 [FISICA_Y_APRENDIZAJE.md](../v1/FISICA_Y_APRENDIZAJE.md) L3–L4,
@@ -768,7 +777,8 @@ Validación: tarjeta **E1** · [CANAL_CONTROL.md § C.3a](../CANAL_CONTROL.md#od
 
 Referencia código: `tsw6/telemetry/tsw_telemetry_source.py` (`_poll_driver_aid_planning`,
 `_tick_station_distances`, `PLANNING_MIN_INTERVAL_S` ≈ 2 s), `driver_aid_parser.py`
-(`parse_track_data_stations`, `resolve_display_next_stop`), `archive/braking_v1_autopilot/station_plan.py` (referencia),
+(`parse_track_data_stations`, `resolve_display_next_stop`),
+`archive/braking_v1_autopilot/station_plan.py` (referencia),
 `speed_decider.py` (`_p1_station_target`, `_p1_station_distance`), `hud_timetable.py`
 (`tsw_hud.db`, `car_stop_signs`).
 
@@ -905,7 +915,10 @@ Dudas de producto y mapeo Stop/DANGER: ver **§3** (no duplicar aquí).
 Igual que **§3**, más checklist de cableado:
 
 - `extract_signal_red` en probe; claves solo si rojo y `dist_cm > 0`.
-- Parser GetData → `TrainState` → `speed_decider` → `tsw6v2.autopilot_limit` (cartel) o FSM estación.
+- Parser GetData → `TrainState` → `speed_decider` → `tsw6v2.autopilot_limit` (cartel) o FSM
+
+  estación.
+
 - `evaluate_signal_brake` deja de ser stub; tests fixture `signal_red=1` (D7).
 - Cross-City 323: rojo a distancia conocida → P1 frena (plan o emergencia); GetData ~20 Hz sin
 
@@ -1002,7 +1015,8 @@ Validación: fase 3 (servicio pasajeros) · sin tarjeta C dedicada hasta inciden
 
 ### 4.7 Proceso Python + GUI
 
-**Postura v2:** para 323 **funciona hoy** (hilo de control + snapshot). El bucle en `V2/tsw6v2/` (D1)
+**Postura v2:** para 323 **funciona hoy** (hilo de control + snapshot). El bucle en `V2/tsw6v2/`
+(D1)
 es
 **cuando toque la ejecución**, no urgencia in-game — misma API mental (`tick` / `step` → snapshot).
 Sidecar (dos procesos) solo si medición lo pide; no por defecto.
@@ -1264,7 +1278,9 @@ pendiente · `Abierto` = falta medición o proceso · `Aplazado` = fuera del cam
 
 **Elegido: A con migración por pruebas** — no es “copiar pegando” ni “borrar y olvidar”:
 
-1. **Nuevo esqueleto** en **`V2/tsw6v2/`** (p. ej. `loop.py`): snapshot → objetivos → un mando → IPC.
+1. **Nuevo esqueleto** en **`V2/tsw6v2/`** (p. ej. `loop.py`): snapshot → objetivos → un mando →
+
+   IPC.
 
    GUI solo visor (§4.7). Probe **no** se toca salvo claves nuevas (señal, etc.).
 
@@ -1274,13 +1290,17 @@ pendiente · `Abierto` = falta medición o proceso · `Aplazado` = fuera del cam
 
    no copiar el árbol coordinator/policy de v1. v1 solo referencia hasta que el test pase en v2.
 
-   **Cartel P1:** diseño **desde cero** en `V2/tsw6v2/` — ver [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
+**Cartel P1:** diseño **desde cero** en `V2/tsw6v2/` — ver
+[REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
 
-   Solo **ideas** del archive `limit_brake` / coordinator (física, muescas UK, capas trace); **no** paridad
+Solo **ideas** del archive `limit_brake` / coordinator (física, muescas UK, capas trace); **no**
+paridad
 
    de comportamiento. Módulos actuales: `limit_state`, `limit_notch`, `limit_containment`, `limits`
 
-   (transitorio → `limit_planner.py`). **Tres techos mph:** zona HOLD **posted+0.5**, coast **59.5**, scoring TSW **posted+0.9**, BRAKE_LIMIT **posted−1** — ver [REGLAS_FRENOS_P1.md § Dos techos](REGLAS_FRENOS_P1.md#2-dos-techos-mph-no-mezclar). Cambios = `V2/tests/` + JSONL.
+(transitorio → `limit_planner.py`). **Tres techos mph:** zona HOLD **posted+0.5**, coast **59.5**,
+scoring TSW **posted+0.9**, BRAKE_LIMIT **posted−1** — ver [REGLAS_FRENOS_P1.md § Dos
+techos](REGLAS_FRENOS_P1.md#2-dos-techos-mph-no-mezclar). Cambios = `V2/tests/` + JSONL.
 
 3. **Reimplementar** donde el plan dice v2 distinto: un RELEASE, paquete tren, `PassengerService`,
 
@@ -1323,7 +1343,8 @@ planning (~2 s): estaciones, geo, masa.
 config).
 `--console` usa el mismo bucle sin ventana. La GUI no importa `braking/v2` ni escribe mandos.
 
-**Criterio de cierre:** §4.7 — GUI visor sin `braking/v2` legacy; `loop_hz` ≥ 18 con ventana abierta.
+**Criterio de cierre:** §4.7 — GUI visor sin `braking/v2` legacy; `loop_hz` ≥ 18 con ventana
+abierta.
 
 **Detalle:** §4.7, ejecución paso 2.
 
@@ -1440,7 +1461,8 @@ síntomas, sesión in-game): **[MANTENIMIENTO.md](MANTENIMIENTO.md)**. Resumen:
 | Dependencias | `requirements-dev.txt` / pyright sin warnings nuevos en módulos tocados |
 | Histórico | Docs sustituidos → `archive/docs/` (no editar allí) |
 
-**No es mantenimiento v2:** reabrir `archive/braking_v1_autopilot/coordinator.py` sin paso D1; refactors cosméticos sin test.
+**No es mantenimiento v2:** reabrir `archive/braking_v1_autopilot/coordinator.py` sin paso D1;
+refactors cosméticos sin test.
 
 ### Fase 0 — Contrato I/O
 
@@ -1469,11 +1491,13 @@ revisión JSON vs `detect_control_layout` hoy.
 **Hoy en `autopilot_core` (323):** bajada y carteles con una política de soltar — lecciones 323 sí;
 estructura Dastsc no obligatoria.
 
-**Pendiente D1:** `V2/tsw6v2/` + GUI visor; portar comportamiento con test (physics, learner, parser);
+**Pendiente D1:** `V2/tsw6v2/` + GUI visor; portar comportamiento con test (physics, learner,
+parser);
 mismo comportamiento Cross-City / Four Oaks.
 
 **Validación:** `V2/tests/test_physics`, `test_release`, `test_decision`, `test_h1_downhill`;
-`tests/test_speed_decider` (cartel vía `autopilot_limit`); `--console` y GUI mismo snapshot; `loop_hz` ≥ 18 (§4.7).
+`tests/test_speed_decider` (cartel vía `autopilot_limit`); `--console` y GUI mismo snapshot;
+`loop_hz` ≥ 18 (§4.7).
 
 ### Fase 3 — Servicio pasajeros
 

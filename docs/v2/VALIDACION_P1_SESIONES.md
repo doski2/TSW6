@@ -1,6 +1,6 @@
 # Validación P1 cartel — sesiones Cross-City
 
-**Estado:** protocolo activo (2026-09-09) · **Reglas:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md)
+**Estado:** protocolo activo (2026-09-10) · **Reglas:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md)
 
 Guía para validar el stack actual en varias sesiones in-game antes de más features.
 No sustituye `pytest`; complementa prueba de campo.
@@ -15,24 +15,24 @@ No sustituye `pytest`; complementa prueba de campo.
 | Muesca + defer | `limit_notch.py` |
 | Feedback decel + aire | `brake_feedback.py`, `brake_air.py` |
 | EMA online | `learner.py`, `learner_v1.py` |
+| RELEASE cinemático (BRAKE_LIMIT) | `physics.py`, `command.py` |
 | Decisión + IPC | `decision.py`, `loop.py` |
 | Trace | `trace.py`, `session_report.py` |
 
-**Fuera de alcance** hasta nueva fase: estación, señal, `limit_planner.py`, COAST_PWR en WATCH.
+**Fuera de alcance** hasta nueva fase: estación, señal, `limit_planner.py`, COAST_PWR en WATCH,
+aprendizaje por distancia integrada (solo EMA tick a tick con filtro aire).
 
 ---
 
 ## Antes de cada sesión
 
 ```bat
-python -m pytest V2/tests/ -q
 ```
 
 - [ ] Probe instalado · Class 323 · Cross-City (o ruta con 60→55).
 - [ ] **Copia de seguridad del perfil** (si vas a aprender online):
 
 ```bat
-copy logs\profiles\RVM_BCC_WRM_Class323_DMS_A_C.json logs\profiles\RVM_BCC_WRM_Class323_DMS_A_C.bak.json
 ```
 
 - [ ] Palanca neutro/tracción al arrancar el agente; sin freno manual.
@@ -42,7 +42,6 @@ copy logs\profiles\RVM_BCC_WRM_Class323_DMS_A_C.json logs\profiles\RVM_BCC_WRM_C
 ## Ejecutar sesión
 
 ```bat
-V2\run_p1_session.bat limit cross-city
 ```
 
 Conduce **≥ 5 min** · varios carteles 60→55 y 55→45 · Ctrl+C al cerrar.
@@ -50,13 +49,11 @@ Conduce **≥ 5 min** · varios carteles 60→55 y 55→45 · Ctrl+C al cerrar.
 Al salir, busca en consola:
 
 ```text
-perfil -> logs\profiles\....json (fill=..., decel_n=...)
 ```
 
 Regenerar HTML:
 
 ```bat
-python scripts\tools\summarize_v2_limit.py logs\v2\ULTIMA.jsonl --html
 ```
 
 ---
@@ -68,8 +65,9 @@ python scripts\tools\summarize_v2_limit.py logs\v2\ULTIMA.jsonl --html
 | **Consola** | `decel_n > 0` solo con frenadas reales; sin errores IPC masivos |
 | **Resumen** | `python scripts\tools\summarize_v2_limit.py …jsonl` — APPLY/RELEASE razonables |
 | **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire |
-| **JSONL** | Bloques `"fb"` con `a_obs` solo en APPLY; `p1.reason=air_fill` esperable al inicio de freno |
-| **Perfil** | `n_bands` sube despacio; no un solo viaje con +200 muestras |
+| **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno |
+| **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
+| **RELEASE** | BRAKE_LIMIT: suelta ~55–56 mph proyectado (no arrastrar hasta 52–53); zona 59.5: banda fija |
 
 ### Criterios “sesión OK” (orientativos)
 
@@ -81,6 +79,16 @@ python scripts\tools\summarize_v2_limit.py logs\v2\ULTIMA.jsonl --html
 | `fb_escalated` | 0–pocos (aire estable) | Muchos sin subir muesca |
 | `air_fill_ticks` | Algunos al meter B1 | Cientos (aire roto / probe) |
 | GAP | 0 o bajo | Muchos `command_none` cerca cartel |
+| `decel_n` al cerrar | 20–80 en sesión ≥10 min con frenadas | 0–5 (aire/bombeo) |
+| 1er APPLY 60→55 | HOLD_DH ~700 m si pico ~60.4 | `plan` ~500 m sin HOLD_DH |
+
+### Referencia (sesiones Cross-City guardadas)
+
+| JSONL | Notas |
+| --- | --- |
+| `20260908T215743Z` | Mucho `a_obs` pre-filtro aire agresivo — restaurar perfil si EMA raro |
+| `20260908T222629Z` | Poco aprendizaje (8 muestras); bombeo; sin HOLD_DH |
+| `20260908T225707Z` | Mejor línea base: HOLD_DH, ~27 muestras limpias, `decel_n` modesto |
 
 ---
 
@@ -94,7 +102,8 @@ python scripts\tools\summarize_v2_limit.py logs\v2\ULTIMA.jsonl --html
 
 Entre sesiones: **no borrar** JSONL (comparar con `compare_sessions.bat` o diff manual).
 
-Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con filtro aire (post 2026-09-09).
+Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con filtro aire (post
+2026-09-09).
 
 ---
 
@@ -110,6 +119,8 @@ Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con fil
 | HOLD_DH + WATCH mezclados en estado | Deuda `limit_planner` (dos histéresis/tick) | Conocido, bajo impacto lejos |
 | Sin `accel_ms2` en probe | Campo HUD ausente | Feedback/EMA inactivos — revisar probe |
 | `air_ready` con `P=None` | Probe sin cilindro | Modo degradado: APPLY sin gate P |
+| RELEASE ~55 mph y luego ~54 | RELEASE cinemático (proyección `fill`) | No — comportamiento esperado |
+| `decel_n` bajo con sesión larga | Bombeo B1↔costa; poco tiempo con P≥92 % | Tuning futuro; seguir validando |
 
 ---
 
@@ -119,8 +130,8 @@ Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con fil
 | --- | --- |
 | `should_coast_throttle_before_brake` | **Eliminado** — COAST en `decision.py` + `command.py` |
 | `is_in_brake_action_window` | Reservado estación/señal; cartel usa `is_in_apply_zone` |
-| `archive/braking_v1_autopilot/` | Solo referencia histórica |
-| Orquestación v1 en `tsw6/autopilot/` | GUI usa `tsw6v2.autopilot_limit` |
+| `archive/braking_v1_autopilot/` | Solo `station_plan` + `objectives` (ref. estación) |
+| `tsw6/autopilot/` (GUI) | Cartel vía `tsw6v2.autopilot_limit`; FSM estación legacy |
 
 ---
 

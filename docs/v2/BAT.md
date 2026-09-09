@@ -1,17 +1,14 @@
 # Scripts `.bat` — mapa y conexiones
 
 **Raíz repo:** `TSW6/` · **Juego (UE4SS):**
-`C:\Program Files (x86)\Steam\steamapps\common\Train Sim World 6\WindowsNoEditor\TS2Prototype\Binaries\Win64\`
+`C:\Program Files (x86)\Steam\steamapps\common\Train Sim World
+6\WindowsNoEditor\TS2Prototype\Binaries\Win64\`
 
 Los `.bat` de la **raíz** son accesos directos; la lógica está en `scripts/`.
 
 ## Flujo típico (probe + autopilot)
 
 ```text
-1. install_ue4ss_probe.bat     → copia mods/TelemetryProbeMod/Scripts/* al juego
-2. Arrancar TSW6               → UE4SS.log: Mod loaded 20260902b, probe ON
-3. probe_ue4ss.bat             → lee %TEMP%\TSW6Bridge\GetData.txt
-4. iniciar_autopilot.bat       → GUI Python (opción 1)
 ```
 
 ## Instalación UE4SS
@@ -63,15 +60,11 @@ Los `.bat` de la **raíz** son accesos directos; la lógica está en `scripts/`.
 **Autopilot / probe:**
 
 ```text
-TelemetryProbeMod : 1
-ApiExplorerMod : 0
 ```
 
 **Solo lab:**
 
 ```text
-TelemetryProbeMod : 0
-ApiExplorerMod : 1
 ```
 
 ## Comprobar UE4SS.log
@@ -79,9 +72,6 @@ ApiExplorerMod : 1
 Buscar:
 
 ```text
-[TelemetryProbe] Mod loaded 20260902b (v2 modules)
-[TelemetryProbe] probe ON (F7 toggle)
-[TelemetryProbe] seq=... speed_ms=...
 ```
 
 Si falta `TelemetryProbeMod` → ejecutar `install_ue4ss_probe.bat`.

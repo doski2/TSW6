@@ -2,7 +2,9 @@
 
 **Fecha:** 2026-08-30 (actualizado 2026-09-01)
 
-## Estado:** L0 **cerrado en 323** · build explorer **`20260901a`
+## Estado
+
+**Estado:** L0 **cerrado en 323** · build explorer **`20260901a`
 
 **Sesión referencia:** [`20260830T213100Z`](../../data/lab_exports/exports/20260830T213100Z/)
 (Cross-City) ·
@@ -504,7 +506,9 @@ del 323.
 
 ### Cierre Class 323 → siguiente tren
 
-##### 323 (explorer):** barrido L0 **cerrado** en cabina. Queda trabajo de **producto
+##### 323 (explorer)
+
+**323 (explorer):** barrido L0 **cerrado** en cabina. Queda trabajo de **producto
 
 (probe/autopilot), no de lab:
 
@@ -569,7 +573,10 @@ cada **nuevo** `vehicle_class`.
 **Conclusión explorer vs probe:** el **explorer** no lee presión/masa en nodos Simulation (Lua
 bloqueado). El **probe** obtiene `brake_cyl_bar` en tick vía **`HUD_GetBrakeGauge_1`**
 (`RedNeedle (Pa)` ÷ 100 000 ≈ bar; coincide con HTTP cilindro en `213100Z`). HTTP
-`Simulation/BrakeCylinder_*` queda para lab/correlator, no para tick. Masa/tracción HTTP = **catálogo**
+`Simulation/BrakeCylinder_*` queda para lab/correlator, no para tick. Masa/tracción HTTP =
+
+###### catálogo
+
 solamente.
 
 ```bat

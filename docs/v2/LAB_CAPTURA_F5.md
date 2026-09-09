@@ -61,7 +61,9 @@ Validado in-game Class 323 — sesión `20260830T140413Z` (~21 m/s, power 2).
 | Nombres lever (`PowerBrakeHandle`) | **F6** `controls` | ✅ ya conocido en 323 |
 | Señal roja, distancia andén | **F7** `driver_aid` (L0.4) | ⬜ C1/C2 |
 
-#### Conclusión 323:** F5 cubre la **cabina HUD** que el probe ya usa para P1. No sustituye **vía
+#### Conclusión 323
+
+**Conclusión 323:** F5 cubre la **cabina HUD** que el probe ya usa para P1. No sustituye **vía
 
 (DriverAid) ni **IPC** (`lever_notch`, `seq`).
 

@@ -63,8 +63,9 @@ listas de tareas.
 | --- | --- |
 | `mods/TelemetryProbeMod/` | Probe Lua ~20 Hz |
 | `mods/ApiExplorerMod/` | Laboratorio Lua (HTTP ↔ UE) |
-| `tsw6/braking/v2/` | P1 — coordinator, policy, physics |
-| `V2/tsw6v2/` | Producto Python v2 (nuevo) |
+| `tsw6/braking/v2/` | Re-export shim → `tsw6v2` (GUI legacy) |
+| `V2/tsw6v2/` | **Producto P1 cartel** (fuente única) |
+| `archive/braking_v1_autopilot/` | Solo `station_plan` + `objectives` (ref. estación) |
 | `tsw6/autopilot/autopilot_core.py` | Bucle ~20 Hz hoy (v1) |
 | `tsw6/telemetry/` | IPC, parser GetData, HTTP planning |
 

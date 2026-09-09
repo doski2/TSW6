@@ -148,17 +148,17 @@ tras emergencia en pendiente.
 
 - [Train Handling When Operating with Dynamic Brakes (UP,
 
-  PDF)](https://lawblet13.org/wp-content/uploads/2022/08/su-2020-02T.pdf) — orden preferencia, buff
+PDF)](<https://lawblet13.org/wp-content/uploads/2022/08/su-2020-02T.pdf>) — orden preferencia, buff
   forces.
 
 - [BNSF Air Brake and Train Handling Rules (NTSB docket
 
-  PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=BNSF+Airbrake+and+Train+Handling+Rules-Rel.pdf&ID=7480227)
+PDF)](<https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=BNSF+Airbrake+and+Train+Handling+Rules-Rel.pdf&ID=7480227>)
   — blended, grades, no ind en dyn.
 
 - [CP Locomotive Engineer Training (NTSB docket
 
-  PDF)](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=CP+Loco+Eng+Training-Rel.pdf&ID=13320063)
+PDF)](<https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=CP+Loco+Eng+Training-Rel.pdf&ID=13320063>)
   — combinación dyn+auto en bajada.
 
 - [NAP — Long Freight Trains, cap. 5](https://www.nationalacademies.org/read/27807/chapter/5) —

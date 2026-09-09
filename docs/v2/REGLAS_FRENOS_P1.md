@@ -1,6 +1,6 @@
 # Reglas de frenos P1 — diseño V2 desde cero
 
-**Estado:** diseño acordado (2026-09-04) · **H1** implementado (primer paso)  
+**Estado:** diseño acordado (2026-09-04) · **H1** implementado (primer paso)
 **Plan:** [PLAN_V2.md](PLAN_V2.md) · **Código:** [CODIGO_V2.md](CODIGO_V2.md)
 
 ---
@@ -25,9 +25,15 @@ Ideas que **sí** entran en el diseño V2 — reimplementadas, no pegadas.
 ### 1. Física única
 
 - Una distancia: **`s = (v² − u²) / (2a_eff)`** (+ margen reacción + fill aire).
-- **`a`** de learner si hay perfil (`logs/profiles/<vehicle>.json`, auto-carga en sesión); si no, fracciones B1/B2/B3 UK.
+- **`a`** de learner si hay perfil (`logs/profiles/<vehicle>.json`, auto-carga en sesión); si no,
+
+  fracciones B1/B2/B3 UK.
+
 - Pendiente: **una vez** — en `a` aprendida **o** en `g` en la fórmula, nunca las dos.
-- TSW penaliza **> límite + 1 mph** → en plan usamos **+0,9 mph** sobre el cartel **vigente** (techo de scoring).
+- TSW penaliza **> límite + 1 mph** → en plan usamos **+0,9 mph** sobre el cartel **vigente** (techo
+
+  de scoring).
+
 - El cartel **siguiente** (BRAKE_LIMIT) usa **−1 mph** sobre su posted (UK pasajeros).
 
 ### 2. Dos techos mph (no mezclar)
@@ -54,7 +60,10 @@ Código (`constants.py`):
 2. **Contención bajada** (`pick_downhill_containment`) si superas el techo de la zona vigente.
 3. **BRAKE_LIMIT** en WATCH (lejos, bajo techo de zona) — solo calcula; **no** bloquea HOLD_DH.
 
-**Defer** (`limit_notch.downhill_defer_brake_commit`): no comprometer B1 todavía si aún vas legal en la zona vigente. Usa `next_brake_overrides_zone_hold` para no diferir dentro del horizonte ni en la banda de acercamiento (56–62.2 mph @ zona 60 @ −1 %%). Esa función **no** participa en la prioridad de `limits.py` (fix sesión 20260908T210357Z).
+**Defer** (`limit_notch.downhill_defer_brake_commit`): no comprometer B1 todavía si aún vas legal en
+la zona vigente. Usa `next_brake_overrides_zone_hold` para no diferir dentro del horizonte ni en la
+banda de acercamiento (56–62.2 mph @ zona 60 @ −1 %%). Esa función **no** participa en la prioridad
+de `limits.py` (fix sesión 20260908T210357Z).
 
 **Caso 60→55 en bajada** (tests: `test_h1_downhill.py`, `test_coast_trim.py`):
 
@@ -66,8 +75,14 @@ Código (`constants.py`):
 
 Excepciones:
 
-- **60→55**: contención @ techo zona (**60.2** @ −1 %%, **60.5** suave) fuera del horizonte; soltar en **59.5** si hay presión/coast eficiente (solo **fuera** del horizonte hacia el 55).
-- **55→45** (y cualquier bajada): RELEASE al cartel next en **ops+0.5** (45→**44.5**); no arrastrar B1 hasta ~40; no soltar por `eff_floor` de zona vigente **dentro** del horizonte.
+- **60→55**: contención @ techo zona (**60.2** @ −1 %%, **60.5** suave) fuera del horizonte; soltar
+
+  en **59.5** si hay presión/coast eficiente (solo **fuera** del horizonte hacia el 55).
+
+- **55→45** (y cualquier bajada): RELEASE al cartel next en **ops+0.5** (45→**44.5**); no arrastrar
+
+  B1 hasta ~40; no soltar por `eff_floor` de zona vigente **dentro** del horizonte.
+
 - **60→60** (misma zona): HOLD_DH si `spd >` techo zona.
 - **35→60** (subida de límite): sin contención — dejar acelerar (`is_ascending_limit_exit`).
 
@@ -101,7 +116,8 @@ Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 
 ### 7. Feedback decel cerrado (bucle corto)
 
-Compara **decel medida** (`accel_ms2` del probe, signo invertido) con el **perfil aprendido** (`predict_decel` / learner) en la muesca comprometida.
+Compara **decel medida** (`accel_ms2` del probe, signo invertido) con el **perfil aprendido**
+(`predict_decel` / learner) en la muesca comprometida.
 
 | Condición | Acción |
 | --- | --- |
@@ -120,23 +136,58 @@ Compara **decel medida** (`accel_ms2` del probe, signo invertido) con el **perfi
 | **Plan / overspeed** | `spd > ops + 0.65` o pick pide muesca más fuerte | `apply_notch_hysteresis` |
 | **Feedback** | Decel real < 70 % del perfil, 2 ticks | `apply_weak_decel_feedback` |
 
-JSONL: bloque `fb` (`a_pred_ms2`, `a_obs_ms2`, `shortfall`, `escalated`). Trace: `p1.reason = decel_feedback` si escala por feedback. Replay HTML: paneles presión + decel y tabla **Feedback decel / aire**.
+JSONL: bloque `fb` (`a_pred_ms2`, `a_obs_ms2`, `shortfall`, `escalated`). Trace: `p1.reason =
+decel_feedback` si escala por feedback. Replay HTML: paneles presión + decel y tabla **Feedback
+decel / aire**.
 
-**Presión de aire (L4):** sí en **decisión** (`air_ready` bloquea APPLY, `cap_escalation` limita escalón, `inhibit_reapply` anti-bombeo, `observe_air` → `brake_fill_s`). **Feedback y EMA** solo miden/aprenden si `brake_decel_sample_ready`: palanca = muesca comprometida y `P ≥ 92 %` de la presión esperada (`brake_air.pressure_for_handle`).
+**Presión de aire (L4):** sí en **decisión** (`air_ready` bloquea APPLY, `cap_escalation` limita
+escalón, `inhibit_reapply` anti-bombeo, `observe_air` → `brake_fill_s`). **Feedback y EMA** solo
+miden/aprenden si `brake_decel_sample_ready`: palanca = muesca comprometida y `P ≥ 92 %` de la
+presión esperada (`brake_air.pressure_for_handle`).
 
-Constantes (`brake_feedback.py`): `DECEL_SHORTFALL_RATIO=0.70`, `WEAK_DECEL_TICKS=2`, `DECEL_MIN_PRED_MS2=0.15`, `DECEL_MIN_OBS_MS2=0.08`.
+Constantes (`brake_feedback.py`): `DECEL_SHORTFALL_RATIO=0.70`, `WEAK_DECEL_TICKS=2`,
+`DECEL_MIN_PRED_MS2=0.15`, `DECEL_MIN_OBS_MS2=0.08`.
 
 Tests: `V2/tests/test_brake_feedback.py`.
 
-**Perfil vs reacción:** el perfil learner da `a` por muesca (+ `brake_fill_s` en distancia). `LIMIT_REACTION_S` (1.5 s) es margen **separado** en el latch — no se resta del feedback.
+**Perfil vs reacción:** el perfil learner da `a` por muesca (+ `brake_fill_s` en distancia).
+`LIMIT_REACTION_S` (1.5 s) es margen **separado** en el latch — no se resta del feedback.
 
-**Aprendizaje online (sesión P1):** en ventana APPLY con muesca comprometida, cada tick con `accel_ms2` de freno actualiza `ema_bands` / `ema` (α=0.10, igual v1). Al cerrar `run_p1_session.bat`:
+**Aprendizaje online (sesión P1):** en ventana APPLY con muesca comprometida, cada tick con
+`accel_ms2` de freno actualiza `ema_bands` / `ema` (α=0.10, igual v1). Al cerrar
+`run_p1_session.bat`:
 
 ```text
-perfil -> logs\profiles\....json (fill=0.80s, decel_n=42)
 ```
 
 Solo si hubo muestras válidas (`decel_n > 0`) o ajuste de aire. No aprende en WATCH/HOLD_DH.
+
+Con filtro aire (post 2026-09-09), `decel_n` modesto (20–80 en sesión larga) es normal; no esperar
+cientos por viaje. Validación campo: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md).
+
+### 8. RELEASE cinemático (BRAKE_LIMIT)
+
+Simétrico al APPLY: no solo banda fija en mph al llegar al objetivo.
+
+| Modo | Cuándo suelta | Criterio |
+| --- | --- | --- |
+| **Contención zona** (60→55 lejos) | ~59.5 mph | Banda fija `spd ≤ coast_floor + release_over` |
+| **BRAKE_LIMIT** (latch al 54) | Antes de 54 mph si el fill seguiría frenando | `v_proy = v + a_net·brake_fill_s ≤ target + banda` |
+
+- `a_net`: `accel_ms2` del probe si hay frenado; si no, `predict_decel` del learner (**ya incluye
+
+  pendiente** — no volver a sumar `g`).
+
+- `brake_fill_s`: del perfil / `BrakeAirTracker`.
+- En bajada cerca del cartel, `should_hold_limit_brake_downhill` no bloquea el latch final (`spd ≤
+
+  latch + 2 mph`).
+
+Módulos: `physics.projected_speed_mph_after_brake_fill`, `command.resolve_release_command`. Tests:
+`test_release.py` (kinematic).
+
+**No planificado (2026-09-10):** aprendizaje por distancia de parada integrada u observación en
+HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
 
 ---
 
@@ -170,32 +221,19 @@ Solo si hubo muestras válidas (`decel_n > 0`) o ajuste de aire. No aprende en W
 
 `LimitPlan` (hoy `BrakeTargetResult` + `LimitBrakeDecision`):
 
-- `mode` — uno de la tabla arriba  
-- `target_mph`, `handle`, `dist_start`, `apply_now`  
+- `mode` — uno de la tabla arriba
+- `target_mph`, `handle`, `dist_start`, `apply_now`
 - `reason` — trace (`plan`, `downhill_hold`, `release`, …)
 
 ### Flujo objetivo (un solo planificador)
 
 ```text
-limit_plan_tick(snapshot, state)
-│
-├─ ¿Freno puesto? → RELEASE (reglas bajada; eff_floor solo fuera horizonte)
-│
-├─ horizon_next = f(spd, next_limit, grad, fill)
-│
-├─ evaluate_limit_brake:
-│     1. next.apply_now → BRAKE_LIMIT
-│     2. spd > techo zona Y fuera horizonte → HOLD_DH / zone_contain
-│     3. else → WATCH (plan latch sin mandar)
-│
-├─ defer (limit_notch): no comprometer B1 si legal en zona; override solo aquí
-│
-├─ histéresis muesca (limit_notch) → feedback decel (brake_feedback) si BRAKE_LIMIT
-│
-└─ command_layer: COAST_PWR si power → APPLY / RELEASE → IPC
 ```
 
-**Eliminar** en el rediseño final: rutas legacy `try_downhill_approach_hold` separadas del latch. La contención de zona (`try_current_zone_downhill_contain`) + **HOLD_DH** (`try_posted_downhill_hold`) comparten `_build_downhill_hold_result`; el efecto bueno se absorbe en **HOLD_DH** + **BRAKE_LIMIT**.
+**Eliminar** en el rediseño final: rutas legacy `try_downhill_approach_hold` separadas del latch. La
+contención de zona (`try_current_zone_downhill_contain`) + **HOLD_DH** (`try_posted_downhill_hold`)
+comparten `_build_downhill_hold_result`; el efecto bueno se absorbe en **HOLD_DH** +
+**BRAKE_LIMIT**.
 
 ### H1 (implementado — primer bloque del diseño nuevo)
 
@@ -205,7 +243,8 @@ limit_plan_tick(snapshot, state)
 | 1b | `dist_next > horizon`, bajada, `spd > posted + 0.5`, misma zona (60→60) | **HOLD_DH** | **60.5** |
 | 2 | `dist_next ≤ horizon` | **BRAKE_LIMIT** al next | **posted_next − 1** (55→54) |
 
-Código actual: `limit_containment.py`, `limits.py`, `decision.py` · tests: `V2/tests/test_h1_downhill.py`.
+Código actual: `limit_containment.py`, `limits.py`, `decision.py` · tests:
+`V2/tests/test_h1_downhill.py`.
 
 ---
 
@@ -254,14 +293,14 @@ Cambiar solo con test + sesión documentada.
 ### Criterio de hecho (V2 only)
 
 ```bat
-python -m pytest V2/tests/ -q
-V2\run_p1_session.bat limit cross-city
-python scripts\tools\summarize_v2_limit.py logs\v2\ULTIMA.jsonl
 ```
 
 Validación multi-sesión: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md).
 
-- JSONL: modos esperados (HOLD_DH lejos, BRAKE_LIMIT cerca, sin “Contención bajada” legacy salvo decisión explícita).
+- JSONL: modos esperados (HOLD_DH lejos, BRAKE_LIMIT cerca, sin “Contención bajada” legacy salvo
+
+  decisión explícita).
+
 - **No** comparar con `tests/test_brake_v2.py` legacy.
 
 ---
@@ -279,9 +318,11 @@ Tras H1, repetir sesión y comparar capas `HOLD_DH` vs `BRAKE`.
 
 ## Apéndice A — Inventario legacy (solo referencia histórica)
 
-Detalle regla a regla del port antiguo: `archive/braking_v1_autopilot/`. **No usar para implementar V2.**
+Detalle regla a regla del port antiguo: `archive/braking_v1_autopilot/`. **No usar para implementar
+V2.**
 
-IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD_DH / BRAKE_LIMIT / RELEASE / COAST_PWR**.
+IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD_DH / BRAKE_LIMIT /
+RELEASE / COAST_PWR**.
 
 ---
 
@@ -297,10 +338,10 @@ IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD
 | `brake_feedback.py` | Bucle corto `a_obs` vs `a_pred` → escalada B1→B2 |
 | `limits.py` | Fachada `evaluate_limit_brake` |
 | `target.py` | `BrakeTargetResult` |
-| `command.py` | RELEASE / COAST / APPLY |
-| `decision.py` | Tick + L4 aire |
+| `command.py` | RELEASE cinemático + COAST / APPLY |
+| `decision.py` | Tick + L4 aire + RELEASE con `accel_ms2` / perfil |
 | `autopilot_limit.py` | Puente autopilot GUI → `evaluate_limit_tick` |
-| `physics.py` | `s = v²/2a` |
+| `physics.py` | APPLY `s = v²/2a` + RELEASE `v + a·fill` |
 
 ---
 
@@ -309,11 +350,13 @@ IDs A–G del inventario 2026-09-04: sustituidos por modos **NONE / WATCH / HOLD
 - [PLAN_V2 §2 Física](PLAN_V2.md#2-física-qué-investigar-e-introducir)
 - [p1_limit_capas.html](p1_limit_capas.html)
 - [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_)
+- [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) — protocolo campo Cross-City
 
-**Changelog**
+#### Changelog
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-10 | RELEASE cinemático BRAKE_LIMIT (`v + a_net·fill`); doc validación actualizada |
 | 2026-09-09 | Doc validación multi-sesión; depurado `should_coast_throttle_before_brake` |
 | 2026-09-09 | Feedback/EMA gated por `brake_decel_sample_ready` (palanca + presión cilindro) |
 | 2026-09-08 | EMA online en sesión P1 (`observe_brake_decel` → perfil al cerrar) |

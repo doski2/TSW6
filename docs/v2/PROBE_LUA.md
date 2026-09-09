@@ -1,6 +1,7 @@
 # Probe Lua v2 — auditoría y mapa
 
-**Build:** `20260908c` (revert sync visual VHID; ver nota abajo) · **Plan:** [PLAN_V2 §4.1](PLAN_V2.md#41-tick-lua-ue4ss) ·
+**Build:** `20260908c` (revert sync visual VHID; ver nota abajo) · **Plan:** [PLAN_V2
+§4.1](PLAN_V2.md#41-tick-lua-ue4ss) ·
 **Contrato:** [CANAL_CONTROL](../CANAL_CONTROL.md)
 
 ## Resumen
@@ -26,6 +27,7 @@
 (incluso en ACK «already») y **bloqueaban el teclado** del jugador. Revertido a `20260905b`.
 Si la palanca 3D no sigue al tren, es limitación conocida de `SetCurrentOutputValue` — no reactivar
 sync visual sin prueba en cabina.
+
 | `main.lua` | Hook ReceiveTick, F7/F8, auto-start |
 
 ## GetData v2 (probe escribe)
@@ -60,8 +62,6 @@ Todo lo de [CANAL_CONTROL § Contrato](../CANAL_CONTROL.md#contrato-getdata-v2) 
 ## Validación
 
 ```bat
-install_ue4ss_probe.bat
-python -m pytest tests/test_tsw_ue4ss_reader.py -q
 ```
 
 In-game: `seq` ~20 Hz · IPC PBH · rojo en semáforo → `signal_red=1` en F8.
