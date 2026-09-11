@@ -101,6 +101,36 @@ def test_jsonl_trace(tmp_path: Path):
     assert tick["brake_fill_s"] == 2.4
 
 
+def test_jsonl_trace_doors_fields(tmp_path: Path):
+    path = tmp_path / "doors.jsonl"
+    trace = JsonlTrace(path, session_meta(mode="station", route="test"))
+    snap = AgentSnapshot(
+        tick=1,
+        speed_mph=0.5,
+        station_dist_m=20.0,
+        station_fsm="STOPPED",
+        doors_telem=True,
+        doors_dmi=False,
+        doors_open=True,
+    )
+    trace.write_tick(snap, t_ms=50.0)
+    trace.close()
+    tick = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[1])
+    assert tick["doors_telem"] is True
+    assert tick["doors_dmi"] is False
+    assert tick["doors_open"] is True
+
+
+def test_format_investigate_doors():
+    snap = AgentSnapshot(
+        tick=1,
+        doors_telem=True,
+        doors_dmi=False,
+    )
+    line = format_investigate(snap)
+    assert "doors=1/0" in line
+
+
 def test_jsonl_trace_station_fields(tmp_path: Path):
     path = tmp_path / "st.jsonl"
     trace = JsonlTrace(path, session_meta(mode="station", route="test"))

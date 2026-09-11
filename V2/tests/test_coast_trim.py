@@ -14,6 +14,73 @@ def test_coast_trim_small_overspeed_downhill() -> None:
     )
 
 
+def test_coast_trim_defers_uphill_60_to_55() -> None:
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert downhill_defer_brake_commit(
+        speed_mph=55.5,
+        ops_target_mph=54.0,
+        distance_m=600.0,
+        gradient_pct=1.0,
+        dist_start=80.0,
+        current_posted_mph=60.0,
+        next_posted_mph=55.0,
+    )
+
+
+def test_coast_trim_defers_uphill_60_to_50_session_201211() -> None:
+    """57 mph @ +1% y ~250 m: coast en cuesta basta; no B1 (sesión 201211Z)."""
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert downhill_defer_brake_commit(
+        speed_mph=57.0,
+        ops_target_mph=49.0,
+        distance_m=256.0,
+        gradient_pct=1.0,
+        dist_start=50.0,
+        current_posted_mph=60.0,
+        next_posted_mph=50.0,
+    )
+
+
+def test_coast_trim_uphill_defer_past_kinematic_ds_session_203100() -> None:
+    """ds<0 pero 95 m al cartel: coast en cuesta sigue diferido (203100Z)."""
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert downhill_defer_brake_commit(
+        speed_mph=56.67,
+        ops_target_mph=54.0,
+        distance_m=94.8,
+        gradient_pct=1.0,
+        dist_start=0.2,
+        current_posted_mph=60.0,
+        next_posted_mph=55.0,
+    )
+    assert downhill_defer_brake_commit(
+        speed_mph=56.61,
+        ops_target_mph=54.0,
+        distance_m=93.6,
+        gradient_pct=1.0,
+        dist_start=-0.7,
+        current_posted_mph=60.0,
+        next_posted_mph=55.0,
+    )
+
+
+def test_coast_trim_uphill_stops_defer_when_too_close() -> None:
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert not downhill_defer_brake_commit(
+        speed_mph=59.0,
+        ops_target_mph=49.0,
+        distance_m=45.0,
+        gradient_pct=1.0,
+        dist_start=10.0,
+        current_posted_mph=60.0,
+        next_posted_mph=50.0,
+    )
+
+
 def test_coast_trim_not_large_overspeed() -> None:
     from tsw6v2.limit_notch import downhill_defer_brake_commit
 

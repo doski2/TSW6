@@ -7,6 +7,7 @@ from pathlib import Path
 
 from tsw6v2.session_report import (
     _kinematic_markers,
+    enrich_ticks_active_time,
     finalize_session_report,
     session_ready_for_browser,
     session_ready_for_html,
@@ -223,6 +224,123 @@ def test_html_shows_station_panel(tmp_path: Path) -> None:
     assert "objetivo STATION" in text
 
 
+def test_kinematic_markers_ignore_ds_telemetry_glitches() -> None:
+    ticks = [
+        {
+            "tick": 1,
+            "t_ms": 0,
+            "spd_mph": 50.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 50.0,
+            "p1_tgt": "STATION",
+            "p1": {"dist_start_m": 40.8},
+        },
+        {
+            "tick": 2,
+            "t_ms": 50,
+            "spd_mph": 49.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 48.0,
+            "p1_tgt": "STATION",
+            "p1": {"dist_start_m": -293.5},
+        },
+        {
+            "tick": 3,
+            "t_ms": 100,
+            "spd_mph": 48.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 46.0,
+            "p1_tgt": "STATION",
+            "p1": {"dist_start_m": 40.3},
+        },
+        {
+            "tick": 4,
+            "t_ms": 150,
+            "spd_mph": 47.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 44.0,
+            "p1_tgt": "STATION",
+            "p1": {"dist_start_m": -289.0},
+        },
+    ]
+    markers = _kinematic_markers(ticks)
+    assert [m for m in markers if m.get("kind") == "ds0"] == []
+
+
+def test_kinematic_markers_dedup_station_apply_by_episode() -> None:
+    ticks = [
+        {
+            "tick": 1,
+            "t_ms": 0,
+            "spd_mph": 55.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 300.0,
+            "stn_dist_m": 280.0,
+            "p1_tgt": "STATION",
+            "p1": {
+                "apply_now": True,
+                "dist_start_m": 40.0,
+                "detail": "Estación dist=280m",
+            },
+        },
+        {
+            "tick": 2,
+            "t_ms": 1000,
+            "spd_mph": 54.0,
+            "lim_mph": 55.0,
+            "lim_dist_m": 250.0,
+            "stn_dist_m": 260.0,
+            "p1_tgt": "STATION",
+            "p1": {
+                "apply_now": True,
+                "dist_start_m": 35.0,
+                "detail": "Estación dist=260m",
+            },
+        },
+    ]
+    markers = _kinematic_markers(ticks)
+    apply = [m for m in markers if m.get("kind") == "apply"]
+    assert len(apply) == 1
+
+
+def test_station_event_rows_door_transitions() -> None:
+    from tsw6v2.session_report import _station_event_rows
+
+    ticks = [
+        {
+            "tick": 1,
+            "t_ms": 0,
+            "stn_dist_m": 12.0,
+            "spd_mph": 0.0,
+            "doors_telem": False,
+            "doors_dmi": False,
+        },
+        {
+            "tick": 2,
+            "t_ms": 1000,
+            "stn_dist_m": 12.0,
+            "spd_mph": 0.0,
+            "doors_telem": True,
+            "doors_dmi": False,
+            "stn_fsm": "STOPPED",
+        },
+        {
+            "tick": 3,
+            "t_ms": 2000,
+            "stn_dist_m": 12.0,
+            "spd_mph": 0.0,
+            "doors_telem": False,
+            "doors_dmi": False,
+            "stn_fsm": "DEPARTING",
+        },
+    ]
+    rows = _station_event_rows(ticks)
+    door_rows = [r for r in rows if str(r.get("event", "")).startswith("puertas")]
+    assert len(door_rows) == 2
+    assert door_rows[0]["event"] == "puertas ABIERTAS"
+    assert door_rows[1]["event"] == "puertas CERRADAS"
+
+
 def test_station_event_rows_dedup_apply(tmp_path: Path) -> None:
     from tsw6v2.session_report import _station_event_rows
 
@@ -239,6 +357,17 @@ def test_station_event_rows_dedup_apply(tmp_path: Path) -> None:
     rows = _station_event_rows(ticks)
     apply_rows = [r for r in rows if r["event"] == "APPLY andén"]
     assert len(apply_rows) == 1
+
+
+def test_enrich_ticks_active_time_skips_menu_pause() -> None:
+    ticks = [
+        {"seq": 1, "t_ms": 0},
+        {"seq": 1, "t_ms": 60000},  # menú pausado: seq congelado
+        {"seq": 2, "t_ms": 60050},
+        {"seq": 4, "t_ms": 60100},
+    ]
+    enrich_ticks_active_time(ticks)
+    assert ticks[-1]["active_t_ms"] == 150.0  # (4-1) * 50 ms
 
 
 if __name__ == "__main__":

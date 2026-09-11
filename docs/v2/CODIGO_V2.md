@@ -47,11 +47,12 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 | --- | --- | --- |
 | 1 | Contrato GetData | Casi cerrado |
 | 2 | Esqueleto `V2/tsw6v2/` | **Cerrado** (pytest + `test-ipc` in-game) |
-| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~198 tests `V2/tests/`) · `run_p1_session` limit/station |
+| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~213 tests `V2/tests/`) · `run_p1_session` limit/station |
 
 Módulos cartel: `planning` · `limit_state` · `limit_notch` · `limit_containment` · `limits` ·
 `decision`. Andén: `station_plan` · `station_brake` · `p1_policy` · `limit_station_cluster` ·
-`planning_poller` (HTTP `DriverAid.TrackData` + fallback `Planning.txt`) — ver
+`p1_station_gate` · `planning_poller` (HTTP `DriverAid.TrackData` + fallback `Planning.txt`) ·
+`session_report` — ver
 [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_) y
 [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos).
 

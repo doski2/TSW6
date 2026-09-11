@@ -7,7 +7,7 @@ from typing import Callable, Optional
 
 from tsw6v2.brake_air import brake_decel_sample_ready
 from tsw6v2.limit_notch import (
-    _downhill_escalation_allowed,
+    _grade_escalation_allowed,
     _in_apply_window,
     _step_stronger,
     phase_for_handle,
@@ -142,7 +142,7 @@ def apply_weak_decel_feedback(
     if state.weak_decel_ticks < WEAK_DECEL_TICKS:
         return handle, phase, fb
 
-    if committed <= 1 or not _downhill_escalation_allowed(
+    if committed <= 1 or not _grade_escalation_allowed(
         gradient_pct, speed_mph, limit_mph
     ):
         return handle, phase, fb

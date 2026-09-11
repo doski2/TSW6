@@ -949,9 +949,11 @@ Detalle casos Four Oaks / Sutton: [BRAKE_V2.md](../v1/BRAKE_V2.md) ·
 
 | Fenómeno | Síntoma (ejemplo) | Capa que responde hoy |
 | --- | --- | --- |
-| **Distancias invertidas** | Andén HUD más cerca que cartel 55 (Four Oaks) | P1: `station_waits`, `next_sign_is_reduction_beyond_station` |
+| **Distancias invertidas** | Andén HUD más cerca que cartel 55 (Four Oaks, gap ~140 m) | P1: `station_waits`, `next_sign_is_reduction_beyond_station` |
+| **Cartel justo tras andén** | Cartel 50 @ +27 m del marker; zona 60 (sesión `213010Z`) | P1: `limit_sign_beyond_station` (gap ≤ 50 m → **STATION** primero) |
 | **Cartel + andén, ya bajo el next** | spd ≤ 55 con cartel 55 delante; plan cartel APPLY pero no hace falta | P1: `will_be_below_limit_at_pass` → `p1tgt=STATION` (proyección al pasar) |
 | **Lista de paradas mala** | Sutton antes que Four Oaks en `markers[]` | Planning: `stop_names` del horario, `hud_geo`, `filter_stations_by_stop_names` |
+| **Gate dwell atascado** | `fsm=STOPPED` con tren en marcha sin puertas (`210853Z`) | `p1_station_gate._left_platform` libera FSM y P1 andén |
 
 **Planning (sentido del servicio):**
 
@@ -1604,6 +1606,7 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
 | 2026-09-10 | 3 / estación | HTTP solo en v1 telemetry | `planning_poller` + `driver_aid_stations` + `bridge/http_api` en V2; `StationPlanning` en `AgentLoop`; fallback `Planning.txt`; script `V2/scripts/write_planning.py` |
+| 2026-09-10 | 3 / estación | Cartel tras andén + gate dwell | `limit_sign_beyond_station`; `p1_station_gate`; sesiones `210853Z`/`213010Z`; [REGLAS §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos) |
 | 2026-09-10 | 3 / estación | Prioridad cartel↔andén | `will_be_below_limit_at_pass`: bajo el next + proyección legal → STATION; doc [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos) |
 | 2026-09-10 | 3 / estación | P1 andén pendiente (paso 6–7) | Andén en `evaluate_p1_tick`: `station_plan`, `station_brake`, `p1_policy`, `limit_station_cluster`; modo `--mode station`; sin import `tsw6` en `V2/` |
 | 2026-09-10 | 3 | RELEASE solo banda 59.5 | RELEASE cinemático BRAKE_LIMIT (`v + a_net·fill`); `limit_release_speed_ready`; HOLD_DH no bloqueado por WATCH; [REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md) §8 |
@@ -1623,7 +1626,7 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
 ## Prioridad (resumen)
 
-1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)); P2 verde (143 tests).
+1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)); pytest verde (~213 tests).
 2. **Paso 5 / C1** — señal roja en P1 (paso 4 probe cerrado); fixture + sesión in-game.
 3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisión `tsw_hud.db` si falla match.
 4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.

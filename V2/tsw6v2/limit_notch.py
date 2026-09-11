@@ -12,6 +12,8 @@ from tsw6v2.physics import (
     coast_trim_covers_overspeed,
     is_downhill_gradient,
     is_in_apply_zone,
+    is_sloped_for_coast_trim,
+    is_uphill_gradient,
 )
 from tsw6v2.plan import notch_strength
 from tsw6v2.planning import is_descending_limit_zone
@@ -44,19 +46,26 @@ def _in_apply_window(
     return apply_now or is_in_apply_zone(dist_start, apply_zone_m)
 
 
-def _downhill_coast_trim_active(
+def _limit_coast_trim_active(
     *,
     speed_mph: float,
     limit_mph: float,
     distance_m: float,
     gradient_pct: float,
 ) -> bool:
-    """Exceso ≤2 mph sobre techo operativo y coast/gravedad bastan."""
-    if not is_downhill_gradient(gradient_pct):
-        return False
+    """
+    ¿Coast + gravedad bastan antes del cartel?
+
+    - Bajada: solo exceso ≤2 mph (gravedad acelera; conservador).
+    - Subida: sin tope fijo; ``coast_trim_covers_overspeed`` decide
+      (sesión 20260911T201211Z: 57 mph @ +1 %% y 250 m al 50).
+    """
     overspeed = speed_mph - limit_mph
-    if overspeed <= 0 or overspeed > LIMIT_DOWNHILL_COAST_TRIM_MPH:
+    if overspeed <= 0:
         return False
+    if is_downhill_gradient(gradient_pct):
+        if overspeed > LIMIT_DOWNHILL_COAST_TRIM_MPH:
+            return False
     return coast_trim_covers_overspeed(
         speed_mph=speed_mph,
         target_mph=limit_mph,
@@ -141,48 +150,56 @@ def downhill_defer_brake_commit(
     next_posted_mph: float | None = None,
 ) -> bool:
     """
-    Bajada: no comprometer B1 todavía.
+    Pendiente: no comprometer B1 todavía si coast/gravedad bastan.
 
-    - 60→55 lejos y lento: diferir BRAKE_LIMIT si aún en banda zona vigente.
-    - Cerca del techo operativo del cartel siguiente: coast si exceso ≤2 mph.
+    - Bajada 60→55 lejos: diferir BRAKE_LIMIT si aún en banda zona vigente.
+    - Bajada coast trim: exceso ≤2 mph sobre techo operativo.
+    - Subida coast trim: sin tope fijo; decide ``coast_trim_covers_overspeed``.
 
     Solo aplica antes del primer compromiso de muesca (``committed_handle is None``).
     """
-    if not is_downhill_gradient(gradient_pct):
-        return False
-    if dist_start <= 0:
-        return False
-    if (
-        current_posted_mph is not None
-        and next_posted_mph is not None
-        and is_descending_limit_zone(current_posted_mph, next_posted_mph)
-        and _defer_descending_zone_brake(
+    def _coast_defer() -> bool:
+        return _limit_coast_trim_active(
             speed_mph=speed_mph,
-            ops_target_mph=ops_target_mph,
+            limit_mph=ops_target_mph,
             distance_m=distance_m,
             gradient_pct=gradient_pct,
-            current_posted_mph=current_posted_mph,
-            next_posted_mph=next_posted_mph,
         )
-    ):
-        return True
-    return _downhill_coast_trim_active(
-        speed_mph=speed_mph,
-        limit_mph=ops_target_mph,
-        distance_m=distance_m,
-        gradient_pct=gradient_pct,
-    )
+
+    # Subida: sin cortar por ds≤0 — ds es margen cinemático, no m al cartel
+    # (sesión 20260911T203100Z: ds=-0.7 @ 95 m, coast aún basta).
+    if is_uphill_gradient(gradient_pct):
+        return _coast_defer()
+    if dist_start <= 0:
+        return False
+    if is_downhill_gradient(gradient_pct):
+        if (
+            current_posted_mph is not None
+            and next_posted_mph is not None
+            and is_descending_limit_zone(current_posted_mph, next_posted_mph)
+            and _defer_descending_zone_brake(
+                speed_mph=speed_mph,
+                ops_target_mph=ops_target_mph,
+                distance_m=distance_m,
+                gradient_pct=gradient_pct,
+                current_posted_mph=current_posted_mph,
+                next_posted_mph=next_posted_mph,
+            )
+        ):
+            return True
+        return _coast_defer()
+    return False
 
 
-def _downhill_escalation_allowed(
+def _grade_escalation_allowed(
     gradient_pct: float,
     speed_mph: float,
     limit_mph: float,
 ) -> bool:
-    """En bajada no subir a B2/B3 hasta estar a ≤2 mph del techo operativo."""
-    if not is_downhill_gradient(gradient_pct):
-        return True
-    return speed_mph <= limit_mph + LIMIT_DOWNHILL_COAST_TRIM_MPH
+    """En pendiente no subir a B2/B3 hasta ≤2 mph sobre techo operativo."""
+    if is_sloped_for_coast_trim(gradient_pct):
+        return speed_mph <= limit_mph + LIMIT_DOWNHILL_COAST_TRIM_MPH
+    return True
 
 
 def _step_stronger(
@@ -219,7 +236,7 @@ def apply_notch_hysteresis(
     Un escalón por tick: no saltar a B3 de golpe.
 
     ``defer_commit``: no comprometer B1 (coast trim / zona vigente legal).
-    Escalada en bajada: solo si ``speed ≤ techo_operativo + 2 mph``.
+    Escalada en pendiente: solo si ``speed ≤ techo_operativo + 2 mph``.
     """
     prev = state.committed_handle
     in_window = _in_apply_window(
@@ -227,7 +244,7 @@ def apply_notch_hysteresis(
         dist_start=dist_start,
         apply_zone_m=apply_zone_m,
     )
-    may_escalate = _downhill_escalation_allowed(
+    may_escalate = _grade_escalation_allowed(
         gradient_pct, speed_mph, limit_mph
     )
     if prev is None:

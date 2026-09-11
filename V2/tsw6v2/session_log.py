@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from tsw6v2.loop import AgentLoop, AgentSnapshot
+from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.session_report import (
     MIN_HTML_DURATION_S,
     MIN_HTML_TICKS,
@@ -46,6 +47,8 @@ class SessionRecorder:
         self.profile = profile
         self._trace: Optional[JsonlTrace] = None
         self._t0 = time.monotonic()
+        self._last_seq: Optional[int] = None
+        self._active_t_ms = 0.0
 
     def _ensure_trace(self) -> JsonlTrace:
         if self._trace is None:
@@ -62,8 +65,18 @@ class SessionRecorder:
 
     def record(self, snap: AgentSnapshot) -> None:
         trace = self._ensure_trace()
+        self._active_t_ms, self._last_seq = advance_probe_active_ms(
+            self._active_t_ms,
+            self._last_seq,
+            snap.seq,
+        )
         t_ms = (time.monotonic() - self._t0) * 1000.0
-        trace.write_tick(snap, t_ms=t_ms, ipc_cmd_id=snap.ipc_cmd_id)
+        trace.write_tick(
+            snap,
+            t_ms=t_ms,
+            active_t_ms=self._active_t_ms,
+            ipc_cmd_id=snap.ipc_cmd_id,
+        )
 
     def finish(
         self,

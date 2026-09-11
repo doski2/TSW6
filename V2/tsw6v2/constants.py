@@ -10,6 +10,7 @@ IPC_ACK_TIMEOUT_S = 0.35
 IPC_STEP_PAUSE_S = 0.08
 AGENT_ACK_TIMEOUT_S = 0.12
 DEFAULT_LOOP_HZ = 20.0
+PROBE_SEQ_MS = 1000.0 / DEFAULT_LOOP_HZ  # ~50 ms por tick de probe
 # Tras tocar la palanca contra el IPC, P1 no manda hasta que pase este tiempo (s).
 DRIVER_OVERRIDE_COOLDOWN_S = 12.0
 
@@ -40,12 +41,13 @@ LIMIT_COAST_BAND_MPH = 0.25
 # HOLD_DH / contención zona vigente (más conservador que scoring TSW)
 LIMIT_ZONE_HOLD_OVER_MPH = 0.5  # bajada suave (−0.3 %%): posted 60 → 60.5
 LIMIT_ZONE_HOLD_OVER_STEEP_MPH = 0.2  # bajada fuerte (−1 %%): posted 60 → 60.2
-LIMIT_DOWNHILL_GRADIENT_PCT = -0.3  # umbral bajada (igual que physics.py)
+LIMIT_DOWNHILL_GRADIENT_PCT = -0.3  # umbral bajada (‰ −3 Dastsc)
+LIMIT_UPHILL_GRADIENT_PCT = 0.3  # umbral subida (coast trim; simétrico)
 LIMIT_ZONE_COAST_OVER_OPS_MPH = 0.5  # ops 59 → suelo coast 59.5
 
 # HOLD_DH (Fase 1 bajada)
 LIMIT_CONTAIN_ESCALATE_OVER_MPH = 0.65
-# Bajada: si exceso ≤ esto sobre techo cartel siguiente, coast antes de B1
+# Pendiente: tope exceso coast trim en bajada y banda sin escalar B2/B3
 LIMIT_DOWNHILL_COAST_TRIM_MPH = 2.0
 
 # Cartel pasado / cola

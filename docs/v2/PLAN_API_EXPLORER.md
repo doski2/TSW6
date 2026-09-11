@@ -532,10 +532,12 @@ del 323.
 | RPM motor | F5 | L0.6e | 0 (EMU) | Diesel: esperar ≠ 0 |
 | Layout mandos | F6 | L0.3 | `combined` | split freight, etc. |
 | Señales / C1 | F7 | L0.4b | enum UK | Por país/vehículo |
+| **Aire y manómetros** | F5 × N + Shift+F5 | **L0.6g** | cilindro vía gauge₁ | **Repetir** — ver § L0.6g |
 
 `vehicle_class` en `session.json` + `notas_sesion.md`. Analizar amperímetro:
 `summarize_hud_amps.py <session>`. Freight / diesel: priorizar F6 (layout split), F5 (RPM, brakes),
-protocolo amperímetro/RPM completo aunque el 323 no haya mostrado esas señales.
+protocolo **L0.6g** (aire/manómetros) y amperímetro/RPM completo aunque el 323 no haya mostrado esas
+señales.
 
 No hace falta repetir el 323 en lab salvo regresión de mod; **sí** repetir checklist completo en
 cada **nuevo** `vehicle_class`.
@@ -674,6 +676,113 @@ puede mostrar `Amps` ≠ 0 → entonces cablear en GetData (D2) **solo para ese 
 | --- | --- |
 | `variable` | Cablear `amps` en probe (vehículo concreto) |
 | `always_zero` | Catálogo para ese vehículo |
+
+### L0.6g — Protocolo freight: aire y manómetros (SD40-2)
+
+**Estado:** ⬜ pendiente primera sesión · **Guía producto:** [FREIGHT_NA.md](../v1/FREIGHT_NA.md) ·
+**323 referencia cilindro:** `213100Z` (`HUD_GetBrakeGauge_1` ≈ HTTP `BrakeCylinder_2_1`)
+
+Objetivo: saber **qué manómetro es qué** en cabina freight y si el **depósito principal (MR)** aporta
+algo que el cilindro / `train_brake` no cubran — **antes** de cablear campos al probe.
+
+#### Qué **no** hacer (cerrado en producto v2)
+
+| Acción | Motivo |
+| --- | --- |
+| Registrar MR “lleno” al arranque del escenario | Siempre ~lleno; no mueve P1 |
+| MR / `Brake Reservoir Tank` en GetData ~20 Hz | [PLAN_V2 §2 L4+](PLAN_V2.md) — tick solo cilindro en UK |
+| Asumir que `HUD_GetBrakeGauge_1` = cilindro | En 323 sí; **mapear de nuevo** en SD40 |
+| `BrakeEffort` en marcha | Overflow B3 en 323; solo catálogo **parado** |
+
+#### Preparación
+
+1. Escenario freight con **tren enganchado** (no solo loco suelta).
+2. ApiExplorerMod instalado; carpeta `data/lab_exports/exports/<timestamp>/` nueva.
+3. Anotar en `notas_sesion.md`: ruta, consist (# vagones), peso del cartel UI si aparece.
+
+#### Secuencia lab (orden recomendado)
+
+| Paso | Tecla | Cuándo | Salida |
+| --- | --- | --- | --- |
+| 1 | **F6** | Parado, mandos en reposo | `controls.json` — confirmar `freight_na` (`Throttle`, `AutomaticBrake`, `DynamicBrake`, `IndependentBrake`) |
+| 2 | **F5** | Parado, freno auto **suelto** | `hud_batch_00_reposo.json` — baseline gauges + RPM |
+| 3 | **F5** | Parado, **servicio ligero** auto (~25–33 %) | `hud_batch_01_auto_ligero.json` |
+| 4 | **F5** | Parado, **servicio fuerte** auto (~75–100 %) | `hud_batch_02_auto_fuerte.json` |
+| 5 | **F5** | **En marcha** ~25–35 mph, dyn **OFF**, auto suelto | crucero |
+| 6 | **F5** | Misma velocidad, **dyn** muesca 2–4 (idle, reversora en marcha) | ventana DB |
+| 7 | **F5** | Bajando con **dyn + auto ligero** si hace falta | blended (F-D) |
+| 8 | **F5** | Frenada **solo auto** desde ~30 mph → ~10 mph | propagación tubo |
+| 9 | **F5** | Tras fila 8: **soltar auto por completo**, esperar ~30 s, repetir fila 8 | recarga / anti-bombeo |
+| 10 | **Shift+F5** | Tras fila 4 (parado, auto aplicado) | `formation.json` — HTTP `BrakeCylinder_*`, `MR (AirPipe)`, masa |
+| 11 | Python | Con TSW `-HTTPAPI` activo | `api_correlator.py --formation <session>` → `formation_http.json` |
+
+Copiar cada `hud_batch.json` con nombre descriptivo **antes** del siguiente F5 (F5 sobrescribe).
+
+#### Qué anotar en cada captura F5
+
+| Campo JSON | Pregunta a responder |
+| --- | --- |
+| `HUD_GetBrakeGauge_1` / `_2` | ¿Cuál sube con **auto**? ¿Cuál con **ind**? ¿Alguno = MR / brake pipe? |
+| `HUD_GetTrainBrakeHandle` | Rango 0–1 vs sensación en cabina |
+| `HUD_GetElectricBrakeHandle` | Rango dyn; correlación con `Acceleration` |
+| `HUD_GetEngineRPM` | Idle vs dyn (pausa ~10 s tras tracción → dyn) |
+| `HUD_GetAcceleration` | Decel real auto vs dyn vs blended |
+| `HUD_GetTractiveEffort` | ¿≠ 0 en diesel? (catálogo; no confiar en marcha) |
+
+#### HTTP formation — nodos a contrastar (Shift+F5 + correlator)
+
+Rutas ya en `FORMATION_MISC_NODES` / `FORMATION_BRAKE_CYLINDERS` del explorer:
+
+| Nodo Simulation | Campos | Comparar con |
+| --- | --- | --- |
+| `BrakeCylinder_*` | `Pressure_BAR` | `HUD_GetBrakeGauge_1/2` en filas 3–4 y 8 |
+| `MR (AirPipe)` | `Pressure_BAR`, `PressurePSI` | gauges en fila 9 (post-frenada + espera) |
+| `Brake Reservoir Tank` | `Pressure_BAR` | si Lua/HTTP devuelve valor **en marcha** |
+| `ClampPowerInput.Mass` | `Mass` | cartel UI + variación vacío/cargado si hay escenario |
+| `LoadSensingBrakeModifier.Mass` | `Mass` | ¿cambia con carga? |
+| `MainResPipeEmergencyState` | estado | solo catálogo |
+
+En 323, Lua no leyó escalares de MR (`child_valid: false` en `213100Z`); **HTTP puede sí** — el
+correlator es la prueba en SD40.
+
+#### Plantilla `notas_sesion.md` (pegar en la carpeta de sesión)
+
+```markdown
+# SD40 — aire y manómetros (L0.6g)
+
+vehicle_class: BNSF_SD40_2_C (o el que devuelva F6)
+consist: ___ vagones · peso cartel: ___ t · largo: ___ yd
+
+## Manómetros (mirando cabina + JSON)
+| Aguja cabina | HUD_GetBrakeGauge | Sube con | Unidad aprox. | ¿= HTTP ...?
+| --- | --- | --- | --- | --- |
+| Izq / MR | _1 / _2 | | bar / psi | |
+| Cilindro / pipe | _1 / _2 | | | BrakeCylinder_* |
+
+## Frenado
+- Auto % mínimo que frena en marcha: ___
+- Dyn útil desde ___ mph hasta ___ mph
+- Tras soltar auto, ¿cuánto hasta segunda frenada fuerte? ___ s
+- MR HTTP bajó tras fila 8–9: sí / no / no legible
+
+## Veredicto L0.6g
+- [ ] gauge → cilindro identificado → candidato `brake_cyl_bar` probe
+- [ ] MR aporta más que cilindro + fill-time → sí / no / solo metadata
+- [ ] `train_brake` + `accel_ms2` bastan para learner auto → sí / no
+```
+
+#### Criterio de cierre L0.6g → producto
+
+| Resultado lab | Acción probe / P1 |
+| --- | --- |
+| Un gauge ≡ `BrakeCylinder_*` HTTP en marcha | Mismo patrón que 323: `brake_cyl_bar` vía `HUD_GetBrakeGauge_N` |
+| MR solo baja tras varias frenadas fuertes | **L4+:** poll HTTP lento o evento; **no** tick 20 Hz; **no** “lleno al inicio” |
+| MR ilegible o = cilindro | Congelar; anti-bombeo solo con cilindro + `brake_fill_s` |
+| `train_brake` fiable 0–1 | Learner eje **auto**; F-D dyn en `brake_selector` (fase 4 FREIGHT_NA) |
+| Ind brake solo maniobras | **Fuera** autopilot v2 (ya acordado) |
+
+**Siguiente tras cerrar L0.6g:** repetir [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) en SD40; luego
+sesión con `probe_ue4ss.bat` para cruzar GetData con `compare_lab_vs_probe.py` (L0.8).
 
 ### SimulationGraph — qué es (y por qué importa)
 
@@ -930,6 +1039,7 @@ Matriz borrador: no actuar parado; no actuar fuera de APPLY; en zona freno + sli
 | 2026-09-01 | **L0.6e** RPM motor vs rueda — útil diesel; 323 usar dyn_brake/ammeter, no EngineRPM |
 | 2026-09-01 | **L0.6f cerrado 323** — `211818Z` Amps=0 con P2 @ 49 mph; repetir en otro tren |
 | 2026-09-01 | Plan: índice, resumen ejecutivo 323, tabla sesiones, coherencia L0.6 |
+| 2026-09-11 | **L0.6g** — protocolo SD40 aire/manómetros; MR no al arranque; checklist nuevo tren |
 
 ---
 
@@ -941,6 +1051,7 @@ Matriz borrador: no actuar parado; no actuar fuera de APPLY; en zona freno + sli
 | `data/lab_exports/exports/20260901T211818Z/` | L0.6f 323: Amps=0 con tracción; barrido L0 completo |
 | [LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md) | Qué recopila F5, protocolo frenar/acelerar |
 | [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) | Protocolo amperímetro — **repetir en cada tren nuevo** |
+| [FREIGHT_NA.md](../v1/FREIGHT_NA.md) | Layout split, F-D, fases freight — destino de L0.6g |
 | `data/lab_exports/exports/20260830T213100Z/` | **Sesión referencia 323** Cross-City (L0 + HTTP, build `l`) |
 | `data/lab_exports/exports/20260831T214213Z/` | Nieve: rojo enum **2**, slip HUD, masa **44 430** kg |
 | `data/lab_exports/exports/20260831T212529Z/` | Nieve: ámbar enum **1** |

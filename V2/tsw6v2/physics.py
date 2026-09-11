@@ -33,6 +33,8 @@ from typing import Optional
 from tsw6v2.constants import (
     BRAKE_TRANSITION_S,
     COAST_DECEL_MS2,
+    LIMIT_DOWNHILL_GRADIENT_PCT,
+    LIMIT_UPHILL_GRADIENT_PCT,
     MAX_DECEL_MS2,
     SAFETY_MARGIN,
 )
@@ -45,7 +47,6 @@ APPLY_NOW_MARGIN_M = 150.0
 APPLY_NOW_MARGIN_MIN_M = 25.0
 APPLY_ZONE_SPEED_S = 2.0  # ~2 s de marcha en ventana APPLY
 TARGET_CLUSTER_GAP_M = 350.0
-DOWNHILL_LIMIT_GRADIENT_PCT = -0.3  # ‰ -3 en Dastsc
 STATION_COAST_CUTOFF_M = 100.0
 DEFAULT_BRAKE_FILL_S = 2.5
 DEFAULT_REACTION_S = 1.5
@@ -75,7 +76,17 @@ def gravity_acceleration_ms2(gradient_pct: float) -> float:
 
 def is_downhill_gradient(gradient_pct: float) -> bool:
     """Pendiente suficiente para reglas HOLD_DH / coast trim (Dastsc ‰ −3)."""
-    return gradient_pct < DOWNHILL_LIMIT_GRADIENT_PCT
+    return gradient_pct < LIMIT_DOWNHILL_GRADIENT_PCT
+
+
+def is_uphill_gradient(gradient_pct: float) -> bool:
+    """Pendiente suficiente para coast trim en subida (simétrico a bajada)."""
+    return gradient_pct > LIMIT_UPHILL_GRADIENT_PCT
+
+
+def is_sloped_for_coast_trim(gradient_pct: float) -> bool:
+    """Bajada o subida con pendiente suficiente para coast trim."""
+    return is_downhill_gradient(gradient_pct) or is_uphill_gradient(gradient_pct)
 
 
 def coast_trim_covers_overspeed(
@@ -86,9 +97,9 @@ def coast_trim_covers_overspeed(
     gradient_pct: float,
 ) -> bool:
     """
-    ¿Coast + gravedad en bajada bastan para quitar el exceso antes del cartel?
+    ¿Coast + gravedad bastan para quitar el exceso antes del cartel?
 
-    Si sí, no comprometer B1 todavía (Vigilar / coast).
+    En subida la gravedad suma a la decel de coast; si sí, no comprometer B1.
     """
     if distance_m <= 0:
         return False
@@ -191,7 +202,7 @@ def limit_release_speed_ready(
     Contención zona (59.5): banda fija en mph sin proyección.
     """
     ceiling = float(target_mph) + float(release_over_mph)
-    if not kinematic:
+    if not kinematic or not is_downhill_gradient(gradient_pct):
         return float(speed_mph) <= ceiling
     projected = projected_speed_mph_after_brake_fill(
         speed_mph,

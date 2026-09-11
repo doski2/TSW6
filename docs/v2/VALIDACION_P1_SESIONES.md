@@ -24,10 +24,12 @@ No sustituye `pytest`; complementa prueba de campo.
 | Decisión + IPC | `decision.py`, `loop.py` |
 | Trace | `trace.py`, `session_report.py` |
 | Andén (modo `station`) | `station_plan`, `station_brake`, `p1_policy`, `limit_station_cluster`, `planning_poller` |
+| FSM dwell andén | `p1_station_gate` — suprime P1 en `STOPPED`/`DEPARTING` |
+| Replay sesión | `session_report.py` — HTML con zoom, puertas, marcadores APPLY |
 
-**Fuera de alcance** hasta nueva fase: señal P1 completa (`evaluate_signal_brake`), FSM puertas,
-`limit_planner.py`, COAST_PWR en WATCH, filtro `tsw_hud.db` en planning V2, aprendizaje por
-distancia integrada (solo EMA tick a tick con filtro aire).
+**Fuera de alcance** hasta nueva fase: señal P1 completa (`evaluate_signal_brake`), dwell puertas
+completo (paso 7), `limit_planner.py`, COAST_PWR en WATCH, filtro `tsw_hud.db` en planning V2,
+aprendizaje por distancia integrada (solo EMA tick a tick con filtro aire).
 
 ---
 
@@ -82,7 +84,7 @@ python scripts\tools\summarize_v2_limit.py logs\v2\<tu_sesion>.jsonl --html
 | **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire |
 | **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno |
 | **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
-| **RELEASE** | BRAKE_LIMIT: suelta ~55–56 mph proyectado (no arrastrar hasta 52–53); zona 59.5: banda fija |
+| **RELEASE** | Bajada: ~55–56 mph proyectado; llano/subida: `spd ≤ objetivo + 0.4` (no undershoot a 44 en 60→50) |
 
 ### Criterios “sesión OK” (orientativos)
 
@@ -174,7 +176,7 @@ regresión de cartel. **No** valida puertas ni dwell (paso 7).
 | 2 | Clave API | `%USERPROFILE%\Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt` |
 | 3 | Servicio en marcha | Horario cargado (Cross-City 2R17 u otro en `data\timetable.json`) |
 | 4 | Probe + F7 | GetData con `speed`, `dist_limit`, palanca |
-| 5 | pytest local | `V2\test_pytest.bat` verde (~198 tests) |
+| 5 | pytest local | `V2\test_pytest.bat` verde (~213 tests) |
 
 **Fallback sin HTTP** (solo laboratorio): escribe distancia manual y repite la checklist de
 `stn=` / `p1tgt=`:
@@ -215,8 +217,9 @@ cerrar la validación.
 | `stn=` | Número positivo que **baja** con marcha (saltos ~2 s HTTP + suave entre ticks) | Siempre `—` |
 | `stn=` tras pausa | No baja en parado prolongado | Sigue bajando parado |
 | `p1tgt=` | `LIMIT` lejos; `STATION` al entrar en horizonte de servicio | Nunca `STATION` con `stn>2000` |
-| `fsm=` | Vacío en marcha; `STOPPED` en andén parado; `DEPARTING` tras cerrar puertas | `p1tgt=STATION` con `fsm=STOPPED` |
-| `lim=` + `p1tgt=LIMIT` | Cartel gana si overspeed o Four Oaks (`station_waits`) | `STATION` frena 60→55 con spd>55 |
+| `fsm=` | Vacío en marcha; `STOPPED` en andén parado; `DEPARTING` tras cerrar puertas | `fsm=STOPPED` en toda la ruta con `spd>25` (gate atascado — ver § gate) |
+| `lim=` + `p1tgt=LIMIT` | Cartel gana si Four Oaks (gap > 50 m) u overspeed en cluster | `LIMIT` con cartel 50 **tras** andén (< 50 m) y `stn<700` |
+| `p1tgt=STATION` + cartel tras andén | `lim@` un poco mayor que `stn` (p. ej. +27 m) → **STATION** desde ~700 m | `SPEED_LIMIT` APPLY al cartel 50 ignorando parada |
 | `p1tgt=STATION` bajo cartel | spd ≤ posted+0.9 y proyección al pasar cartel legal → STATION fijo | Oscilación STATION↔LIMIT con spd~52 y lim 55 |
 | `p1=APPLY` + `p1tgt=STATION` | Antes del andén, muesca coherente con velocidad | Sin APPLY con `stn<30` y spd>15 |
 | `ipc_tgt=` | Muesca IPC pendiente (0–8) | — |
@@ -261,7 +264,9 @@ tick=420 spd=12.0 lim=55@800 stn=350  … fsm=DEPARTING p1tgt=LIMIT …
 | `stn` salta cada ~2 s | Refresh HTTP normal | No |
 | `stn` deriva vs HUD | Solo `v×dt` entre polls | Conocido; C2 `odo_m` |
 | `p1tgt=STATION` muy lejos | `should_defer_station_brake` falló | Revisar dist/velocidad |
-| Freno al cartel en Sutton/Four Oaks | `station_waits` prioriza LIMIT (recorte invertido) | Caso Four Oaks — anotar tramo |
+| Freno al cartel en Sutton/Four Oaks | `station_waits` prioriza LIMIT (recorte invertido, gap > 50 m) | Caso Four Oaks — anotar tramo |
+| Cartel 50 justo tras andén | `p1tgt=LIMIT` con `lim@` ≈ `stn` + 20–50 m | Sesión `213010Z` — regla `limit_sign_beyond_station` |
+| `fsm=STOPPED` toda la sesión | Salida sin puertas; gate no liberó P1 andén | Sesión `210853Z` — `_left_platform` |
 | `p1tgt` alterna STATION/LIMIT cada tick | Cartel APPLY con spd ya bajo next; sin proyección | Revisar `will_be_below_limit_at_pass` (sesión 231617Z) |
 
 ### Protocolo mínimo (2 sesiones andén)
@@ -282,7 +287,15 @@ V2\compare_sessions.bat logs\v2\<sesion1>.jsonl logs\v2\<sesion2>.jsonl
 - `stn=` siempre `—` con HTTP confirmado y servicio en marcha.
 - `p1tgt=STATION` con `stn` > 3000 m de forma estable.
 - Overshoot habitual > 5 mph en andén conocido (2 sesiones seguidas).
-- P1 frena cartel 60→55 cuando `station_waits` debería aplazar (Four Oaks documentado).
+- P1 frena cartel 60→55 cuando `station_waits` debería aplazar (Four Oaks, gap > 50 m).
+- Cartel inmediatamente tras andén y `p1tgt=LIMIT` de forma estable (última parada Cross-City).
+
+### Sesiones de referencia (2026-09-10)
+
+| Sesión | Síntoma | Fix / regla |
+| --- | --- | --- |
+| `210853Z` | `fsm=STOPPED` permanente; sin frenado andén; cartel 50 → ~44 mph | Gate `_left_platform`; RELEASE llano sin cinemática |
+| `213010Z` | Última parada: `LIMIT` al 50 tras andén en vez de `STATION` | `limit_sign_beyond_station` + `LIMIT_AFTER_STATION_MAX_M` |
 
 ---
 

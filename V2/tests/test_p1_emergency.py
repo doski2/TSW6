@@ -21,6 +21,26 @@ def test_check_p1_emergency_critico():
     assert cmd.target_notch == EMERGENCY_BRAKE_HANDLE
 
 
+def test_p1_tick_no_station_emergency_during_departure():
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 5.37,  # ~12 mph
+            "lever_notch": 6,
+            "dist_limit_cm": 500000.0,
+            "next_limit_ms": 26.8224,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=12.0,
+    )
+    assert decision.reason != "emergency"
+    assert decision.command is None
+
+
 def test_p1_tick_emergency_before_station_plan():
     snap = ProbeSnapshot.from_dict(
         {

@@ -58,7 +58,7 @@ if "%CH%"=="6" (
     exit /b %ERRORLEVEL%
 )
 if "%CH%"=="7" (
-    python -m tsw6v2 gui --mode p1 --route cross-city --open-html
+    call "%~dp0run_gui.bat" --mode p1 --route cross-city --open-html
     goto done
 )
 if "%CH%"=="8" (

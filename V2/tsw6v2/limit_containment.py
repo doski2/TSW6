@@ -116,25 +116,16 @@ def _hold_if_over_zone_ceiling(
     )
 
 
-def try_current_zone_downhill_contain(
-    state: LimitBrakeState,
+def _defer_zone_contain_for_next_horizon(
     *,
     speed_mph: float,
     posted_limit_mph: float,
+    next_limit_mph: Optional[float],
+    next_distance_m: Optional[float],
     gradient_pct: float,
-    next_limit_mph: Optional[float] = None,
-    next_distance_m: Optional[float] = None,
-) -> Optional[BrakeTargetResult]:
-    """
-    Bajada 60→55 lejos del cartel: si superas posted+0.5, B1 suave antes del 55.
-    """
-    if not is_downhill_gradient(gradient_pct):
-        return None
-
-    if is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
-        return None
-
-    if (
+) -> bool:
+    """Dentro del horizonte BRAKE_LIMIT al next: no HOLD zona vigente."""
+    return (
         next_limit_mph is not None
         and next_distance_m is not None
         and is_descending_limit_zone(posted_limit_mph, next_limit_mph)
@@ -144,9 +135,34 @@ def try_current_zone_downhill_contain(
             next_distance_m=next_distance_m,
             gradient_pct=gradient_pct,
         )
+    )
+
+
+def try_current_zone_contain(
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    posted_limit_mph: float,
+    gradient_pct: float,
+    next_limit_mph: Optional[float] = None,
+    next_distance_m: Optional[float] = None,
+) -> Optional[BrakeTargetResult]:
+    """
+    Techo zona vigente lejos del next (60.5 @ +0.3 %%, 60.2 @ −1 %%).
+
+    60→55/50 lejos: B1 suave si superas posted+margen; el techo depende de la
+    pendiente vía ``posted_zone_hold_ceiling_mph`` (sesiones 204031Z, 203100Z).
+    """
+    if is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
+        return None
+    if _defer_zone_contain_for_next_horizon(
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        next_limit_mph=next_limit_mph,
+        next_distance_m=next_distance_m,
+        gradient_pct=gradient_pct,
     ):
         return None
-
     return _hold_if_over_zone_ceiling(
         state,
         speed_mph=speed_mph,
@@ -168,7 +184,7 @@ def try_posted_downhill_hold(
     """
     HOLD_DH — cartel siguiente no baja (60→60).
 
-    En 60→55 lejos del cartel usar ``try_current_zone_downhill_contain``.
+    En 60→55 lejos del cartel usar ``try_current_zone_contain``.
     """
     if not is_downhill_gradient(gradient_pct):
         return None
@@ -206,8 +222,8 @@ def pick_downhill_containment(
     next_limit_mph: Optional[float] = None,
     next_distance_m: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
-    """Contención bajada: zona vigente (60→55 lejos) o HOLD_DH (60→60)."""
-    zone = try_current_zone_downhill_contain(
+    """Zona vigente lejos del next o HOLD_DH (60→60 en bajada)."""
+    zone = try_current_zone_contain(
         state,
         speed_mph=speed_mph,
         posted_limit_mph=posted_limit_mph,

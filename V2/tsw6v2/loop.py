@@ -62,6 +62,9 @@ class AgentSnapshot:
     station_dist_m: Optional[float] = None
     station_eta: Optional[str] = None
     station_fsm: str = ""
+    doors_open: Optional[bool] = None
+    doors_telem: Optional[bool] = None
+    doors_dmi: Optional[bool] = None
     ipc_cmd_id: Optional[int] = None
     brake_fill_s: Optional[float] = None
     fb_a_pred_ms2: Optional[float] = None
@@ -94,6 +97,9 @@ class AgentSnapshot:
         station_dist_m: Optional[float] = None,
         station_eta: Optional[str] = None,
         station_fsm: str = "",
+        doors_open: Optional[bool] = None,
+        doors_telem: Optional[bool] = None,
+        doors_dmi: Optional[bool] = None,
         ipc_cmd_id: Optional[int] = None,
         brake_fill_s: Optional[float] = None,
         fb_a_pred_ms2: Optional[float] = None,
@@ -142,6 +148,9 @@ class AgentSnapshot:
             station_dist_m=station_dist_m,
             station_eta=station_eta,
             station_fsm=station_fsm,
+            doors_open=snap.doors_open,
+            doors_telem=snap.doors_telem,
+            doors_dmi=snap.doors_dmi,
             ipc_cmd_id=ipc_cmd_id,
             brake_fill_s=brake_fill_s,
             fb_a_pred_ms2=fb_a_pred_ms2,

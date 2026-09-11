@@ -17,6 +17,11 @@ def test_planning_distance_rejects_jump_after_platform():
     assert not planning_distance_accept(52.0, 2211.0, 36.8)
 
 
+def test_planning_distance_rejects_jump_at_creep_after_platform():
+    """Sesión 20260911T152306Z: dwell creep @ 3.4 mph no debe aceptar 0→2012 m."""
+    assert not planning_distance_accept(0.0, 2012.0, 3.4)
+
+
 def test_planning_distance_accepts_normal_update():
     assert planning_distance_accept(500.0, 480.0, 60.0)
     assert planning_distance_accept(None, 900.0, 0.0)

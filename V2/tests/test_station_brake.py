@@ -3,6 +3,7 @@ from __future__ import annotations
 import _path  # noqa: F401
 
 from tsw6v2.limit_station_cluster import (
+    limit_sign_beyond_station,
     merged_approach_overspeed,
     next_sign_is_reduction_beyond_station,
     station_waits_for_approach_limit,
@@ -110,6 +111,54 @@ def test_wait_when_reduction_clustered_before_station():
         station_dist_m=180.0,
         current_limit_mph=60.0,
     )
+
+
+def test_limit_sign_beyond_station_session_213010z():
+    """Cartel 50 justo tras andén: andén más cercano que el cartel."""
+    assert limit_sign_beyond_station(727.0, 700.0)
+    assert not limit_sign_beyond_station(500.0, 800.0)
+    assert not station_waits_for_approach_limit(
+        speed_mph=58.9,
+        limit_mph=50.0,
+        limit_dist_m=727.0,
+        station_dist_m=700.0,
+        current_limit_mph=60.0,
+    )
+
+
+def test_pick_station_when_limit_sign_after_platform():
+    """Sesión 213010Z: no BRAKE_LIMIT al 50 tras andén con zona vigente 60."""
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=727.0,
+        target_speed_mph=50.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=80.0,
+        apply_now=True,
+        detail="limit",
+    )
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=700.0,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=50.0,
+        apply_now=True,
+        detail="station",
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=58.9,
+        limit_target=limit,
+        station_target=station,
+        limit_mph=50.0,
+        limit_dist_m=727.0,
+        station_dist_m=700.0,
+        effective_limit=60.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "STATION"
 
 
 def test_pick_limit_when_merged_approach_overspeed():

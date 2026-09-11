@@ -148,7 +148,7 @@ Tarjetas de validación por tema (PLAN_V2):
 | --- | --- |
 | **P3** | Carteles P1 (`--limit-brake`) — ver [checklist P3](#checklist-p3--limit-brake-in-game) |
 | **C1** | Semáforo verde → ámbar → rojo; `signal_red` + distancia |
-| **C2** | Aproximación andén; `station_dist` / FSM |
+| **C2** | Aproximación andén; `station_dist` / FSM (`p1_station_gate`) · [VALIDACION § andén](VALIDACION_P1_SESIONES.md#validación-p1-andén--modo-station--http-tarjeta-c2-parcial) |
 | **9b** | Nieve / slip; `is_slipping` en log sin cambio mando |
 
 ### Checklist P3 — `--limit-brake` in-game
@@ -161,7 +161,7 @@ Alcance: solo **cartel** (`dist_limit_cm` / `next_limit_ms`); sin estación ni s
 - [ ] Probe instalado (`scripts\ue4ss\install_ue4ss_probe.bat`) y juego con UE4SS.
 - [ ] Partida **Class 323** en marcha (recomendado: Cross-City, tramo con carteles 60→55 o 55→45).
 - [ ] Palanca en **neutro (4)** o tracción moderada; sin freno manual al iniciar el agente.
-- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **143** tests).
+- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **213** tests).
 - [ ] Opcional: copiar una línea GetData a fixture si encuentras un caso raro.
 
 #### Comandos
@@ -211,7 +211,7 @@ Cada línea: `tick=… seq=… mph=… lever=… target=… ipc=… p1=<CMD>/<FA
 | --- | --- | --- | --- |
 | A | **Lejos del cartel** | 60 mph, cartel 55 a > 800 m | Sin `p1=APPLY` (o `apply` muy tarde); no B3 a kilómetros |
 | B | **Ventana APPLY** | Acercarse al 55 mph; distancia ~200–400 m | `p1=APPLY/B1` (o B2); `lever` baja a 3+; `train_brake` ≥ 0.25 en B1 |
-| C | **RELEASE en cartel** | BRAKE_LIMIT: suelta ~55–56 mph si el fill seguiría pasando 54; zona lejos ~59.5 | `p1=RELEASE/NEU`; `target=4`; palanca → 4 |
+| C | **RELEASE en cartel** | Bajada: ~55–56 mph proyectado; llano/subida: en banda `objetivo+0.4` | `p1=RELEASE/NEU`; `target=4`; palanca → 4 |
 | D | **No RELEASE al arrancar** | Parado, freno puesto, cartel lejos | **No** `RELEASE` con spd ≈ 0 y cartel a cientos de m |
 | E | **HOLD_DH bajada** | Cartel 60, spd ~61.0, pendiente −1%, **misma zona** (60→60) | `p1=APPLY/B1` con `Mantener bajada @60.5`; RELEASE ~59.5 lejos del 55 |
 | F | **Tracción + cartel** | Palanca > 4 acercándose a cartel | Primero `COAST_THROTTLE` o neutro, luego `APPLY` |

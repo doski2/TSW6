@@ -281,6 +281,34 @@ def test_kinematic_no_release_when_projected_above_target():
     assert cmd is None
 
 
+def test_no_kinematic_release_uphill_60_to_50():
+    """Sesión 210853Z: en subida no soltar @51 con objetivo 49 (evita caer a ~44)."""
+    cmd = resolve_release_command(
+        speed_mph=51.2,
+        handle_notch=1,
+        effective_limit=60.0,
+        next_limit_mph=50.0,
+        distance_next_m=189.0,
+        gradient_pct=1.0,
+        latch_ops_target=49.0,
+        brake_fill_s=2.5,
+        predict_decel=lambda h, s, g: 0.45,
+    )
+    assert cmd is None
+    cmd_ok = resolve_release_command(
+        speed_mph=49.3,
+        handle_notch=1,
+        effective_limit=60.0,
+        next_limit_mph=50.0,
+        distance_next_m=170.0,
+        gradient_pct=1.0,
+        latch_ops_target=49.0,
+        brake_fill_s=2.5,
+    )
+    assert cmd_ok is not None
+    assert cmd_ok.kind == "RELEASE"
+
+
 def test_projected_speed_after_brake_fill():
     from tsw6v2.physics import projected_speed_mph_after_brake_fill
 

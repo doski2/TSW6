@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from tsw6v2.limit_station_cluster import (
+    limit_sign_beyond_station,
     merged_approach_overspeed,
     should_merge_limit_and_station_plans,
     station_may_ignore_limit_approach,
@@ -14,6 +15,7 @@ from tsw6v2.constants import LIMIT_RELEASE_MAX_OVER_MPH
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
+    TARGET_CLUSTER_GAP_M,
     brake_ctx_for_decel,
     braking_distance_mph,
     decel_for_notch,
@@ -22,7 +24,7 @@ from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.target import BrakeTargetResult
 
 # Margen sobre bd(v→0): sesión 20260909T224556Z entró STATION tarde @ 444 m.
-HORIZON_SLACK_M = 15.0
+HORIZON_SLACK_M = 10.0
 # Por debajo: cartel WATCH no gana al andén si el servicio ya debe planificar.
 STATION_APPROACH_PRIORITY_M = 600.0
 STATION_APPROACH_MIN_SPEED_MPH = 15.0
@@ -72,9 +74,11 @@ def should_prefer_station_in_approach(
     - WATCH / sin APPLY (regla previa).
     - Ya bajo el cartel siguiente y la proyección al pasarlo sigue legal.
     """
-    if station_dist_m > STATION_APPROACH_PRIORITY_M:
-        return False
     if speed_mph < STATION_APPROACH_MIN_SPEED_MPH:
+        return False
+    if limit_sign_beyond_station(limit_dist_m, station_dist_m):
+        return station_dist_m <= STATION_APPROACH_PRIORITY_M + TARGET_CLUSTER_GAP_M
+    if station_dist_m > STATION_APPROACH_PRIORITY_M:
         return False
     if station_may_ignore_limit_approach(
         speed_mph=speed_mph,

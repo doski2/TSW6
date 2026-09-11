@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -39,6 +40,82 @@ _AI_JSON_MS = 500
 _AGENT_HZ = 20.0
 _EVENT_MAX = 80
 _BAR_RATIO_EPS = 0.001
+
+
+def _secondary_monitor_workarea() -> Optional[tuple[int, int, int, int]]:
+    """Área útil (x, y, ancho, alto) del primer monitor no primario (Windows)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    user32 = ctypes.windll.user32
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("rcMonitor", RECT),
+            ("rcWork", RECT),
+            ("dwFlags", ctypes.c_ulong),
+        ]
+
+    MONITORINFOF_PRIMARY = 0x00000001
+    found: list[tuple[int, int, int, int]] = []
+
+    def _callback(hmon, _hdc, _rect, _lparam):
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            return True
+        if info.dwFlags & MONITORINFOF_PRIMARY:
+            return True
+        r = info.rcWork
+        found.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return True
+
+    enum_proc = ctypes.WINFUNCTYPE(
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(RECT),
+        ctypes.c_long,
+    )(_callback)
+    user32.EnumDisplayMonitors(0, 0, enum_proc, 0)
+    return found[0] if found else None
+
+
+def _gui_secondary_enabled() -> bool:
+    """``V2/run_gui.bat`` define ``TSW6_GUI_SECONDARY=1``; CLI directo = monitor primario."""
+    return os.environ.get("TSW6_GUI_SECONDARY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _place_on_secondary_monitor(root: tk.Tk) -> None:
+    """Monitor secundario maximizado si ``_gui_secondary_enabled()``."""
+    if not _gui_secondary_enabled():
+        return
+
+    area = _secondary_monitor_workarea()
+    if area is None:
+        return
+    x, y, w, h = area
+    root.geometry(f"{w}x{h}+{x}+{y}")
+    root.update_idletasks()
+    try:
+        root.state("zoomed")
+    except tk.TclError:
+        pass
+
 
 # Tema oscuro (alineado con replay HTML)
 _C = {
@@ -199,8 +276,10 @@ class AgentGuiApp:
         self._headline_var = tk.StringVar(value="—")
 
         root.title("TSW6 V2 — Agente")
-        root.geometry("1040x720")
+        if not _gui_secondary_enabled():
+            root.geometry("1040x720")
         root.minsize(880, 600)
+        _place_on_secondary_monitor(root)
         root.configure(bg=_C["bg"])
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 

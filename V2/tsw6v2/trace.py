@@ -8,8 +8,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from tsw6v2.constants import PROBE_SEQ_MS
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import format_layer_tag, layer_label
+
+
+def advance_probe_active_ms(
+    active_ms: float,
+    last_seq: int | None,
+    seq: int | None,
+) -> tuple[float, int | None]:
+    """Avanza tiempo activo según ``seq`` del probe (~``PROBE_SEQ_MS`` por paso)."""
+    if seq is not None:
+        if last_seq is not None:
+            delta = int(seq) - int(last_seq)
+            if delta > 0:
+                active_ms += delta * PROBE_SEQ_MS
+        last_seq = int(seq)
+    return active_ms, last_seq
 
 
 def _git_head() -> Optional[str]:
@@ -65,6 +81,7 @@ class JsonlTrace:
         snap: AgentSnapshot,
         *,
         t_ms: float,
+        active_t_ms: Optional[float] = None,
         ipc_cmd_id: Optional[int] = None,
     ) -> None:
         p1: dict[str, Any] = {}
@@ -106,6 +123,9 @@ class JsonlTrace:
             "lim_dist_m": _round_opt(snap.limit_dist_m, 1),
             "stn_dist_m": _round_opt(snap.station_dist_m, 1),
             "stn_fsm": snap.station_fsm or None,
+            "doors_telem": snap.doors_telem,
+            "doors_dmi": snap.doors_dmi,
+            "doors_open": snap.doors_open,
             "p1_tgt": snap.p1_target_kind or None,
             "vehicle": snap.vehicle,
             "p1": p1 or None,
@@ -117,6 +137,8 @@ class JsonlTrace:
                 "error": snap.ipc_error or None,
             },
         }
+        if active_t_ms is not None:
+            row["active_t_ms"] = round(active_t_ms, 1)
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
         self.write(row)
@@ -177,6 +199,10 @@ def format_investigate(snap: AgentSnapshot) -> str:
     ]
     if snap.station_fsm:
         parts.append(f"fsm={snap.station_fsm}")
+    if snap.doors_telem is not None or snap.doors_dmi is not None or snap.doors_open is not None:
+        telem = "1" if snap.doors_telem else ("0" if snap.doors_telem is False else "—")
+        dmi = "1" if snap.doors_dmi else ("0" if snap.doors_dmi is False else "—")
+        parts.append(f"doors={telem}/{dmi}")
     if snap.p1_target_kind:
         parts.append(f"p1tgt={snap.p1_target_kind}")
     if capa:
@@ -199,7 +225,7 @@ def format_investigate(snap: AgentSnapshot) -> str:
         parts.append(f"a={snap.fb_a_obs_ms2:.2f}/{snap.fb_a_pred_ms2:.2f}")
     if snap.driver_override_s > 0:
         parts.append(f"manual={snap.driver_override_s:.0f}s")
-    return " ".join(parts)
+    return str(" ".join(parts))
 
 
 def _round_opt(val: Optional[float], digits: int) -> Optional[float]:

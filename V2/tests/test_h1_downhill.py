@@ -57,6 +57,23 @@ def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
     assert r.phase == "B1"
 
 
+def test_flat_zone_contain_60_to_50_session_204031() -> None:
+    """60→50 lejos @ +0.36 %%: >60.5 → HOLD zona vigente (sesión 204031Z)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=60.53,
+        limit_mph=50.0,
+        distance_m=3516.0,
+        gradient_pct=0.36,
+        posted_limit_mph=60.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert r.target_speed_mph == 60.5
+    assert r.handle_notch == 3
+
+
 def test_h1_brake_limit_inside_horizon_60_to_55():
     r = evaluate_limit_brake(
         LimitBrakeState(),

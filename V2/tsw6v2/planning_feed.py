@@ -31,20 +31,17 @@ PLATFORM_PASSED_MAX_M = 80.0
 def planning_distance_accept(
     prev_m: Optional[float],
     new_m: float,
-    speed_mph: float,
+    speed_mph: float,  # reservado: logs en poller/feed
     *,
     jump_reject_m: float = PLANNING_JUMP_REJECT_M,
     platform_passed_max_m: float = PLATFORM_PASSED_MAX_M,
-    min_speed_mph: float = 10.0,
 ) -> bool:
     """``False`` si el HTTP salta a la siguiente estación sin parada."""
     if prev_m is None:
         return True
-    if (
-        new_m > prev_m + jump_reject_m
-        and prev_m < platform_passed_max_m
-        and speed_mph > min_speed_mph
-    ):
+    # Tras pasar andén (dwell o creep): rechazar salto a cualquier velocidad
+    # (sesión 20260911T152306Z: 0→2012 m @ 3.4 mph).
+    if new_m > prev_m + jump_reject_m and prev_m < platform_passed_max_m:
         return False
     return True
 

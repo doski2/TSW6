@@ -6,7 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from tsw6v2.constants import LIMIT_DOWNHILL_GRADIENT_PCT, posted_zone_hold_ceiling_mph
+from tsw6v2.constants import posted_zone_hold_ceiling_mph
+from tsw6v2.physics import is_downhill_gradient
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import LAYERS, layer_help, layer_label
 
@@ -36,7 +37,7 @@ def _dash(val: Optional[float], *, digits: int = 1, suffix: str = "") -> str:
 def _is_downhill(gradient_pct: Optional[float]) -> bool:
     if gradient_pct is None:
         return False
-    return float(gradient_pct) < LIMIT_DOWNHILL_GRADIENT_PCT
+    return is_downhill_gradient(float(gradient_pct))
 
 
 @dataclass(frozen=True)

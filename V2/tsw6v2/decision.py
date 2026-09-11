@@ -18,7 +18,11 @@ from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
 from tsw6v2.p1_emergency import EmergencyTargetKind, check_p1_emergency
 from tsw6v2.p1_policy import pick_p1_brake_target
-from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED
+from tsw6v2.station_plan import (
+    DEFAULT_STATION_CFG,
+    STATION_SCHEDULE_SLACK_ENABLED,
+    should_suppress_station_braking_for_departure,
+)
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
 from tsw6v2.station_brake import evaluate_station_brake
@@ -275,6 +279,23 @@ def _decision_from_emergency(
     )
 
 
+def _station_emergency_suppressed(
+    *,
+    speed_mph: float,
+    station_distance_m: float,
+    throttle_notch: int,
+) -> bool:
+    """Salida en marcha: no emergencia andén a velocidad de arranque."""
+    if not should_suppress_station_braking_for_departure(
+        speed_mph=speed_mph,
+        station_distance_m=station_distance_m,
+        throttle_notch=throttle_notch,
+    ):
+        return False
+    cap = DEFAULT_STATION_CFG.departure_speed_mph * 1.35
+    return speed_mph <= cap
+
+
 def _attempt_p1_emergency(
     prep: _TickPrep,
     snap: ProbeSnapshot,
@@ -287,7 +308,17 @@ def _attempt_p1_emergency(
     signal_dist = _signal_distance_m(snap)
     if signal_dist is not None:
         checks.append(("SIGNAL", signal_dist))
+    throttle = _throttle_notch(prep.lever)
     for kind, dist in checks:
+        if (
+            kind == "STATION"
+            and _station_emergency_suppressed(
+                speed_mph=prep.ctx.speed_mph,
+                station_distance_m=dist,
+                throttle_notch=throttle,
+            )
+        ):
+            continue
         cmd = check_p1_emergency(
             target_kind=kind,
             speed_mph=prep.ctx.speed_mph,
@@ -299,6 +330,16 @@ def _attempt_p1_emergency(
         if cmd is not None:
             return _decision_from_emergency(prep, cmd, target_kind=kind, distance_m=dist)
     return None
+
+
+def _limit_release_allowed(
+    station_dist: Optional[float],
+    target: Optional[BrakeTargetResult],
+) -> bool:
+    """Modo cartel siempre; con andén solo si pick_p1 eligió LIMIT."""
+    if station_dist is None:
+        return True
+    return target is not None and target.target_kind == "SPEED_LIMIT"
 
 
 def _attempt_release(
@@ -454,19 +495,13 @@ def evaluate_p1_tick(
     if prep is None:
         return LimitBrakeDecision.idle(reason="no_speed")
 
-    emerg = _attempt_p1_emergency(prep, snap, station_distance_m=station_dist)
+    emerg = _attempt_p1_emergency(
+        prep,
+        snap,
+        station_distance_m=station_dist if station_brake_enabled else None,
+    )
     if emerg is not None:
         return emerg
-
-    released = _attempt_release(
-        prep,
-        limit_state=limit_state,
-        release_state=release_state,
-        snap=snap,
-        limit_brake_enabled=limit_brake_enabled,
-    )
-    if released is not None:
-        return released
 
     ctx = prep.ctx
     limit_target: Optional[BrakeTargetResult] = None
@@ -506,11 +541,10 @@ def evaluate_p1_tick(
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
         )
 
+    target: Optional[BrakeTargetResult]
     if station_dist is None:
         if not limit_brake_enabled or prep.next_limit_mph is None or prep.dist_m is None:
             return ctx.idle("no_limit_sign")
-        if limit_target is None:
-            return ctx.idle("no_plan")
         target = limit_target
     else:
         target = pick_p1_brake_target(
@@ -529,6 +563,21 @@ def evaluate_p1_tick(
             if limit_target is None and station_target is None:
                 return ctx.idle("no_plan")
             return ctx.idle("no_plan", target=limit_target or station_target)
+
+    # Tras pick: RELEASE cartel no debe soltar freno de andén (sesión 123139Z).
+    if _limit_release_allowed(station_dist, target):
+        released = _attempt_release(
+            prep,
+            limit_state=limit_state,
+            release_state=release_state,
+            snap=snap,
+            limit_brake_enabled=limit_brake_enabled,
+        )
+        if released is not None:
+            return released
+
+    if target is None:
+        return ctx.idle("no_plan")
 
     decision = _finalize_target_decision(
         ctx,

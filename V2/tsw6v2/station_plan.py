@@ -466,7 +466,7 @@ def plan_station_service_brake(
     )
     if station_distance_m < cfg.terminal_approach_m:
         t = max(0.0, station_distance_m / cfg.terminal_approach_m)
-        reaction *= 0.45 + 0.55 * t
+        reaction *= 0.40 + 0.60 * t
 
     coast_allowance_m = schedule_coast_allowance_m(
         station_distance_m,

@@ -5,12 +5,37 @@ import json
 import math
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # V2 en PYTHONPATH (V2/run_p1_session.bat lo configura)
 from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.p1_layers import LAYERS, classify_from_p1, layer_label
+from tsw6v2.p1_station_gate import doors_effective
 from tsw6v2.physics import apply_zone_margin_m
+
+
+def enrich_ticks_active_time(ticks: list[dict[str, Any]]) -> None:
+    """
+    ``active_t_ms``: tiempo de juego (seq del probe), sin pausas de menú.
+
+    Si el JSONL ya lo trae (``SessionRecorder``), no recalcula.
+    """
+    if not ticks:
+        return
+    if all(t.get("active_t_ms") is not None for t in ticks):
+        return
+    active_ms = 0.0
+    last_seq: int | None = None
+    for t in ticks:
+        active_ms, last_seq = advance_probe_active_ms(active_ms, last_seq, t.get("seq"))
+        t["active_t_ms"] = round(active_ms, 1)
+
+
+def _tick_t_s(t: dict[str, Any]) -> float:
+    if t.get("active_t_ms") is not None:
+        return float(t["active_t_ms"]) / 1000.0
+    return float(t["t_ms"]) / 1000.0
 
 
 def load_ticks(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
@@ -24,6 +49,7 @@ def load_ticks(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]
             session = row
         elif row.get("type") == "tick":
             ticks.append(row)
+    enrich_ticks_active_time(ticks)
     return session, ticks
 
 
@@ -53,7 +79,7 @@ def summarize(path: Path) -> dict[str, Any]:
             limits.append(
                 {
                     "tick": t["tick"],
-                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "t_s": round(_tick_t_s(t), 1),
                     "spd": t.get("spd_mph"),
                     "lim_mph": lim_mph,
                     "lim_dist_m": t.get("lim_dist_m"),
@@ -82,7 +108,7 @@ def summarize(path: Path) -> dict[str, Any]:
         p1 = t.get("p1") or {}
         return {
             "tick": t["tick"],
-            "t_s": round(t["t_ms"] / 1000, 1),
+            "t_s": round(_tick_t_s(t), 1),
             "spd": t.get("spd_mph"),
             "lever": t.get("lever"),
             "lim_mph": t.get("lim_mph"),
@@ -99,6 +125,7 @@ def summarize(path: Path) -> dict[str, Any]:
         "session": session,
         "n_ticks": len(ticks),
         "duration_s": round(ticks[-1]["t_ms"] / 1000, 1),
+        "active_duration_s": round(_tick_t_s(ticks[-1]), 1),
         "speed_min_max": (round(min(spds), 1), round(max(spds), 1)) if spds else None,
         "ipc_sent": ipc_sent,
         "p1_reasons": dict(reasons.most_common()),
@@ -129,6 +156,15 @@ def summarize(path: Path) -> dict[str, Any]:
         "station_ticks": sum(1 for t in ticks if t.get("stn_dist_m") is not None),
         "p1_tgt_station_ticks": sum(1 for t in ticks if t.get("p1_tgt") == "STATION"),
         "station_events": _station_event_rows(ticks),
+        "doors_telem_ticks": sum(1 for t in ticks if t.get("doors_telem") is not None),
+        "doors_dmi_ticks": sum(1 for t in ticks if t.get("doors_dmi") is not None),
+        "doors_open_ticks": sum(
+            1 for t in ticks if doors_effective(
+                doors_open=t.get("doors_open"),
+                doors_telem=t.get("doors_telem"),
+                doors_dmi=t.get("doors_dmi"),
+            ) is True
+        ),
     }
 
 
@@ -143,36 +179,59 @@ def _station_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list
     prev_tgt: str | None = None
     prev_fsm: str | None = None
     prev_cmd: str | None = None
+    prev_doors: Optional[bool] = None
     for t in ticks:
         stn = t.get("stn_dist_m")
         tgt = t.get("p1_tgt")
         fsm = t.get("stn_fsm")
         p1 = t.get("p1") or {}
         cmd = p1.get("cmd")
+        doors_now = doors_effective(
+            doors_open=t.get("doors_open"),
+            doors_telem=t.get("doors_telem"),
+            doors_dmi=t.get("doors_dmi"),
+        )
+        doors_lbl = _doors_label(t)
         if stn is not None and not seen_planning:
             seen_planning = True
             rows.append(
                 {
                     "tick": t["tick"],
-                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "t_s": round(_tick_t_s(t), 1),
                     "event": "planning",
                     "stn_m": stn,
                     "spd": t.get("spd_mph"),
                     "p1_tgt": tgt,
                     "fsm": fsm,
+                    "doors": doors_lbl,
                     "detail": "primera distancia andén",
+                }
+            )
+        if doors_now is not None and prev_doors is not None and doors_now != prev_doors:
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(_tick_t_s(t), 1),
+                    "event": "puertas ABIERTAS" if doors_now else "puertas CERRADAS",
+                    "stn_m": stn,
+                    "spd": t.get("spd_mph"),
+                    "p1_tgt": tgt,
+                    "fsm": fsm,
+                    "doors": doors_lbl,
+                    "detail": doors_lbl,
                 }
             )
         if tgt == "STATION" and prev_tgt != "STATION":
             rows.append(
                 {
                     "tick": t["tick"],
-                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "t_s": round(_tick_t_s(t), 1),
                     "event": "objetivo STATION",
                     "stn_m": stn,
                     "spd": t.get("spd_mph"),
                     "p1_tgt": tgt,
                     "fsm": fsm,
+                    "doors": doors_lbl,
                     "detail": p1.get("reason") or "",
                 }
             )
@@ -180,12 +239,13 @@ def _station_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list
             rows.append(
                 {
                     "tick": t["tick"],
-                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "t_s": round(_tick_t_s(t), 1),
                     "event": f"FSM {fsm}",
                     "stn_m": stn,
                     "spd": t.get("spd_mph"),
                     "p1_tgt": tgt,
                     "fsm": fsm,
+                    "doors": doors_lbl,
                     "detail": "",
                 }
             )
@@ -193,19 +253,36 @@ def _station_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list
             rows.append(
                 {
                     "tick": t["tick"],
-                    "t_s": round(t["t_ms"] / 1000, 1),
+                    "t_s": round(_tick_t_s(t), 1),
                     "event": "APPLY andén",
                     "stn_m": stn,
                     "spd": t.get("spd_mph"),
                     "p1_tgt": tgt,
                     "fsm": fsm,
+                    "doors": doors_lbl,
                     "detail": p1.get("detail") or p1.get("reason") or "",
                 }
             )
         prev_tgt = tgt
         prev_fsm = fsm
         prev_cmd = cmd
+        if doors_now is not None:
+            prev_doors = doors_now
     return rows[:limit]
+
+
+def _doors_label(tick: dict[str, Any]) -> str:
+    telem = tick.get("doors_telem")
+    dmi = tick.get("doors_dmi")
+    open_raw = tick.get("doors_open")
+    parts: list[str] = []
+    if telem is not None:
+        parts.append(f"telem={'1' if telem else '0'}")
+    if dmi is not None:
+        parts.append(f"dmi={'1' if dmi else '0'}")
+    if open_raw is not None and telem is None and dmi is None:
+        parts.append(f"open={'1' if open_raw else '0'}")
+    return " ".join(parts) if parts else "—"
 
 
 def _fb_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
@@ -219,7 +296,7 @@ def _fb_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict
         rows.append(
             {
                 "tick": t["tick"],
-                "t_s": round(t["t_ms"] / 1000, 1),
+                "t_s": round(_tick_t_s(t), 1),
                 "spd": t.get("spd_mph"),
                 "p_bar": t.get("brake_cyl_bar"),
                 "a_obs": fb.get("a_obs_ms2"),
@@ -250,6 +327,51 @@ def _pressure_chart_bounds(series: list[dict[str, Any]]) -> tuple[float, float]:
 def _apply_zone_m(*, spd_mph: float, lim_dist_m: float, dist_start_m: float) -> float:
     apply_at = max(0.0, float(lim_dist_m) - float(dist_start_m))
     return apply_zone_margin_m(float(spd_mph) * MPH_TO_MS, apply_at)
+
+
+def _is_air_wait_apply(detail: str) -> bool:
+    d = detail.lower()
+    return "esperando" in d and ("presión" in d or "presion" in d)
+
+
+def _ds_crosses_zero(prev_ds: float, ds_f: float) -> bool:
+    """Cruce real de ds=0; ignora saltos de telemetría (p. ej. 40 → -290)."""
+    if prev_ds <= 0 or ds_f > 0:
+        return False
+    step = prev_ds - ds_f
+    return step <= 80 and ds_f >= -25
+
+
+def _limit_pass_episode(prev_lim_dist: float | None, lim_dist: float, episode: int) -> int:
+    """Nuevo episodio al pasar cartel (distancia baja → vuelve a subir)."""
+    if prev_lim_dist is not None and prev_lim_dist < 90 and lim_dist > 350:
+        return episode + 1
+    return episode
+
+
+def _apply_marker_key(
+    tick: dict[str, Any],
+    detail: str,
+    *,
+    station_episode: int,
+    limit_episode: int,
+) -> str | None:
+    """Clave estable: primer APPLY por cartel / episodio de andén (no por texto variable)."""
+    tgt = str(tick.get("p1_tgt") or "")
+    if tgt == "STATION" or detail.startswith("Estación"):
+        return f"station:{station_episode}"
+    lim = tick.get("lim_mph")
+    if lim is not None:
+        lim_f = float(lim)
+        if limit_episode == 0:
+            return f"limit:{lim_f}"
+        return f"limit:{lim_f}:e{limit_episode}"
+    return None
+
+
+def _ds0_context_key(tick: dict[str, Any]) -> str:
+    tgt = tick.get("p1_tgt") or "SPEED_LIMIT"
+    return f"ds0:{tick.get('lim_mph')}:{tgt}"
 
 
 def _append_kinematic_marker(
@@ -290,9 +412,21 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     prev_lim_dist: float | None = None
     prev_spd: float | None = None
     seen_apply: set[str] = set()
+    station_episode = 0
+    prev_stn: float | None = None
+    limit_episode: dict[float, int] = {}
+    prev_lim_dist_by_lim: dict[float, float] = {}
+    last_ds0_t: dict[str, float] = {}
 
     for t in ticks:
         p1 = t.get("p1") or {}
+        stn_raw = t.get("stn_dist_m")
+        if stn_raw is not None:
+            stn_f = float(stn_raw)
+            if prev_stn is not None and prev_stn < 40 and stn_f > 200:
+                station_episode += 1
+            prev_stn = stn_f
+
         ds = p1.get("dist_start_m")
         lim_dist = t.get("lim_dist_m")
         spd = t.get("spd_mph")
@@ -306,10 +440,20 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ds_f = float(ds)
         lim_f = float(lim_dist)
         spd_f = float(spd)
-        t_s = float(t["t_ms"]) / 1000.0
+        t_s = _tick_t_s(t)
         detail = str(p1.get("detail") or "")
+        lim_mph_val = t.get("lim_mph")
+        lim_ep = 0
+        if lim_mph_val is not None:
+            lim_key = float(lim_mph_val)
+            prev_ld = prev_lim_dist_by_lim.get(lim_key)
+            limit_episode[lim_key] = _limit_pass_episode(
+                prev_ld, lim_f, limit_episode.get(lim_key, 0)
+            )
+            prev_lim_dist_by_lim[lim_key] = lim_f
+            lim_ep = limit_episode[lim_key]
 
-        if prev_ds is not None and prev_ds > 0 and ds_f <= 0:
+        if prev_ds is not None and _ds_crosses_zero(prev_ds, ds_f):
             if prev_ds != ds_f and prev_t_s is not None:
                 frac = prev_ds / (prev_ds - ds_f)
                 cross_t = prev_t_s + frac * (t_s - prev_t_s)
@@ -325,27 +469,37 @@ def _kinematic_markers(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 lim_cross = lim_f
                 spd_cross = spd_f
                 ds_cross = ds_f
-            _append_kinematic_marker(
-                markers,
-                t_s=cross_t,
-                lim_mph=t.get("lim_mph"),
-                spd=spd_cross,
-                lim_dist_m=lim_cross,
-                ds=ds_cross,
-                kind="ds0",
-            )
+            ds0_key = _ds0_context_key(t)
+            if cross_t - last_ds0_t.get(ds0_key, -999.0) >= 5.0:
+                last_ds0_t[ds0_key] = cross_t
+                _append_kinematic_marker(
+                    markers,
+                    t_s=cross_t,
+                    lim_mph=t.get("lim_mph"),
+                    spd=spd_cross,
+                    lim_dist_m=lim_cross,
+                    ds=ds_cross,
+                    kind="ds0",
+                )
 
-        if p1.get("apply_now") is True and detail and detail not in seen_apply:
-            seen_apply.add(detail)
-            _append_kinematic_marker(
-                markers,
-                t_s=t_s,
-                lim_mph=t.get("lim_mph"),
-                spd=spd_f,
-                lim_dist_m=lim_f,
-                ds=ds_f,
-                kind="apply",
+        if p1.get("apply_now") is True and detail and not _is_air_wait_apply(detail):
+            apply_key = _apply_marker_key(
+                t,
+                detail,
+                station_episode=station_episode,
+                limit_episode=lim_ep,
             )
+            if apply_key and apply_key not in seen_apply:
+                seen_apply.add(apply_key)
+                _append_kinematic_marker(
+                    markers,
+                    t_s=t_s,
+                    lim_mph=t.get("lim_mph"),
+                    spd=spd_f,
+                    lim_dist_m=lim_f,
+                    ds=ds_f,
+                    kind="apply",
+                )
 
         prev_ds = ds_f
         prev_t_s = t_s
@@ -709,28 +863,16 @@ def _render_chart_svg(
         lane = badge_lanes.get(idx, 0)
         badge_y = y_spd + 16 + lane * 16
         lim_m = m.get("lim_dist_m")
+        guide_bot = y_dist + h_dist
         out.append(
-            f'<line x1="{cx:.1f}" y1="{y_spd}" x2="{cx:.1f}" y2="{y_layers + h_layers}" '
-            f'stroke="#38bdf8" stroke-width="1" stroke-dasharray="3,4" opacity="0.45"/>'
+            f'<line x1="{cx:.1f}" y1="{y_spd}" x2="{cx:.1f}" y2="{guide_bot:.1f}" '
+            f'stroke="#38bdf8" stroke-width="1" stroke-dasharray="3,4" opacity="0.4"/>'
         )
-        out.append(f'<circle cx="{cx:.1f}" cy="{badge_y:.1f}" r="9" fill="#0ea5e9" opacity="0.95"/>')
         out.append(
-            f'<text x="{cx:.1f}" y="{badge_y + 4:.1f}" fill="#0f172a" font-size="10" '
+            f'<text x="{cx:.1f}" y="{badge_y + 4:.1f}" fill="#67e8f9" font-size="10" '
             f'font-weight="700" text-anchor="middle">{idx + 1}</text>'
         )
         if lim_m is not None:
-            lim_label = f"{int(round(float(lim_m)))}m"
-            out.append(
-                f'<text x="{cx:.1f}" y="{badge_y + 22:.1f}" fill="#38bdf8" font-size="9" '
-                f'font-weight="600" text-anchor="middle">{lim_label}</text>'
-            )
-            dist_start_m = m.get("dist_start_m")
-            if dist_start_m is not None:
-                ds_lbl = f"ds {int(round(float(dist_start_m)))}m"
-                out.append(
-                    f'<text x="{cx:.1f}" y="{y_ds + h_ds - 4:.1f}" fill="#c9a0ff" font-size="9" '
-                    f'text-anchor="middle">{ds_lbl}</text>'
-                )
             dist_y = y_in_panel(
                 float(lim_m),
                 dist_min,
@@ -738,11 +880,11 @@ def _render_chart_svg(
                 y_dist,
                 h_dist,
             )
+            lim_label = f"{int(round(float(lim_m)))} m"
             out.append(
-                f'<circle cx="{cx:.1f}" cy="{dist_y:.1f}" r="4" fill="#38bdf8" stroke="#0f172a" '
-                f'stroke-width="1"/>'
+                f'<text x="{cx + 4:.1f}" y="{dist_y - 3:.1f}" fill="#e8a87c" font-size="9" '
+                f'font-weight="600" text-anchor="start">{lim_label}</text>'
             )
-
     for m in markers:
         if m.get("kind") == "apply":
             continue
@@ -750,16 +892,6 @@ def _render_chart_svg(
         out.append(
             f'<line x1="{cx:.1f}" y1="{y_ds}" x2="{cx:.1f}" y2="{y_ds + h_ds}" '
             f'stroke="#67e8f9" stroke-width="1.5" stroke-dasharray="2,3" opacity="0.65"/>'
-        )
-
-    for p in series:
-        if p.get("cmd") not in ("APPLY", "RELEASE"):
-            continue
-        col = "#ef4444" if p.get("cmd") == "APPLY" else "#eab308"
-        cx = x_t(p["t"])
-        out.append(
-            f'<line x1="{cx:.1f}" y1="{y_spd}" x2="{cx:.1f}" y2="{y_layers + h_layers}" '
-            f'stroke="{col}" stroke-width="1.25" opacity="0.22"/>'
         )
 
     out.append(
@@ -775,7 +907,7 @@ def _render_chart_svg(
         f'text-anchor="end">lim</text>'
     )
 
-    return "".join(out)
+    return f'<g id="chart-content">{"".join(out)}</g>'
 
 
 def _chart_view_height(*, show_station: bool = False) -> int:
@@ -807,9 +939,14 @@ def _session_warning_html(summary: dict[str, Any]) -> str:
 
 def _meta_line(summary: dict[str, Any]) -> str:
     sess = summary.get("session") or {}
+    dur = summary.get("duration_s")
+    active = summary.get("active_duration_s")
+    time_part = f"{dur}s"
+    if active is not None and dur is not None and float(active) + 5 < float(dur):
+        time_part = f"{active}s activo ({dur}s reloj)"
     return (
         f"modo={sess.get('mode')} ruta={sess.get('route')} git={sess.get('git')} "
-        f"· {summary.get('n_ticks')} ticks · {summary.get('duration_s')}s"
+        f"· {summary.get('n_ticks')} ticks · {time_part}"
     )
 
 
@@ -906,7 +1043,7 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
             )
         out.append(
             {
-                "t": round(t["t_ms"] / 1000, 1),
+                "t": round(_tick_t_s(t), 1),
                 "spd": t.get("spd_mph"),
                 "eff": t.get("eff_mph"),
                 "lim": t.get("lim_mph"),
@@ -932,7 +1069,7 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
 
 def _render_station_rows(events: list[dict[str, Any]]) -> str:
     if not events:
-        return '<tr><td colspan="7">Sin eventos andén (¿modo station? ¿HTTP planning?)</td></tr>'
+        return '<tr><td colspan="8">Sin eventos andén (¿modo station? ¿HTTP planning?)</td></tr>'
     rows: list[str] = []
     for e in events:
         stn = e.get("stn_m")
@@ -942,7 +1079,9 @@ def _render_station_rows(events: list[dict[str, Any]]) -> str:
         rows.append(
             f'<tr><td>{e.get("t_s")}</td><td>{e.get("event")}</td><td>{stn_s} m</td>'
             f'<td>{spd_s}</td><td>{e.get("p1_tgt") or "—"}</td>'
-            f'<td>{e.get("fsm") or "—"}</td><td>{e.get("detail") or ""}</td></tr>'
+            f'<td>{e.get("fsm") or "—"}</td>'
+            f'<td>{e.get("doors") or "—"}</td>'
+            f'<td>{e.get("detail") or ""}</td></tr>'
         )
     return "".join(rows)
 
@@ -987,12 +1126,16 @@ def write_html_replay(path: Path, out: Path) -> None:
     if has_station:
         stn_ticks = int(summary.get("station_ticks") or 0)
         stn_tgt = int(summary.get("p1_tgt_station_ticks") or 0)
+        doors_telem = int(summary.get("doors_telem_ticks") or 0)
+        doors_dmi = int(summary.get("doors_dmi_ticks") or 0)
+        doors_open = int(summary.get("doors_open_ticks") or 0)
         station_section = f"""
 <h2>Andén (estación)</h2>
-<p class="leg">Ticks con <code>stn_dist_m</code>: <b>{stn_ticks}</b> · objetivo <code>p1_tgt=STATION</code>: <b>{stn_tgt}</b>.
-Franja verde en panel andén = P1 eligió parada. Si la curva no llega a 0, revisar WAIT aire / emergencia tardía.</p>
+<p class="leg">Ticks con <code>stn_dist_m</code>: <b>{stn_ticks}</b> · objetivo <code>p1_tgt=STATION</code>: <b>{stn_tgt}</b> ·
+puertas telem: <b>{doors_telem}</b> · DMI: <b>{doors_dmi}</b> · abiertas: <b>{doors_open}</b>.
+<code>fsm=STOPPED</code> → abrir puertas → cerrar → <code>DEPARTING</code>. Si telem/DMI = 0 en toda la sesión, el probe no ve puertas.</p>
 <table id="station"><thead><tr>
-<th>t(s)</th><th>evento</th><th>stn</th><th>spd</th><th>p1_tgt</th><th>fsm</th><th>detalle</th>
+<th>t(s)</th><th>evento</th><th>stn</th><th>spd</th><th>p1_tgt</th><th>fsm</th><th>puertas</th><th>detalle</th>
 </tr></thead><tbody>{station_rows}</tbody></table>
 """
     html = f"""<!DOCTYPE html>
@@ -1007,7 +1150,12 @@ Franja verde en panel andén = P1 eligió parada. Si la curva no llega a 0, revi
   .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }}
   .stat {{ background: #1a1f28; padding: 0.5rem 0.75rem; border-radius: 6px; min-width: 8rem; }}
   .stat b {{ display: block; font-size: 1.25rem; color: #7eb6ff; }}
-  svg {{ background: #1a1f28; border-radius: 8px; width: 100%; max-width: 1100px; }}
+  .chart-wrap {{ max-width: 1100px; }}
+  .chart-toolbar {{ display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; font-size: 12px; color: #9aa3b2; }}
+  .chart-toolbar button {{ background: #1a1f28; border: 1px solid #2a3140; color: #e6e8ec; border-radius: 4px; padding: 0.2rem 0.55rem; cursor: pointer; font-size: 12px; }}
+  .chart-toolbar button:hover {{ border-color: #7eb6ff; color: #7eb6ff; }}
+  svg#chart {{ background: #1a1f28; border-radius: 8px; width: 100%; display: block; touch-action: none; cursor: grab; user-select: none; }}
+  svg#chart.panning {{ cursor: grabbing; }}
   table {{ border-collapse: collapse; width: 100%; max-width: 1100px; font-size: 12px; }}
   th, td {{ border: 1px solid #2a3140; padding: 4px 8px; text-align: left; }}
   th {{ background: #1a1f28; }}
@@ -1025,8 +1173,14 @@ Franja verde en panel andén = P1 eligió parada. Si la curva no llega a 0, revi
 <div class="meta" id="meta">{meta_html}</div>
 <div class="stats" id="stats">{stats_html}</div>
 <p class="leg">{panel_leg}</p>
-<p class="leg">Círculos numerados = primer APPLY por cartel; debajo <b>Xm</b> = metros al cartel en ese momento. Punto cian en panel distancia = misma marca.</p>
+<p class="leg">Números cian = primer APPLY por cartel/andén; <b>Xm</b> en panel distancia = metros al cartel en ese APPLY. Rueda = zoom · arrastrar = mover · doble clic = reset.</p>
+<div class="chart-wrap">
+<div class="chart-toolbar">
+  <button type="button" id="chart-reset" title="Restablecer zoom">Reset zoom</button>
+  <span>Rueda del ratón: zoom en el tiempo · arrastrar: desplazar · doble clic: vista completa</span>
+</div>
 <svg id="chart" viewBox="0 0 {_CHART_W} {chart_h}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
+</div>
 {station_section}
 <h2>Capas (tiempo en sesión)</h2>
 <div class="stats" id="layer-stats">{layer_stats_html}</div>
@@ -1034,7 +1188,7 @@ Franja verde en panel andén = P1 eligió parada. Si la curva no llega a 0, revi
 <table id="ds0"><thead><tr>
 <th>#</th><th>tipo</th><th>t(s)</th><th>spd</th><th>cartel</th><th>m al cartel</th><th>ds / zona</th>
 </tr></thead><tbody id="ds0-body">{ds0_rows}</tbody></table>
-<p class="leg">El <b>#</b> coincide con el círculo en el gráfico. <b>m al cartel</b> = probe. <b>ds</b> = margen al punto cinemático (0 = ideal).</p>
+<p class="leg">El <b>#</b> coincide con la marca numerada en el gráfico. <b>m al cartel</b> = probe. <b>ds</b> = margen al punto cinemático (0 = ideal).</p>
 <h2>Feedback decel / aire</h2>
 <table id="fb-air"><thead><tr>
 <th>t(s)</th><th>spd</th><th>P bar</th><th>a_obs</th><th>a_pred</th><th>shortfall</th><th>fase</th><th>why</th>
@@ -1055,7 +1209,9 @@ const LAYER_COL = {{
 const DATA = {data_json};
 const s = DATA.summary;
 const meta = document.getElementById('meta');
-meta.textContent = `modo=${{s.session?.mode}} ruta=${{s.session?.route}} git=${{s.session?.git}} · ${{s.n_ticks}} ticks · ${{s.duration_s}}s`;
+const timeLbl = (s.active_duration_s != null && s.active_duration_s + 5 < s.duration_s)
+  ? `${{s.active_duration_s}}s activo (${{s.duration_s}}s reloj)` : `${{s.duration_s}}s`;
+meta.textContent = `modo=${{s.session?.mode}} ruta=${{s.session?.route}} git=${{s.session?.git}} · ${{s.n_ticks}} ticks · ${{timeLbl}}`;
 
 const stats = [
   ['Frenar', s.apply_ticks], ['Soltar', s.release_ticks], ['IPC', s.ipc_sent],
@@ -1096,9 +1252,86 @@ const mk = DATA.markers||[];
 const applyN = mk.filter(m=>m.kind==='apply').length;
 document.getElementById('note').innerHTML =
   '<b>Debate:</b> panel distancia baja hacia el cartel; ds cruza 0 = ideal. '+
-  'Si el círculo APPLY va antes de ds=0, el margen de zona adelanta el freno. '+
+  'Si la marca APPLY va antes de ds=0, el margen de zona adelanta el freno. '+
   (applyN ? `Marcas APPLY numeradas: ${{applyN}}.` : 'Sin APPLY en sesión.') +
   ' <a href="../../docs/v2/p1_limit_capas.html">Diagrama concepto</a>.';
+
+(function initChartZoom() {{
+  const svg = document.getElementById('chart');
+  if (!svg) return;
+  const CHART_W = {_CHART_W};
+  const CHART_H = {chart_h};
+  const MIN_W = CHART_W * 0.04;
+  let vb = {{ x: 0, y: 0, w: CHART_W, h: CHART_H }};
+  let pan = null;
+
+  function clampView() {{
+    vb.w = Math.min(CHART_W, Math.max(MIN_W, vb.w));
+    vb.h = Math.min(CHART_H, Math.max(MIN_W * (CHART_H / CHART_W), vb.h));
+    vb.x = Math.min(CHART_W - vb.w, Math.max(0, vb.x));
+    vb.y = Math.min(CHART_H - vb.h, Math.max(0, vb.y));
+  }}
+
+  function applyViewBox() {{
+    clampView();
+    svg.setAttribute('viewBox', `${{vb.x}} ${{vb.y}} ${{vb.w}} ${{vb.h}}`);
+  }}
+
+  function resetView() {{
+    vb = {{ x: 0, y: 0, w: CHART_W, h: CHART_H }};
+    applyViewBox();
+  }}
+
+  function svgPoint(clientX, clientY) {{
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return {{ x: vb.x + vb.w / 2, y: vb.y + vb.h / 2 }};
+    const p = pt.matrixTransform(ctm.inverse());
+    return {{ x: p.x, y: p.y }};
+  }}
+
+  svg.addEventListener('wheel', (e) => {{
+    e.preventDefault();
+    const p = svgPoint(e.clientX, e.clientY);
+    const scale = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+    const newW = vb.w * scale;
+    const newH = vb.h * scale;
+    const rx = (p.x - vb.x) / vb.w;
+    const ry = (p.y - vb.y) / vb.h;
+    vb.w = newW;
+    vb.h = newH;
+    vb.x = p.x - rx * vb.w;
+    vb.y = p.y - ry * vb.h;
+    applyViewBox();
+  }}, {{ passive: false }});
+
+  svg.addEventListener('mousedown', (e) => {{
+    if (e.button !== 0) return;
+    e.preventDefault();
+    pan = {{ x: e.clientX, y: e.clientY, vbX: vb.x, vbY: vb.y }};
+    svg.classList.add('panning');
+  }});
+
+  window.addEventListener('mousemove', (e) => {{
+    if (!pan) return;
+    const rect = svg.getBoundingClientRect();
+    const dx = (e.clientX - pan.x) * (vb.w / rect.width);
+    const dy = (e.clientY - pan.y) * (vb.h / rect.height);
+    vb.x = pan.vbX - dx;
+    vb.y = pan.vbY - dy;
+    applyViewBox();
+  }});
+
+  window.addEventListener('mouseup', () => {{
+    pan = null;
+    svg.classList.remove('panning');
+  }});
+
+  svg.addEventListener('dblclick', () => resetView());
+  document.getElementById('chart-reset')?.addEventListener('click', () => resetView());
+}})();
 </script>
 </body>
 </html>"""
@@ -1158,3 +1391,44 @@ def print_report(data: dict[str, Any]) -> None:
             print(f"  {k}: {v}")
     print()
     print(f"GAP (revisar): {data.get('command_none_near', 0)} ticks cerca cartel sin cmd")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Genera replay HTML desde JSONL (p. ej. si la sesión no cerró con Ctrl+C)."""
+    import argparse
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Resumen y replay HTML de sesión P1 (JSONL)",
+    )
+    parser.add_argument("jsonl", type=Path, help="Ruta al .jsonl")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Generar HTML aunque la sesión sea muy corta",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Abrir el HTML en el navegador",
+    )
+    args = parser.parse_args(argv)
+    path = args.jsonl
+    if not path.is_file():
+        print(f"No existe: {path}", file=sys.stderr)
+        return 1
+    data = summarize(path)
+    print_report(data)
+    html = finalize_session_report(path, summary=data, force=args.force)
+    if html is None:
+        print("HTML omitido (sesión corta; usa --force)", file=sys.stderr)
+        return 1
+    print(f"\nreplay -> {html.resolve()}")
+    if args.open and session_ready_for_browser(data):
+        os.startfile(str(html.resolve()))  # type: ignore[attr-defined]
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

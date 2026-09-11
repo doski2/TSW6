@@ -8,6 +8,9 @@ from tsw6v2.constants import LIMIT_OVER_ACTIVE_MPH, posted_scoring_ceiling_mph
 from tsw6v2.physics import TARGET_CLUSTER_GAP_M, projected_speed_mph_at_distance
 from tsw6v2.target import LIMIT_SCORING_MAX_OVER_MPH, LIMIT_SIGN_PASSED_M
 
+# Cartel next pegado al marker (50 mph justo tras andén); Four Oaks ~140 m sí espera recorte.
+LIMIT_AFTER_STATION_MAX_M = 50.0
+
 
 def targets_are_clustered(
     limit_dist_m: float,
@@ -27,6 +30,22 @@ def should_merge_limit_and_station_plans(
     if limit_dist_m > station_dist_m:
         return False
     return targets_are_clustered(limit_dist_m, station_dist_m, cluster_gap_m)
+
+
+def limit_sign_beyond_station(
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+) -> bool:
+    """
+    Cartel ``next`` detrás del marker de parada (p. ej. 50 mph justo tras andén).
+
+    Sesión 213010Z: andén @ 700 m, cartel 50 @ 727 m — frenar al andén, no al cartel.
+    """
+    if limit_dist_m is None or station_dist_m is None:
+        return False
+    if limit_dist_m <= LIMIT_SIGN_PASSED_M or station_dist_m <= 0:
+        return False
+    return limit_dist_m > station_dist_m
 
 
 def cluster_approach_in_range(
@@ -111,6 +130,8 @@ def next_sign_is_reduction_beyond_station(
         return False
     if limit_dist_m <= station_dist_m + LIMIT_SIGN_PASSED_M:
         return False
+    if limit_dist_m - station_dist_m <= LIMIT_AFTER_STATION_MAX_M:
+        return False
     # Cartel posterior al andén (fuera del cluster): parada, no esperar recorte.
     if limit_dist_m > station_dist_m + TARGET_CLUSTER_GAP_M:
         return False
@@ -136,6 +157,8 @@ def station_waits_for_approach_limit(
         current_limit_mph=current_limit_mph,
     ):
         return True
+    if limit_sign_beyond_station(limit_dist_m, station_dist_m):
+        return False
     if limit_mph is None or not cluster_approach_in_range(limit_dist_m, station_dist_m):
         return False
     if station_may_ignore_limit_approach(

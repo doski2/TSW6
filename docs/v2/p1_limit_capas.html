@@ -2,25 +2,49 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
-<title>P1 cartel — capas (concepto)</title>
+<title>P1 — capas cartel y andén</title>
 <style>
-  body { font: 15px/1.5 system-ui, sans-serif; margin: 1.5rem 2rem; max-width: 900px; color: #1a1a1a; }
-  h1 { font-size: 1.25rem; }
-  .sub { color: #555; margin-bottom: 1.5rem; }
-  svg { width: 100%; max-width: 860px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
-  table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; font-size: 14px; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 1.5rem 2rem; max-width: 960px; color: #1a1a1a; }
+  h1 { font-size: 1.35rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.35rem; }
+  h3 { font-size: 0.95rem; margin-top: 1.25rem; color: #333; }
+  .sub { color: #555; margin-bottom: 1rem; }
+  nav { background: #f4f4f5; padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1.5rem; font-size: 14px; }
+  nav a { margin-right: 1rem; }
+  svg { width: 100%; max-width: 900px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; display: block; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 14px; }
   th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: top; }
   th { background: #f0f0f0; }
   code { font-size: 12px; background: #eee; padding: 1px 4px; border-radius: 3px; }
   .debate { background: #f7f9fc; border-left: 4px solid #4a7fc1; padding: 0.75rem 1rem; margin-top: 1.5rem; }
+  .note { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 0.6rem 1rem; margin: 1rem 0; font-size: 14px; }
+  .warn { background: #fff7ed; border-left: 4px solid #f97316; padding: 0.6rem 1rem; margin: 1rem 0; font-size: 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; font-size: 13px; margin: 0.5rem 0 1rem; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
 </style>
 </head>
 <body>
-<h1>Aproximación a un cartel — capas P1</h1>
-<p class="sub">Distancia al cartel (eje horizontal) · ejemplo 60 → 55 mph. Los nombres técnicos (APPLY, COAST) se mantienen en código; en consola y gráficos usamos <strong>capas</strong>.</p>
 
-<svg viewBox="0 0 860 280" xmlns="http://www.w3.org/2000/svg">
-  <!-- distance axis -->
+<h1>P1 — capas cartel y andén</h1>
+<p class="sub">Referencia visual · código en <code>V2/tsw6v2/</code> · reglas:
+<a href="REGLAS_FRENOS_P1.md">REGLAS_FRENOS_P1.md</a> · validación:
+<a href="VALIDACION_P1_SESIONES.md">VALIDACION_P1_SESIONES.md</a></p>
+
+<nav>
+  <a href="#cartel">1. Cartel</a>
+  <a href="#pick">2. Prioridad cartel↔andén</a>
+  <a href="#geometria">3. Geometría cluster</a>
+  <a href="#gate">4. FSM dwell</a>
+  <a href="#capas">5. Tabla capas</a>
+  <a href="#debate">6. Debatir sesión</a>
+</nav>
+
+<!-- ── 1. CARTEL ─────────────────────────────────────────────── -->
+<h2 id="cartel">1. Aproximación a un cartel (modo <code>limit</code> o <code>station</code>)</h2>
+<p class="sub">Distancia al cartel · ejemplo 60 → 55 mph. En consola/HTML: <code>p1tgt=SPEED_LIMIT</code>.</p>
+
+<svg viewBox="0 0 860 280" xmlns="http://www.w3.org/2000/svg" aria-label="Capas cartel">
   <line x1="60" y1="230" x2="820" y2="230" stroke="#333" stroke-width="1"/>
   <text x="440" y="260" text-anchor="middle" font-size="13">Distancia al cartel (m)</text>
   <text x="80" y="248" font-size="11">2000</text>
@@ -28,15 +52,11 @@
   <text x="480" y="248" font-size="11">300</text>
   <text x="620" y="248" font-size="11">80</text>
   <text x="760" y="248" font-size="11">0</text>
-
-  <!-- speed curve schematic -->
   <text x="20" y="120" font-size="11" fill="#666">mph</text>
   <path d="M 80 60 L 350 70 L 520 100 L 680 140 L 760 175" fill="none" stroke="#2563eb" stroke-width="2.5"/>
   <text x="400" y="55" font-size="12" fill="#2563eb">velocidad</text>
   <line x1="60" y1="155" x2="820" y2="155" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <text x="700" y="150" font-size="12" fill="#ea580c">cartel 55 mph</text>
-
-  <!-- layer bands -->
+  <text x="700" y="150" font-size="12" fill="#ea580c">objetivo ~54 mph</text>
   <rect x="80" y="190" width="200" height="28" fill="#94a3b8" opacity="0.5"/>
   <text x="180" y="208" text-anchor="middle" font-size="12">VIGILAR</text>
   <rect x="280" y="190" width="200" height="28" fill="#fbbf24" opacity="0.55"/>
@@ -44,39 +64,208 @@
   <rect x="480" y="190" width="140" height="28" fill="#f87171" opacity="0.55"/>
   <text x="550" y="208" text-anchor="middle" font-size="12">FRENAR</text>
   <rect x="620" y="190" width="140" height="28" fill="#4ade80" opacity="0.55"/>
-  <text x="690" y="208" text-anchor="middle" font-size="12">SOLTAR freno</text>
-
-  <!-- coast power note -->
-  <rect x="430" y="12" width="200" height="36" fill="#c4b5fd" opacity="0.6" rx="4"/>
-  <text x="530" y="35" text-anchor="middle" font-size="11">Si palanca &gt; neutro: QUITAR TRACCIÓN primero</text>
-
-  <!-- dist_start arrow -->
+  <text x="690" y="208" text-anchor="middle" font-size="12">SOLTAR</text>
+  <rect x="430" y="12" width="220" height="36" fill="#c4b5fd" opacity="0.6" rx="4"/>
+  <text x="540" y="35" text-anchor="middle" font-size="11">Si palanca &gt; neutro: QUITAR TRACCIÓN primero</text>
   <line x1="480" y1="175" x2="480" y2="218" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr)"/>
   <text x="490" y="168" font-size="11" fill="#7c3aed">dist_start = 0</text>
   <defs><marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7c3aed"/></marker></defs>
 </svg>
 
+<div class="note">
+  <strong>RELEASE (§8):</strong> en <strong>bajada</strong> puede soltar antes del objetivo si la proyección
+  <code>v + a·fill</code> lo permite. En <strong>llano/subida</strong> solo suelta en banda
+  <code>spd ≤ objetivo + 0.4 mph</code> (evita undershoot — sesión <code>210853Z</code>).
+</div>
+
+<!-- ── 2. PICK P1 ────────────────────────────────────────────── -->
+<h2 id="pick">2. Prioridad cartel ↔ andén (<code>pick_p1_brake_target</code>)</h2>
+<p class="sub">Solo modo <code>station</code>. Cada tick: dos planes → un <code>p1_tgt</code>.</p>
+
+<svg viewBox="0 0 860 420" xmlns="http://www.w3.org/2000/svg" aria-label="Flujo pick P1">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#555"/></marker>
+  </defs>
+  <!-- start -->
+  <rect x="330" y="10" width="200" height="36" rx="6" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="430" y="33" text-anchor="middle" font-size="13">limit_target + station_target</text>
+
+  <!-- row 1 checks → LIMIT -->
+  <rect x="40" y="70" width="240" height="44" rx="5" fill="#fee2e2" stroke="#f87171"/>
+  <text x="160" y="90" text-anchor="middle" font-size="11">station_waits?</text>
+  <text x="160" y="105" text-anchor="middle" font-size="10" fill="#666">Four Oaks gap &gt; 50 m</text>
+  <rect x="310" y="70" width="240" height="44" rx="5" fill="#fee2e2" stroke="#f87171"/>
+  <text x="430" y="90" text-anchor="middle" font-size="11">merged_overspeed?</text>
+  <text x="430" y="105" text-anchor="middle" font-size="10" fill="#666">cluster, cartel delante</text>
+  <rect x="580" y="70" width="240" height="44" rx="5" fill="#fee2e2" stroke="#f87171"/>
+  <text x="700" y="90" text-anchor="middle" font-size="11">unified + spd alto?</text>
+  <text x="700" y="105" text-anchor="middle" font-size="10" fill="#666">parada unificada</text>
+
+  <line x1="430" y1="46" x2="160" y2="70" stroke="#555" marker-end="url(#arrow)"/>
+  <line x1="430" y1="46" x2="430" y2="70" stroke="#555" marker-end="url(#arrow)"/>
+  <line x1="430" y1="46" x2="700" y2="70" stroke="#555" marker-end="url(#arrow)"/>
+  <text x="95" y="62" font-size="10" fill="#555">sí</text>
+  <text x="365" y="62" font-size="10" fill="#555">sí</text>
+  <text x="635" y="62" font-size="10" fill="#555">sí</text>
+
+  <rect x="300" y="130" width="260" height="32" rx="5" fill="#fecaca" stroke="#dc2626"/>
+  <text x="430" y="150" text-anchor="middle" font-size="12" font-weight="bold">→ LIMIT</text>
+  <line x1="160" y1="114" x2="380" y2="130" stroke="#dc2626" marker-end="url(#arrow)"/>
+  <line x1="430" y1="114" x2="430" y2="130" stroke="#dc2626" marker-end="url(#arrow)"/>
+  <line x1="700" y1="114" x2="480" y2="130" stroke="#dc2626" marker-end="url(#arrow)"/>
+
+  <!-- prefer station -->
+  <rect x="280" y="185" width="300" height="50" rx="5" fill="#d1fae5" stroke="#10b981"/>
+  <text x="430" y="205" text-anchor="middle" font-size="11">should_prefer_station?</text>
+  <text x="430" y="222" text-anchor="middle" font-size="10" fill="#166534">cartel tras andén · proyección OK · WATCH</text>
+  <line x1="430" y1="162" x2="430" y2="185" stroke="#555" marker-end="url(#arrow)"/>
+  <text x="440" y="178" font-size="10" fill="#555">no en checks ↑</text>
+
+  <rect x="80" y="260" width="200" height="32" rx="5" fill="#a7f3d0" stroke="#059669"/>
+  <text x="180" y="280" text-anchor="middle" font-size="12" font-weight="bold">→ STATION</text>
+  <line x1="350" y1="210" x2="200" y2="260" stroke="#059669" marker-end="url(#arrow)"/>
+  <text x="255" y="248" font-size="10" fill="#555">sí</text>
+
+  <!-- defer -->
+  <rect x="480" y="260" width="300" height="44" rx="5" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="630" y="278" text-anchor="middle" font-size="11">defer? (stn &gt; bd+10 m)</text>
+  <text x="630" y="295" text-anchor="middle" font-size="10" fill="#666">LIMIT si APPLY; si no None</text>
+  <line x1="510" y1="235" x2="600" y2="260" stroke="#555" marker-end="url(#arrow)"/>
+  <text x="520" y="252" font-size="10" fill="#555">no prefer</text>
+
+  <!-- urgency -->
+  <rect x="300" y="330" width="260" height="36" rx="5" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="430" y="353" text-anchor="middle" font-size="12">urgencia (dist_start menor gana)</text>
+  <line x1="630" y1="304" x2="480" y2="330" stroke="#555" marker-end="url(#arrow)"/>
+
+  <!-- emergency parallel -->
+  <rect x="40" y="380" width="780" height="32" rx="5" fill="#fce7f3" stroke="#db2777"/>
+  <text x="430" y="400" text-anchor="middle" font-size="11">Paralelo: emergencia andén/señal (B3) si dist crítica — antes del pick, salvo gate/supresión salida</text>
+</svg>
+
+<!-- ── 3. GEOMETRÍA ─────────────────────────────────────────── -->
+<h2 id="geometria">3. Geometría cluster — cartel delante vs detrás del andén</h2>
+
+<svg viewBox="0 0 860 200" xmlns="http://www.w3.org/2000/svg" aria-label="Geometría cluster">
+  <text x="430" y="22" text-anchor="middle" font-size="13" font-weight="bold">Sentido marcha →</text>
+
+  <!-- Case A: limit before station (normal cluster) -->
+  <text x="200" y="48" text-anchor="middle" font-size="12" fill="#333">A · Cartel delante (Sutton)</text>
+  <line x1="40" y1="100" x2="380" y2="100" stroke="#333" stroke-width="2"/>
+  <rect x="120" y="82" width="16" height="36" fill="#f87171"/>
+  <text x="128" y="135" text-anchor="middle" font-size="10">lim@</text>
+  <text x="128" y="148" text-anchor="middle" font-size="10">98 m</text>
+  <rect x="240" y="82" width="16" height="36" fill="#34d399"/>
+  <text x="248" y="135" text-anchor="middle" font-size="10">stn</text>
+  <text x="248" y="148" text-anchor="middle" font-size="10">384 m</text>
+  <text x="200" y="175" text-anchor="middle" font-size="11" fill="#059669">Proyección OK → STATION</text>
+
+  <!-- Case B: Four Oaks inverted -->
+  <text x="640" y="48" text-anchor="middle" font-size="12" fill="#333">B · Four Oaks (gap ~140 m)</text>
+  <line x1="480" y1="100" x2="820" y2="100" stroke="#333" stroke-width="2"/>
+  <rect x="560" y="82" width="16" height="36" fill="#34d399"/>
+  <text x="568" y="135" text-anchor="middle" font-size="10">stn</text>
+  <text x="568" y="148" text-anchor="middle" font-size="10">180 m</text>
+  <rect x="700" y="82" width="16" height="36" fill="#f87171"/>
+  <text x="708" y="135" text-anchor="middle" font-size="10">lim@</text>
+  <text x="708" y="148" text-anchor="middle" font-size="10">320 m</text>
+  <text x="640" y="175" text-anchor="middle" font-size="11" fill="#dc2626">station_waits → LIMIT primero</text>
+
+  <!-- Case C: sign just after platform -->
+  <text x="430" y="48" text-anchor="middle" font-size="12" fill="#333" style="visibility:hidden">spacer</text>
+</svg>
+
+<svg viewBox="0 0 860 120" xmlns="http://www.w3.org/2000/svg" aria-label="Cartel tras andén">
+  <text x="430" y="22" text-anchor="middle" font-size="12" fill="#333">C · Cartel justo tras andén (213010Z, gap ≤ 50 m)</text>
+  <line x1="180" y1="60" x2="680" y2="60" stroke="#333" stroke-width="2"/>
+  <rect x="380" y="42" width="20" height="36" fill="#34d399"/>
+  <text x="390" y="95" text-anchor="middle" font-size="10">stn 700 m</text>
+  <rect x="420" y="42" width="20" height="36" fill="#f87171"/>
+  <text x="430" y="95" text-anchor="middle" font-size="10">lim@ 727 m</text>
+  <text x="430" y="115" text-anchor="middle" font-size="11" fill="#059669">limit_sign_beyond_station → STATION (no frenar al 50 antes de parar)</text>
+</svg>
+
 <table>
-  <thead><tr><th>Capa (debate)</th><th>Código antiguo</th><th>¿Manda al tren?</th><th>Cuándo</th></tr></thead>
+  <thead><tr><th>Gap <code>lim@ − stn</code></th><th>Ejemplo</th><th>Objetivo P1</th></tr></thead>
   <tbody>
-    <tr><td><strong>Vigilar</strong> [WATCH]</td><td><code>command_none</code>, apply_now=false</td><td>No</td><td>Cartel lejos; plan calculado pero sin ventana de frenado.</td></tr>
-    <tr><td><strong>Esperar ventana</strong> [WAIT]</td><td><code>apply_deferred</code></td><td>No</td><td>Cerca del cartel pero dist_start aún positivo (metros de margen).</td></tr>
-    <tr><td><strong>Quitar tracción</strong> [COAST_PWR]</td><td><code>COAST_THROTTLE</code></td><td>Sí → neutro</td><td>Potencia puesta; hay que soltar antes de frenar.</td></tr>
-    <tr><td><strong>Frenar</strong> [BRAKE]</td><td><code>APPLY</code> B1/B2/B3</td><td>Sí → muesca freno</td><td>apply_now=true; dentro de la ventana cinemática.</td></tr>
-    <tr><td><strong>Soltar freno</strong> [RELEASE]</td><td><code>RELEASE</code></td><td>Sí → neutro</td><td>Velocidad ≤ cartel + banda (~0.4 mph).</td></tr>
-    <tr><td><strong>Revisar</strong> [GAP]</td><td>apply_now=true sin cmd</td><td>—</td><td>Candidato a bug o umbral mal afinado — debatir con JSONL.</td></tr>
+    <tr><td>Cartel <strong>delante</strong> (lim &lt; stn)</td><td>lim@ 98, stn 384</td><td>STATION si proyección legal; si no LIMIT en cluster</td></tr>
+    <tr><td>+27 m (≤ 50 m)</td><td>213010Z última parada</td><td><strong>STATION</strong></td></tr>
+    <tr><td>+140 m (50–350 m)</td><td>Four Oaks 60→55</td><td><strong>LIMIT</strong> (recorte antes del andén)</td></tr>
+    <tr><td>&gt; 350 m</td><td>Cartel lejos tras pasar</td><td>STATION (no bloqueo cluster)</td></tr>
   </tbody>
 </table>
 
+<!-- ── 4. GATE FSM ───────────────────────────────────────────── -->
+<h2 id="gate">4. FSM dwell andén (<code>p1_station_gate</code>)</h2>
+<p class="sub">Si <code>fsm=STOPPED|DEPARTING</code> → <code>station_p1_enabled=False</code> (sin plan ni emergencia andén).</p>
+
+<svg viewBox="0 0 860 200" xmlns="http://www.w3.org/2000/svg" aria-label="FSM gate">
+  <defs><marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#555"/></marker></defs>
+  <rect x="60" y="70" width="100" height="44" rx="20" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="110" y="97" text-anchor="middle" font-size="12">None</text>
+  <rect x="280" y="70" width="120" height="44" rx="8" fill="#fef08a" stroke="#ca8a04"/>
+  <text x="340" y="97" text-anchor="middle" font-size="12">STOPPED</text>
+  <rect x="520" y="70" width="120" height="44" rx="8" fill="#bfdbfe" stroke="#2563eb"/>
+  <text x="580" y="97" text-anchor="middle" font-size="12">DEPARTING</text>
+  <line x1="160" y1="92" x2="278" y2="92" stroke="#555" marker-end="url(#arr2)"/>
+  <text x="218" y="82" text-anchor="middle" font-size="10">stn≤55 ∧ spd≤1.5</text>
+  <line x1="400" y1="92" x2="518" y2="92" stroke="#555" marker-end="url(#arr2)"/>
+  <text x="459" y="82" text-anchor="middle" font-size="10">puertas ↑↓</text>
+  <line x1="580" y1="114" x2="110" y2="140" stroke="#555" marker-end="url(#arr2)"/>
+  <text x="350" y="155" text-anchor="middle" font-size="10">spd≥25 mph o 90 s</text>
+  <line x1="340" y1="114" x2="110" y2="130" stroke="#10b981" marker-end="url(#arr2)"/>
+  <text x="200" y="148" text-anchor="middle" font-size="10" fill="#059669">_left_platform (sin puertas)</text>
+  <text x="200" y="162" text-anchor="middle" font-size="9" fill="#666">spd≥25 · stn&gt;55 · stn≤1 · planning lost</text>
+</svg>
+
+<div class="warn">
+  <strong>210853Z:</strong> si el tren sale del andén sin puertas y el gate queda en <code>STOPPED</code>,
+  no habrá <code>p1tgt=STATION</code> en la siguiente aproximación. Corregido con <code>_left_platform</code>.
+</div>
+
+<!-- ── 5. TABLA CAPAS ──────────────────────────────────────────── -->
+<h2 id="capas">5. Tabla de capas (consola / JSONL)</h2>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#94a3b8"></span> Vigilar</span>
+  <span><span class="swatch" style="background:#fbbf24"></span> Esperar</span>
+  <span><span class="swatch" style="background:#f87171"></span> Frenar</span>
+  <span><span class="swatch" style="background:#4ade80"></span> Soltar</span>
+  <span><span class="swatch" style="background:#34d399"></span> Andén</span>
+</div>
+
+<table>
+  <thead><tr><th>Capa</th><th>Código</th><th>¿Manda?</th><th>Cuándo</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Vigilar</strong> [WATCH]</td><td><code>command_none</code>, apply_now=false</td><td>No</td><td>Cartel lejos; plan sin ventana.</td></tr>
+    <tr><td><strong>Esperar ventana</strong></td><td><code>apply_deferred</code></td><td>No</td><td>dist_start &gt; 0; margen cinemático.</td></tr>
+    <tr><td><strong>Quitar tracción</strong></td><td><code>COAST_THROTTLE</code></td><td>Sí → neutro</td><td>Tracción antes de frenar.</td></tr>
+    <tr><td><strong>Frenar cartel</strong></td><td><code>APPLY</code> B1–B3 · <code>p1_tgt=LIMIT</code></td><td>Sí</td><td>BRAKE_LIMIT / HOLD_DH.</td></tr>
+    <tr><td><strong>Frenar andén</strong></td><td><code>APPLY</code> B1–B3 · <code>p1_tgt=STATION</code></td><td>Sí</td><td>Perfil v→0; emergencia si tarde.</td></tr>
+    <tr><td><strong>Soltar</strong></td><td><code>RELEASE</code></td><td>Sí → neutro</td><td>Banda objetivo; bajada: proyección fill.</td></tr>
+    <tr><td><strong>Gate OFF</strong></td><td><code>station_p1_enabled=False</code></td><td>—</td><td><code>fsm=STOPPED|DEPARTING</code>; solo cartel si aplica.</td></tr>
+    <tr><td><strong>GAP</strong></td><td>apply sin cmd</td><td>—</td><td>Revisar JSONL / aire / IPC.</td></tr>
+  </tbody>
+</table>
+
+<!-- ── 6. DEBATE ───────────────────────────────────────────────── -->
+<h2 id="debate">6. Cómo debatir una sesión</h2>
+
 <div class="debate">
-  <strong>Cómo debatimos una sesión</strong>
+  <strong>Modo cartel</strong>
   <ol>
-    <li>Grabar: <code>V2\run_p1_session.bat limit cross-city</code></li>
+    <li><code>V2\run_p1_session.bat limit cross-city</code></li>
     <li>Replay: <code>python scripts/tools/summarize_v2_limit.py logs\v2\….jsonl --html</code></li>
-    <li>Mirar franja de <strong>capas</strong> (colores) vs velocidad y cartel.</li>
-    <li>Solo discutir tramos <strong>GAP</strong> o donde el comportamiento “se siente mal”.</li>
-    <li>Cambiar umbrales en V2 (no v1); nueva sesión para comparar.</li>
+    <li>Franjas de capas vs velocidad y cartel; RELEASE en bajada vs llano.</li>
+  </ol>
+  <strong>Modo andén</strong>
+  <ol>
+    <li><code>V2\run_p1_session.bat station cross-city</code> (TSW6 con <code>-HTTPAPI</code>)</li>
+    <li>Replay HTML en <code>logs\v2\</code> — panel <code>stn</code>, <code>p1_tgt</code>, <code>stn_fsm</code>, puertas</li>
+    <li>Comprobar transición <code>LIMIT→STATION</code>; cartel tras andén (gap &lt; 50 m); parada final <code>stn</code> + <code>spd</code></li>
+    <li>Sesiones ref.: <code>210853Z</code> (gate + RELEASE), <code>213010Z</code> (prioridad andén)</li>
   </ol>
 </div>
+
 </body>
 </html>

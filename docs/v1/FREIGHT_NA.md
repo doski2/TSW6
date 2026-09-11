@@ -179,8 +179,9 @@ PDF)](<https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=pdf&FileName=
 | 5 | ⬜ | `handle_controller` rama freight + IPC |
 | 6 | ⬜ | Tracción predictiva 8 muescas (fuera de v2 inicial; tras P1 freight estable) |
 
-**Siguiente:** fase 4 + sesión SD40 documentando umbral bajada y auto vs dyn. No mezclar con
-lógica combined del 323.
+**Siguiente:** sesión lab **L0.6g** ([PLAN_API_EXPLORER § L0.6g](../v2/PLAN_API_EXPLORER.md)) —
+mapear manómetros y aire en SD40; luego fase 4 + umbral bajada auto vs dyn. No mezclar con lógica
+combined del 323.
 
 ---
 

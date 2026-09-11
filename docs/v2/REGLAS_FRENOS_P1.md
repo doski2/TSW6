@@ -172,7 +172,8 @@ Simétrico al APPLY: no solo banda fija en mph al llegar al objetivo.
 | Modo | Cuándo suelta | Criterio |
 | --- | --- | --- |
 | **Contención zona** (60→55 lejos) | ~59.5 mph | Banda fija `spd ≤ coast_floor + release_over` |
-| **BRAKE_LIMIT** (latch al 54) | Antes de 54 mph si el fill seguiría frenando | `v_proy = v + a_net·brake_fill_s ≤ target + banda` |
+| **BRAKE_LIMIT bajada** (latch al 54) | Antes de 54 mph si el fill seguiría frenando | `v_proy = v + a_net·brake_fill_s ≤ target + banda` |
+| **BRAKE_LIMIT llano/subida** | En banda al objetivo | `spd ≤ target + release_over` (sin proyección anticipada) |
 
 - `a_net`: `accel_ms2` del probe si hay frenado; si no, `predict_decel` del learner (**ya incluye
 
@@ -182,9 +183,14 @@ Simétrico al APPLY: no solo banda fija en mph al llegar al objetivo.
 - En bajada cerca del cartel, `should_hold_limit_brake_downhill` no bloquea el latch final (`spd ≤
 
   latch + 2 mph`).
+- **Llano/subida** (`gradient_pct ≥ −0.3 %%`): `limit_release_speed_ready` **no** usa proyección
 
-Módulos: `physics.projected_speed_mph_after_brake_fill`, `command.resolve_release_command`. Tests:
-`test_release.py` (kinematic).
+  cinemática — evita soltar demasiado pronto y caer por debajo del objetivo (sesión `210853Z`,
+
+  60→50 @ +1 %%: RELEASE @ 51 mph → ~44 mph). En **bajada** se mantiene el RELEASE anticipado.
+
+Módulos: `physics.projected_speed_mph_after_brake_fill`, `physics.limit_release_speed_ready`,
+`command.resolve_release_command`. Tests: `test_release.py` (kinematic + `test_no_kinematic_release_uphill_60_to_50`).
 
 **No planificado (2026-09-10):** aprendizaje por distancia de parada integrada u observación en
 HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
@@ -207,11 +213,54 @@ limit_target + station_target
 
 | Regla | Cuándo | Objetivo |
 | --- | --- | --- |
-| `should_defer_station_brake` | Andén más lejos que `bd(v→0)` servicio + 15 m | Sin STATION todavía |
-| `station_waits_for_approach_limit` | Recorte HUD invertido o overspeed al cartel en cluster | LIMIT primero |
-| `merged_approach_overspeed` | Cluster, cartel > 50 m, spd > next + 0.5 | LIMIT |
-| `should_prefer_station_in_approach` | Andén < 600 m, spd > 15 mph, cartel no exige freno | **STATION** |
+| `should_defer_station_brake` | Andén más lejos que `bd(v→0)` servicio + 10 m | Sin STATION todavía |
+| `station_waits_for_approach_limit` | Recorte HUD invertido (gap > 50 m) o overspeed al cartel en cluster | LIMIT primero |
+| `limit_sign_beyond_station` | Cartel **detrás** del marker (`lim@` > `stn`) | No esperar cartel; priorizar andén |
+| `merged_approach_overspeed` | Cluster, cartel **delante** del andén, spd > next + 0.5 | LIMIT |
+| `should_prefer_station_in_approach` | Andén < 600 m (o cartel tras andén < 950 m), spd > 15 mph | **STATION** |
 | `station_may_ignore_limit_approach` | Cartel delante en cluster + proyección legal | **STATION** anticipado |
+
+#### Cartel justo **después** del andén (sesión `213010Z`)
+
+Geometría: andén @ 700 m, cartel 50 @ 727 m (zona vigente 60). El cartel **no** es objetivo de
+
+parada — hay que frenar al **marker de andén** primero; el 50 mph aplica al salir.
+
+| Gap `lim@ − stn` | Comportamiento |
+| --- | --- |
+| ≤ `LIMIT_AFTER_STATION_MAX_M` (50 m) | `next_sign_is_reduction_beyond_station` falso; `limit_sign_beyond_station` → **STATION** |
+| > 50 m y ≤ 350 m (Four Oaks ~140 m) | `next_sign_is_reduction_beyond_station` → **LIMIT** (recorte 60→55 antes del andén) |
+| Cartel delante del andén | Reglas cluster / proyección habituales |
+
+Implementación: `limit_station_cluster.limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M`.
+Tests: `test_limit_sign_beyond_station_session_213010z`, `test_pick_station_when_limit_sign_after_platform`.
+
+#### FSM dwell andén (`p1_station_gate.py`)
+
+Modo `station`: suprime **todo** P1 andén (plan + emergencia) en `STOPPED` / `DEPARTING`.
+
+| Estado | Entrada | Salida |
+| --- | --- | --- |
+| `STOPPED` | `stn ≤ 55 m` y `spd ≤ 1.5` (spawn ~47 m) o puertas abiertas a baja velocidad | Puertas abrir→cerrar → `DEPARTING`; o `_left_platform` (ver abajo) |
+| `DEPARTING` | Tras cerrar puertas | `spd ≥ 25 mph` o timeout 90 s → `None` |
+| `None` | En marcha | Condiciones de parada → `STOPPED` |
+
+**Salida sin ciclo puertas** (`_left_platform`): si el tren abandona el andén sin abrir puertas
+
+(sesión `210853Z` — `fsm=STOPPED` toda la ruta y sin frenado de andén):
+
+- `spd ≥ 25 mph`, o
+- `stn > 55 m`, o
+- `stn ≤ 1 m` con marcha (pasó el marker), o
+- `stn = None` y `spd > 8 mph` (planning perdido en marcha).
+
+**No** sale solo por velocidad dentro del andén (`12 mph` @ `stn=10 m` sigue `STOPPED`).
+
+Capas de supresión (complementarias, no duplicadas):
+
+1. **Gate** — apaga P1 estación en dwell (`loop.py` → `station_p1_enabled=False`).
+2. **`should_suppress_station_braking_for_departure`** — anula plan con tracción en salida.
+3. **`_station_emergency_suppressed`** — capa emergencia con tope ~15 mph.
 
 #### Proyección al pasar el cartel (`station_may_ignore_limit_approach`)
 
@@ -244,10 +293,13 @@ Constantes (`p1_policy.py` / `physics.py`):
 
 | Constante | Valor | Notas |
 | --- | --- | --- |
-| `HORIZON_SLACK_M` | 15 m | Sobre `bd(v→0)` para defer STATION |
+| `HORIZON_SLACK_M` | 10 m | Sobre `bd(v→0)` para defer STATION |
 | `STATION_APPROACH_PRIORITY_M` | 600 m | Horizonte preferencia andén |
 | `STATION_APPROACH_MIN_SPEED_MPH` | 15 | No robar creep en andén |
 | `TARGET_CLUSTER_GAP_M` | 350 m | Cluster cartel+andén |
+| `LIMIT_AFTER_STATION_MAX_M` | 50 m | Cartel pegado tras marker → andén primero |
+| `PLATFORM_AT_STOP_M` | 55 m | Gate FSM: radio parada en andén |
+| `DEPARTING_CLEAR_MPH` | 25 | Gate: marcha clara / fin `DEPARTING` |
 
 **No aplica** feedback decel en STATION (solo cartel en `limits.py`). Emergencia andén: `p1_emergency`
 independiente de esta prioridad.
@@ -412,10 +464,12 @@ RELEASE / COAST_PWR**.
 | --- | --- |
 | `station_plan.py` | Perfil v→0 (B1/B2/B3); ETA desactivada por defecto |
 | `station_brake.py` | `evaluate_station_brake` → `BrakeTargetResult` STATION |
-| `limit_station_cluster.py` | Cluster 350 m, `will_be_below_limit_at_pass`, `station_waits` |
+| `limit_station_cluster.py` | Cluster 350 m, `limit_sign_beyond_station`, `station_waits` |
 | `p1_policy.py` | `pick_p1_brake_target`, defer horizonte, preferencia andén |
+| `p1_station_gate.py` | FSM `STOPPED`/`DEPARTING`; suprime P1 andén en dwell |
 | `planning_poller.py` / `planning_feed.py` | HTTP `DriverAid.TrackData` + anti-salto distancia |
 | `p1_emergency.py` | B3 si distancia crítica al andén / señal |
+| `session_report.py` | Replay HTML/JSONL; puertas, marcadores APPLY, zoom |
 | `decision.py` | `evaluate_p1_tick`: emergencia → release → pick objetivo → L4 |
 
 ---
@@ -423,7 +477,7 @@ RELEASE / COAST_PWR**.
 ## Relacionados
 
 - [PLAN_V2 §2 Física](PLAN_V2.md#2-física-qué-investigar-e-introducir)
-- [p1_limit_capas.html](p1_limit_capas.html)
+- [p1_limit_capas.html](p1_limit_capas.html) — diagramas cartel, pick cartel↔andén, cluster, FSM gate
 - [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_)
 - [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) — protocolo campo Cross-City
 
@@ -431,6 +485,10 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-10 | `p1_limit_capas.html`: ramas andén, pick, geometría cluster, FSM gate |
+| 2026-09-10 | Cartel tras andén (`213010Z`): `limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M` |
+| 2026-09-10 | FSM dwell `p1_station_gate` + salida `_left_platform` (`210853Z`); RELEASE llano sin cinemática |
+| 2026-09-10 | `HORIZON_SLACK_M` 15→10 m; reacción terminal andén ligeramente más temprana |
 | 2026-09-10 | §9 prioridad cartel↔andén; `will_be_below_limit_at_pass` + proyección al pasar cartel |
 | 2026-09-10 | RELEASE cinemático BRAKE_LIMIT (`v + a_net·fill`); doc validación actualizada |
 | 2026-09-09 | Doc validación multi-sesión; depurado `should_coast_throttle_before_brake` |
