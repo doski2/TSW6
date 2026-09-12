@@ -20,6 +20,7 @@ from tsw6v2.physics import (
     MPH_TO_MS,
     apply_zone_margin_m,
     is_downhill_gradient,
+    is_uphill_gradient,
 )
 from tsw6v2.target import BrakeTargetResult
 
@@ -133,6 +134,12 @@ def try_current_zone_contain(
         next_limit_mph=next_limit_mph,
         next_distance_m=next_distance_m,
         gradient_pct=gradient_pct,
+    ):
+        return None
+    # Salida lenta→rápida en cuesta: no HOLD_DH (sesión 201456Z: 45→60 @ +1 %%).
+    if (
+        is_uphill_gradient(gradient_pct)
+        and is_ascending_limit_exit(posted_limit_mph, next_limit_mph)
     ):
         return None
     return _hold_if_over_zone_ceiling(

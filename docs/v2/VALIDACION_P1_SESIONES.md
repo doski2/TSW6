@@ -16,8 +16,8 @@ No sustituye `pytest`; complementa prueba de campo.
 
 | Pieza | Módulo |
 | --- | --- |
-| Prioridad H1 + latch | `limits.py`, `limit_containment.py` |
-| Muesca + defer | `limit_notch.py` |
+| Prioridad H1 + latch | `limits.py`, `limit_containment.py`, `limit_horizon.py` |
+| Muesca + defer + coast trim | `limit_notch.py`, `command.py` (`coast_trim_deferred`) |
 | Feedback decel + aire | `brake_feedback.py`, `brake_air.py` |
 | EMA online | `learner.py`, `learner_v1.py` |
 | RELEASE cinemático (BRAKE_LIMIT) | `physics.py`, `command.py` |
@@ -27,27 +27,29 @@ No sustituye `pytest`; complementa prueba de campo.
 | FSM dwell andén | `p1_station_gate` — suprime P1 en `STOPPED`/`DEPARTING` |
 | Replay sesión | `session_report.py` — HTML con zoom, puertas, marcadores APPLY |
 
-**Fuera de alcance** hasta nueva fase: señal P1 completa (`evaluate_signal_brake`), dwell puertas
-completo (paso 7), `limit_planner.py`, COAST_PWR en WATCH, filtro `tsw_hud.db` en planning V2,
-aprendizaje por distancia integrada (solo EMA tick a tick con filtro aire).
+**Fuera de alcance** hasta nueva fase: frenada gradual señal (`evaluate_signal_brake` — paso 5),
+dwell puertas completo (paso 7), `limit_planner.py`, COAST_PWR en WATCH, filtro `tsw_hud.db` en
+planning V2, aprendizaje por distancia integrada (solo EMA tick a tick con filtro aire).
+
+**Parcial (2026-09-12):** probe + trace + replay HTML registran `signal_red`; P1 solo emergencia
+(`p1_emergency`).
 
 ---
 
 ## Antes de cada sesión
 
 ```bat
-V2\test_pytest.bat
 ```
 
 - [ ] Probe instalado · Class 323 · Cross-City (o ruta con 60→55).
 - [ ] **Copia de seguridad del perfil** (si vas a aprender online):
 
 ```bat
-copy logs\profiles\Class_323.json logs\profiles\Class_323.bak.json
 ```
 
 - [ ] Palanca neutro/tracción al arrancar el agente; sin freno manual.
 - [ ] **Modo `station`:** TSW6 con `-HTTPAPI` · `CommAPIKey.txt` presente · servicio con paradas en
+
   `data\timetable.json` (p. ej. headcode `2R17`).
 
 ---
@@ -55,7 +57,6 @@ copy logs\profiles\Class_323.json logs\profiles\Class_323.bak.json
 ## Ejecutar sesión (cartel)
 
 ```bat
-V2\run_p1_session.bat limit cross-city
 ```
 
 Conduce **≥ 5 min** · varios carteles 60→55 y 55→45 · Ctrl+C al cerrar.
@@ -63,14 +64,11 @@ Conduce **≥ 5 min** · varios carteles 60→55 y 55→45 · Ctrl+C al cerrar.
 Al salir, busca en consola:
 
 ```text
-perfil -> logs\profiles\Class_323.json (fill=…, decel_n=…)
-replay -> logs\v2\…_cross-city_limit.html
 ```
 
 Regenerar HTML (si hace falta):
 
 ```bat
-python scripts\tools\summarize_v2_limit.py logs\v2\<tu_sesion>.jsonl --html
 ```
 
 ---
@@ -81,8 +79,9 @@ python scripts\tools\summarize_v2_limit.py logs\v2\<tu_sesion>.jsonl --html
 | --- | --- |
 | **Consola** | `decel_n > 0` solo con frenadas reales; sin errores IPC masivos |
 | **Resumen** | `python scripts\tools\summarize_v2_limit.py …jsonl` — APPLY/RELEASE razonables |
-| **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire |
-| **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno |
+| **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire; sección **Señal (rojo)** si hubo ticks rojos |
+| **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno; `signal_red`/`signal_dist_m` si pasas semáforo rojo |
+| **Consola investigate** | `sig=ROJO@…m` cuando probe emite rojo |
 | **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
 | **RELEASE** | Bajada: ~55–56 mph proyectado; llano/subida: `spd ≤ objetivo + 0.4` (no undershoot a 44 en 60→50) |
 
@@ -98,6 +97,9 @@ python scripts\tools\summarize_v2_limit.py logs\v2\<tu_sesion>.jsonl --html
 | GAP | 0 o bajo | Muchos `command_none` cerca cartel |
 | `decel_n` al cerrar | 20–80 en sesión ≥10 min con frenadas | 0–5 (aire/bombeo) |
 | 1er APPLY 60→55 | HOLD_DH ~700 m si pico ~60.4 | `plan` ~500 m sin HOLD_DH |
+| 45→60 en subida | COAST sin B1; sin HOLD_DH | B1 @ 55 mph en P6; sin `sig=` si probe viejo |
+| 70→45 caída grande | Primer APPLY ≥ B2 si ≥18 mph de caída | Atascado en B1 con P ~1.6 bar |
+| Señal rojo salida | `signal_red` en JSONL + HTML | Solo HUD; consola sin `sig=` |
 
 ### Referencia (sesiones Cross-City guardadas)
 
@@ -106,6 +108,8 @@ python scripts\tools\summarize_v2_limit.py logs\v2\<tu_sesion>.jsonl --html
 | `20260908T215743Z` | Mucho `a_obs` pre-filtro aire agresivo — restaurar perfil si EMA raro |
 | `20260908T222629Z` | Poco aprendizaje (8 muestras); bombeo; sin HOLD_DH |
 | `20260908T225707Z` | Mejor línea base: HOLD_DH, ~27 muestras limpias, `decel_n` modesto |
+| `20260912T183116Z` | **Antes fix:** 70→45 atascado B1 @ ~1.6 bar — **tras fix:** B2 mínimo, umbral 1.55 bar |
+| `20260912T201456Z` | **Antes fix:** P6 @ 55 sin coast + HOLD_DH uphill 45→60 — **tras fix:** coast trim + sin HOLD en subida |
 
 ---
 
@@ -133,7 +137,8 @@ Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con fil
 | `decel_n` muy alto en 1 sesión | Aprendió transitorios (sesión pre-filtro aire) | Corregido; restaurar perfil |
 | EMA B1 muy bajo (~0.24) | Una sesión agresiva | Restaurar backup; validar 2–3 sesiones |
 | `ack_timeout` en log UE4SS | IPC puntual | Secundario si mandos llegan |
-| HOLD_DH + WATCH mezclados en estado | Deuda `limit_planner` (dos histéresis/tick) | Conocido, bajo impacto lejos |
+| HOLD_DH + WATCH mezclados en estado | Mitigado con snapshots en `limits.py` (2026-09-12) | Revisar si reaparece |
+| Rojo en HUD, no en JSONL | Probe sin reinstalar tras cambio Lua | Re-ejecutar `install_ue4ss_probe.bat` |
 | Sin `accel_ms2` en probe | Campo HUD ausente | Feedback/EMA inactivos — revisar probe |
 | `air_ready` con `P=None` | Probe sin cilindro | Modo degradado: APPLY sin gate P |
 | RELEASE ~55 mph y luego ~54 | RELEASE cinemático (proyección `fill`) | No — comportamiento esperado |
@@ -176,26 +181,22 @@ regresión de cartel. **No** valida puertas ni dwell (paso 7).
 | 2 | Clave API | `%USERPROFILE%\Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt` |
 | 3 | Servicio en marcha | Horario cargado (Cross-City 2R17 u otro en `data\timetable.json`) |
 | 4 | Probe + F7 | GetData con `speed`, `dist_limit`, palanca |
-| 5 | pytest local | `V2\test_pytest.bat` verde (~213 tests) |
+| 5 | pytest local | `V2\test_pytest.bat` verde (~600 tests) |
 
 **Fallback sin HTTP** (solo laboratorio): escribe distancia manual y repite la checklist de
 `stn=` / `p1tgt=`:
 
 ```bat
-python V2\scripts\write_planning.py 1200 --stop Sutton --eta 14:32
-V2\run_p1_session.bat station cross-city
 ```
 
 ### Arranque
 
 ```bat
-V2\run_p1_session.bat station cross-city
 ```
 
 Debe aparecer en stderr:
 
 ```text
-AVISO: P1 estación: distancia vía HTTP DriverAid.TrackData (~2 s)
 ```
 
 Si dice `Planning.txt (manual o fallback…)` → no hay HTTP; revisar `-HTTPAPI` y clave antes de
@@ -206,7 +207,9 @@ cerrar la validación.
 1. Salir de Lichfield / tramo con **próxima parada programada** (Four Oaks, Sutton, etc.).
 2. Conducir **≥ 3 min** acercándote a una parada del horario.
 3. Incluir un tramo con **cartel + andén** (p. ej. 60→55 antes de Sutton) para probar
+
    `pick_p1_brake_target`.
+
 4. Llegar a **v ≈ 0** en el andén (parada completa).
 5. Ctrl+C tras la parada o al salir del andén.
 
@@ -228,20 +231,18 @@ cerrar la validación.
 Ejemplo de secuencia esperada:
 
 ```text
-tick=80  spd=58.1 lim=55@420 stn=1840 eff=55 … p1tgt=LIMIT
-tick=220 spd=48.2 lim=—@—   stn=620  eff=45  … p1tgt=STATION p1=APPLY …
-tick=310 spd=8.4  lim=—@—   stn=42   eff=45  … p1tgt=STATION p1=APPLY …
-tick=380 spd=0.6  lim=—@—   stn=12   … fsm=STOPPED p1tgt=LIMIT …
-tick=420 spd=12.0 lim=55@800 stn=350  … fsm=DEPARTING p1tgt=LIMIT …
 ```
 
 ### Qué mirar en JSONL / HTML
 
 - [ ] Líneas con `station_dist_m` o `stn` en investigate coherente con distancia HUD (orden de
+
   magnitud; fin de plataforma, no tablón fino).
+
 - [ ] Al menos un tick con `p1tgt=STATION` (JSONL: `p1_tgt`) antes de la parada.
 - [ ] Sin ráfagas de `command_none` (`GAP`) todo el tramo final si `stn<150`.
 - [ ] `Planning.txt` en `%TEMP%\TSW6Bridge\` se actualiza si HTTP activo (última línea con
+
   `station_dist_m=`).
 
 ### Criterios “sesión andén OK”
@@ -279,7 +280,6 @@ tick=420 spd=12.0 lim=55@800 stn=350  … fsm=DEPARTING p1tgt=LIMIT …
 Guardar JSONL en `logs\v2\` con etiqueta `station` en el nombre. Comparar:
 
 ```bat
-V2\compare_sessions.bat logs\v2\<sesion1>.jsonl logs\v2\<sesion2>.jsonl
 ```
 
 ### Cuando escalar (andén)

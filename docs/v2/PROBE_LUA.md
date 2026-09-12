@@ -37,7 +37,7 @@ Todo lo de [CANAL_CONTROL § Contrato](../CANAL_CONTROL.md#contrato-getdata-v2) 
 | Clave | Build | Notas |
 | --- | --- | --- |
 | `brake_cyl_bar` | `20260905b` | `HUD_GetBrakeGauge_1` → `RedNeedle (Pa)` ÷ 100 000 (323; lab `213100Z`). Fallback `Simulation.BrakeCylinder_*` |
-| `signal_red` + `signal_dist_cm` | `20260902a` | Solo si `signalAspectClass == 2` y dist &gt; 0 |
+| `signal_red` + `signal_dist_cm` | `20260902a` (+ refinado 2026-09-12) | Rojo si enum **2** o string Stop/DANGER/RED; fallback `nextSignals[0]`; si dist ≤ 0 → `1 cm` (salida andén) |
 | `is_slipping` | `20260902a` | `HUD_GetIsSlipping` |
 | `traction_locked` | `20260902a` | `HUD_GetIsTractionLocked` (opcional) |
 
@@ -66,8 +66,10 @@ Todo lo de [CANAL_CONTROL § Contrato](../CANAL_CONTROL.md#contrato-getdata-v2) 
 
 In-game: `seq` ~20 Hz · IPC PBH · rojo en semáforo → `signal_red=1` en F8.
 
+Tras cambiar `telemetry.lua`: `install_ue4ss_probe.bat` (copia `Scripts/` completo).
+
 ## Pendiente producto (no probe)
 
-- Paso 5 PLAN_V2: `evaluate_signal_brake` en Python (P1 rojo)
+- Paso 5 PLAN_V2: `evaluate_signal_brake` en Python (frenada gradual rojo; hoy solo emergencia)
 - Paso 6: cargar `data/vehicles/class_323.json` en IPC (nombres sin heurística)
 - 9b-b: handler slip tras matriz S1–S4

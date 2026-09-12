@@ -176,6 +176,63 @@ def test_descending_zone_no_defer_inside_brake_horizon() -> None:
     )
 
 
+def test_uphill_early_coast_when_brake_deferred_session_201456() -> None:
+    """54 mph @ +0.93 %%, B1 diferido lejos: COAST_PWR, no quedarse en P6."""
+    from tsw6v2.command import command_from_target
+
+    cmd = command_from_target(
+        target_kind="SPEED_LIMIT",
+        distance_m=3980.0,
+        target_speed_mph=34.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=3535.0,
+        apply_now=False,
+        throttle_notch=6,
+        current_notch=6,
+        speed_mph=54.5,
+        gradient_pct=0.93,
+        coast_trim_deferred=True,
+    )
+    assert cmd is not None
+    assert cmd.kind == "COAST_THROTTLE"
+
+
+def test_no_early_coast_without_coast_trim_deferred() -> None:
+    from tsw6v2.command import command_from_target
+
+    cmd = command_from_target(
+        target_kind="SPEED_LIMIT",
+        distance_m=3980.0,
+        target_speed_mph=34.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=3535.0,
+        apply_now=False,
+        throttle_notch=6,
+        current_notch=6,
+        speed_mph=54.5,
+        gradient_pct=0.93,
+        coast_trim_deferred=False,
+    )
+    assert cmd is None
+
+
+def test_no_hold_dh_uphill_ascending_exit_session_201456() -> None:
+    """45→60 @ +1 %%: no B1 HOLD_DH al salir de zona lenta."""
+    from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=45.58,
+        limit_mph=60.0,
+        distance_m=724.4,
+        gradient_pct=1.05,
+        posted_limit_mph=45.0,
+    )
+    assert r is None or not r.downhill_hold
+
+
 def test_coast_trim_not_when_over_current_ops_band() -> None:
     from tsw6v2.limit_notch import downhill_defer_brake_commit
 

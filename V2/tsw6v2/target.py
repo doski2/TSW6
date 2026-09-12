@@ -38,6 +38,7 @@ class BrakeTargetResult:
     apply_now: bool
     detail: str = ""
     downhill_hold: bool = False
+    coast_trim_deferred: bool = False
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
     fb_shortfall: bool = False
@@ -74,6 +75,7 @@ class BrakeTargetResult:
             detail=self.detail,
             gradient_pct=gradient_pct,
             brake_committed=brake_committed,
+            coast_trim_deferred=self.coast_trim_deferred,
         )
 
 

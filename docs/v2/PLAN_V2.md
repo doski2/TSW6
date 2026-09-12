@@ -11,7 +11,8 @@ referencia, no el producto v2.
 **Laboratorio Lua (diseño):** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) — mod aparte, no mezclar
 con el probe.
 **Python v2:** todo código producto nuevo en **`V2/tsw6v2/`** — ver [CODIGO_V2.md](CODIGO_V2.md).
-**Python v1 (legacy, no producto):** `tsw6/autopilot/` — no usar en sesiones nuevas; `autopilot_limit`
+**Python v1 (legacy, no producto):** `tsw6/autopilot/` — no usar en sesiones nuevas;
+`autopilot_limit`
 solo puente GUI v1 si alguien arranca `iniciar_autopilot.bat`. Perfil andén canónico:
 `V2/tsw6v2/station_plan.py` (archive `braking_v1_autopilot/station_plan.py` = shim re-export).
 No ampliar v1 salvo bug crítico.
@@ -473,7 +474,9 @@ aire lento.
 
 ###### Nota cilindro (histórico lab)
 
-###### Nota cilindro (histórico lab):** `Simulation` Lua 323 no leía presión; **`HUD_GetBrakeGauge_1`
+###### Nota cilindro (histórico lab)
+
+**Nota cilindro (histórico lab):** `Simulation` Lua 323 no leía presión; **`HUD_GetBrakeGauge_1`
 
 (`RedNeedle (Pa)` ÷ 100 000 ≈ bar) coincide con HTTP cilindro en `213100Z`. Producción: probe
 `brake_cyl_bar` en tick — ver [PROBE_LUA](PROBE_LUA.md) (`HUD_GetBrakeGauge_1`, no Simulation Lua).
@@ -875,18 +878,18 @@ Validación: tarjeta **C2** (tras C1) · [DRIVERAID_API.md](../reference/DRIVERA
 **Diseño completo:** [§3](#3-semáforos-diseño-v2-no-apéndice) (solo rojo, S-Lua, D3/D8 cerrados).
 Aquí: **restricción de canal** y **hueco en código** — el plan ya está; falta cablear C1.
 
-Referencia código: `mods/TelemetryProbeMod/Scripts/main.lua` (pendiente `extract_signal_red`),
-`archive/braking_v1_autopilot/objectives.py` (`evaluate_signal_brake` stub, `is_red_signal_aspect`).
-Portar emergencia SIGNAL a `V2/tsw6v2/` con C1.
+Referencia código: `mods/TelemetryProbeMod/Scripts/telemetry.lua` (`extract_signal_red`),
+`archive/braking_v1_autopilot/objectives.py` (`evaluate_signal_brake` stub).
 
 **Dos capas (no confundir):**
 
 | Capa | Estado | Notas |
 | --- | --- | --- |
-| Probe GetData | ❌ | Sin `signal_red` / `signal_dist_cm` (presupuesto §4.1: +2 escalares) |
-| Parser / `TrainState` / decider | ❌ | No cableado desde GetData |
+| Probe GetData | ✅ | `signal_red` + `signal_dist_cm` (enum 2, Stop/DANGER/RED, fallback `nextSignals[0]`) |
+| Parser / `TrainState` | ✅ | `signal_red`, `signal_dist_m` en snapshot |
+| Trace / replay | ✅ | JSONL + investigate `sig=ROJO@…m`; HTML sección **Señal** (`session_report`) |
 | P1 emergencia | ✅ | Dist + aspecto rojo → `check_p1_emergency` (`test_signal_emergency_red_aspect`) |
-| P1 plan gradual | ❌ | `evaluate_signal_brake` stub — sin candidato `SIGNAL` en cola normal |
+| P1 plan gradual | ❌ | `evaluate_signal_brake` stub — sin candidato `SIGNAL` en cola normal (paso **5**) |
 | Policy prioridad | ✅ | `should_prefer_signal_over_limit`, `signal_behind_station` (~50 m) |
 
 La API HTTP (`distanceToSignal`, `signalAspectClass`) **existe** pero **no** es canal de tick (D3).
@@ -899,8 +902,8 @@ El hueco operativo no es “falta de diseño” sino **probe → P1**.
 
 | Estado | Qué | Bloqueo |
 | --- | --- | --- |
-| **Elegido** | S-Lua: `signal_red=1` + `signal_dist_cm` solo con rojo adelante | F9 + `extract_signal_red` |
-| **Parcial** | Emergencia diseñada en archive v1 | `evaluate_signal_brake` + telemetría GetData (C1) |
+| **Elegido** | S-Lua: `signal_red=1` + `signal_dist_cm` con rojo adelante | `extract_signal_red` en probe ✅ |
+| **Parcial** | C1 probe + trace cerrados; plan gradual pendiente | `evaluate_signal_brake` (paso **5**) |
 | **Fuera v2** | HTTP tick; ámbar/verde; cola `nextSignals[]` | §3, D3, D8 |
 | **Aplazado** | Rojo con permiso de escenario (pasar en rojo) | Sesión C1 si aparece caso |
 
@@ -916,12 +919,10 @@ Dudas de producto y mapeo Stop/DANGER: ver **§3** (no duplicar aquí).
 
 Igual que **§3**, más checklist de cableado:
 
-- `extract_signal_red` en probe; claves solo si rojo y `dist_cm > 0`.
-- Parser GetData → `TrainState` → `speed_decider` → `tsw6v2.autopilot_limit` (cartel) o FSM
-
-  estación.
-
-- `evaluate_signal_brake` deja de ser stub; tests fixture `signal_red=1` (D7).
+- [x] `extract_signal_red` en probe; dist mínima 1 cm si HUD rojo con dist 0 (salida andén).
+- [x] Parser GetData → `TrainState` → trace JSONL + replay HTML.
+- [ ] `evaluate_signal_brake` deja de ser stub; candidato `SIGNAL` en cola P1 normal.
+- [x] Tests fixture `signal_red=1` (`test_trace`, emergencia).
 - Cross-City 323: rojo a distancia conocida → P1 frena (plan o emergencia); GetData ~20 Hz sin
 
   freeze.
@@ -1516,14 +1517,15 @@ andén conocido; revisar §4.6 vs log. (`test_brake_station` archivado con coord
 
 ### Fase 4 — Señales rojas (mínimo viable)
 
-Diseño hecho (§3). Referencia emergencia en archive v1. Cableado pendiente tarjeta **C1**.
+Diseño hecho (§3). **C1 probe + trace cerrados** (2026-09-12). Pendiente plan gradual (paso **5**).
 
-- [ ] `extract_signal_red` en probe → `signal_red` + `signal_dist_cm` (S-Lua).
-- [ ] Quitar stub `evaluate_signal_brake`; rojo → plan a 0 o emergencia.
-- [ ] Fixtures GetData + dumps DRIVERAID (D7).
+- [x] `extract_signal_red` en probe → `signal_red` + `signal_dist_cm` (S-Lua).
+- [x] Parser + trace JSONL + replay HTML (`test_trace`, `test_session_report`).
+- [ ] Quitar stub `evaluate_signal_brake`; rojo → plan gradual a 0 (además de emergencia).
+- [x] Fixtures GetData `signal_red=1` (D7).
 
-**Validación:** `test_signal_emergency_red_aspect` (o equivalente); fixture `signal_red=1`;
-sesión **C1** in-game; §3 criterios de cierre.
+**Validación:** emergencia `test_signal_emergency_red_aspect`; sesión **C1** in-game con `sig=` en
+consola y sección HTML **Señal**; §3 criterios de cierre probe.
 
 ### Fase 5 — Techo de vía + cola de límites
 
@@ -1592,12 +1594,18 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 desbloquea C1/G-B sin hinchar el probe. No sustituye pasos 1–10.
 
 **Sesión actual:** paso **3** — cartel + **andén P1** en `V2/tsw6v2/`; **157 tests** `V2/tests/`.
-Stack: HOLD_DH / BRAKE_LIMIT, muesca + defer, feedback decel (`brake_feedback`), EMA online con filtro
-aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. Andén: `station_plan` + `station_brake` + `p1_policy` + `planning_poller`
-(HTTP `DriverAid.TrackData` ~2 s + `v×dt`; fallback `Planning.txt`). **Subfase:** validación campo cartel y andén
+Stack: HOLD_DH / BRAKE_LIMIT, muesca + defer, feedback decel (`brake_feedback`), EMA online con
+filtro
+aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. Andén: `station_plan`
+
++ `station_brake` + `p1_policy` + `planning_poller`
+
+(HTTP `DriverAid.TrackData` ~2 s + `v×dt`; fallback `Planning.txt`). **Subfase:** validación campo
+cartel y andén
 ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) — checklist `station` + HTTP); sesión ref.
 cartel `20260908T225707Z`. Pasos
-**2** y **4** cerrados. Señal en P1 solo emergencia (`p1_emergency`); `evaluate_signal_brake` paso **5**.
+**2** y **4** cerrados. Señal en P1 solo emergencia (`p1_emergency`); `evaluate_signal_brake` paso
+**5**.
 FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `run_p1_session.bat`
 — **no** `tsw6/autopilot/`. **Siguiente código:** cerrar validación paso 3 → paso **5** señal.
 
@@ -1605,6 +1613,11 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
+| 2026-09-12 | 3 / cartel | Dos rutas mutaban `LimitBrakeState` | Evaluación dual con `snapshot()`/`replace_from()`; learner solo en ruta BRAKE_LIMIT ganadora |
+| 2026-09-12 | 3 / cartel | Horizonte duplicado | `limit_horizon.py` — fuente única `next_limit_brake_horizon_m` |
+| 2026-09-12 | 3 / cartel | 70→45 atascado B1 | `BRAKE_PLAN_LARGE_DROP_MPH=18` → mínimo B2; histéresis usa muesca de `pick_weakest`; aire 323 @ 1.55 bar |
+| 2026-09-12 | 3 / cartel | 45→60 uphill sin coast | `coast_trim_deferred` + `early_coast` en subida; sin HOLD_DH en salida lenta→rápida en cuesta (`201456Z`) |
+| 2026-09-12 | 4 / C1 | Rojo solo enum 2 | Probe: strings Stop/DANGER/RED, fallback `nextSignals[0]`, dist=1 cm; trace + replay HTML señal |
 | 2026-09-10 | 3 / estación | HTTP solo en v1 telemetry | `planning_poller` + `driver_aid_stations` + `bridge/http_api` en V2; `StationPlanning` en `AgentLoop`; fallback `Planning.txt`; script `V2/scripts/write_planning.py` |
 | 2026-09-10 | 3 / estación | Cartel tras andén + gate dwell | `limit_sign_beyond_station`; `p1_station_gate`; sesiones `210853Z`/`213010Z`; [REGLAS §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos) |
 | 2026-09-10 | 3 / estación | Prioridad cartel↔andén | `will_be_below_limit_at_pass`: bajo el next + proyección legal → STATION; doc [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos) |
@@ -1626,8 +1639,11 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
 ## Prioridad (resumen)
 
-1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)); pytest verde (~213 tests).
-2. **Paso 5 / C1** — señal roja en P1 (paso 4 probe cerrado); fixture + sesión in-game.
+1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md));
+
+   pytest verde (~600 tests).
+
+2. **Paso 5** — `evaluate_signal_brake` (frenada gradual rojo); C1 probe + trace **cerrados**.
 3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisión `tsw_hud.db` si falla match.
 4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.
 5. **Siempre** — checklist transversal al cerrar cada paso (pytest, delta, probe si Lua).
@@ -1642,6 +1658,8 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
 #### Siguiente código
 
-**Siguiente código:** cerrar validación **paso 3**; luego paso **5** (`evaluate_signal_brake`, rojo en P1).
-Tarjetas in-game: **C1** señales · **C2** andén (pasos 6–7). Canal: [CANAL_CONTROL](../CANAL_CONTROL.md) ·
+**Siguiente código:** cerrar validación **paso 3**; luego paso **5** (`evaluate_signal_brake`, rojo
+en P1).
+Tarjetas in-game: **C1** señales · **C2** andén (pasos 6–7). Canal:
+[CANAL_CONTROL](../CANAL_CONTROL.md) ·
 probe: [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).

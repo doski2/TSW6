@@ -85,8 +85,8 @@ D2](v2/PLAN_V2.md#d2--schema-getdata)):
 | `odo_m` | float | odómetro | C.3a, estaciones |
 | `doors_telem` | 0/1 | telemetría | FSM (opcional) |
 | `doors_dmi` | 0/1 | DMI | FSM puertas |
-| `signal_red` | 0/1 | DriverAid `signalAspectClass==2` | P1 rojo (paso 5) |
-| `signal_dist_cm` | float | DriverAid distancia señal (cm) | Con `signal_red=1` |
+| `signal_red` | 0/1 | `extract_signal_red` — enum 2 o Stop/DANGER/RED; fallback `nextSignals[0]` | P1 emergencia hoy; plan gradual paso 5 |
+| `signal_dist_cm` | float | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1** | Con `signal_red=1` |
 | `is_slipping` | 0/1 | `HUD_GetIsSlipping` | Log 9b-a; handler 9b-b pendiente |
 | `traction_locked` | 0/1 | `HUD_GetIsTractionLocked` | Opcional con slip |
 

@@ -126,6 +126,8 @@ class JsonlTrace:
             "doors_telem": snap.doors_telem,
             "doors_dmi": snap.doors_dmi,
             "doors_open": snap.doors_open,
+            "signal_red": snap.signal_red,
+            "signal_dist_m": _round_opt(snap.signal_dist_m, 1),
             "p1_tgt": snap.p1_target_kind or None,
             "vehicle": snap.vehicle,
             "p1": p1 or None,
@@ -199,6 +201,13 @@ def format_investigate(snap: AgentSnapshot) -> str:
     ]
     if snap.station_fsm:
         parts.append(f"fsm={snap.station_fsm}")
+    if snap.signal_red is True:
+        sig_d = (
+            f"{snap.signal_dist_m:.0f}"
+            if snap.signal_dist_m is not None
+            else "?"
+        )
+        parts.append(f"sig=ROJO@{sig_d}m")
     if snap.doors_telem is not None or snap.doors_dmi is not None or snap.doors_open is not None:
         telem = "1" if snap.doors_telem else ("0" if snap.doors_telem is False else "—")
         dmi = "1" if snap.doors_dmi else ("0" if snap.doors_dmi is False else "—")

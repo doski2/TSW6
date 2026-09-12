@@ -165,11 +165,72 @@ def summarize(path: Path) -> dict[str, Any]:
                 doors_dmi=t.get("doors_dmi"),
             ) is True
         ),
+        "signal_red_ticks": sum(1 for t in ticks if t.get("signal_red") is True),
+        "signal_events": _signal_event_rows(ticks),
     }
 
 
 def _session_has_station(ticks: list[dict[str, Any]]) -> bool:
     return any(t.get("stn_dist_m") is not None for t in ticks)
+
+
+def _session_has_signal(ticks: list[dict[str, Any]]) -> bool:
+    return any(t.get("signal_red") is True for t in ticks)
+
+
+def _signal_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:
+    """Transiciones señal roja y emergencias SIGNAL."""
+    rows: list[dict[str, Any]] = []
+    prev_red = False
+    prev_emerg = False
+    for t in ticks:
+        red = t.get("signal_red") is True
+        dist = t.get("signal_dist_m")
+        p1 = t.get("p1") or {}
+        reason = str(p1.get("reason") or "")
+        emerg = reason == "emergency" or "SIGNAL" in str(p1.get("detail") or "")
+        if red and not prev_red:
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(_tick_t_s(t), 1),
+                    "event": "señal ROJO",
+                    "dist_m": dist,
+                    "spd": t.get("spd_mph"),
+                    "cmd": p1.get("cmd"),
+                    "why": reason or None,
+                    "detail": p1.get("detail") or "",
+                }
+            )
+        elif prev_red and not red:
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(_tick_t_s(t), 1),
+                    "event": "señal clear",
+                    "dist_m": dist,
+                    "spd": t.get("spd_mph"),
+                    "cmd": p1.get("cmd"),
+                    "why": reason or None,
+                    "detail": "",
+                }
+            )
+        if emerg and not prev_emerg:
+            rows.append(
+                {
+                    "tick": t["tick"],
+                    "t_s": round(_tick_t_s(t), 1),
+                    "event": "emergencia SIGNAL",
+                    "dist_m": dist,
+                    "spd": t.get("spd_mph"),
+                    "cmd": p1.get("cmd"),
+                    "why": reason,
+                    "detail": p1.get("detail") or "",
+                }
+            )
+        prev_red = red
+        prev_emerg = emerg
+    return rows[:limit]
 
 
 def _station_event_rows(ticks: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:
@@ -1062,9 +1123,28 @@ def _downsample_series(ticks: list[dict[str, Any]], max_pts: int = 800) -> list[
                 "a_obs": (t.get("fb") or {}).get("a_obs_ms2"),
                 "a_pred": (t.get("fb") or {}).get("a_pred_ms2"),
                 "fb_sf": bool((t.get("fb") or {}).get("shortfall")),
+                "sig_red": t.get("signal_red"),
+                "sig_m": t.get("signal_dist_m"),
             }
         )
     return out
+
+
+def _render_signal_rows(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return '<tr><td colspan="7">Sin eventos de señal (probe sin <code>signal_red</code>)</td></tr>'
+    rows: list[str] = []
+    for e in events:
+        dist = e.get("dist_m")
+        dist_s = f"{float(dist):.0f}" if isinstance(dist, (int, float)) else "—"
+        spd = e.get("spd")
+        spd_s = f"{float(spd):.1f}" if isinstance(spd, (int, float)) else "—"
+        rows.append(
+            f'<tr><td>{e.get("t_s")}</td><td>{e.get("event")}</td><td>{dist_s} m</td>'
+            f'<td>{spd_s}</td><td>{e.get("cmd") or "—"}</td>'
+            f'<td>{e.get("why") or "—"}</td><td>{e.get("detail") or ""}</td></tr>'
+        )
+    return "".join(rows)
 
 
 def _render_station_rows(events: list[dict[str, Any]]) -> str:
@@ -1093,6 +1173,7 @@ def write_html_replay(path: Path, out: Path) -> None:
         raise ValueError("sin ticks")
     summary = summarize(path)
     has_station = _session_has_station(ticks)
+    has_signal = _session_has_signal(ticks)
     series = _downsample_series(ticks)
     markers = _kinematic_markers(ticks)
     layers_meta = {
@@ -1109,6 +1190,7 @@ def write_html_replay(path: Path, out: Path) -> None:
     data_json = json.dumps(payload, ensure_ascii=False)
     ds0_rows = _render_ds0_rows(markers)
     station_rows = _render_station_rows(summary.get("station_events") or [])
+    signal_rows = _render_signal_rows(summary.get("signal_events") or [])
     chart_svg = _render_chart_svg(series, markers, show_station=has_station)
     warn_html = _session_warning_html(summary)
     meta_html = _meta_line(summary)
@@ -1122,6 +1204,17 @@ def write_html_replay(path: Path, out: Path) -> None:
         else "Seis paneles: <b>velocidad</b> · <b>m al cartel</b> · <b>ds</b> · "
         "<b>presión bar</b> · <b>decel obs/pred</b> · <b>capa</b>."
     )
+    signal_section = ""
+    if has_signal:
+        sig_ticks = int(summary.get("signal_red_ticks") or 0)
+        signal_section = f"""
+<h2>Señal (rojo)</h2>
+<p class="leg">Ticks con <code>signal_red=true</code>: <b>{sig_ticks}</b>.
+P1 v2 solo emergencia ante rojo (paso 5 = frenada gradual pendiente).</p>
+<table id="signal"><thead><tr>
+<th>t(s)</th><th>evento</th><th>dist</th><th>spd</th><th>cmd</th><th>why</th><th>detalle</th>
+</tr></thead><tbody>{signal_rows}</tbody></table>
+"""
     station_section = ""
     if has_station:
         stn_ticks = int(summary.get("station_ticks") or 0)
@@ -1182,6 +1275,7 @@ puertas telem: <b>{doors_telem}</b> · DMI: <b>{doors_dmi}</b> · abiertas: <b>{
 <svg id="chart" viewBox="0 0 {_CHART_W} {chart_h}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">{chart_svg}</svg>
 </div>
 {station_section}
+{signal_section}
 <h2>Capas (tiempo en sesión)</h2>
 <div class="stats" id="layer-stats">{layer_stats_html}</div>
 <h2>Marcas cinemáticas (ideal vs APPLY)</h2>
@@ -1219,6 +1313,7 @@ const stats = [
   ['FB medido', s.fb_ticks||0], ['FB shortfall', s.fb_shortfall||0],
   ['FB escaló', s.fb_escalated||0], ['Espera aire', s.air_fill_ticks||0],
   ...(s.station_ticks ? [['Andén ticks', s.station_ticks], ['STATION tgt', s.p1_tgt_station_ticks||0]] : []),
+  ...(s.signal_red_ticks ? [['Señal rojo', s.signal_red_ticks]] : []),
 ];
 document.getElementById('stats').innerHTML = stats.map(([k,v]) =>
   `<div class="stat"><b>${{v}}</b>${{k}}</div>`).join('');

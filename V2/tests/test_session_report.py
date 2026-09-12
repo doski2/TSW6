@@ -48,6 +48,40 @@ def test_finalize_session_report(tmp_path: Path) -> None:
     assert data["apply_ticks"] == 1
 
 
+def test_html_signal_section(tmp_path: Path) -> None:
+    p = tmp_path / "sig.jsonl"
+    rows = [
+        {"type": "session", "mode": "station", "route": "test"},
+        {
+            "type": "tick",
+            "tick": 1,
+            "t_ms": 0,
+            "spd_mph": 15.0,
+            "signal_red": True,
+            "signal_dist_m": 120.0,
+            "p1": {"reason": "no_plan"},
+        },
+        {
+            "type": "tick",
+            "tick": 2,
+            "t_ms": 1000,
+            "spd_mph": 14.0,
+            "signal_red": False,
+            "signal_dist_m": None,
+            "p1": {"reason": "no_plan"},
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    out = tmp_path / "out.html"
+    write_html_replay(p, out)
+    text = out.read_text(encoding="utf-8")
+    assert "Señal (rojo)" in text
+    assert "señal ROJO" in text
+    data = summarize(p)
+    assert data["signal_red_ticks"] == 1
+    assert len(data["signal_events"]) >= 1
+
+
 def test_html_shows_ds_zero_and_apply_zone(tmp_path: Path) -> None:
     p = tmp_path / "cross.jsonl"
     rows = [

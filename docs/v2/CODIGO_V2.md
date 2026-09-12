@@ -32,14 +32,14 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 
 ## v1 vs V2
 
-| Situación | Qué hacer |
-| --- | --- |
-| Feature nueva cartel/bajada | Solo `V2/tsw6v2/` + `V2/tests/` |
-| Sesión P1 cartel / andén | `V2\run_p1_session.bat limit\|station` → `AgentLoop` + `evaluate_p1_tick` |
-| Planning andén sin HTTP | `V2\scripts\write_planning.py <metros>` → `%TEMP%\TSW6Bridge\Planning.txt` |
-| Legacy GUI v1 (`iniciar_autopilot.bat`) | No usar en producto v2 |
-| Bug en v1 producción | Arreglo mínimo **o** portar regla a V2 |
-| Import desde v1 en `tsw6v2/` | **Prohibido** — contrato D2 en `bridge/` |
+| Situación | Qué hacer | |
+| --- | --- | --- |
+| Feature nueva cartel/bajada | Solo `V2/tsw6v2/` + `V2/tests/` | |
+| Sesión P1 cartel / andén | `V2\run_p1_session.bat limit\ | station` → `AgentLoop` + `evaluate_p1_tick` |
+| Planning andén sin HTTP | `V2\scripts\write_planning.py <metros>` → `%TEMP%\TSW6Bridge\Planning.txt` | |
+| Legacy GUI v1 (`iniciar_autopilot.bat`) | No usar en producto v2 | |
+| Bug en v1 producción | Arreglo mínimo **o** portar regla a V2 | |
+| Import desde v1 en `tsw6v2/` | **Prohibido** — contrato D2 en `bridge/` | |
 
 ## Estado (pasos PLAN_V2)
 
@@ -47,10 +47,11 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 | --- | --- | --- |
 | 1 | Contrato GetData | Casi cerrado |
 | 2 | Esqueleto `V2/tsw6v2/` | **Cerrado** (pytest + `test-ipc` in-game) |
-| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~213 tests `V2/tests/`) · `run_p1_session` limit/station |
+| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~600 tests `V2/tests/`) · `run_p1_session` limit/station |
 
-Módulos cartel: `planning` · `limit_state` · `limit_notch` · `limit_containment` · `limits` ·
-`decision`. Andén: `station_plan` · `station_brake` · `p1_policy` · `limit_station_cluster` ·
+Módulos cartel: `planning` · `limit_state` · `limit_horizon` · `limit_notch` ·
+`limit_containment` · `limits` · `decision` · `trace`. Andén: `station_plan` · `station_brake` ·
+`p1_policy` · `limit_station_cluster` ·
 `p1_station_gate` · `planning_poller` (HTTP `DriverAid.TrackData` + fallback `Planning.txt`) ·
 `session_report` — ver
 [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_) y

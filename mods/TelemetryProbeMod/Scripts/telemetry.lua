@@ -129,21 +129,56 @@ local function extract_gradient(driverAid)
     return nil
 end
 
--- C1 (PLAN_V2 §3): solo si aspecto rojo adelante (UK 323 enum 2).
+local RED_ASPECT_STRINGS = { STOP = true, DANGER = true, RED = true }
+
+local function is_red_signal_aspect(v)
+    if v == nil then return false end
+    local n = util.pick_float(v)
+    if n ~= nil and math.floor(n + 0.5) == config.SIGNAL_RED_ASPECT then
+        return true
+    end
+    local s = util.lua_str(v)
+    if s == nil then return false end
+    local upper = string.upper(s)
+    if RED_ASPECT_STRINGS[upper] then return true end
+    return string.find(upper, "DANGER", 1, true) ~= nil
+end
+
+local function read_first_next_signal(driverAid)
+    local arr = driverAid.nextSignals or driverAid.NextSignals
+    if arr == nil then return nil, nil end
+    local item = nil
+    pcall(function() item = arr[0] end)
+    if item == nil then pcall(function() item = arr[1] end) end
+    if type(item) ~= "table" then return nil, nil end
+    local aspect = item.value or item.Value or item.signalAspectClass or item.SignalAspectClass
+    local dist_cm = util.pick_float(
+        item.distanceToNextSignal,
+        item.DistanceToNextSignal)
+    return aspect, dist_cm
+end
+
+-- C1 (PLAN_V2 §3): rojo adelante (UK 323 enum 2 o Stop/DANGER).
 function M.extract_signal_red(driverAid)
-    local aspect = util.pick_float(
-        driverAid.signalAspectClass,
-        driverAid.SignalAspectClass)
+    local aspect = driverAid.signalAspectClass or driverAid.SignalAspectClass
     local dist_cm = util.pick_float(
         driverAid.distanceToSignal,
         driverAid.DistanceToSignal)
-    if aspect == nil or dist_cm == nil or dist_cm <= 0 then
+    if not is_red_signal_aspect(aspect) then
+        local sig_aspect, sig_dist = read_first_next_signal(driverAid)
+        if is_red_signal_aspect(sig_aspect) then
+            aspect = sig_aspect
+            if sig_dist ~= nil then dist_cm = sig_dist end
+        end
+    end
+    if not is_red_signal_aspect(aspect) then
         return nil, nil
     end
-    if math.floor(aspect + 0.5) == config.SIGNAL_RED_ASPECT then
-        return 1, dist_cm
+    -- Al salir del andén dist puede ser 0/nil aunque el HUD muestre rojo.
+    if dist_cm == nil or dist_cm <= 0 then
+        dist_cm = 1.0
     end
-    return nil, nil
+    return 1, dist_cm
 end
 
 local function read_driver_aid(controller)

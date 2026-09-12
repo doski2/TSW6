@@ -16,6 +16,7 @@ from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     brake_command_apply_zone_m,
     is_downhill_gradient,
+    is_uphill_gradient,
     limit_release_speed_ready,
     should_emit_brake_command,
     speed_limit_pre_coast_horizon_m,
@@ -137,6 +138,7 @@ def command_from_target(
     detail: str = "",
     gradient_pct: float = 0.0,
     brake_committed: bool = False,
+    coast_trim_deferred: bool = False,
 ) -> Optional[BrakeCommand]:
     """
     APPLY / COAST desde plan (sin RELEASE — ver ``resolve_release_command``).
@@ -160,7 +162,13 @@ def command_from_target(
             apply_at_remaining_m=apply_at_remaining_m,
             dist_start=dist_start,
         )
-        if not in_window and dist_start > coast_h:
+        # Subida + coast trim: soltar tracción lejos del cartel (sesión 201456Z).
+        early_coast = (
+            traction
+            and coast_trim_deferred
+            and is_uphill_gradient(gradient_pct)
+        )
+        if not in_window and dist_start > coast_h and not early_coast:
             return None
         if traction:
             return BrakeCommand(

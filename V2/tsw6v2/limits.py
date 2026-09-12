@@ -259,6 +259,7 @@ def _evaluate_next_limit_brake(
         phase=phase,
         dist_start=dist_start,
         apply_now=apply_now,
+        coast_trim_deferred=defer_commit,
         detail=(
             f"Límite {posted:.0f} mph → @{latch.limit_mph:.0f} "
             f"(latched @{latch.latched_speed_mph:.0f})"

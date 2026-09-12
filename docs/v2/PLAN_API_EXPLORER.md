@@ -682,7 +682,8 @@ puede mostrar `Amps` ≠ 0 → entonces cablear en GetData (D2) **solo para ese 
 **Estado:** ⬜ pendiente primera sesión · **Guía producto:** [FREIGHT_NA.md](../v1/FREIGHT_NA.md) ·
 **323 referencia cilindro:** `213100Z` (`HUD_GetBrakeGauge_1` ≈ HTTP `BrakeCylinder_2_1`)
 
-Objetivo: saber **qué manómetro es qué** en cabina freight y si el **depósito principal (MR)** aporta
+Objetivo: saber **qué manómetro es qué** en cabina freight y si el **depósito principal (MR)**
+aporta
 algo que el cilindro / `train_brake` no cubran — **antes** de cablear campos al probe.
 
 #### Qué **no** hacer (cerrado en producto v2)
@@ -748,27 +749,6 @@ correlator es la prueba en SD40.
 #### Plantilla `notas_sesion.md` (pegar en la carpeta de sesión)
 
 ```markdown
-# SD40 — aire y manómetros (L0.6g)
-
-vehicle_class: BNSF_SD40_2_C (o el que devuelva F6)
-consist: ___ vagones · peso cartel: ___ t · largo: ___ yd
-
-## Manómetros (mirando cabina + JSON)
-| Aguja cabina | HUD_GetBrakeGauge | Sube con | Unidad aprox. | ¿= HTTP ...?
-| --- | --- | --- | --- | --- |
-| Izq / MR | _1 / _2 | | bar / psi | |
-| Cilindro / pipe | _1 / _2 | | | BrakeCylinder_* |
-
-## Frenado
-- Auto % mínimo que frena en marcha: ___
-- Dyn útil desde ___ mph hasta ___ mph
-- Tras soltar auto, ¿cuánto hasta segunda frenada fuerte? ___ s
-- MR HTTP bajó tras fila 8–9: sí / no / no legible
-
-## Veredicto L0.6g
-- [ ] gauge → cilindro identificado → candidato `brake_cyl_bar` probe
-- [ ] MR aporta más que cilindro + fill-time → sí / no / solo metadata
-- [ ] `train_brake` + `accel_ms2` bastan para learner auto → sí / no
 ```
 
 #### Criterio de cierre L0.6g → producto

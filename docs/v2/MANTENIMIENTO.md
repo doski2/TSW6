@@ -264,6 +264,7 @@ Cada tick → una línea JSON en `logs/v2/<timestamp>_<route>_limit.jsonl` (o ru
 | `p1.detail` | Texto del plan (contención bajada, latch, …) |
 | `brake_fill_s` | Tiempo de llenado aire aprendido (perfil activo) |
 | `ipc` | Mandos enviados y ACK |
+| `signal_red` / `signal_dist_m` | Semáforo rojo (probe C1); replay HTML sección **Señal** |
 
 Valores de `p1.reason`:
 
@@ -372,7 +373,8 @@ Archive: `station_plan` + `objectives` (estación/señal); coordinator/policy **
 | `limits.py` | Fachada: `evaluate_limit_brake` (HOLD_DH + BRAKE_LIMIT) |
 | `limit_state.py` | Latch, `decel` por muesca, margen reacción + `fill_s` |
 | `limit_notch.py` | Escalón B1→B2→B3, muesca mínima suficiente |
-| `limit_containment.py` | HOLD_DH + horizonte BRAKE_LIMIT |
+| `limit_horizon.py` | Horizonte cinemático al cartel siguiente |
+| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon`) |
 | `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE) |
 | `decision.py` | Tick → `BrakeCommand` |
 | `autopilot_limit.py` | Puente `speed_decider` → `evaluate_limit_tick` |
