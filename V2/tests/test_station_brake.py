@@ -346,6 +346,31 @@ def test_pick_none_when_deferred_and_limit_watch_far():
     assert picked is None
 
 
+def test_pick_none_when_station_deferred_and_limit_watch_only() -> None:
+    """Salida andén: sin plan STATION lejos, cartel WATCH no debe ser objetivo P1."""
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=3998.0,
+        target_speed_mph=34.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=3540.0,
+        apply_now=False,
+        detail="limit",
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=56.0,
+        limit_target=limit,
+        station_target=None,
+        limit_mph=35.0,
+        limit_dist_m=3998.0,
+        station_dist_m=8340.0,
+        effective_limit=60.0,
+        gradient_pct=0.93,
+    )
+    assert picked is None
+
+
 def test_will_be_below_limit_at_pass_coasting():
     assert will_be_below_limit_at_pass(
         speed_mph=52.0,

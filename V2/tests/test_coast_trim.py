@@ -176,21 +176,52 @@ def test_descending_zone_no_defer_inside_brake_horizon() -> None:
     )
 
 
+def test_no_early_coast_descending_60_to_35_far_session_221258() -> None:
+    """56 mph en zona 60, cartel 35 @ 4 km: no COAST_PWR lejos (221258Z)."""
+    from tsw6v2.command import command_from_target
+    from tsw6v2.limit_notch import downhill_defer_brake_commit
+
+    assert not downhill_defer_brake_commit(
+        speed_mph=56.67,
+        ops_target_mph=34.0,
+        distance_m=3998.0,
+        gradient_pct=0.93,
+        dist_start=3540.8,
+        current_posted_mph=60.0,
+        next_posted_mph=35.0,
+    )
+    cmd = command_from_target(
+        target_kind="SPEED_LIMIT",
+        distance_m=3998.0,
+        target_speed_mph=34.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=3540.8,
+        apply_now=False,
+        throttle_notch=6,
+        current_notch=6,
+        speed_mph=56.67,
+        gradient_pct=0.93,
+        coast_trim_deferred=False,
+    )
+    assert cmd is None
+
+
 def test_uphill_early_coast_when_brake_deferred_session_201456() -> None:
-    """54 mph @ +0.93 %%, B1 diferido lejos: COAST_PWR, no quedarse en P6."""
+    """45→60 @ +0.93 %%, coast trim diferido: COAST_PWR antes del cartel."""
     from tsw6v2.command import command_from_target
 
     cmd = command_from_target(
         target_kind="SPEED_LIMIT",
-        distance_m=3980.0,
-        target_speed_mph=34.0,
+        distance_m=724.0,
+        target_speed_mph=59.0,
         handle_notch=3,
         phase="B1",
-        dist_start=3535.0,
+        dist_start=120.0,
         apply_now=False,
         throttle_notch=6,
         current_notch=6,
-        speed_mph=54.5,
+        speed_mph=55.0,
         gradient_pct=0.93,
         coast_trim_deferred=True,
     )

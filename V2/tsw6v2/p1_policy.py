@@ -21,6 +21,7 @@ from tsw6v2.physics import (
     decel_for_notch,
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+from tsw6v2.signal_plan import signal_behind_station
 from tsw6v2.target import BrakeTargetResult
 
 # Margen sobre bd(v→0): sesión 20260909T224556Z entró STATION tarde @ 444 m.
@@ -28,6 +29,15 @@ HORIZON_SLACK_M = 10.0
 # Por debajo: cartel WATCH no gana al andén si el servicio ya debe planificar.
 STATION_APPROACH_PRIORITY_M = 600.0
 STATION_APPROACH_MIN_SPEED_MPH = 15.0
+
+
+def _active_limit_or_none(
+    limit_target: Optional[BrakeTargetResult],
+) -> Optional[BrakeTargetResult]:
+    """Solo cartel con APPLY; WATCH no es objetivo P1 con andén diferido."""
+    if limit_target is None or not limit_target.apply_now:
+        return None
+    return limit_target
 
 
 def should_defer_station_brake(
@@ -129,7 +139,33 @@ def should_delay_unified_station_plan(
     return speed_mph > limit_mph + LIMIT_RELEASE_MAX_OVER_MPH
 
 
-def pick_p1_brake_target(
+def should_prefer_signal_over_limit(
+    signal_target: BrakeTargetResult,
+    limit_target: BrakeTargetResult,
+) -> bool:
+    """Rojo siempre gana al cartel (PLAN_V2 §3 — parar en Stop)."""
+    _ = limit_target
+    return True
+
+
+def should_prefer_signal_over_station(
+    signal_target: BrakeTargetResult,
+    station_target: BrakeTargetResult,
+) -> bool:
+    """Parada a 0: gana el objetivo más cercano (salida andén: señal antes que marcador)."""
+    if signal_behind_station(
+        signal_dist_m=signal_target.distance_m,
+        station_dist_m=station_target.distance_m,
+    ):
+        return False
+    if signal_target.apply_now and not station_target.apply_now:
+        return True
+    if not signal_target.apply_now and station_target.apply_now:
+        return False
+    return signal_target.distance_m <= station_target.distance_m
+
+
+def _pick_limit_station_target(
     *,
     speed_mph: float,
     limit_target: Optional[BrakeTargetResult],
@@ -142,18 +178,25 @@ def pick_p1_brake_target(
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
     accel_ms2: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
-    """Elige un solo objetivo P1 (cartel o andén)."""
-    if station_target is None:
-        return limit_target
-    if limit_target is None:
-        if station_dist_m is None:
-            return None
-        if should_defer_station_brake(
+    """Elige cartel o andén (sin señal)."""
+    station_deferred: Optional[bool] = None
+    if station_dist_m is not None:
+        station_deferred = should_defer_station_brake(
             speed_mph=speed_mph,
             station_dist_m=station_dist_m,
             gradient_pct=gradient_pct,
             brake_fill_s=brake_fill_s,
-        ):
+        )
+
+    if station_target is None:
+        if station_deferred:
+            # Sin plan STATION (lejos): no mostrar cartel WATCH (221258Z salida andén).
+            return _active_limit_or_none(limit_target)
+        return limit_target
+    if limit_target is None:
+        if station_dist_m is None:
+            return None
+        if station_deferred:
             return None
         return station_target
 
@@ -196,13 +239,6 @@ def pick_p1_brake_target(
     ):
         return limit_target
 
-    deferred = should_defer_station_brake(
-        speed_mph=speed_mph,
-        station_dist_m=station_dist_m,
-        gradient_pct=gradient_pct,
-        brake_fill_s=brake_fill_s,
-    )
-
     if should_prefer_station_in_approach(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
@@ -214,10 +250,54 @@ def pick_p1_brake_target(
     ):
         return station_target
 
-    if deferred:
+    if station_deferred:
         # Cartel APPLY gana; WATCH no debe ocultar que aún no toca andén.
-        return limit_target if limit_target.apply_now else None
+        return _active_limit_or_none(limit_target)
 
     if limit_target.urgency <= station_target.urgency:
         return limit_target
     return station_target
+
+
+def pick_p1_brake_target(
+    *,
+    speed_mph: float,
+    limit_target: Optional[BrakeTargetResult],
+    station_target: Optional[BrakeTargetResult],
+    signal_target: Optional[BrakeTargetResult] = None,
+    signal_dist_m: Optional[float] = None,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    effective_limit: Optional[float] = None,
+    gradient_pct: float = 0.0,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    accel_ms2: Optional[float] = None,
+) -> Optional[BrakeTargetResult]:
+    """Elige un solo objetivo P1 (cartel, andén o señal)."""
+    chosen = _pick_limit_station_target(
+        speed_mph=speed_mph,
+        limit_target=limit_target,
+        station_target=station_target,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        effective_limit=effective_limit,
+        gradient_pct=gradient_pct,
+        brake_fill_s=brake_fill_s,
+        accel_ms2=accel_ms2,
+    )
+    if signal_target is None:
+        return chosen
+    if signal_behind_station(
+        signal_dist_m=signal_dist_m if signal_dist_m is not None else signal_target.distance_m,
+        station_dist_m=station_dist_m,
+    ):
+        return chosen
+    if chosen is None:
+        return signal_target
+    if chosen.target_kind == "STATION":
+        if should_prefer_signal_over_station(signal_target, chosen):
+            return signal_target
+        return chosen
+    return signal_target

@@ -60,8 +60,7 @@ Código (`constants.py`):
 2. **Contención bajada** (`pick_downhill_containment`) si superas el techo de la zona vigente.
 3. **BRAKE_LIMIT** en WATCH (lejos, bajo techo de zona) — solo calcula; **no** bloquea HOLD_DH.
 
-##### Evaluación dual (2026-09-12):** BRAKE_LIMIT y HOLD_DH se calculan sobre **copias
-
+**Evaluación dual (2026-09-12):** BRAKE_LIMIT y HOLD_DH se calculan sobre **copias**
 (`LimitBrakeState.snapshot()`); solo la ruta ganadora hace `replace_from` al estado vivo. El learner
 solo observa decel en la ruta BRAKE_LIMIT comprometida — evita latch/EMA contaminados por la rama
 perdedora (sesión `201456Z`).
@@ -116,6 +115,11 @@ next existe), `limits.py` marca `coast_trim_deferred=True` en `BrakeTargetResult
 Caso típico: 45→60 @ +1 %%, P6 con tracción @ 55 mph — soltar gas antes del cartel sin frenar
 (sesión `201456Z`). Tests: `test_coast_trim.py`.
 
+**Excepción caída grande en subida (60→35):** si `posted − next ≥ BRAKE_PLAN_LARGE_DROP_MPH` (18) y
+vas **legal en zona vigente** (p. ej. 56 mph en zona 60) **fuera del horizonte** del cartel 35, **no**
+diferir coast-trim comparando con ops del next (34 mph). Evita `COAST_THROTTLE` a 4 km al salir del
+andén (sesión `221258Z`). Sigue aplicando en 60→55 @ +1 %% (caída posted &lt; 18).
+
 ### 3. Objetivos claros por tick
 
 Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
@@ -128,6 +132,7 @@ Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 | **BRAKE_LIMIT** | Frenar al **siguiente** cartel (`posted_next − 1`; latch + muesca mínima) |
 | **RELEASE** | En banda; soltar (con excepciones bajada) |
 | **COAST_PWR** | Quitar tracción antes de freno |
+| **SIGNAL** | Semáforo rojo: plan gradual v→0 (`evaluate_signal_brake`; paso 5) |
 
 ### 4. Muescas UK pasajeros
 
@@ -233,6 +238,23 @@ Módulos: `physics.projected_speed_mph_after_brake_fill`, `physics.limit_release
 **No planificado (2026-09-10):** aprendizaje por distancia de parada integrada u observación en
 HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
 
+#### RELEASE en modo `station` (2026-09-13)
+
+`evaluate_p1_tick` **siempre** evalúa `resolve_release_command` si hay freno puesto (B1–B3),
+**antes** de devolver `no_plan` cuando `pick_p1_brake_target` devuelve `None`.
+
+| Capa | Regla |
+| --- | --- |
+| `_limit_release_allowed` | Modo cartel: siempre. Modo station: sí salvo `target=STATION` o `station_target.apply_now` |
+| `pick=None` + andén lejos | Aún RELEASE de HOLD_DH / BRAKE_LIMIT (sesión `224046Z`: B1 tras zona 15 en bajada −1.7 %%) |
+| Sesión `123139Z` | Con `target=STATION` y freno de andén activo → **no** RELEASE de cartel |
+
+Orden en `decision.py`: emergencia → planes cartel/andén → **RELEASE** → idle / APPLY / COAST.
+
+**Undershoot:** si se pierde la ventana de RELEASE y la velocidad cae mucho por debajo del
+objetivo (`speed < target − LIMIT_RELEASE_MIN_SPEED_BAND_MPH`), el guard anti-parado en escenario
+puede mantener B1 — no ampliar sin nueva sesión tras validar el fix `224046Z`.
+
 ### 9. Prioridad cartel ↔ andén (dos objetivos)
 
 Modo `station`: cada tick hay hasta **dos planes** (`evaluate_limit_brake` +
@@ -246,6 +268,7 @@ con gap ≤ `TARGET_CLUSTER_GAP_M` (350 m).
 | Regla | Cuándo | Objetivo |
 | --- | --- | --- |
 | `should_defer_station_brake` | Andén más lejos que `bd(v→0)` servicio + 10 m | Sin STATION todavía |
+| `_active_limit_or_none` | Andén diferido + cartel solo WATCH | `pick` → `None` (no `p1tgt` fantasma; sesión `221258Z`) |
 | `station_waits_for_approach_limit` | Recorte HUD invertido (gap > 50 m) o overspeed al cartel en cluster | LIMIT primero |
 | `limit_sign_beyond_station` | Cartel **detrás** del marker (`lim@` > `stn`) | No esperar cartel; priorizar andén |
 | `merged_approach_overspeed` | Cluster, cartel **delante** del andén, spd > next + 0.5 | LIMIT |
@@ -267,6 +290,31 @@ parada — hay que frenar al **marker de andén** primero; el 50 mph aplica al s
 Implementación: `limit_station_cluster.limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M`.
 Tests: `test_limit_sign_beyond_station_session_213010z`,
 `test_pick_station_when_limit_sign_after_platform`.
+
+### 10. Señal roja (paso 5)
+
+Modos `station`, `signal` y `p1`: `signal_brake_enabled=True`. Plan gradual **además** de
+emergencia (`p1_emergency`).
+
+| Capa | Módulo | Regla |
+| --- | --- | --- |
+| Plan | `signal_plan.plan_brake_for_signal` | Perfil v→0 (reutiliza `plan_station_service_brake`, sin holgura horario) |
+| Eval | `signal_brake.evaluate_signal_brake` | `BrakeTargetResult` SIGNAL; WATCH lejos (`allow_watch`) |
+| Común | `service_brake.target_from_stop_plan` | Conversión plan → target (andén + señal) |
+| Pick | `pick_p1_brake_target` | Rojo **gana** al cartel (incl. HOLD_DH diferido); vs andén gana el más cercano |
+| Detrás andén | `signal_behind_station` (gap 50 m) | No planificar señal; no bloquear RELEASE andén |
+| Salida andén | `should_suppress_signal_braking_for_departure` | Rojo @ ~2 m, tracción, spd ≤ 11 mph — esperar verde |
+| Emergencia | `_attempt_p1_emergency` | SIGNAL **antes** que STATION; misma supresión salida que el plan |
+| RELEASE | `_limit_release_allowed` | Bloqueado con objetivo SIGNAL o señal activa adelante |
+
+Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → RELEASE → idle / APPLY /
+COAST.
+
+**Sesión `225433Z` (SPAD):** rojo @ 1040 m @ 56 mph → solo emergencia @ 61 m (tarde); HOLD_DH @15
+ganaba a señal en recta final. Tras paso 5: `p1tgt=SIGNAL`, `COAST_PWR` lejos, B1+ en ventana.
+
+**Riesgo probe (sin fix Python):** `signal_red` puede desaparecer ~40 m con velocidad aún alta
+(tick 20223) — latch Lua futuro.
 
 #### FSM dwell andén (`p1_station_gate.py`)
 
@@ -365,7 +413,7 @@ independiente de esta prioridad.
 | `gradient_pct` | Bajada / subida |
 | `brake_cyl_bar` | L4 (opcional) |
 | `lever_notch` | RELEASE / COAST_PWR |
-| `signal_red` + `signal_dist_cm` | Semáforo rojo adelante (C1 probe; P1 emergencia hoy) |
+| `signal_red` + `signal_dist_cm` | Semáforo rojo adelante (C1 probe; plan gradual + emergencia) |
 
 ### Salida
 
@@ -423,7 +471,7 @@ Todas en `constants.py` o sección `P1_LIMIT_TUNING` (pendiente agrupar).
 | `WEAK_DECEL_TICKS` | 2 | Ticks consecutivos con shortfall antes de subir muesca |
 | `DECEL_MIN_PRED_MS2` | 0.15 | Ignorar perfil por debajo (ruido) |
 | `DECEL_MIN_OBS_MS2` | 0.08 | Ignorar accel probe por debajo (ruido) |
-| `BRAKE_PLAN_LARGE_DROP_MPH` | 18.0 | Caída grande en ventana → mínimo B2 (`pick_weakest`) |
+| `BRAKE_PLAN_LARGE_DROP_MPH` | 18.0 | **Doble uso:** (1) `pick_weakest`: caída **velocidad** al objetivo → mínimo B2; (2) `downhill_defer_brake_commit` subida: caída **posted** zona ≥18 → no coast-trim vs ops del next si legal en zona vigente |
 | `PRESSURE_BRAKING_MIN_BAR` | 1.55 | Gate aire B1 Class 323 (`physics` / `brake_air`) |
 
 Cambiar solo con test + sesión documentada.
@@ -503,13 +551,16 @@ RELEASE / COAST_PWR**.
 | `station_plan.py` | Perfil v→0 (B1/B2/B3); ETA desactivada por defecto |
 | `station_brake.py` | `evaluate_station_brake` → `BrakeTargetResult` STATION |
 | `limit_station_cluster.py` | Cluster 350 m, `limit_sign_beyond_station`, `station_waits` |
-| `p1_policy.py` | `pick_p1_brake_target`, defer horizonte, preferencia andén |
+| `signal_plan.py` | `plan_brake_for_signal`, `signal_behind_station`, supresión salida |
+| `signal_brake.py` | `evaluate_signal_brake` → `BrakeTargetResult` SIGNAL |
+| `service_brake.py` | `target_from_stop_plan` (andén + señal) |
+| `p1_policy.py` | `pick_p1_brake_target`, `_active_limit_or_none`, `should_defer_station_brake` |
 | `p1_station_gate.py` | FSM `STOPPED`/`DEPARTING`; suprime P1 andén en dwell |
 | `planning_poller.py` / `planning_feed.py` | HTTP `DriverAid.TrackData` + anti-salto distancia |
 | `p1_emergency.py` | B3 si distancia crítica al andén / señal |
 | `session_report.py` | Replay HTML/JSONL; puertas, marcadores APPLY, zoom, señal rojo |
 | `trace.py` | JSONL tick + investigate (`sig=ROJO@…m`) |
-| `decision.py` | `evaluate_p1_tick`: emergencia → release → pick objetivo → L4 |
+| `decision.py` | `evaluate_p1_tick`: emergencia → pick (cartel/andén/señal) → release → L4 |
 
 ---
 
@@ -527,6 +578,8 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-13 | Paso 5 señal: `evaluate_signal_brake`, `signal_plan`, `service_brake`; rojo gana HOLD_DH; emergencia SIGNAL con supresión salida; sesión ref. `225433Z` |
+| 2026-09-13 | Modo station: RELEASE antes de `no_plan` (`224046Z` HOLD_DH zona 15); `pick` sin WATCH con andén diferido + sin `p1tgt` fantasma (`221258Z`); coast-trim subida no en caída posted grande 60→35 |
 | 2026-09-12 | Evaluación dual con snapshots; `limit_horizon.py`; coast trim subida (`coast_trim_deferred`); sin HOLD_DH en salida lenta→rápida en cuesta; caída grande → B2; aire 323 @ 1.55 bar; trace/replay señal |
 | 2026-09-10 | `p1_limit_capas.html`: ramas andén, pick, geometría cluster, FSM gate |
 | 2026-09-10 | Cartel tras andén (`213010Z`): `limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M` |

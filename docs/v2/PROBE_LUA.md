@@ -70,6 +70,6 @@ Tras cambiar `telemetry.lua`: `install_ue4ss_probe.bat` (copia `Scripts/` comple
 
 ## Pendiente producto (no probe)
 
-- Paso 5 PLAN_V2: `evaluate_signal_brake` en Python (frenada gradual rojo; hoy solo emergencia)
+- Latch `signal_red` en probe si desaparece ~40 m en marcha (sesión `225433Z` tick 20223)
 - Paso 6: cargar `data/vehicles/class_323.json` en IPC (nombres sin heurística)
 - 9b-b: handler slip tras matriz S1–S4

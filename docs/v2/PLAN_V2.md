@@ -889,8 +889,8 @@ Referencia código: `mods/TelemetryProbeMod/Scripts/telemetry.lua` (`extract_sig
 | Parser / `TrainState` | ✅ | `signal_red`, `signal_dist_m` en snapshot |
 | Trace / replay | ✅ | JSONL + investigate `sig=ROJO@…m`; HTML sección **Señal** (`session_report`) |
 | P1 emergencia | ✅ | Dist + aspecto rojo → `check_p1_emergency` (`test_signal_emergency_red_aspect`) |
-| P1 plan gradual | ❌ | `evaluate_signal_brake` stub — sin candidato `SIGNAL` en cola normal (paso **5**) |
-| Policy prioridad | ✅ | `should_prefer_signal_over_limit`, `signal_behind_station` (~50 m) |
+| P1 plan gradual | ✅ | `signal_brake.evaluate_signal_brake` + `signal_plan` (paso **5**, 2026-09-13) |
+| Policy prioridad | ✅ | Rojo gana cartel; `signal_behind_station` (~50 m); señal vs andén = más cercano |
 
 La API HTTP (`distanceToSignal`, `signalAspectClass`) **existe** pero **no** es canal de tick (D3).
 El hueco operativo no es “falta de diseño” sino **probe → P1**.
@@ -903,7 +903,7 @@ El hueco operativo no es “falta de diseño” sino **probe → P1**.
 | Estado | Qué | Bloqueo |
 | --- | --- | --- |
 | **Elegido** | S-Lua: `signal_red=1` + `signal_dist_cm` con rojo adelante | `extract_signal_red` en probe ✅ |
-| **Parcial** | C1 probe + trace cerrados; plan gradual pendiente | `evaluate_signal_brake` (paso **5**) |
+| **Cerrado** | C1 probe + trace + plan gradual P1 | `evaluate_signal_brake` (paso **5**, 2026-09-13) |
 | **Fuera v2** | HTTP tick; ámbar/verde; cola `nextSignals[]` | §3, D3, D8 |
 | **Aplazado** | Rojo con permiso de escenario (pasar en rojo) | Sesión C1 si aparece caso |
 
@@ -921,7 +921,7 @@ Igual que **§3**, más checklist de cableado:
 
 - [x] `extract_signal_red` en probe; dist mínima 1 cm si HUD rojo con dist 0 (salida andén).
 - [x] Parser GetData → `TrainState` → trace JSONL + replay HTML.
-- [ ] `evaluate_signal_brake` deja de ser stub; candidato `SIGNAL` en cola P1 normal.
+- [x] `evaluate_signal_brake` en P1; candidato `SIGNAL` en `pick_p1_brake_target` (2026-09-13).
 - [x] Tests fixture `signal_red=1` (`test_trace`, emergencia).
 - Cross-City 323: rojo a distancia conocida → P1 frena (plan o emergencia); GetData ~20 Hz sin
 
@@ -1521,7 +1521,7 @@ Diseño hecho (§3). **C1 probe + trace cerrados** (2026-09-12). Pendiente plan 
 
 - [x] `extract_signal_red` en probe → `signal_red` + `signal_dist_cm` (S-Lua).
 - [x] Parser + trace JSONL + replay HTML (`test_trace`, `test_session_report`).
-- [ ] Quitar stub `evaluate_signal_brake`; rojo → plan gradual a 0 (además de emergencia).
+- [x] `evaluate_signal_brake`; rojo → plan gradual a 0 (además de emergencia; 2026-09-13).
 - [x] Fixtures GetData `signal_red=1` (D7).
 
 **Validación:** emergencia `test_signal_emergency_red_aspect`; sesión **C1** in-game con `sig=` en
@@ -1580,7 +1580,7 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 | 2 | Esqueleto `V2/tsw6v2/` (`loop.py`: snapshot → un mando → IPC), GUI visor | D1, P0 | 2 | ✅ `V2/tests/` · `test-ipc` in-game · `--console`/`gui` |
 | 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | pytest carteles · [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) in-game |
 | 4 | `extract_signal_red` + fixture pytest | Sesión **C1**, P2 | 4 | ✅ probe `20260902a` · fixture |
-| 5 | Quitar stub `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | emergencia rojo + C1 in-game |
+| 5 | `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | ✅ código + pytest; validar in-game `225433Z` |
 | 6 | Paquete JSON `data/vehicles/` + caché palancas G-B | 323 validado, P2 | 1 | `test_control_layout` + IPC |
 | 7 | `PassengerService` genérico + FSM puertas | Paso 6, P2 | 3 | `test_station_fsm` + andén |
 | 8 | TimeOfDay → holgura (o OFF documentado) | D9 medición, P4 | 1, 3 | nota en GUI + §1 |
@@ -1604,15 +1604,19 @@ aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. A
 cartel y andén
 ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) — checklist `station` + HTTP); sesión ref.
 cartel `20260908T225707Z`. Pasos
-**2** y **4** cerrados. Señal en P1 solo emergencia (`p1_emergency`); `evaluate_signal_brake` paso
-**5**.
-FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `run_p1_session.bat`
-— **no** `tsw6/autopilot/`. **Siguiente código:** cerrar validación paso 3 → paso **5** señal.
+**2**, **4** y **5** (código) cerrados. Señal: plan gradual + emergencia; validación in-game
+pendiente (sesión ref. `225433Z`). FSM puertas / servicio comercial = paso **7**. Runtime producto:
+`AgentLoop` + `run_p1_session.bat` — **no** `tsw6/autopilot/`. **Siguiente:** validar paso 3 +
+señal in-game.
 
 ### Deltas (cambios al codificar)
 
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
+| 2026-09-13 | 5 / señal | Stub `evaluate_signal_brake` | `signal_plan` + `signal_brake` + `service_brake`; pick SIGNAL; emergencia con supresión salida; ref. `225433Z` |
+| 2026-09-13 | 3 / estación | RELEASE solo si pick eligió LIMIT | RELEASE cartel/HOLD_DH **antes** de `no_plan`; `_limit_release_allowed` con `pick=None` (`224046Z`) |
+| 2026-09-13 | 3 / estación | Cartel WATCH al salir del andén | `pick_p1`: `_active_limit_or_none` + andén diferido → sin objetivo; HUD sin `p1tgt` (`221258Z`) |
+| 2026-09-13 | 3 / cartel | Coast-trim subida vs 60→35 lejos | No defer si caída posted ≥18 y legal en zona vigente fuera de horizonte (`221258Z`) |
 | 2026-09-12 | 3 / cartel | Dos rutas mutaban `LimitBrakeState` | Evaluación dual con `snapshot()`/`replace_from()`; learner solo en ruta BRAKE_LIMIT ganadora |
 | 2026-09-12 | 3 / cartel | Horizonte duplicado | `limit_horizon.py` — fuente única `next_limit_brake_horizon_m` |
 | 2026-09-12 | 3 / cartel | 70→45 atascado B1 | `BRAKE_PLAN_LARGE_DROP_MPH=18` → mínimo B2; histéresis usa muesca de `pick_weakest`; aire 323 @ 1.55 bar |
@@ -1643,8 +1647,11 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
    pytest verde (~600 tests).
 
-2. **Paso 5** — `evaluate_signal_brake` (frenada gradual rojo); C1 probe + trace **cerrados**.
-3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisión `tsw_hud.db` si falla match.
+2. **Paso 5** — validar in-game frenada gradual rojo (sesión ref. `225433Z`); C1 probe + código
+
+   **cerrados**.
+
+3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisación `tsw_hud.db` si falla match.
 4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.
 5. **Siempre** — checklist transversal al cerrar cada paso (pytest, delta, probe si Lua).
 
@@ -1658,8 +1665,8 @@ FSM puertas / servicio comercial = paso **7**. Runtime producto: `AgentLoop` + `
 
 #### Siguiente código
 
-**Siguiente código:** cerrar validación **paso 3**; luego paso **5** (`evaluate_signal_brake`, rojo
-en P1).
-Tarjetas in-game: **C1** señales · **C2** andén (pasos 6–7). Canal:
+**Siguiente código:** cerrar validación **paso 3** + señal in-game (replay `225433Z`); pasos **6–7**
+tren/servicio.
+Tarjetas in-game: **C1** señales (plan gradual) · **C2** andén (pasos 6–7). Canal:
 [CANAL_CONTROL](../CANAL_CONTROL.md) ·
 probe: [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).

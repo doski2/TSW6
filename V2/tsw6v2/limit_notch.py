@@ -172,6 +172,25 @@ def downhill_defer_brake_commit(
     # Subida: sin cortar por ds≤0 — ds es margen cinemático, no m al cartel
     # (sesión 20260911T203100Z: ds=-0.7 @ 95 m, coast aún basta).
     if is_uphill_gradient(gradient_pct):
+        # Caída grande (60→35) lejos en zona vigente: no coast-trim vs ops del next.
+        # Sesión 20260912T221258Z: P6 @ 56 mph, cartel 35 @ 4 km → coast_throttle erróneo.
+        if (
+            current_posted_mph is not None
+            and next_posted_mph is not None
+            and is_descending_limit_zone(current_posted_mph, next_posted_mph)
+            and current_posted_mph - next_posted_mph >= BRAKE_PLAN_LARGE_DROP_MPH
+            and not within_next_brake_horizon(
+                speed_mph=speed_mph,
+                next_limit_mph=next_posted_mph,
+                next_distance_m=distance_m,
+                gradient_pct=gradient_pct,
+            )
+        ):
+            ceiling = downhill_ops_coast_ceiling_mph(
+                current_posted_mph, gradient_pct
+            )
+            if speed_mph <= ceiling + LIMIT_DOWNHILL_COAST_TRIM_MPH:
+                return False
         return _coast_defer()
     if dist_start <= 0:
         return False

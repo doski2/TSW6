@@ -27,13 +27,13 @@ def resolve_p1_mode(*, mode: str | None, limit_brake: bool) -> str:
 def apply_p1_mode(loop: AgentLoop, mode: str) -> list[str]:
     """Activa flags del bucle; avisos si el modo aún no tiene P1."""
     warnings: list[str] = []
-    loop.limit_brake_enabled = mode in ("limit", "station", "p1")
+    loop.limit_brake_enabled = mode in ("limit", "station", "signal", "p1")
     loop.station_brake_enabled = mode in ("station", "p1")
-    # loop.signal_brake_enabled = mode in ("signal", "p1")
+    loop.signal_brake_enabled = mode in ("signal", "station", "p1")
     if mode in ("station", "p1"):
         warnings.append(f"P1 estación: distancia vía {loop.station_planning_channel}")
     if mode == "signal":
-        warnings.append("P1 señal: no implementado (paso 4-5) — trace + probe activos")
+        warnings.append("P1 señal: plan gradual rojo (paso 5) + emergencia")
     return warnings
 
 

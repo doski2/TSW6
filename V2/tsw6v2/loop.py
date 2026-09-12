@@ -193,6 +193,7 @@ class AgentLoop:
     driver_override_cooldown_s: float = DRIVER_OVERRIDE_COOLDOWN_S
     limit_brake_enabled: bool = False
     station_brake_enabled: bool = False
+    signal_brake_enabled: bool = False
     learner: Optional[LearnerProfile] = None
     auto_profile: bool = True
     profiles_dir: Optional[Path] = None
@@ -361,7 +362,11 @@ class AgentLoop:
 
         station_p1_enabled = self.station_brake_enabled
         manual_active = self._manual_override_active()
-        if snap is not None and (self.limit_brake_enabled or self.station_brake_enabled):
+        if snap is not None and (
+            self.limit_brake_enabled
+            or self.station_brake_enabled
+            or self.signal_brake_enabled
+        ):
             mph = (
                 float(snap.speed_ms) * MS_TO_MPH
                 if snap is not None and snap.speed_ms is not None
@@ -402,6 +407,7 @@ class AgentLoop:
                 station_distance_m=station_dist_m,
                 limit_brake_enabled=self.limit_brake_enabled,
                 station_brake_enabled=station_p1_enabled,
+                signal_brake_enabled=self.signal_brake_enabled,
             )
             limit_dist_m = decision.limit_dist_m
             limit_mph = decision.limit_mph

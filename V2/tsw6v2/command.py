@@ -431,8 +431,8 @@ def resolve_release_command(
     if is_brake_released(handle_notch):
         return None
 
-    if plan is not None and plan.target_kind == "STATION":
-        # Freno de andén hasta cierre de puertas (FSM DEPARTING).
+    if plan is not None and plan.target_kind in ("STATION", "SIGNAL"):
+        # Freno de andén / señal roja hasta objetivo cumplido.
         return None
 
     if next_limit_mph is None:

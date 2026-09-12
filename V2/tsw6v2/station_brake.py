@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, should_emit_brake_command
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
+from tsw6v2.service_brake import target_from_stop_plan
 from tsw6v2.station_plan import (
     STATION_SCHEDULE_SLACK_ENABLED,
     plan_brake_for_station,
@@ -46,37 +47,9 @@ def evaluate_station_brake(
     )
     if plan is None:
         return None
-    step = plan.active_step
-    if step is None:
-        return None
-    emit = should_emit_brake_command(
-        apply_now=step.apply_now,
-        dist_start=step.dist_start,
+    return target_from_stop_plan(
+        plan,
         speed_mph=speed_mph,
-        distance_to_target_m=plan.distance_to_target_m,
-        apply_at_remaining_m=step.apply_at_remaining_m,
-    )
-    if not emit:
-        late = [s for s in plan.steps if s.dist_start <= 0]
-        step = late[-1] if late else None
-        if step is None:
-            return None
-        emit = should_emit_brake_command(
-            apply_now=True,
-            dist_start=step.dist_start,
-            speed_mph=speed_mph,
-            distance_to_target_m=plan.distance_to_target_m,
-            apply_at_remaining_m=step.apply_at_remaining_m,
-        )
-    if not emit:
-        return None
-    return BrakeTargetResult(
-        target_kind="STATION",
-        distance_m=plan.distance_to_target_m,
-        target_speed_mph=0.0,
-        handle_notch=step.handle_notch,
-        phase=step.notch,
-        dist_start=step.dist_start,
-        apply_now=True,
         detail=f"Estación dist={plan.distance_to_target_m:.0f}m",
+        allow_watch=False,
     )

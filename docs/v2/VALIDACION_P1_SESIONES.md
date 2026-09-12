@@ -24,15 +24,16 @@ No sustituye `pytest`; complementa prueba de campo.
 | Decisión + IPC | `decision.py`, `loop.py` |
 | Trace | `trace.py`, `session_report.py` |
 | Andén (modo `station`) | `station_plan`, `station_brake`, `p1_policy`, `limit_station_cluster`, `planning_poller` |
+| Señal roja (paso 5) | `signal_plan`, `signal_brake`, `service_brake`, `p1_emergency` |
 | FSM dwell andén | `p1_station_gate` — suprime P1 en `STOPPED`/`DEPARTING` |
 | Replay sesión | `session_report.py` — HTML con zoom, puertas, marcadores APPLY |
 
-**Fuera de alcance** hasta nueva fase: frenada gradual señal (`evaluate_signal_brake` — paso 5),
-dwell puertas completo (paso 7), `limit_planner.py`, COAST_PWR en WATCH, filtro `tsw_hud.db` en
-planning V2, aprendizaje por distancia integrada (solo EMA tick a tick con filtro aire).
+**Fuera de alcance** hasta nueva fase: dwell puertas completo (paso 7), `limit_planner.py`,
+COAST_PWR en WATCH cartel, filtro `tsw_hud.db` en planning V2, aprendizaje por distancia integrada
+(solo EMA tick a tick con filtro aire), latch probe `signal_red` (pérdida ~40 m en marcha).
 
-**Parcial (2026-09-12):** probe + trace + replay HTML registran `signal_red`; P1 solo emergencia
-(`p1_emergency`).
+**Paso 5 (2026-09-13):** `evaluate_signal_brake` — plan gradual v→0 + emergencia. Validación
+in-game pendiente (sesión ref. `225433Z`).
 
 ---
 
@@ -100,6 +101,10 @@ Regenerar HTML (si hace falta):
 | 45→60 en subida | COAST sin B1; sin HOLD_DH | B1 @ 55 mph en P6; sin `sig=` si probe viejo |
 | 70→45 caída grande | Primer APPLY ≥ B2 si ≥18 mph de caída | Atascado en B1 con P ~1.6 bar |
 | Señal rojo salida | `signal_red` en JSONL + HTML | Solo HUD; consola sin `sig=` |
+| Rojo lejos en marcha | `p1tgt=SIGNAL`, `COAST_PWR` o plan; no solo `no_plan` | 0 plan con rojo @ &gt;500 m |
+| Aproximación rojo | `p1tgt=SIGNAL` (no HOLD_DH cartel); parada antes del poste | SPAD; emergencia solo @ &lt;60 m |
+| Salida andén, cartel 35 @ &gt;3 km | `p1tgt` vacío, capa OK, P6 permitido en zona 60 | `p1tgt=LIMIT` + Vigilar o `COAST_PWR` lejos |
+| HOLD_DH zona 15 en bajada | `RELEASE` tras ~14–15 mph; no B1 hasta 6 mph | 0 `RELEASE` en JSONL; `reason=no_plan` con B1 |
 
 ### Referencia (sesiones Cross-City guardadas)
 
@@ -110,6 +115,9 @@ Regenerar HTML (si hace falta):
 | `20260908T225707Z` | Mejor línea base: HOLD_DH, ~27 muestras limpias, `decel_n` modesto |
 | `20260912T183116Z` | **Antes fix:** 70→45 atascado B1 @ ~1.6 bar — **tras fix:** B2 mínimo, umbral 1.55 bar |
 | `20260912T201456Z` | **Antes fix:** P6 @ 55 sin coast + HOLD_DH uphill 45→60 — **tras fix:** coast trim + sin HOLD en subida |
+| `20260912T221258Z` | **Antes fix:** salida andén, cartel 35 @ 4 km → `COAST_PWR` / Vigilar — **tras fix:** `no_plan`, sin `p1tgt`, tracción en zona 60 |
+| `20260912T224046Z` | **Antes fix:** HOLD_DH @ 15 mph en bajada, 0 RELEASE, B1 hasta ~6 mph — **tras fix:** RELEASE con `pick=None` y andén lejos |
+| `20260912T225433Z` | **Antes fix:** SPAD rojo (solo emergencia @ 61 m; HOLD_DH @15 en final) — **tras fix paso 5:** plan SIGNAL desde lejos; validar in-game |
 
 ---
 
@@ -143,6 +151,9 @@ Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con fil
 | `air_ready` con `P=None` | Probe sin cilindro | Modo degradado: APPLY sin gate P |
 | RELEASE ~55 mph y luego ~54 | RELEASE cinemático (proyección `fill`) | No — comportamiento esperado |
 | `decel_n` bajo con sesión larga | Bombeo B1↔costa; poco tiempo con P≥92 % | Tuning futuro; seguir validando |
+| B1 tras HOLD_DH en modo `station` | Antes 2026-09-13: RELEASE no corría con `pick=None` | Corregido — validar `RELEASE` en replay |
+| SPAD con `signal_red` lejos | Antes paso 5: solo emergencia tardía + HOLD_DH final | Plan SIGNAL; validar `225433Z` in-game |
+| `signal_red` desaparece @ ~40 m | Probe pierde aspecto en marcha | Latch Lua; anotar sesión |
 
 ---
 
