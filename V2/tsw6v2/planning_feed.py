@@ -21,6 +21,9 @@ def default_planning_path() -> Path:
 class PlanningSnapshot:
     station_distance_m: Optional[float] = None
     station_name: Optional[str] = None
+    service_name: Optional[str] = None
+    schedule_source: str = ""
+    hud_timetable_id: Optional[int] = None
 
 
 # Rechazar salto HTTP a la siguiente parada tras pasar sin dwell (sesión 20260909T224556Z).

@@ -20,8 +20,8 @@ def test_fill_time_observed() -> None:
 
 def test_cap_escalation_waits_for_pressure() -> None:
     air = BrakeAirTracker()
-    assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=2.0) == 3
-    assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=2.6) == 2
+    assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=1.2) == 3
+    assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=1.7) == 2
 
 
 def test_inhibit_reapply_until_idle() -> None:
@@ -54,17 +54,17 @@ def test_air_ready_coast_idle_gauge() -> None:
 def test_air_ready_service_needs_pressure() -> None:
     air = BrakeAirTracker()
     assert air.air_ready(1.2, lever=3) is False
-    assert air.air_ready(2.6, lever=3) is True
+    assert air.air_ready(1.65, lever=3) is True
 
 
 def test_pressure_for_handle_b1() -> None:
-    assert pressure_for_handle(3) >= 2.4
+    assert 1.5 <= pressure_for_handle(3) <= 1.7
 
 
 def test_brake_decel_sample_ready() -> None:
-    assert brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=2.8)
-    assert not brake_decel_sample_ready(handle=3, lever=6, brake_cyl_bar=2.8)
-    assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.5)
+    assert brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.65)
+    assert not brake_decel_sample_ready(handle=3, lever=6, brake_cyl_bar=1.65)
+    assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.2)
     assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=None)
 
 

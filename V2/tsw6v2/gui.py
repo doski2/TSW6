@@ -464,8 +464,9 @@ class AgentGuiApp:
     def _planning_source(self) -> str:
         if not self.loop.station_brake_enabled:
             return ""
-        src = self.loop.station_planning_source
-        return src if src != "none" else ""
+        if self.loop.station_planning_source == "none":
+            return ""
+        return self.loop.station_planning_channel
 
     def _ensure_session_recorder(self) -> Optional[SessionRecorder]:
         if self._log_path is None:

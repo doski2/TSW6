@@ -19,9 +19,9 @@ _COAST_NOTCH = NEUTRAL_NOTCH
 
 PRESSURE_CONFIRM_RATIO = 0.92
 _PRESSURE_FOR_HANDLE: dict[int, float] = {
-    3: 2.5,  # B1
-    2: 3.2,  # B2
-    1: 4.0,  # B3
+    3: 1.55,  # B1 — HUD 323 ~1.6 bar
+    2: 2.0,  # B2
+    1: 2.5,  # B3
 }
 
 

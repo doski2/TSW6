@@ -54,6 +54,7 @@ class StationPlanning:
         self._last_tick_t = 0.0
         self._last_speed_mph = 0.0
         self._source = "none"
+        self._schedule_source = ""
         if self.http_enabled and find_api_key() is not None:
             self._http_ok = probe_http_api(timeout_s=PLANNING_READ_TIMEOUT_S)
             if self._http_ok:
@@ -76,6 +77,11 @@ class StationPlanning:
     @property
     def http_active(self) -> bool:
         return self._http_ok
+
+    @property
+    def schedule_source(self) -> str:
+        """``hud_db`` | ``timetable_json`` | ``track_only`` | ```` (sin poll aún)."""
+        return self._schedule_source
 
     def close(self) -> None:
         self._stop_event.set()
@@ -126,9 +132,14 @@ class StationPlanning:
                     self._last_speed_mph,
                 )
                 return
+            sched = str(result.get("schedule_source") or "")
+            self._schedule_source = sched
             snap = PlanningSnapshot(
                 station_distance_m=new_dist,
                 station_name=str(name) if name else None,
+                service_name=result.get("service_name"),
+                schedule_source=sched,
+                hud_timetable_id=result.get("hud_timetable_id"),
             )
             self._snap = snap
         write_planning_snapshot(

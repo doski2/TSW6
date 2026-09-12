@@ -36,11 +36,11 @@ from tsw6v2.constants import (
     LIMIT_DOWNHILL_GRADIENT_PCT,
     LIMIT_UPHILL_GRADIENT_PCT,
     MAX_DECEL_MS2,
+    MPH_TO_MS,
     SAFETY_MARGIN,
 )
 
-# Dastsc physics.ts
-MPH_TO_MS = 0.44704
+# Dastsc physics.ts — MPH_TO_MS vive en constants; re-export aquí.
 G_MSS = 9.80665
 DEFAULT_MAX_BRAKE_DECEL = MAX_DECEL_MS2
 APPLY_NOW_MARGIN_M = 150.0
@@ -51,7 +51,8 @@ STATION_COAST_CUTOFF_M = 100.0
 DEFAULT_BRAKE_FILL_S = 2.5
 DEFAULT_REACTION_S = 1.5
 PRESSURE_IDLE_MAX_BAR = 1.5
-PRESSURE_BRAKING_MIN_BAR = 2.0
+# HUD Class 323: reposo ~1.0 bar, B1 en servicio ~1.6 bar (sesión 183116Z).
+PRESSURE_BRAKING_MIN_BAR = 1.55
 BRAKE_FILL_CLAMP = (0.8, 5.0)
 
 

@@ -6,6 +6,8 @@ from typing import Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import (
+    ASCENDING_EXIT_ZONE_HOLD_MIN_DELTA_MPH,
+    ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH,
     ASCENDING_LIMIT_DELTA_MPH,
     DESCENDING_LIMIT_DELTA_MPH,
     LIMIT_OVER_ACTIVE_MPH,
@@ -51,11 +53,36 @@ def is_ascending_limit_exit(
     )
 
 
+def should_skip_zone_hold_for_ascending_exit(
+    posted_limit_mph: float,
+    next_limit_mph: Optional[float],
+) -> bool:
+    """
+    Salto grande (35→60): dejar subir hacia el cartel siguiente.
+
+    Saltos moderados (10→30 en Cross-City): mantener HOLD_DH en zona lenta
+    aunque el cartel suba (sesión 142034Z: 12 mph en zona 10 sin objetivo).
+
+    Zonas muy lentas (posted < 30): siempre contener — 15→50 no anula el 15
+    vigente (sesión 152129Z: 16 mph en bajada sin freno).
+    """
+    if not is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
+        return False
+    if next_limit_mph is None:
+        return False
+    if posted_limit_mph < ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH:
+        return False
+    return (
+        next_limit_mph - posted_limit_mph
+        >= ASCENDING_EXIT_ZONE_HOLD_MIN_DELTA_MPH
+    )
+
+
 def is_descending_limit_zone(
     posted_limit_mph: float,
     next_limit_mph: Optional[float],
     *,
-    delta_mph: float = ASCENDING_LIMIT_DELTA_MPH,
+    delta_mph: float = DESCENDING_LIMIT_DELTA_MPH,
 ) -> bool:
     """Cartel siguiente baja (ej. 60→55): solo BRAKE_LIMIT, sin HOLD_DH."""
     return (

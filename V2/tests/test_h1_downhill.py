@@ -6,13 +6,25 @@ from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeReleaseState
 from tsw6v2.decision import evaluate_limit_tick
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
-from tsw6v2.limit_containment import next_limit_brake_horizon_m
+from tsw6v2.limit_horizon import next_limit_brake_horizon_m, within_next_brake_horizon
 from tsw6v2.p1_layers import classify_layer
 
 
 def test_h1_horizon_positive():
     h = next_limit_brake_horizon_m(60.0, 55.0, -1.0)
     assert 100 < h < 900
+    assert within_next_brake_horizon(
+        speed_mph=60.0,
+        next_limit_mph=55.0,
+        next_distance_m=h - 10.0,
+        gradient_pct=-1.0,
+    )
+    assert not within_next_brake_horizon(
+        speed_mph=60.0,
+        next_limit_mph=55.0,
+        next_distance_m=h + 10.0,
+        gradient_pct=-1.0,
+    )
 
 
 def test_h1_no_hold_on_descending_zone_60_to_55():
@@ -41,8 +53,9 @@ def test_zone_hold_ceiling_scales_with_gradient():
 
 def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
     """60→55 lejos: > techo HOLD (60.2 @ −1%%) → B1 suave, no al 55 todavía."""
+    state = LimitBrakeState()
     r = evaluate_limit_brake(
-        LimitBrakeState(),
+        state,
         speed_mph=62.5,
         limit_mph=55.0,
         distance_m=520.0,
@@ -55,6 +68,8 @@ def test_h1_zone_contain_far_when_over_scoring_ceiling_on_60_to_55():
     assert r.target_speed_mph == 60.2
     assert r.handle_notch == 3
     assert r.phase == "B1"
+    assert state.latch is None
+    assert state.committed_handle == 3
 
 
 def test_flat_zone_contain_60_to_50_session_204031() -> None:
@@ -155,6 +170,22 @@ def test_h1_no_hold_on_ascending_exit():
         posted_limit_mph=35.0,
     )
     assert r is None or not getattr(r, "downhill_hold", False)
+
+
+def test_h1_zone_contain_on_moderate_ascending_10_to_30():
+    """10→30 lejos: HOLD zona 10 aunque suba el cartel (sesión 142034Z)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=12.8,
+        limit_mph=30.0,
+        distance_m=123.0,
+        gradient_pct=-1.74,
+        posted_limit_mph=10.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert abs(r.target_speed_mph - 9.88) < 0.05
 
 
 def test_h1_posted_hold_far_from_next_sign():
@@ -271,6 +302,59 @@ def test_h1_downhill_coast_trim_defers_b1_near_target():
     assert not r.apply_now
     assert r.handle_notch == 3
     assert r.phase == "B1"
+
+
+def test_h1_hold_zone_15_to_50_session_152129() -> None:
+    """15→50: zona 15 obligatoria en bajada aunque el cartel siguiente suba mucho."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=16.0,
+        limit_mph=50.0,
+        distance_m=800.0,
+        gradient_pct=-1.74,
+        posted_limit_mph=15.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert abs(r.target_speed_mph - 14.88) < 0.05
+
+
+def test_h1_coast_watch_below_hold_ceiling_session_150916() -> None:
+    """30→50 @ −0.92 %%: vigilar y soltar P6 antes del techo 30.2 (150916Z)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=28.09,
+        limit_mph=50.0,
+        distance_m=533.3,
+        gradient_pct=-0.92,
+        posted_limit_mph=30.0,
+    )
+    assert r is not None
+    assert not r.downhill_hold
+    assert r.phase == "WATCH"
+    assert not r.apply_now
+    assert abs(r.target_speed_mph - 30.2) < 0.05
+
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 12.55,  # ~28.09 mph
+            "lever_notch": 6,
+            "dist_limit_cm": 53330.0,
+            "next_limit_ms": 22.352,  # 50 mph
+            "speed_limit_ms": 13.4112,  # 30 mph
+            "gradient_pct": -0.92,
+        }
+    )
+    decision = evaluate_limit_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "COAST_THROTTLE"
+    assert decision.reason == "coast_throttle"
 
 
 def test_h1_coast_pwr_before_hold_with_power():

@@ -16,8 +16,10 @@ from tsw6v2.physics import (
     is_uphill_gradient,
 )
 from tsw6v2.plan import notch_strength
+from tsw6v2.limit_horizon import within_next_brake_horizon
 from tsw6v2.planning import is_descending_limit_zone
 from tsw6v2.constants import (
+    BRAKE_PLAN_LARGE_DROP_MPH,
     LIMIT_CONTAIN_ESCALATE_OVER_MPH,
     LIMIT_DOWNHILL_COAST_TRIM_MPH,
     downhill_ops_coast_ceiling_mph,
@@ -99,10 +101,11 @@ def next_brake_overrides_zone_hold(
         return False
     if not is_descending_limit_zone(current_posted_mph, next_posted_mph):
         return False
-    from tsw6v2.limit_containment import next_limit_brake_horizon_m
-
-    if distance_m <= next_limit_brake_horizon_m(
-        speed_mph, next_posted_mph, gradient_pct
+    if within_next_brake_horizon(
+        speed_mph=speed_mph,
+        next_limit_mph=next_posted_mph,
+        next_distance_m=distance_m,
+        gradient_pct=gradient_pct,
     ):
         return True
     ceiling = downhill_ops_coast_ceiling_mph(current_posted_mph, gradient_pct)
@@ -249,7 +252,7 @@ def apply_notch_hysteresis(
     )
     if prev is None:
         if in_window and not defer_commit:
-            start = 3
+            start = handle
             state.committed_handle = start
             state.committed_phase = phase_for_handle(start)
             return start, state.committed_phase
@@ -316,19 +319,31 @@ def pick_weakest_sufficient_notch(
     if not evaluated:
         return SERVICE_HANDLES_WEAK_TO_STRONG[-1][0], "B3", float("inf"), False
 
-    late = [row for row in evaluated if row[2] < 0]
-    if late:
-        handle, phase, dist_start, _zone, _apply_now = max(
-            late, key=lambda row: notch_strength(row[0]))
-        return handle, phase, dist_start, True
-
     in_zone = [
         row for row in evaluated
         if is_in_apply_zone(row[2], row[3])
     ]
     if in_zone:
+        speed_drop = speed_mph - latch.limit_mph
+        if speed_drop >= BRAKE_PLAN_LARGE_DROP_MPH:
+            # 70→45 @ 63 mph: B1 aprendido optimista — mínimo B2 (sesión 183116Z).
+            for row in in_zone:
+                if row[0] <= 2:
+                    handle, phase, dist_start, _zone, apply_now = row
+                    return handle, phase, dist_start, apply_now
+            for row in evaluated:
+                if row[0] == 2 and row[2] >= 0:
+                    handle, phase, dist_start, _zone, _apply_now = row
+                    return handle, phase, dist_start, True
         handle, phase, dist_start, _zone, apply_now = in_zone[0]
         return handle, phase, dist_start, apply_now
+
+    late = [row for row in evaluated if row[2] < 0]
+    if late:
+        # Solo si ninguna muesca cabe en ventana: la más fuerte entre las tardías.
+        handle, phase, dist_start, _zone, _apply_now = max(
+            late, key=lambda row: notch_strength(row[0]))
+        return handle, phase, dist_start, True
 
     handle, phase, dist_start, _zone, _apply_now = evaluated[0]
     return handle, phase, dist_start, False

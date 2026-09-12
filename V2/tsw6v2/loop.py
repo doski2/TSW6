@@ -9,7 +9,12 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path, read_probe_file
 from tsw6v2.bridge.ipc_bus import purge_lua_commands
-from tsw6v2.command import BrakeCommand, BrakeReleaseState
+from tsw6v2.command import (
+    BrakeCommand,
+    BrakeReleaseState,
+    is_brake_applied,
+    release_brake_command,
+)
 from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
     DRIVER_OVERRIDE_COOLDOWN_S,
@@ -230,8 +235,18 @@ class AgentLoop:
     def station_planning_channel(self) -> str:
         """Descripción humana de la fuente de distancia andén."""
         if self._station_planning.http_active:
-            return "HTTP DriverAid.TrackData (~2 s)"
+            sched = self._station_planning.schedule_source
+            base = "HTTP DriverAid.TrackData (~2 s)"
+            if sched == "hud_db":
+                return f"{base} + tsw_hud.db"
+            if sched == "timetable_json":
+                return f"{base} + timetable.json"
+            return base
         return "Planning.txt (manual o fallback sin -HTTPAPI)"
+
+    @property
+    def station_schedule_source(self) -> str:
+        return self._station_planning.schedule_source
 
     def shutdown(self) -> None:
         """Cierra recursos en segundo plano (planning HTTP)."""
@@ -352,19 +367,33 @@ class AgentLoop:
                 if snap is not None and snap.speed_ms is not None
                 else 0.0
             )
+            dwell_release: Optional[BrakeCommand] = None
             if self.station_brake_enabled:
                 planning = self._station_planning.update(mph)
                 station_dist_m = planning.station_distance_m
+                prev_station_fsm = self._station_gate.state
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,
                     doors_open=snap.doors_open,
                     doors_telem=snap.doors_telem,
                     doors_dmi=snap.doors_dmi,
+                    throttle_notch=lever if lever is not None else 4,
                 )
                 station_fsm = self._station_gate.state or ""
-                if self._station_gate.suppress_station_brake():
+                if self._station_gate.suppress_station_brake(
+                    station_dist_m=station_dist_m,
+                    throttle_notch=lever if lever is not None else 4,
+                    speed_mph=mph,
+                ):
                     station_p1_enabled = False
+                if (
+                    station_fsm == "STOPPED"
+                    and prev_station_fsm != "STOPPED"
+                    and lever is not None
+                    and is_brake_applied(int(lever))
+                ):
+                    dwell_release = release_brake_command(at_target=True)
             decision = evaluate_p1_tick(
                 self._limit_state,
                 self._release_state,
@@ -393,6 +422,12 @@ class AgentLoop:
             if not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(decision.command)
+            elif not manual_active and dwell_release is not None:
+                p1_cmd = dwell_release.kind
+                p1_phase = dwell_release.phase or ""
+                p1_reason = dwell_release.reason or ""
+                p1_detail = "Andén: parada — soltar freno"
+                self._apply_brake_command(dwell_release)
             else:
                 self._maybe_release_driver_control(lever)
             p1_layer = classify_layer(

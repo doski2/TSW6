@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
+    DEFAULT_REACTION_S,
     MPH_TO_MS,
     brake_reaction_margin_m,
 )
@@ -20,7 +22,7 @@ from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG
 
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
-LIMIT_REACTION_S = 1.5
+LIMIT_REACTION_S = DEFAULT_REACTION_S
 
 
 @dataclass
@@ -56,6 +58,18 @@ class LimitBrakeState:
         self.committed_handle = None
         self.committed_phase = None
         self.weak_decel_ticks = 0
+
+    def snapshot(self) -> LimitBrakeState:
+        """Copia profunda para evaluar ramas sin mutar el estado compartido."""
+        return copy.deepcopy(self)
+
+    def replace_from(self, other: LimitBrakeState) -> None:
+        """Sustituye este estado por el de la rama ganadora."""
+        self.latch = other.latch
+        self.last_limit_mph = other.last_limit_mph
+        self.committed_handle = other.committed_handle
+        self.committed_phase = other.committed_phase
+        self.weak_decel_ticks = other.weak_decel_ticks
 
 
 def limit_changed(

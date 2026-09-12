@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import _path  # noqa: F401
 
+from tsw6v2.brake_air import BrakeAirTracker
+from tsw6v2.learner import LearnerProfile
 from tsw6v2.limit_notch import (
     apply_notch_hysteresis,
     pick_weakest_sufficient_notch,
 )
 from tsw6v2.limit_state import LimitBrakeState, latch_limit_target
 from tsw6v2.limits import evaluate_limit_brake
+from tsw6v2.physics import DEFAULT_MAX_BRAKE_DECEL
 
 
 def _latched_state(*, speed_mph: float, distance_m: float) -> LimitBrakeState:
@@ -128,3 +133,58 @@ def test_evaluate_limit_brake_defers_apply_while_legal_in_current_zone() -> None
     assert result is not None
     assert not result.apply_now
     assert result.handle_notch == 3
+
+
+def test_large_drop_70_to_45_prefers_b2_session_183116() -> None:
+    """70→45 @ 63 mph: caída grande → B2 mínimo, no solo B1 optimista."""
+    state = LimitBrakeState()
+    latch_limit_target(
+        state,
+        posted_limit_mph=45.0,
+        distance_m=440.9,
+        speed_mph=62.91,
+        gradient_pct=-0.21,
+        accel_ms2=None,
+        base_decel=DEFAULT_MAX_BRAKE_DECEL,
+        predict_decel=None,
+    )
+    latch = state.latch
+    assert latch is not None
+    handle, phase, _ds, apply_now = pick_weakest_sufficient_notch(
+        speed_mph=62.91,
+        distance_m=440.9,
+        latch=latch,
+    )
+    assert handle == 2
+    assert phase == "B2"
+    assert apply_now
+
+
+def test_air_ready_323_b1_gauge_session_183116() -> None:
+    air = BrakeAirTracker()
+    assert air.air_ready(1.74, lever=3) is True
+    assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=1.74) == 2
+
+
+def test_evaluate_70_to_45_with_learner_not_stuck_on_b1() -> None:
+    root = Path(__file__).resolve().parents[2]
+    path = root / "logs" / "profiles" / "RVM_BCC_WRM_Class323_DMS_A_C.json"
+    if not path.is_file():
+        return
+    learner = LearnerProfile.from_json(path)
+    state = LimitBrakeState()
+    result = evaluate_limit_brake(
+        state,
+        speed_mph=62.91,
+        limit_mph=45.0,
+        distance_m=440.9,
+        gradient_pct=-0.21,
+        posted_limit_mph=70.0,
+        predict_decel=learner.predict_decel,
+        learner=learner,
+        lever=3,
+        brake_cyl_bar=1.74,
+    )
+    assert result is not None
+    assert result.handle_notch <= 2
+    assert learner.air_ready(1.74, lever=3) is True

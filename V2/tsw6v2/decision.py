@@ -419,34 +419,6 @@ def _finalize_target_decision(
             else False
         ),
     )
-    if (
-        target.downhill_hold
-        and lever > NEUTRAL_NOTCH
-        and cmd is not None
-        and cmd.kind == "APPLY"
-    ):
-        coast = BrakeCommand(
-            kind="COAST_THROTTLE",
-            target_notch=NEUTRAL_NOTCH,
-            reason="Quitar tracción (mantener bajada)",
-        )
-        return ctx.decide(
-            coast,
-            "coast_throttle",
-            phase="NEU",
-            dist_start_m=target.dist_start,
-            apply_now=target.apply_now,
-            detail=target.detail,
-            handle_notch=coast.target_notch,
-            fb_a_pred_ms2=target.fb_a_pred_ms2,
-            fb_a_obs_ms2=target.fb_a_obs_ms2,
-            fb_shortfall=target.fb_shortfall,
-            fb_escalated=target.fb_escalated,
-            target_kind=target.target_kind,
-            station_dist_m=(
-                target.distance_m if target.target_kind == "STATION" else None
-            ),
-        )
 
     if cmd is None:
         return ctx.idle("command_none", target=target)

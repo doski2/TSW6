@@ -67,10 +67,14 @@ def evaluate_limit_brake(
     brake_cyl_bar: float | None = None,
 ) -> Optional[BrakeTargetResult]:
     """Planifica frenada al cartel. Re-latch si cambia el límite objetivo."""
+    base = state.snapshot()
+    dh_state = base.snapshot()
+    next_state = base.snapshot()
+
     downhill_contain = None
     if posted_limit_mph is not None and limit_mph is not None and distance_m is not None:
         downhill_contain = pick_downhill_containment(
-            state,
+            dh_state,
             speed_mph=speed_mph,
             posted_limit_mph=posted_limit_mph,
             gradient_pct=gradient_pct,
@@ -81,7 +85,7 @@ def evaluate_limit_brake(
     next_r: Optional[BrakeTargetResult] = None
     if limit_mph is not None and distance_m is not None and distance_m > 0:
         next_r = _evaluate_next_limit_brake(
-            state,
+            next_state,
             speed_mph=speed_mph,
             limit_mph=limit_mph,
             distance_m=distance_m,
@@ -92,19 +96,55 @@ def evaluate_limit_brake(
             brake_fill_s=brake_fill_s,
             escalate_cap=escalate_cap,
             current_posted_mph=posted_limit_mph,
-            learner=learner,
             lever=lever,
             brake_cyl_bar=brake_cyl_bar,
         )
 
-    # H1: dentro del horizonte del cartel siguiente → plan latch gana.
+    def _commit_next() -> None:
+        state.replace_from(next_state)
+        if (
+            learner is not None
+            and next_r is not None
+            and next_state.committed_handle is not None
+            and _in_apply_window(
+                apply_now=next_r.apply_now,
+                dist_start=next_r.dist_start,
+                apply_zone_m=apply_zone_margin_m(
+                    speed_mph * MPH_TO_MS,
+                    max(0.0, next_r.distance_m - next_r.dist_start),
+                ),
+            )
+        ):
+            learner.observe_brake_decel(
+                handle=next_state.committed_handle,
+                speed_mph=speed_mph,
+                gradient_pct=gradient_pct,
+                accel_ms2=accel_ms2,
+                lever=lever,
+                brake_cyl_bar=brake_cyl_bar,
+            )
+
+    def _commit_downhill() -> None:
+        state.replace_from(dh_state)
+
+    # H1: APPLY al cartel siguiente gana; HOLD_DH gana a WATCH del latch.
     if next_r is not None and next_r.apply_now:
+        _commit_next()
         return next_r
-    if downhill_contain is not None:
+    if downhill_contain is not None and (
+        downhill_contain.downhill_hold or downhill_contain.apply_now
+    ):
         # No dejar que WATCH (apply_now=false) bloquee HOLD_DH fuera del horizonte
         # (sesión 20260908T210357Z: 56–62 mph con P3 y sin COAST_PWR).
+        _commit_downhill()
         return downhill_contain
-    return next_r
+    if next_r is not None:
+        _commit_next()
+        return next_r
+    if downhill_contain is not None:
+        _commit_downhill()
+        return downhill_contain
+    return None
 
 
 def _evaluate_next_limit_brake(
@@ -120,7 +160,6 @@ def _evaluate_next_limit_brake(
     brake_fill_s: float,
     escalate_cap: Callable[[int, int], int] | None = None,
     current_posted_mph: Optional[float] = None,
-    learner: Optional[LearnerProfile] = None,
     lever: int | None = None,
     brake_cyl_bar: float | None = None,
 ) -> Optional[BrakeTargetResult]:
@@ -211,24 +250,6 @@ def _evaluate_next_limit_brake(
         lever=lever,
         brake_cyl_bar=brake_cyl_bar,
     )
-    if (
-        learner is not None
-        and state.committed_handle is not None
-        and _in_apply_window(
-            apply_now=apply_now,
-            dist_start=dist_start,
-            apply_zone_m=apply_zone_m,
-        )
-    ):
-        learner.observe_brake_decel(
-            handle=state.committed_handle,
-            speed_mph=speed_mph,
-            gradient_pct=gradient_pct,
-            accel_ms2=accel_ms2,
-            lever=lever,
-            brake_cyl_bar=brake_cyl_bar,
-        )
-
     posted = latch.posted_limit_mph
     return BrakeTargetResult(
         target_kind="SPEED_LIMIT",

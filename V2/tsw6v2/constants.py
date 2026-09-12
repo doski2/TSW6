@@ -61,6 +61,13 @@ LIMIT_RELEASE_MIN_SPEED_BAND_MPH = 5.0
 # Transición zona lenta→rápida (35→60) y cola sin cartel adelante
 ASCENDING_LIMIT_DELTA_MPH = 0.5
 DESCENDING_LIMIT_DELTA_MPH = 0.5
+# Salto grande (35→60): no HOLD zona lenta; saltos menores (10→30) sí contienen.
+ASCENDING_EXIT_ZONE_HOLD_MIN_DELTA_MPH = 25.0
+# Zonas 10/15 (Cross-City): siempre contener aunque el cartel siguiente suba mucho (15→50).
+ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH = 30.0
+
+# Caída spd→ops objetivo grande (70→45): mínimo B2 si cabe en ventana.
+BRAKE_PLAN_LARGE_DROP_MPH = 18.0
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:
