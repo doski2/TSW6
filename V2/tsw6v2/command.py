@@ -29,6 +29,7 @@ from tsw6v2.constants import (
     EMERGENCY_BRAKE_MAX_DIST_M,
     LIMIT_COAST_BAND_MPH,
     LIMIT_CONTAIN_ESCALATE_OVER_MPH,
+    LIMIT_DOWNHILL_COAST_TRIM_MPH,
     LIMIT_OVER_ACTIVE_MPH,
     LIMIT_RELEASE_MAX_OVER_MPH,
     LIMIT_RELEASE_MIN_SPEED_BAND_MPH,
@@ -38,8 +39,10 @@ from tsw6v2.constants import (
     SERVICE_MAX_BRAKE,
     SERVICE_MIN_HANDLE,
     passenger_ops_target_mph,
+    posted_zone_hold_ceiling_mph,
 )
 from tsw6v2.limit_containment import downhill_brake_release_floor_mph
+from tsw6v2.limit_horizon import within_next_brake_horizon
 from tsw6v2.planning import is_ascending_limit_exit
 from tsw6v2.target import (
     BrakeTargetKind,
@@ -90,6 +93,7 @@ class BrakeCommand:
     phase: Optional[str] = None        # B1, B2, B3
     reason: str = ""
     distance_m: Optional[float] = None   # para limitar notch 0 (emergencia)
+    zone_coast_release: bool = False
 
     def display_action(self) -> str:
         """Etiqueta para GUI/logs (Dastsc: fase del plan, no COAST/BRAKE)."""
@@ -120,6 +124,16 @@ def limit_release_over_mph(gradient_pct: float = 0.0) -> float:
     # −0.3 %% → 0.40 mph; −1.0 %% → 0.55 mph
     t = (g - 0.3) / 0.7
     return LIMIT_RELEASE_MAX_OVER_MPH + t * 0.15
+
+
+def downhill_zone_rearm_ceiling_mph(
+    posted_limit_mph: float,
+    gradient_pct: float = 0.0,
+) -> float:
+    """Techo HOLD zona + banda RELEASE; tras soltar eff_floor no re-HOLD_DH hasta superarlo."""
+    return posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct) + limit_release_over_mph(
+        gradient_pct
+    )
 
 
 def command_from_target(
@@ -282,6 +296,19 @@ def release_brake_command(*, at_target: bool) -> Optional[BrakeCommand]:
     )
 
 
+def release_service_over_brake_command(
+    *,
+    reason: str = "Plan servicio: reducir freno heredado",
+) -> BrakeCommand:
+    """Soltar a neutro si el freno vigente es más fuerte que el plan andén/señal."""
+    return BrakeCommand(
+        kind="RELEASE",
+        target_notch=4,
+        phase="NEU",
+        reason=reason,
+    )
+
+
 # ── RELEASE y anti-rebrake (Dastsc resolveReleaseAction) ─────────────────────
 
 
@@ -359,17 +386,73 @@ class SpeedLimitCoastLatch:
     limit_speed_mph: float
 
 
+@dataclass
+class DownhillZoneCoastLatch:
+    posted_limit_mph: float
+    rearm_ceiling_mph: float
+
+
 class BrakeReleaseState:
     """Estado del latch coast entre ticks."""
 
     def __init__(self) -> None:
         self._coast_latch: Optional[SpeedLimitCoastLatch] = None
+        self._downhill_zone_latch: Optional[DownhillZoneCoastLatch] = None
 
     def reset(self) -> None:
         self._coast_latch = None
+        self._downhill_zone_latch = None
 
     def latch(self, limit_speed_mph: float) -> None:
         self._coast_latch = SpeedLimitCoastLatch(limit_speed_mph=limit_speed_mph)
+
+    def latch_downhill_zone(
+        self,
+        posted_limit_mph: float,
+        rearm_ceiling_mph: float,
+    ) -> None:
+        """Tras RELEASE eff_floor: no re-HOLD_DH hasta repunte sobre techo + margen."""
+        self._downhill_zone_latch = DownhillZoneCoastLatch(
+            posted_limit_mph=float(posted_limit_mph),
+            rearm_ceiling_mph=float(rearm_ceiling_mph),
+        )
+
+    def latch_after_zone_coast_release(
+        self,
+        posted_limit_mph: float,
+        gradient_pct: float,
+    ) -> None:
+        self.latch_downhill_zone(
+            posted_limit_mph,
+            downhill_zone_rearm_ceiling_mph(posted_limit_mph, gradient_pct),
+        )
+
+    def update_downhill_zone(
+        self,
+        speed_mph: float,
+        posted_limit_mph: Optional[float],
+    ) -> None:
+        if self._downhill_zone_latch is None:
+            return
+        if posted_limit_mph is None:
+            self._downhill_zone_latch = None
+            return
+        if posted_limit_mph != self._downhill_zone_latch.posted_limit_mph:
+            self._downhill_zone_latch = None
+            return
+        if speed_mph > self._downhill_zone_latch.rearm_ceiling_mph:
+            self._downhill_zone_latch = None
+
+    def should_inhibit_downhill_hold(
+        self,
+        speed_mph: float,
+        posted_limit_mph: float,
+    ) -> bool:
+        if self._downhill_zone_latch is None:
+            return False
+        if posted_limit_mph != self._downhill_zone_latch.posted_limit_mph:
+            return False
+        return speed_mph <= self._downhill_zone_latch.rearm_ceiling_mph
 
     def update(
         self,
@@ -412,6 +495,44 @@ class BrakeReleaseState:
         if is_brake_applied(handle_notch):
             return False
         return speed_mph <= next_limit_mph + COAST_REBRAKE_MARGIN_MPH
+
+
+def resolve_orphan_limit_brake_release(
+    *,
+    speed_mph: float,
+    handle_notch: int,
+    effective_limit: float,
+    next_limit_mph: Optional[float],
+    distance_next_m: Optional[float],
+    gradient_pct: float,
+    limit_target: Optional[BrakeTargetResult] = None,
+) -> Optional[BrakeCommand]:
+    """
+    Freno heredado (HOLD_DH / B1–B2) sin plan activo: soltar bajo techo zona.
+
+    Sesión ``095417Z``: B2 tras 15→30 con ``no_plan`` y spd ~15 mph; el RELEASE
+    al cartel 50 no aplica (``LIMIT_RELEASE_MIN_SPEED_BAND``).
+    """
+    if not is_brake_applied(handle_notch):
+        return None
+    if limit_target is not None and (
+        limit_target.apply_now or limit_target.downhill_hold
+    ):
+        return None
+    ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
+    if speed_mph > ceiling:
+        return None
+    if next_limit_mph is not None and distance_next_m is not None:
+        if within_next_brake_horizon(
+            speed_mph=speed_mph,
+            next_limit_mph=next_limit_mph,
+            next_distance_m=distance_next_m,
+            gradient_pct=gradient_pct,
+        ):
+            ops_next = passenger_ops_target_mph(next_limit_mph)
+            if speed_mph > ops_next - LIMIT_DOWNHILL_COAST_TRIM_MPH:
+                return None
+    return release_brake_command(at_target=True)
 
 
 def resolve_release_command(
@@ -503,6 +624,15 @@ def resolve_release_command(
 
     cmd = release_brake_command(at_target=True)
     if cmd:
+        if zone_release_target is not None:
+            cmd = BrakeCommand(
+                kind=cmd.kind,
+                target_notch=cmd.target_notch,
+                phase=cmd.phase,
+                reason=cmd.reason,
+                distance_m=cmd.distance_m,
+                zone_coast_release=True,
+            )
         _log.debug(
             "P1 RELEASE  spd=%.1f  target=%.1f  handle=%d  next=%s",
             speed_mph,
@@ -541,10 +671,13 @@ __all__ = [
     "is_brake_applied",
     "is_brake_released",
     "is_downhill_limit_approach",
+    "downhill_zone_rearm_ceiling_mph",
     "limit_release_over_mph",
+    "resolve_orphan_limit_brake_release",
     "plan_to_brake_command",
     "platform_door_brake_command",
     "release_brake_command",
+    "release_service_over_brake_command",
     "release_target_mph",
     "resolve_release_command",
     "should_hold_limit_brake_downhill",

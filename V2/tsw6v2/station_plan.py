@@ -441,11 +441,12 @@ def plan_station_service_brake(
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
     schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    min_speed_ms: float = 0.5,
 ) -> Optional[BrakePlan]:
     speed_ms = speed_mph * MPH_TO_MS
     target_ms = 0.0
 
-    if speed_ms < 0.5 or station_distance_m is None:
+    if speed_ms < min_speed_ms or station_distance_m is None:
         return None
     if speed_ms <= target_ms + 0.05:
         return None

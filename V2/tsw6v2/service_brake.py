@@ -1,9 +1,15 @@
-"""Conversión plan v→0 → ``BrakeTargetResult`` (andén / señal)."""
+"""Conversión plan v→0 → ``BrakeTargetResult`` y mandos (andén / señal unificados)."""
 
 from __future__ import annotations
 
 from typing import Optional
 
+from tsw6v2.command import (
+    BrakeCommand,
+    command_from_target,
+    is_brake_applied,
+    release_service_over_brake_command,
+)
 from tsw6v2.physics import should_emit_brake_command
 from tsw6v2.plan import BrakePlan
 from tsw6v2.target import BrakeTargetResult
@@ -64,3 +70,50 @@ def target_from_stop_plan(
         apply_now=True,
         detail=detail,
     )
+
+
+def should_release_over_braked_for_stop_target(
+    target: BrakeTargetResult,
+    current_notch: int,
+) -> bool:
+    """
+    UK: notch menor = freno más fuerte (1=B3, 3=B1).
+
+    WATCH o fuera de ventana: soltar si heredamos más muesca que el plan.
+    """
+    if not is_brake_applied(current_notch):
+        return False
+    return current_notch < int(target.handle_notch)
+
+
+def command_from_stop_target(
+    target: BrakeTargetResult,
+    *,
+    throttle_notch: int = 0,
+    current_notch: int = 4,
+    speed_mph: float = 0.0,
+    gradient_pct: float = 0.0,
+) -> Optional[BrakeCommand]:
+    """APPLY / COAST / RELEASE unificado para STATION y SIGNAL."""
+    apply_at_remaining_m = target.distance_m - target.dist_start
+    cmd = command_from_target(
+        target_kind=target.target_kind,
+        distance_m=target.distance_m,
+        target_speed_mph=target.target_speed_mph,
+        handle_notch=target.handle_notch,
+        phase=target.phase,
+        dist_start=target.dist_start,
+        apply_now=target.apply_now,
+        throttle_notch=throttle_notch,
+        current_notch=current_notch,
+        speed_mph=speed_mph,
+        apply_at_remaining_m=apply_at_remaining_m,
+        detail=target.detail,
+        gradient_pct=gradient_pct,
+        brake_committed=False,
+    )
+    if cmd is not None:
+        return cmd
+    if should_release_over_braked_for_stop_target(target, current_notch):
+        return release_service_over_brake_command()
+    return None

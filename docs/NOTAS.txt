@@ -4,8 +4,8 @@ estudiado documento estado:
 1. una vez terminado plan v2 revisar documentacion y sincronizar el resto de doc con plan v2
 2 cameraMode insertar y probar mas adelante
 3.patinaje ver si hay un valor que a partir de eso patina? en dastsc si estaba añadir reglas
-4.
-5.
+4.pendiente probar y validar semaforo rojo
+5.sabe como responde el aire cada muesca de freno y si es prolungada o no la frenada?
 6. 
 7.
 8. mantener siempre la velocidad max iguel que en bajada pero en todo?

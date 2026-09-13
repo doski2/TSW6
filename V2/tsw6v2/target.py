@@ -58,6 +58,17 @@ class BrakeTargetResult:
         gradient_pct: float = 0.0,
         brake_committed: bool = False,
     ) -> Optional["BrakeCommand"]:
+        if self.target_kind in ("STATION", "SIGNAL"):
+            from tsw6v2.service_brake import command_from_stop_target
+
+            return command_from_stop_target(
+                self,
+                throttle_notch=throttle_notch,
+                current_notch=current_notch,
+                speed_mph=speed_mph,
+                gradient_pct=gradient_pct,
+            )
+
         from tsw6v2.command import command_from_target
 
         return command_from_target(

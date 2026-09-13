@@ -47,7 +47,9 @@ def test_zone_hold_ceiling_scales_with_gradient():
 
     assert zone_hold_over_mph(0.0) == 0.5
     assert abs(zone_hold_over_mph(-1.0) - 0.2) < 0.01
+    assert zone_hold_over_mph(-1.74) == 0.2  # no extrapolar negativo (095417Z)
     assert posted_zone_hold_ceiling_mph(60.0, -1.0) == 60.2
+    assert abs(posted_zone_hold_ceiling_mph(15.0, -1.74) - 15.2) < 0.01
     assert posted_zone_hold_ceiling_mph(60.0, -0.2) == 60.5
 
 
@@ -185,7 +187,7 @@ def test_h1_zone_contain_on_moderate_ascending_10_to_30():
     assert r is not None
     assert r.downhill_hold
     assert r.apply_now
-    assert abs(r.target_speed_mph - 9.88) < 0.05
+    assert abs(r.target_speed_mph - 10.2) < 0.05
 
 
 def test_h1_posted_hold_far_from_next_sign():
@@ -317,7 +319,23 @@ def test_h1_hold_zone_15_to_50_session_152129() -> None:
     assert r is not None
     assert r.downhill_hold
     assert r.apply_now
-    assert abs(r.target_speed_mph - 14.88) < 0.05
+    assert abs(r.target_speed_mph - 15.2) < 0.05
+
+
+def test_h1_hold_zone_15_overspeed_session_143544() -> None:
+    """15→50 @283 m: HOLD_DH @21 mph (overspeed zona 15, sesión 143544Z)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=21.0,
+        limit_mph=50.0,
+        distance_m=283.0,
+        gradient_pct=-1.74,
+        posted_limit_mph=15.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert abs(r.target_speed_mph - 15.2) < 0.05
 
 
 def test_h1_coast_watch_below_hold_ceiling_session_150916() -> None:

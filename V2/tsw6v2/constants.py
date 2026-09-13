@@ -91,6 +91,8 @@ def zone_hold_over_mph(gradient_pct: float = 0.0) -> float:
         return LIMIT_ZONE_HOLD_OVER_MPH
     if g <= 0.3:
         return LIMIT_ZONE_HOLD_OVER_MPH
+    if g >= 1.0:
+        return LIMIT_ZONE_HOLD_OVER_STEEP_MPH
     t = (g - 0.3) / 0.7
     return LIMIT_ZONE_HOLD_OVER_MPH - t * (
         LIMIT_ZONE_HOLD_OVER_MPH - LIMIT_ZONE_HOLD_OVER_STEEP_MPH

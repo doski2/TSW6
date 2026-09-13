@@ -10,14 +10,17 @@ from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
     is_brake_applied,
+    release_service_over_brake_command,
+    resolve_orphan_limit_brake_release,
     resolve_release_command,
 )
+from tsw6v2.service_brake import should_release_over_braked_for_stop_target
 from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
 from tsw6v2.p1_emergency import EmergencyTargetKind, check_p1_emergency
-from tsw6v2.p1_policy import pick_p1_brake_target
+from tsw6v2.p1_policy import limit_release_allowed, pick_p1_brake_target
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     STATION_SCHEDULE_SLACK_ENABLED,
@@ -28,7 +31,7 @@ from tsw6v2.planning import effective_limit_mph, next_speed_limit
 from tsw6v2.signal_brake import evaluate_signal_brake
 from tsw6v2.signal_plan import (
     should_suppress_signal_braking_for_departure,
-    signal_behind_station,
+    signal_in_play,
 )
 from tsw6v2.station_brake import evaluate_station_brake
 from tsw6v2.target import BrakeTargetResult
@@ -325,9 +328,12 @@ def _attempt_p1_emergency(
 ) -> Optional[LimitBrakeDecision]:
     signal_dist = _signal_distance_m(snap)
     checks: list[tuple[EmergencyTargetKind, float]] = []
-    if signal_dist is not None and not signal_behind_station(
-        signal_dist_m=signal_dist,
-        station_dist_m=station_distance_m,
+    if (
+        signal_dist is not None
+        and signal_in_play(
+            signal_dist_m=signal_dist,
+            station_dist_m=station_distance_m,
+        )
     ):
         checks.append(("SIGNAL", signal_dist))
     if station_distance_m is not None and station_distance_m > 0:
@@ -366,36 +372,6 @@ def _attempt_p1_emergency(
     return None
 
 
-def _limit_release_allowed(
-    station_dist: Optional[float],
-    target: Optional[BrakeTargetResult],
-    station_target: Optional[BrakeTargetResult] = None,
-    signal_target: Optional[BrakeTargetResult] = None,
-    signal_dist_m: Optional[float] = None,
-) -> bool:
-    """Modo cartel siempre; con andén solo si no hay freno STATION/SIGNAL activo."""
-    if target is not None and target.target_kind == "SIGNAL":
-        return False
-    if (
-        signal_target is not None
-        and not signal_behind_station(
-            signal_dist_m=signal_dist_m if signal_dist_m is not None else signal_target.distance_m,
-            station_dist_m=station_dist,
-        )
-    ):
-        return False
-    if station_dist is None:
-        return True
-    if target is not None and target.target_kind == "STATION":
-        return False
-    if target is not None and target.target_kind == "SPEED_LIMIT":
-        return True
-    if station_target is not None and station_target.apply_now:
-        return False
-    # pick=None (andén lejos): aún soltar HOLD_DH / BRAKE_LIMIT (sesión 224046Z).
-    return True
-
-
 def _attempt_release(
     prep: _TickPrep,
     *,
@@ -403,6 +379,7 @@ def _attempt_release(
     release_state: BrakeReleaseState,
     snap: ProbeSnapshot,
     limit_brake_enabled: bool = True,
+    limit_target: Optional[BrakeTargetResult] = None,
 ) -> Optional[LimitBrakeDecision]:
     if not limit_brake_enabled or not is_brake_applied(prep.lever):
         return None
@@ -423,9 +400,24 @@ def _attempt_release(
         predict_decel=prep.predict,
     )
     if rel is None:
+        rel = resolve_orphan_limit_brake_release(
+            speed_mph=prep.ctx.speed_mph,
+            handle_notch=prep.lever,
+            effective_limit=prep.ctx.effective,
+            next_limit_mph=prep.next_limit_mph,
+            distance_next_m=prep.dist_m,
+            gradient_pct=prep.ctx.grad,
+            limit_target=limit_target,
+        )
+    if rel is None:
         return None
     limit_state.clear_commitment()
-    if prep.next_limit_mph is not None:
+    if rel.zone_coast_release:
+        release_state.latch_after_zone_coast_release(
+            prep.ctx.effective,
+            prep.ctx.grad,
+        )
+    elif prep.next_limit_mph is not None:
         release_state.latch(prep.next_limit_mph)
     return prep.ctx.decide(
         rel,
@@ -532,12 +524,11 @@ def evaluate_p1_tick(
 
     ctx = prep.ctx
     limit_target: Optional[BrakeTargetResult] = None
-    if (
-        limit_brake_enabled
-        and prep.next_limit_mph is not None
-        and prep.dist_m is not None
+    posted = ctx.effective if snap.speed_limit_ms else None
+    if limit_brake_enabled and (
+        (prep.next_limit_mph is not None and prep.dist_m is not None)
+        or posted is not None
     ):
-        posted = ctx.effective if snap.speed_limit_ms else None
         limit_target = evaluate_limit_brake(
             limit_state,
             speed_mph=ctx.speed_mph,
@@ -552,6 +543,7 @@ def evaluate_p1_tick(
             learner=learner,
             lever=prep.lever,
             brake_cyl_bar=ctx.cyl,
+            release_state=release_state,
         )
 
     station_target: Optional[BrakeTargetResult] = None
@@ -572,8 +564,7 @@ def evaluate_p1_tick(
     signal_target: Optional[BrakeTargetResult] = None
     if (
         signal_brake_enabled
-        and signal_dist is not None
-        and not signal_behind_station(
+        and signal_in_play(
             signal_dist_m=signal_dist,
             station_dist_m=station_dist,
         )
@@ -604,16 +595,47 @@ def evaluate_p1_tick(
         accel_ms2=snap.accel_ms2,
     )
 
-    # Tras pick: RELEASE cartel no debe soltar freno de andén/señal (sesión 123139Z).
-    if _limit_release_allowed(
-        station_dist, target, station_target, signal_target, signal_dist
+    def _limit_release_ok(pick: Optional[BrakeTargetResult]) -> bool:
+        return limit_release_allowed(
+            station_dist,
+            pick,
+            station_target,
+            signal_target,
+            signal_dist,
+            speed_mph=ctx.speed_mph,
+        )
+
+    # Señal WATCH: soltar freno heredado aunque gane cartel HOLD_DH (083405Z).
+    if (
+        signal_brake_enabled
+        and signal_target is not None
+        and not signal_target.apply_now
+        and is_brake_applied(prep.lever)
+        and should_release_over_braked_for_stop_target(signal_target, prep.lever)
+        and _limit_release_ok(target)
     ):
+        rel = release_service_over_brake_command(
+            reason="Señal WATCH: reducir freno heredado",
+        )
+        limit_state.clear_commitment()
+        return ctx.decide(
+            rel,
+            "release",
+            phase=rel.phase or "NEU",
+            detail=rel.reason,
+            handle_notch=rel.target_notch,
+            target_kind="SIGNAL",
+        )
+
+    # Tras pick: RELEASE cartel no debe soltar freno de andén/señal (sesión 123139Z).
+    if _limit_release_ok(target):
         released = _attempt_release(
             prep,
             limit_state=limit_state,
             release_state=release_state,
             snap=snap,
             limit_brake_enabled=limit_brake_enabled,
+            limit_target=limit_target if limit_brake_enabled else None,
         )
         if released is not None:
             return released

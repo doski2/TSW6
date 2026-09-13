@@ -39,6 +39,7 @@ from tsw6v2.physics import (
     MPH_TO_MS,
     apply_zone_margin_m,
 )
+from tsw6v2.command import BrakeReleaseState
 from tsw6v2.target import LIMIT_COAST_BAND_MPH, BrakeTargetResult
 
 __all__ = [
@@ -65,6 +66,7 @@ def evaluate_limit_brake(
     learner: Optional[LearnerProfile] = None,
     lever: int | None = None,
     brake_cyl_bar: float | None = None,
+    release_state: Optional[BrakeReleaseState] = None,
 ) -> Optional[BrakeTargetResult]:
     """Planifica frenada al cartel. Re-latch si cambia el límite objetivo."""
     base = state.snapshot()
@@ -72,14 +74,15 @@ def evaluate_limit_brake(
     next_state = base.snapshot()
 
     downhill_contain = None
-    if posted_limit_mph is not None and limit_mph is not None and distance_m is not None:
+    if posted_limit_mph is not None:
         downhill_contain = pick_downhill_containment(
             dh_state,
             speed_mph=speed_mph,
             posted_limit_mph=posted_limit_mph,
             gradient_pct=gradient_pct,
-            next_limit_mph=limit_mph,
-            next_distance_m=distance_m,
+            next_limit_mph=limit_mph if distance_m is not None else None,
+            next_distance_m=distance_m if distance_m is not None else None,
+            release_state=release_state,
         )
 
     next_r: Optional[BrakeTargetResult] = None

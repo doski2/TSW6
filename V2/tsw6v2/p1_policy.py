@@ -21,7 +21,13 @@ from tsw6v2.physics import (
     decel_for_notch,
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
-from tsw6v2.signal_plan import signal_behind_station
+from tsw6v2.signal_plan import (
+    SIGNAL_WATCH_LIMIT_DEFER_M,
+    resolve_signal_dist_m,
+    should_block_creep_release_from_signal,
+    signal_behind_station,
+    signal_in_play,
+)
 from tsw6v2.target import BrakeTargetResult
 
 # Margen sobre bd(v→0): sesión 20260909T224556Z entró STATION tarde @ 444 m.
@@ -142,10 +148,21 @@ def should_delay_unified_station_plan(
 def should_prefer_signal_over_limit(
     signal_target: BrakeTargetResult,
     limit_target: BrakeTargetResult,
+    *,
+    signal_dist_m: Optional[float] = None,
 ) -> bool:
-    """Rojo siempre gana al cartel (PLAN_V2 §3 — parar en Stop)."""
-    _ = limit_target
-    return True
+    """
+    Rojo gana al cartel si APPLY o cerca del poste.
+
+    WATCH lejos no bloquea HOLD_DH / BRAKE_LIMIT (102222Z: zona 15 @20 mph,
+    señal WATCH @283 m).
+    """
+    if signal_target.apply_now:
+        return True
+    if limit_target.apply_now or limit_target.downhill_hold:
+        return False
+    dist = resolve_signal_dist_m(signal_dist_m, signal_target)
+    return dist is not None and dist <= SIGNAL_WATCH_LIMIT_DEFER_M
 
 
 def should_prefer_signal_over_station(
@@ -163,6 +180,45 @@ def should_prefer_signal_over_station(
     if not signal_target.apply_now and station_target.apply_now:
         return False
     return signal_target.distance_m <= station_target.distance_m
+
+
+def limit_release_allowed(
+    station_dist: Optional[float],
+    target: Optional[BrakeTargetResult],
+    station_target: Optional[BrakeTargetResult] = None,
+    signal_target: Optional[BrakeTargetResult] = None,
+    signal_dist_m: Optional[float] = None,
+    speed_mph: Optional[float] = None,
+) -> bool:
+    """Modo cartel siempre; con andén solo si no hay freno STATION/SIGNAL activo."""
+    if target is not None and target.target_kind == "SIGNAL":
+        return False
+    sig_dist = resolve_signal_dist_m(signal_dist_m, signal_target)
+    # Probe con distancia manda: bloquear RELEASE en creep aunque el plan sea None (143544Z).
+    if sig_dist is not None and should_block_creep_release_from_signal(
+        signal_dist_m=sig_dist,
+        speed_mph=speed_mph,
+    ):
+        return False
+    if (
+        signal_target is not None
+        and signal_target.apply_now
+        and not signal_behind_station(
+            signal_dist_m=sig_dist,
+            station_dist_m=station_dist,
+        )
+    ):
+        return False
+    if station_dist is None:
+        return True
+    if target is not None and target.target_kind == "STATION":
+        return False
+    if target is not None and target.target_kind == "SPEED_LIMIT":
+        return True
+    if station_target is not None and station_target.apply_now:
+        return False
+    # pick=None (andén lejos): aún soltar HOLD_DH / BRAKE_LIMIT (sesión 224046Z).
+    return True
 
 
 def _pick_limit_station_target(
@@ -289,8 +345,8 @@ def pick_p1_brake_target(
     )
     if signal_target is None:
         return chosen
-    if signal_behind_station(
-        signal_dist_m=signal_dist_m if signal_dist_m is not None else signal_target.distance_m,
+    if not signal_in_play(
+        signal_dist_m=resolve_signal_dist_m(signal_dist_m, signal_target),
         station_dist_m=station_dist_m,
     ):
         return chosen
@@ -300,4 +356,10 @@ def pick_p1_brake_target(
         if should_prefer_signal_over_station(signal_target, chosen):
             return signal_target
         return chosen
-    return signal_target
+    if should_prefer_signal_over_limit(
+        signal_target,
+        chosen,
+        signal_dist_m=signal_dist_m,
+    ):
+        return signal_target
+    return chosen

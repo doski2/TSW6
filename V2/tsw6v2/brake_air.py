@@ -113,7 +113,12 @@ class BrakeAirTracker:
         p = float(brake_cyl_bar)
         if lever is not None and int(lever) >= _COAST_NOTCH:
             return p <= PRESSURE_IDLE_MAX_BAR
-        return p >= PRESSURE_BRAKING_MIN_BAR
+        handle = int(lever) if lever is not None else 3
+        return brake_decel_sample_ready(
+            handle=handle,
+            lever=lever,
+            brake_cyl_bar=p,
+        )
 
     def inhibit_reapply(
         self,

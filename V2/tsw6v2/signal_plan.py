@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL, MPH_TO_MS
+
+if TYPE_CHECKING:
+    from tsw6v2.target import BrakeTargetResult
 from tsw6v2.plan import BrakePlan, PredictDecelFn
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
@@ -20,6 +23,14 @@ from tsw6v2.station_plan import (
 SIGNAL_DEPARTURE_MAX_DIST_M = 25.0
 # Andén mucho más cerca que la señal → priorizar parada en andén (PLAN_V2 §3).
 SIGNAL_BEHIND_STATION_GAP_M = 50.0
+# WATCH lejos no bloquea cartel; rojo cercano (<150 m) sigue mandando señal.
+SIGNAL_WATCH_LIMIT_DEFER_M = 150.0
+# Parada final: plan gradual deja dist_start≈distancia a baja spd (102222Z @204 m).
+SIGNAL_IMMEDIATE_STOP_M = 250.0
+SIGNAL_IMMEDIATE_MAX_SPEED_MPH = 30.0
+# No soltar freno heredado en creep lejos del poste (102222Z RELEASE @204 m).
+SIGNAL_RELEASE_BLOCK_MIN_DIST_M = 50.0
+SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH = 8.0
 
 
 @dataclass(frozen=True)
@@ -44,6 +55,46 @@ def signal_behind_station(
     if signal_dist_m <= 0 or station_dist_m <= 0:
         return False
     return station_dist_m + gap_m < signal_dist_m
+
+
+def signal_in_play(
+    *,
+    signal_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+) -> bool:
+    """True si hay señal roja medible y no está detrás del andén."""
+    if signal_dist_m is None or signal_dist_m <= 0:
+        return False
+    return not signal_behind_station(
+        signal_dist_m=signal_dist_m,
+        station_dist_m=station_dist_m,
+    )
+
+
+def resolve_signal_dist_m(
+    signal_dist_m: Optional[float],
+    signal_target: Optional["BrakeTargetResult"] = None,
+) -> Optional[float]:
+    """Distancia al poste: probe primero, luego objetivo planificado."""
+    if signal_dist_m is not None:
+        return signal_dist_m
+    if signal_target is not None:
+        return signal_target.distance_m
+    return None
+
+
+def should_block_creep_release_from_signal(
+    *,
+    signal_dist_m: Optional[float],
+    speed_mph: Optional[float],
+) -> bool:
+    """No soltar freno en creep lejos del poste (102222Z RELEASE @204 m)."""
+    if signal_dist_m is None or speed_mph is None:
+        return False
+    return (
+        signal_dist_m > SIGNAL_RELEASE_BLOCK_MIN_DIST_M
+        and speed_mph < SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH
+    )
 
 
 def should_suppress_signal_braking_for_departure(
@@ -82,6 +133,12 @@ def _plan_to_signal(plan: BrakePlan) -> BrakePlan:
     )
 
 
+def _immediate_signal_plan(signal_distance_m: float, speed_mph: float) -> BrakePlan:
+    return _plan_to_signal(
+        build_immediate_stop_plan(signal_distance_m, max(speed_mph, 0.1))
+    )
+
+
 def plan_brake_for_signal(
     *,
     speed_mph: float,
@@ -98,8 +155,6 @@ def plan_brake_for_signal(
     """Plan gradual a 0 frente a semáforo rojo (sin holgura de horario)."""
     if signal_distance_m <= 0:
         return None
-    if speed_mph * MPH_TO_MS < 0.5:
-        return None
     if should_suppress_signal_braking_for_departure(
         speed_mph=speed_mph,
         signal_distance_m=signal_distance_m,
@@ -107,6 +162,11 @@ def plan_brake_for_signal(
         station_distance_m=station_distance_m,
         cfg=station_cfg,
     ):
+        return None
+    if speed_mph <= 0.5:
+        # Crawl lejos del poste (143544Z); en andén/salida → None (suppress arriba).
+        if signal_distance_m > SIGNAL_RELEASE_BLOCK_MIN_DIST_M:
+            return _immediate_signal_plan(signal_distance_m, speed_mph)
         return None
 
     final_stop = plan_station_final_stop(
@@ -138,9 +198,18 @@ def plan_brake_for_signal(
         cfg=station_cfg_signal,
         schedule_slack_enabled=False,
         brake_fill_s=brake_fill_s,
+        min_speed_ms=0.35,
     )
-    if plan is None and signal_distance_m < 120.0 and speed_mph > 2.0:
-        plan = build_immediate_stop_plan(signal_distance_m, speed_mph)
+    if (
+        signal_distance_m < SIGNAL_IMMEDIATE_STOP_M
+        and 0.5 < speed_mph <= SIGNAL_IMMEDIATE_MAX_SPEED_MPH
+        and (
+            plan is None
+            or plan.active_step is None
+            or not plan.active_step.apply_now
+        )
+    ):
+        return _immediate_signal_plan(signal_distance_m, speed_mph)
     if plan is None:
         return None
     return _plan_to_signal(plan)

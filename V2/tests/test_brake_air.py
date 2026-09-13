@@ -54,6 +54,7 @@ def test_air_ready_coast_idle_gauge() -> None:
 def test_air_ready_service_needs_pressure() -> None:
     air = BrakeAirTracker()
     assert air.air_ready(1.2, lever=3) is False
+    assert air.air_ready(1.51, lever=3) is True  # 143544Z: B1 ~1.51 bar
     assert air.air_ready(1.65, lever=3) is True
 
 

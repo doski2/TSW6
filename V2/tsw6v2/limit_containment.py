@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from tsw6v2.constants import (
     posted_zone_hold_ceiling_mph,
@@ -23,6 +23,9 @@ from tsw6v2.physics import (
     is_uphill_gradient,
 )
 from tsw6v2.target import BrakeTargetResult
+
+if TYPE_CHECKING:
+    from tsw6v2.command import BrakeReleaseState
 
 # Re-export para tests y callers existentes.
 from tsw6v2.limit_horizon import next_limit_brake_horizon_m  # noqa: F401
@@ -77,7 +80,13 @@ def _hold_if_over_zone_ceiling(
     posted_limit_mph: float,
     gradient_pct: float,
     next_distance_m: Optional[float],
+    release_state: Optional[BrakeReleaseState] = None,
 ) -> Optional[BrakeTargetResult]:
+    if release_state is not None and release_state.should_inhibit_downhill_hold(
+        speed_mph,
+        posted_limit_mph,
+    ):
+        return None
     hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct)
     if speed_mph <= hold_target:
         return None
@@ -121,6 +130,7 @@ def try_current_zone_contain(
     gradient_pct: float,
     next_limit_mph: Optional[float] = None,
     next_distance_m: Optional[float] = None,
+    release_state: Optional[BrakeReleaseState] = None,
 ) -> Optional[BrakeTargetResult]:
     """
     Techo zona vigente lejos del next (60.5 @ +0.3 %%, 60.2 @ −1 %%).
@@ -148,6 +158,7 @@ def try_current_zone_contain(
         posted_limit_mph=posted_limit_mph,
         gradient_pct=gradient_pct,
         next_distance_m=next_distance_m,
+        release_state=release_state,
     )
 
 
@@ -208,6 +219,7 @@ def try_posted_downhill_hold(
     gradient_pct: float,
     next_limit_mph: Optional[float] = None,
     next_distance_m: Optional[float] = None,
+    release_state: Optional[BrakeReleaseState] = None,
 ) -> Optional[BrakeTargetResult]:
     """
     HOLD_DH — cartel siguiente no baja (60→60).
@@ -235,6 +247,7 @@ def try_posted_downhill_hold(
         posted_limit_mph=posted_limit_mph,
         gradient_pct=gradient_pct,
         next_distance_m=next_distance_m,
+        release_state=release_state,
     )
 
 
@@ -246,8 +259,11 @@ def pick_downhill_containment(
     gradient_pct: float,
     next_limit_mph: Optional[float] = None,
     next_distance_m: Optional[float] = None,
+    release_state: Optional[BrakeReleaseState] = None,
 ) -> Optional[BrakeTargetResult]:
     """Zona vigente lejos del next o HOLD_DH (60→60 en bajada)."""
+    if release_state is not None:
+        release_state.update_downhill_zone(speed_mph, posted_limit_mph)
     if should_skip_zone_hold_for_ascending_exit(posted_limit_mph, next_limit_mph):
         return None
     zone = try_current_zone_contain(
@@ -257,6 +273,7 @@ def pick_downhill_containment(
         gradient_pct=gradient_pct,
         next_limit_mph=next_limit_mph,
         next_distance_m=next_distance_m,
+        release_state=release_state,
     )
     if zone is not None:
         return zone
@@ -267,6 +284,7 @@ def pick_downhill_containment(
         gradient_pct=gradient_pct,
         next_limit_mph=next_limit_mph,
         next_distance_m=next_distance_m,
+        release_state=release_state,
     )
     if held is not None:
         return held
@@ -294,16 +312,12 @@ def downhill_brake_release_floor_mph(
 
     - Acercándose al cartel next (55→45): soltar ~44.5, también en horizonte.
     - Zona vigente lejos del next (60→55): coast ~59.5.
+    - Subida de cartel (15→50 lejos, 10→30 en horizonte): coast ~14.5 / ~9.5 en zona vigente
+      (sesiones `081745Z`, `142034Z`).
     - En banda zona vigente tras frenar (45 @ ~44.5): no seguir con B1 hasta 40.
     """
     if not is_downhill_gradient(gradient_pct):
         return None
-    if is_ascending_limit_exit(effective_limit, next_limit_mph):
-        return None
-
-    next_floor = posted_zone_coast_floor_mph(next_limit_mph)
-    if speed_mph <= next_floor + release_over_mph:
-        return next_floor
 
     in_horizon = within_next_brake_horizon(
         speed_mph=speed_mph,
@@ -311,12 +325,20 @@ def downhill_brake_release_floor_mph(
         next_distance_m=distance_next_m,
         gradient_pct=gradient_pct,
     )
-    if not in_horizon:
+    ascending_exit = is_ascending_limit_exit(effective_limit, next_limit_mph)
+    if not in_horizon or ascending_exit:
         eff_floor = posted_zone_coast_floor_mph(effective_limit)
         ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
         if eff_floor <= speed_mph <= ceiling:
             return eff_floor
         if eff_floor - 1.0 <= speed_mph <= eff_floor + release_over_mph:
             return eff_floor
+
+    if ascending_exit:
+        return None
+
+    next_floor = posted_zone_coast_floor_mph(next_limit_mph)
+    if speed_mph <= next_floor + release_over_mph:
+        return next_floor
 
     return None

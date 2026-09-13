@@ -194,6 +194,99 @@ def test_release_downhill_zone_coast_far_from_next_sign():
     assert cmd.kind == "RELEASE"
 
 
+def test_release_downhill_zone_15_to_50_far_session_081745() -> None:
+    """15→50 @ 1 km: tras HOLD_DH @15, RELEASE en banda ~14.5 (sesión 081745Z)."""
+    cmd = resolve_release_command(
+        speed_mph=14.9,
+        handle_notch=3,
+        effective_limit=15.0,
+        next_limit_mph=50.0,
+        distance_next_m=1001.0,
+        gradient_pct=-1.74,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+    assert cmd.zone_coast_release
+
+
+def test_no_hold_dh_rearm_after_zone_release_session_092947() -> None:
+    """15→50: tras RELEASE eff_floor, no bombeo HOLD_DH hasta repunte sobre techo+margen."""
+    from tsw6v2.command import (
+        BrakeReleaseState,
+        downhill_zone_rearm_ceiling_mph,
+    )
+    from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+
+    grad = -1.74
+    posted = 15.0
+    rearm = downhill_zone_rearm_ceiling_mph(posted, grad)
+
+    without = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=15.3,
+        limit_mph=50.0,
+        distance_m=1001.0,
+        gradient_pct=grad,
+        posted_limit_mph=posted,
+    )
+    assert without is not None
+    assert without.downhill_hold
+
+    release_state = BrakeReleaseState()
+    release_state.latch_after_zone_coast_release(posted, grad)
+    inhibited = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=15.3,
+        limit_mph=50.0,
+        distance_m=1001.0,
+        gradient_pct=grad,
+        posted_limit_mph=posted,
+        release_state=release_state,
+    )
+    assert inhibited is None or not inhibited.downhill_hold
+
+    release_state.update_downhill_zone(rearm + 0.2, posted)
+    assert release_state.should_inhibit_downhill_hold(rearm + 0.1, posted) is False
+    rearmed = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=16.0,
+        limit_mph=50.0,
+        distance_m=1001.0,
+        gradient_pct=grad,
+        posted_limit_mph=posted,
+        release_state=release_state,
+    )
+    assert rearmed is not None
+    assert rearmed.downhill_hold
+
+
+def test_release_downhill_zone_10_to_30_in_horizon_session_142034() -> None:
+    """10→30 @ 123 m: tras HOLD_DH, RELEASE en banda ~9.5 (sesión 142034Z)."""
+    cmd = resolve_release_command(
+        speed_mph=10.0,
+        handle_notch=3,
+        effective_limit=10.0,
+        next_limit_mph=30.0,
+        distance_next_m=123.0,
+        gradient_pct=-1.74,
+    )
+    assert cmd is not None
+    assert cmd.kind == "RELEASE"
+
+
+def test_no_release_downhill_zone_10_to_30_above_ceiling() -> None:
+    """10→30 en horizonte: sin RELEASE mientras spd > techo zona (~10.9)."""
+    cmd = resolve_release_command(
+        speed_mph=12.8,
+        handle_notch=3,
+        effective_limit=10.0,
+        next_limit_mph=30.0,
+        distance_next_m=123.0,
+        gradient_pct=-1.74,
+    )
+    assert cmd is None
+
+
 def test_no_zone_release_downhill_when_still_over_ceiling():
     cmd = resolve_release_command(
         speed_mph=60.8,

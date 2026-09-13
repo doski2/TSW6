@@ -87,9 +87,15 @@ Excepciones:
 
   en **59.5** si hay presión/coast eficiente (solo **fuera** del horizonte hacia el 55).
 
-- **55→45** (y cualquier bajada): RELEASE al cartel next en **ops+0.5** (45→**44.5**); no arrastrar
+- **55→45** (y bajada con cartel next **bajando**): RELEASE al cartel next en **ops+0.5** (45→**44.5**);
 
-  B1 hasta ~40; no soltar por `eff_floor` de zona vigente **dentro** del horizonte.
+  no arrastrar B1 hasta ~40; no soltar por `eff_floor` de zona vigente **dentro** del horizonte.
+
+- **Subida de cartel en bajada** (10→30, 15→50): RELEASE en suelo zona vigente (**ops+0.5**)
+
+  lejos del next **o** en horizonte si la velocidad está en banda de la zona lenta (sesiones
+
+  `081745Z`, `142034Z`). No usar ops del cartel siguiente (anti-parado).
 
 - **60→60** (misma zona): HOLD_DH si `spd >` techo zona.
 - **45→60** (subida de límite en **cuesta**): sin HOLD_DH ni zone_contain — dejar acelerar
@@ -144,9 +150,13 @@ Cada tick el planificador elige **un modo** (no una pila de `if` legacy):
 
 - No APPLY sin presión; no bombar tras soltar; escalón acorde a `brake_cyl_bar`.
 - Depende de probe — sin presión, modo degradado documentado.
-- Class 323: umbral B1 ~**1.55 bar** (`PRESSURE_BRAKING_MIN_BAR`, `brake_air.pressure_for_handle`) —
+- Class 323: umbral nominal B1 ~**1.55 bar** (`PRESSURE_BRAKING_MIN_BAR`,
 
-  HUD suele marcar ~1.6 bar con B1 real (sesión `183116Z`).
+  `brake_air.pressure_for_handle`). Con muesca de servicio ya aplicada, `air_ready` exige
+
+  **92 %** de la presión esperada para esa muesca (`pressure_for_handle × 0.92` ≈ 1.43 bar en
+
+  B1) — evita `air_fill` con cilindro ~1.51 bar en HOLD_DH (sesión `143544Z`).
 
 ### 6. Trazabilidad
 
@@ -300,18 +310,32 @@ emergencia (`p1_emergency`).
 | --- | --- | --- |
 | Plan | `signal_plan.plan_brake_for_signal` | Perfil v→0 (reutiliza `plan_station_service_brake`, sin holgura horario) |
 | Eval | `signal_brake.evaluate_signal_brake` | `BrakeTargetResult` SIGNAL; WATCH lejos (`allow_watch`) |
-| Común | `service_brake.target_from_stop_plan` | Conversión plan → target (andén + señal) |
+| Común | `service_brake` | `target_from_stop_plan` + `command_from_stop_target`: APPLY/COAST/**RELEASE** si freno heredado > plan WATCH |
 | Pick | `pick_p1_brake_target` | Rojo **gana** al cartel (incl. HOLD_DH diferido); vs andén gana el más cercano |
 | Detrás andén | `signal_behind_station` (gap 50 m) | No planificar señal; no bloquear RELEASE andén |
 | Salida andén | `should_suppress_signal_braking_for_departure` | Rojo @ ~2 m, tracción, spd ≤ 11 mph — esperar verde |
 | Emergencia | `_attempt_p1_emergency` | SIGNAL **antes** que STATION; misma supresión salida que el plan |
-| RELEASE | `_limit_release_allowed` | Bloqueado con objetivo SIGNAL o señal activa adelante |
+| RELEASE | `limit_release_allowed` | Bloqueado con SIGNAL **`apply_now`**; WATCH suelta vía `command_from_stop_target` (`083405Z`). Con **`signal_dist_m`** del probe y creep &gt;50 m → bloqueado aunque `signal_target=None` (`143544Z`) |
+| Crawl | `plan_brake_for_signal` | `speed ≤ 0.5` y rojo &gt;50 m → plan inmediato (no perder objetivo señal) |
+| Zona sin next | `evaluate_limit_brake` | `posted` vigente sin cartel siguiente (`lim=null` un tick) → HOLD_DH / contención zona |
 
 Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → RELEASE → idle / APPLY /
 COAST.
 
 **Sesión `225433Z` (SPAD):** rojo @ 1040 m @ 56 mph → solo emergencia @ 61 m (tarde); HOLD_DH @15
 ganaba a señal en recta final. Tras paso 5: `p1tgt=SIGNAL`, `COAST_PWR` lejos, B1+ en ventana.
+
+**Sesión `083405Z`:** B3 heredado del cartel 45 + rojo WATCH @ 1 km → `command_none` y parada a
+~750 m del poste. Tras unificación servicio: RELEASE a neutro si muesca > plan; plan señal activo
+hasta ~0.5 mph.
+
+**Sesión `143544Z` (zona 15 → señal roja):** overspeed hasta ~21.6 mph por `air_fill` con B1
+
+~1.51 bar; RELEASE erróneo @122 m / 0.4 mph al perder `signal_target`. Replay offline
+
+(`V2/scripts/replay_jsonl.py`): en zona 15, `air_fill` 486→20 ticks y APPLY 124→679; sin
+
+RELEASE creep con rojo lejos.
 
 **Riesgo probe (sin fix Python):** `signal_red` puede desaparecer ~40 m con velocidad aún alta
 (tick 20223) — latch Lua futuro.
@@ -578,6 +602,13 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-13 | Sesión `143544Z`: `air_ready` vía `brake_decel_sample_ready`; parada inmediata unificada &lt;250 m; RELEASE bloqueado con `signal_dist_m` en creep; HOLD_DH con `posted` sin `next`; `resolve_signal_dist_m`; replay `scripts/replay_jsonl.py` |
+| 2026-09-13 | Señal roja: parada inmediata &lt;250 m @≤30 mph; sin RELEASE en creep &gt;50 m; WATCH lejos no bloquea HOLD_DH (`102222Z`) |
+| 2026-09-13 | Fix `zone_hold_over_mph`: cap @ −1 %% (no margen negativo en −1.74 %%); techo HOLD 15→15.2 y latch rearm ~15.75 (`095417Z`) |
+| 2026-09-13 | RELEASE huérfano: freno HOLD_DH/B2 sin plan (`no_plan`) bajo techo zona — sesión `095417Z` (B2 tras 15→30, objetivo 50 lejos) |
+| 2026-09-13 | Latch coast zona bajada: tras RELEASE `eff_floor`, inhibir HOLD_DH hasta `spd > techo_zona + limit_release_over` (evita bombeo HOLD↔RELEASE @ ~15 mph, sesión `092947Z`) |
+| 2026-09-13 | Servicio unificado (`service_brake`): señal/andén RELEASE si freno heredado > plan WATCH; señal activa bajo 1 mph lejos del poste; `_limit_release_allowed` solo con señal `apply_now` (`083405Z`) |
+| 2026-09-13 | RELEASE `eff_floor` en subida de cartel: lejos del next (`081745Z` 15→50) y en horizonte (`142034Z` 10→30); `ascending_exit` no bloquea suelo zona vigente |
 | 2026-09-13 | Paso 5 señal: `evaluate_signal_brake`, `signal_plan`, `service_brake`; rojo gana HOLD_DH; emergencia SIGNAL con supresión salida; sesión ref. `225433Z` |
 | 2026-09-13 | Modo station: RELEASE antes de `no_plan` (`224046Z` HOLD_DH zona 15); `pick` sin WATCH con andén diferido + sin `p1tgt` fantasma (`221258Z`); coast-trim subida no en caída posted grande 60→35 |
 | 2026-09-12 | Evaluación dual con snapshots; `limit_horizon.py`; coast trim subida (`coast_trim_deferred`); sin HOLD_DH en salida lenta→rápida en cuesta; caída grande → B2; aire 323 @ 1.55 bar; trace/replay señal |

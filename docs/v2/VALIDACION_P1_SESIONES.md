@@ -81,6 +81,7 @@ Regenerar HTML (si hace falta):
 | **Consola** | `decel_n > 0` solo con frenadas reales; sin errores IPC masivos |
 | **Resumen** | `python scripts\tools\summarize_v2_limit.py …jsonl` — APPLY/RELEASE razonables |
 | **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire; sección **Señal (rojo)** si hubo ticks rojos |
+| **Replay offline** | `python V2/scripts/replay_jsonl.py logs/v2/<sesión>.jsonl` — re-evalúa decisiones; comparar `air_fill` / APPLY en zona lenta (ref. `143544Z`) |
 | **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno; `signal_red`/`signal_dist_m` si pasas semáforo rojo |
 | **Consola investigate** | `sig=ROJO@…m` cuando probe emite rojo |
 | **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
@@ -117,6 +118,7 @@ Regenerar HTML (si hace falta):
 | `20260912T201456Z` | **Antes fix:** P6 @ 55 sin coast + HOLD_DH uphill 45→60 — **tras fix:** coast trim + sin HOLD en subida |
 | `20260912T221258Z` | **Antes fix:** salida andén, cartel 35 @ 4 km → `COAST_PWR` / Vigilar — **tras fix:** `no_plan`, sin `p1tgt`, tracción en zona 60 |
 | `20260912T224046Z` | **Antes fix:** HOLD_DH @ 15 mph en bajada, 0 RELEASE, B1 hasta ~6 mph — **tras fix:** RELEASE con `pick=None` y andén lejos |
+| `20260913T081745Z` | **Antes fix:** HOLD_DH @ 15 mph, cartel 50 @ ~1 km, 0 RELEASE, B1 hasta ~2 mph — **tras fix:** `eff_floor` zona 15 (~14.5) lejos del next; también 10→30 en horizonte (`142034Z`) |
 | `20260912T225433Z` | **Antes fix:** SPAD rojo (solo emergencia @ 61 m; HOLD_DH @15 en final) — **tras fix paso 5:** plan SIGNAL desde lejos; validar in-game |
 
 ---
