@@ -20,7 +20,11 @@ from tsw6v2.ipc import probe_lever
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
 from tsw6v2.p1_emergency import EmergencyTargetKind, check_p1_emergency
-from tsw6v2.p1_policy import limit_release_allowed, pick_p1_brake_target
+from tsw6v2.p1_policy import (
+    limit_release_allowed,
+    pick_p1_brake_target,
+    should_allow_station_watch_when_deferred,
+)
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     STATION_SCHEDULE_SLACK_ENABLED,
@@ -201,6 +205,30 @@ def _escalate_cap_fn(
     return _cap
 
 
+def _overlay_active_zone_hold(
+    pick: Optional[BrakeTargetResult],
+    limit_target: Optional[BrakeTargetResult],
+) -> Optional[BrakeTargetResult]:
+    """
+    HOLD_DH activo manda aunque el pick sea STATION/SIGNAL WATCH (173809Z).
+
+    ``p1tgt`` sigue siendo el pick; el mando usa contención de zona.
+    """
+    if (
+        limit_target is None
+        or not limit_target.apply_now
+        or not limit_target.downhill_hold
+    ):
+        return pick
+    if pick is None:
+        return limit_target
+    if pick.target_kind == "SPEED_LIMIT" and pick.apply_now:
+        return pick
+    if pick.target_kind in ("STATION", "SIGNAL") and not pick.apply_now:
+        return limit_target
+    return pick
+
+
 def _air_apply_block(
     learner: Optional[LearnerProfile],
     cmd: BrakeCommand,
@@ -224,6 +252,29 @@ def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
     if target.downhill_hold and cmd.kind == "APPLY":
         return "downhill_hold"
     return "plan"
+
+
+def _attempt_signal_inherited_release(
+    ctx: _TickCtx,
+    prep: _TickPrep,
+    limit_state: LimitBrakeState,
+    *,
+    release_ref: BrakeTargetResult,
+    reason: str,
+) -> Optional[LimitBrakeDecision]:
+    """Suelta freno de servicio heredado respecto al plan señal (WATCH o rojo pasado)."""
+    if not should_release_over_braked_for_stop_target(release_ref, prep.lever):
+        return None
+    rel = release_service_over_brake_command(reason=reason)
+    limit_state.clear_commitment()
+    return ctx.decide(
+        rel,
+        "release",
+        phase=rel.phase or "NEU",
+        detail=rel.reason,
+        handle_notch=rel.target_notch,
+        target_kind="SIGNAL",
+    )
 
 
 def _prepare_tick(
@@ -548,6 +599,15 @@ def evaluate_p1_tick(
 
     station_target: Optional[BrakeTargetResult] = None
     if station_dist is not None:
+        station_allow_watch = should_allow_station_watch_when_deferred(
+            speed_mph=ctx.speed_mph,
+            station_dist_m=station_dist,
+            limit_mph=prep.next_limit_mph,
+            limit_dist_m=prep.dist_m,
+            gradient_pct=ctx.grad,
+            brake_fill_s=prep.fill_s,
+            accel_ms2=snap.accel_ms2,
+        )
         station_target = evaluate_station_brake(
             speed_mph=ctx.speed_mph,
             station_distance_m=station_dist,
@@ -558,6 +618,7 @@ def evaluate_p1_tick(
             schedule_slack_enabled=schedule_slack_enabled,
             brake_fill_s=prep.fill_s,
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
+            allow_watch=station_allow_watch,
         )
 
     signal_dist = _signal_distance_m(snap)
@@ -605,27 +666,52 @@ def evaluate_p1_tick(
             speed_mph=ctx.speed_mph,
         )
 
+    # Rojo pasado / verde: soltar B3 heredado (152037Z tras primer semáforo).
+    if (
+        signal_brake_enabled
+        and snap.signal_red is not True
+        and signal_target is None
+        and is_brake_applied(prep.lever)
+        and not (station_target is not None and station_target.apply_now)
+        and (target is None or target.target_kind != "STATION" or not target.apply_now)
+        and _limit_release_ok(target)
+    ):
+        cleared = _attempt_signal_inherited_release(
+            ctx,
+            prep,
+            limit_state,
+            release_ref=BrakeTargetResult(
+                target_kind="SIGNAL",
+                distance_m=999.0,
+                target_speed_mph=0.0,
+                handle_notch=3,
+                phase="B1",
+                dist_start=500.0,
+                apply_now=False,
+                detail="",
+            ),
+            reason="Señal pasada/verde: soltar freno heredado",
+        )
+        if cleared is not None:
+            return cleared
+
     # Señal WATCH: soltar freno heredado aunque gane cartel HOLD_DH (083405Z).
     if (
         signal_brake_enabled
         and signal_target is not None
         and not signal_target.apply_now
         and is_brake_applied(prep.lever)
-        and should_release_over_braked_for_stop_target(signal_target, prep.lever)
         and _limit_release_ok(target)
     ):
-        rel = release_service_over_brake_command(
+        released = _attempt_signal_inherited_release(
+            ctx,
+            prep,
+            limit_state,
+            release_ref=signal_target,
             reason="Señal WATCH: reducir freno heredado",
         )
-        limit_state.clear_commitment()
-        return ctx.decide(
-            rel,
-            "release",
-            phase=rel.phase or "NEU",
-            detail=rel.reason,
-            handle_notch=rel.target_notch,
-            target_kind="SIGNAL",
-        )
+        if released is not None:
+            return released
 
     # Tras pick: RELEASE cartel no debe soltar freno de andén/señal (sesión 123139Z).
     if _limit_release_ok(target):
@@ -640,18 +726,19 @@ def evaluate_p1_tick(
         if released is not None:
             return released
 
-    if target is None:
+    command_target = _overlay_active_zone_hold(target, limit_target)
+    if command_target is None:
         if (
             station_dist is None
             and (not limit_brake_enabled or prep.next_limit_mph is None or prep.dist_m is None)
             and signal_target is None
         ):
             return ctx.idle("no_limit_sign")
-        return ctx.idle("no_plan")
+        return ctx.idle("no_plan", target=target)
 
     decision = _finalize_target_decision(
         ctx,
-        target,
+        command_target,
         limit_state=limit_state,
         release_state=release_state,
         snap=snap,
@@ -661,7 +748,10 @@ def evaluate_p1_tick(
         next_limit_mph=prep.next_limit_mph,
         grad=ctx.grad,
     )
-    decision.target_kind = target.target_kind
+    if target is not None:
+        decision.target_kind = target.target_kind
+        if target.target_kind == "STATION":
+            decision.station_dist_m = target.distance_m
     return decision
 
 

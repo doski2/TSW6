@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL, MPH_TO_MS
+from tsw6v2.constants import STATION_APPROACH_PRIORITY_M
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 
 if TYPE_CHECKING:
     from tsw6v2.target import BrakeTargetResult
+from tsw6v2.limit_station_cluster import exit_signal_clustered_with_platform_stop
 from tsw6v2.plan import BrakePlan, PredictDecelFn
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
@@ -21,22 +23,22 @@ from tsw6v2.station_plan import (
 
 # Señal de salida andén: rojo a ~2 m con tracción — no frenar hasta arrancar en verde.
 SIGNAL_DEPARTURE_MAX_DIST_M = 25.0
-# Andén mucho más cerca que la señal → priorizar parada en andén (PLAN_V2 §3).
-SIGNAL_BEHIND_STATION_GAP_M = 50.0
 # WATCH lejos no bloquea cartel; rojo cercano (<150 m) sigue mandando señal.
 SIGNAL_WATCH_LIMIT_DEFER_M = 150.0
-# Parada final: plan gradual deja dist_start≈distancia a baja spd (102222Z @204 m).
-SIGNAL_IMMEDIATE_STOP_M = 250.0
+# APPLY / parada total solo dentro de ~100 yd (152037Z: no parar a 217 m).
+SIGNAL_BRAKE_HORIZON_M = 91.0
 SIGNAL_IMMEDIATE_MAX_SPEED_MPH = 30.0
-# No soltar freno heredado en creep lejos del poste (102222Z RELEASE @204 m).
-SIGNAL_RELEASE_BLOCK_MIN_DIST_M = 50.0
+# Fase final ~50 yd antes del poste (terminal approach).
+SIGNAL_TERMINAL_APPROACH_M = 46.0
+# No soltar freno en creep dentro del horizonte (102222Z @70 m).
+SIGNAL_RELEASE_BLOCK_MIN_DIST_M = 15.0
 SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH = 8.0
 
 
 @dataclass(frozen=True)
 class SignalBrakeConfig:
     reaction_time_s: float = 1.0
-    terminal_approach_m: float = 80.0
+    terminal_approach_m: float = SIGNAL_TERMINAL_APPROACH_M
     final_stop_max_distance_m: float = 35.0
 
 
@@ -47,14 +49,42 @@ def signal_behind_station(
     *,
     signal_dist_m: Optional[float],
     station_dist_m: Optional[float],
-    gap_m: float = SIGNAL_BEHIND_STATION_GAP_M,
 ) -> bool:
-    """True si el andén está ≥gap_m más cerca que la señal (foco en STATION)."""
+    """
+    True si el marcador de andén está antes que el rojo en la vía.
+
+    Parada en andén, no al semáforo de salida (150617Z: stn 120 m, sig 280 m).
+    Salida: sig más cerca que stn (29 m vs 31 m) → False → señal manda.
+    """
     if signal_dist_m is None or station_dist_m is None:
         return False
     if signal_dist_m <= 0 or station_dist_m <= 0:
         return False
-    return station_dist_m + gap_m < signal_dist_m
+    return station_dist_m < signal_dist_m
+
+
+def signal_deferred_to_station_at_platform(
+    *,
+    signal_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    max_station_dist_m: float = STATION_APPROACH_PRIORITY_M,
+) -> bool:
+    """
+    Geometría donde la parada es el andén, no el poste (150617Z, 164240Z).
+
+    - Rojo **detrás** del marker (``stn < sig``).
+    - Rojo **pegado** al marker en aproximación final (cluster).
+    """
+    if signal_behind_station(
+        signal_dist_m=signal_dist_m,
+        station_dist_m=station_dist_m,
+    ):
+        return True
+    return exit_signal_clustered_with_platform_stop(
+        signal_dist_m,
+        station_dist_m,
+        max_station_dist_m=max_station_dist_m,
+    )
 
 
 def signal_in_play(
@@ -71,6 +101,22 @@ def signal_in_play(
     )
 
 
+def signal_apply_horizon_m(speed_mph: float) -> float:
+    """
+    Horizonte APPLY: ~100 yd en marcha moderada; hasta 150 m si spd >30 mph (155148Z).
+
+    Lejos (217 m @ 20 mph) sigue WATCH — no repetir parada temprana 152037Z.
+    """
+    if speed_mph > SIGNAL_IMMEDIATE_MAX_SPEED_MPH:
+        return SIGNAL_WATCH_LIMIT_DEFER_M
+    return SIGNAL_BRAKE_HORIZON_M
+
+
+def signal_in_brake_horizon(signal_dist_m: float, speed_mph: float = 0.0) -> bool:
+    """True si el poste está dentro del horizonte APPLY para esta velocidad."""
+    return 0 < signal_dist_m <= signal_apply_horizon_m(speed_mph)
+
+
 def resolve_signal_dist_m(
     signal_dist_m: Optional[float],
     signal_target: Optional["BrakeTargetResult"] = None,
@@ -83,13 +129,25 @@ def resolve_signal_dist_m(
     return None
 
 
+def signal_within_pick_priority_m(
+    signal_dist_m: Optional[float],
+    signal_target: Optional["BrakeTargetResult"] = None,
+) -> bool:
+    """Rojo dentro de 150 m — prioridad pick sobre cartel (155148Z)."""
+    dist = resolve_signal_dist_m(signal_dist_m, signal_target)
+    return dist is not None and dist <= SIGNAL_WATCH_LIMIT_DEFER_M
+
+
 def should_block_creep_release_from_signal(
     *,
     signal_dist_m: Optional[float],
     speed_mph: Optional[float],
 ) -> bool:
-    """No soltar freno en creep lejos del poste (102222Z RELEASE @204 m)."""
+    """Creep dentro del horizonte (~100 yd): no RELEASE hasta el poste (102222Z)."""
     if signal_dist_m is None or speed_mph is None:
+        return False
+    horizon = signal_apply_horizon_m(speed_mph or 0.0)
+    if signal_dist_m > horizon:
         return False
     return (
         signal_dist_m > SIGNAL_RELEASE_BLOCK_MIN_DIST_M
@@ -164,8 +222,11 @@ def plan_brake_for_signal(
     ):
         return None
     if speed_mph <= 0.5:
-        # Crawl lejos del poste (143544Z); en andén/salida → None (suppress arriba).
-        if signal_distance_m > SIGNAL_RELEASE_BLOCK_MIN_DIST_M:
+        # Crawl dentro de ~100 yd (143544Z); lejos → sin plan (acercar con cartel).
+        if (
+            signal_in_brake_horizon(signal_distance_m, speed_mph)
+            and signal_distance_m > SIGNAL_RELEASE_BLOCK_MIN_DIST_M
+        ):
             return _immediate_signal_plan(signal_distance_m, speed_mph)
         return None
 
@@ -201,8 +262,8 @@ def plan_brake_for_signal(
         min_speed_ms=0.35,
     )
     if (
-        signal_distance_m < SIGNAL_IMMEDIATE_STOP_M
-        and 0.5 < speed_mph <= SIGNAL_IMMEDIATE_MAX_SPEED_MPH
+        speed_mph > 0.5
+        and signal_in_brake_horizon(signal_distance_m, speed_mph)
         and (
             plan is None
             or plan.active_step is None

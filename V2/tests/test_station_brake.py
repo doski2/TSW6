@@ -3,6 +3,7 @@ from __future__ import annotations
 import _path  # noqa: F401
 
 from tsw6v2.limit_station_cluster import (
+    exit_signal_clustered_with_platform_stop,
     limit_sign_beyond_station,
     merged_approach_overspeed,
     next_sign_is_reduction_beyond_station,
@@ -11,6 +12,7 @@ from tsw6v2.limit_station_cluster import (
 )
 from tsw6v2.p1_policy import (
     pick_p1_brake_target,
+    should_allow_station_watch_when_deferred,
     should_defer_station_brake,
     should_prefer_station_in_approach,
 )
@@ -346,6 +348,44 @@ def test_pick_none_when_deferred_and_limit_watch_far():
     assert picked is None
 
 
+def test_pick_limit_watch_near_when_station_deferred_session_153551() -> None:
+    """Tras semáforo: cartel 15 @162 m gana sobre señal WATCH @446 m (andén @452 m)."""
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=162.0,
+        target_speed_mph=14.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=29.0,
+        apply_now=False,
+        detail="limit",
+    )
+    signal = BrakeTargetResult(
+        target_kind="SIGNAL",
+        distance_m=446.0,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=246.0,
+        apply_now=False,
+        detail="signal",
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=22.0,
+        limit_target=limit,
+        station_target=None,
+        signal_target=signal,
+        signal_dist_m=446.0,
+        limit_mph=15.0,
+        limit_dist_m=162.0,
+        station_dist_m=452.0,
+        effective_limit=60.0,
+        gradient_pct=-1.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "SPEED_LIMIT"
+
+
 def test_pick_none_when_station_deferred_and_limit_watch_only() -> None:
     """Salida andén: sin plan STATION lejos, cartel WATCH no debe ser objetivo P1."""
     limit = BrakeTargetResult(
@@ -464,3 +504,95 @@ def test_pick_limit_when_station_waits_for_reduction():
     )
     assert picked is not None
     assert picked.target_kind == "SPEED_LIMIT"
+
+
+def test_allow_station_watch_when_limit50_ignorable_session_164240() -> None:
+    assert should_allow_station_watch_when_deferred(
+        speed_mph=16.2,
+        station_dist_m=231.2,
+        limit_mph=50.0,
+        limit_dist_m=228.0,
+        gradient_pct=-1.0,
+    )
+    assert not should_allow_station_watch_when_deferred(
+        speed_mph=22.0,
+        station_dist_m=452.0,
+        limit_mph=15.0,
+        limit_dist_m=162.0,
+        gradient_pct=-1.0,
+    )
+
+
+def test_pick_station_watch_zone15_ignores_limit50_session_164240() -> None:
+    """Zona 15 en bajada: objetivo andén, no cartel 50 WATCH en cluster."""
+    station = evaluate_station_brake(
+        speed_mph=16.2,
+        station_distance_m=231.2,
+        gradient_pct=-1.0,
+        allow_watch=True,
+    )
+    assert station is not None
+    assert station.target_kind == "STATION"
+    assert not station.apply_now
+
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=228.0,
+        target_speed_mph=50.0,
+        handle_notch=0,
+        phase="WATCH",
+        dist_start=0.0,
+        apply_now=False,
+        downhill_hold=True,
+        detail="limit",
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=16.2,
+        limit_target=limit,
+        station_target=station,
+        limit_mph=50.0,
+        limit_dist_m=228.0,
+        station_dist_m=231.2,
+        effective_limit=15.0,
+        gradient_pct=-1.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "STATION"
+
+
+def test_pick_station_watch_below_15mph_deferred_session_164240() -> None:
+    """Tras pasar cartel 15: STATION WATCH aunque spd <15 mph."""
+    station = evaluate_station_brake(
+        speed_mph=14.7,
+        station_distance_m=286.8,
+        gradient_pct=-1.0,
+        allow_watch=True,
+    )
+    assert station is not None
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=283.0,
+        target_speed_mph=50.0,
+        handle_notch=0,
+        phase="WATCH",
+        dist_start=0.0,
+        apply_now=False,
+        detail="limit",
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=14.7,
+        limit_target=limit,
+        station_target=station,
+        limit_mph=50.0,
+        limit_dist_m=283.0,
+        station_dist_m=286.8,
+        effective_limit=15.0,
+        gradient_pct=-1.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "STATION"
+
+
+def test_exit_signal_clustered_with_platform_stop_session_164240() -> None:
+    assert exit_signal_clustered_with_platform_stop(133.0, 137.0)
+    assert not exit_signal_clustered_with_platform_stop(620.0, 1141.0)

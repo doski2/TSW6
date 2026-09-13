@@ -69,6 +69,9 @@ ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH = 30.0
 # Caída spd→ops objetivo grande (70→45): mínimo B2 si cabe en ventana.
 BRAKE_PLAN_LARGE_DROP_MPH = 18.0
 
+# Andén P1: horizonte preferencia STATION y cluster señal salida (p1_policy, signal_plan).
+STATION_APPROACH_PRIORITY_M = 600.0
+
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:
     """Techo operativo cartel **siguiente** (BRAKE_LIMIT: 55 → 54)."""

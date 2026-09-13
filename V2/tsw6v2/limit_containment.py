@@ -59,6 +59,7 @@ def _build_downhill_hold_result(
         speed_mph=speed_mph,
         limit_mph=hold_target,
         gradient_pct=gradient_pct,
+        downhill_hold=True,
     )
     return BrakeTargetResult(
         target_kind="SPEED_LIMIT",
@@ -231,15 +232,6 @@ def try_posted_downhill_hold(
 
     if is_descending_limit_zone(posted_limit_mph, next_limit_mph):
         return None
-
-    if next_limit_mph is not None and next_distance_m is not None:
-        if within_next_brake_horizon(
-            speed_mph=speed_mph,
-            next_limit_mph=next_limit_mph,
-            next_distance_m=next_distance_m,
-            gradient_pct=gradient_pct,
-        ):
-            return None
 
     return _hold_if_over_zone_ceiling(
         state,

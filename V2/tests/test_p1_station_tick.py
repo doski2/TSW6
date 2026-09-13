@@ -156,6 +156,34 @@ def test_latch_blocks_rehold_after_zone_release_session_095417() -> None:
     assert decision.command is None or decision.command.kind != "APPLY"
 
 
+def test_station_watch_overlay_hold_dh_zone15_session_173809() -> None:
+    """STATION WATCH no debe bloquear HOLD_DH en zona 15 (21 mph, 173809Z)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 9.39,  # ~21 mph
+            "lever_notch": 4,
+            "brake_cyl_bar": 1.0,
+            "gradient_pct": -1.0,
+            "speed_limit_ms": 6.7056,  # 15 mph vigente
+            "dist_limit_cm": 28300.0,
+            "next_limit_ms": 22.352,  # 50 mph
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=289.6,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.target_kind == "STATION"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+    assert decision.reason == "downhill_hold"
+
+
 def test_no_limit_release_while_station_braking():
     """Sesión 20260910T123139Z: latch 55 no debe soltar freno de andén @ ~212 m."""
     snap = ProbeSnapshot.from_dict(

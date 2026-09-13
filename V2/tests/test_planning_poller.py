@@ -47,3 +47,29 @@ def test_station_planning_http_dead_reckoning():
     snap = src.update(60.0)
     assert snap.station_distance_m is not None
     assert snap.station_distance_m < 500.0
+
+
+def test_station_planning_rejects_http_regression(monkeypatch):
+    monkeypatch.setattr(
+        "tsw6v2.planning_poller.poll_station_planning",
+        lambda: {"next_stop": {"distance_m": 235.4, "name": "Stn"}},
+    )
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    src._snap.station_distance_m = 230.7
+    src._last_speed_mph = 23.0
+    src._poll_once()
+    assert src._snap.station_distance_m == 230.7
+
+
+def test_station_planning_resets_on_probe_seq_discontinuity(monkeypatch):
+    monkeypatch.setattr(
+        "tsw6v2.planning_poller.poll_station_planning",
+        lambda: {"next_stop": {"distance_m": 1200.0, "name": "Far"}},
+    )
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    src._snap.station_distance_m = 235.0
+    src._last_probe_seq = 5000
+    src.update(60.0, probe_seq=120)
+    assert src._snap.station_distance_m == 1200.0

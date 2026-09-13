@@ -82,6 +82,7 @@ Regenerar HTML (si hace falta):
 | **Resumen** | `python scripts\tools\summarize_v2_limit.py …jsonl` — APPLY/RELEASE razonables |
 | **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire; sección **Señal (rojo)** si hubo ticks rojos |
 | **Replay offline** | `python V2/scripts/replay_jsonl.py logs/v2/<sesión>.jsonl` — re-evalúa decisiones; comparar `air_fill` / APPLY en zona lenta (ref. `143544Z`) |
+| **Distancia andén** | Debe **bajar** en marcha (v×dt); si se queda ~230–235 m fija → HTTP TrackData regresando; tras **cargar partida** debe refrescar (ref. `145832Z`) |
 | **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno; `signal_red`/`signal_dist_m` si pasas semáforo rojo |
 | **Consola investigate** | `sig=ROJO@…m` cuando probe emite rojo |
 | **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
@@ -102,10 +103,12 @@ Regenerar HTML (si hace falta):
 | 45→60 en subida | COAST sin B1; sin HOLD_DH | B1 @ 55 mph en P6; sin `sig=` si probe viejo |
 | 70→45 caída grande | Primer APPLY ≥ B2 si ≥18 mph de caída | Atascado en B1 con P ~1.6 bar |
 | Señal rojo salida | `signal_red` en JSONL + HTML | Solo HUD; consola sin `sig=` |
-| Rojo lejos en marcha | `p1tgt=SIGNAL`, `COAST_PWR` o plan; no solo `no_plan` | 0 plan con rojo @ &gt;500 m |
-| Aproximación rojo | `p1tgt=SIGNAL` (no HOLD_DH cartel); parada antes del poste | SPAD; emergencia solo @ &lt;60 m |
+| Rojo lejos en marcha | `p1tgt=SIGNAL` WATCH; **sin** APPLY hasta ~91 m (~100 yd) | Parada total @ &gt;150 m (`152037Z`) |
+| Aproximación rojo | APPLY dentro de ~100 yd; parada total cerca del poste | SPAD; emergencia solo @ &lt;60 m |
+| Tras semáforo verde | `reason=release` si B3 heredado; tracción recuperada | B3 atascado tras pasar rojo (`152037Z`) |
 | Salida andén, cartel 35 @ &gt;3 km | `p1tgt` vacío, capa OK, P6 permitido en zona 60 | `p1tgt=LIMIT` + Vigilar o `COAST_PWR` lejos |
-| HOLD_DH zona 15 en bajada | `RELEASE` tras ~14–15 mph; no B1 hasta 6 mph | 0 `RELEASE` en JSONL; `reason=no_plan` con B1 |
+| HOLD_DH zona 15 en bajada | `RELEASE` tras ~14–15 mph; `reason=downhill_hold` si spd &gt; techo (~15.2); `p1tgt` puede ser STATION | `no_plan`/`command_none` con 16–21 mph en `eff=15` (`173809Z`) |
+| Zona 15 → andén final | `p1tgt=STATION` tras cartel 15 (no LIMIT al next 50); rojo salida no gana al marker | `p1tgt=LIMIT@50` o `SIGNAL` en cluster andén (`164240Z`) |
 
 ### Referencia (sesiones Cross-City guardadas)
 
@@ -120,6 +123,13 @@ Regenerar HTML (si hace falta):
 | `20260912T224046Z` | **Antes fix:** HOLD_DH @ 15 mph en bajada, 0 RELEASE, B1 hasta ~6 mph — **tras fix:** RELEASE con `pick=None` y andén lejos |
 | `20260913T081745Z` | **Antes fix:** HOLD_DH @ 15 mph, cartel 50 @ ~1 km, 0 RELEASE, B1 hasta ~2 mph — **tras fix:** `eff_floor` zona 15 (~14.5) lejos del next; también 10→30 en horizonte (`142034Z`) |
 | `20260912T225433Z` | **Antes fix:** SPAD rojo (solo emergencia @ 61 m; HOLD_DH @15 en final) — **tras fix paso 5:** plan SIGNAL desde lejos; validar in-game |
+| `20260913T152037Z` | **Antes fix:** parada total @ ~217 m al 1.er semáforo; B3 no suelta tras pasar — **tras fix:** WATCH lejos, APPLY ~100 yd, RELEASE al apagar rojo |
+| `20260913T153551Z` | **Antes fix:** tras 1.er semáforo `pick=None` + `p1tgt=SIGNAL` lejos; cartel 15 @ ~160 m ignorado → B3 tarde y crawl — **tras fix:** cartel WATCH cercano con andén diferido gana sobre señal WATCH @ &gt;150 m |
+| `20260913T155148Z` | **Antes fix:** GAP cartel 15 APPLY + rojo @ ~100 m @ 32 mph → B3 tarde + emergencia — **tras fix:** señal &lt;150 m gana; APPLY hasta 150 m si spd &gt;30 |
+| `20260913T150617Z` | **Antes fix:** freno al rojo de salida @280 m con andén @120 m — **tras fix:** `signal_behind_station`; STATION manda |
+| `20260913T143544Z` | **Antes fix:** `air_fill` largo + RELEASE creep con rojo — **tras fix:** `brake_decel_sample_ready`; creep bloqueado dentro de horizonte |
+| `20260913T164240Z` | **Antes fix:** tras zona 15 `p1tgt=LIMIT@50`; overspeed ~17 mph; final `p1tgt=SIGNAL` con rojo pegado al andén — **tras fix:** STATION WATCH en aproximación; pick STATION sobre rojo salida en cluster; replay tick 2461/2881 |
+| `20260913T173809Z` | **Antes fix:** overspeed hasta **21 mph** en zona 15; `p1tgt=STATION` pero sin `downhill_hold` — **tras fix:** overlay HOLD_DH con objetivo STATION; escalada B2; replay ~185 ticks `downhill_hold` en `eff=15` |
 
 ---
 

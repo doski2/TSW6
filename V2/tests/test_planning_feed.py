@@ -25,3 +25,14 @@ def test_planning_distance_rejects_jump_at_creep_after_platform():
 def test_planning_distance_accepts_normal_update():
     assert planning_distance_accept(500.0, 480.0, 60.0)
     assert planning_distance_accept(None, 900.0, 0.0)
+
+
+def test_planning_distance_rejects_http_regression_while_approaching():
+    """145832Z: HTTP ~235 m con v×dt ~230 m — no resetear hacia arriba."""
+    assert not planning_distance_accept(230.7, 235.4, 23.0)
+    assert planning_distance_accept(230.7, 235.4, 2.0)  # parado: aceptar
+
+
+def test_planning_distance_accepts_large_jump_after_save_load():
+    """Tras cargar partida: salto legítimo a otra posición en ruta."""
+    assert planning_distance_accept(235.0, 1800.0, 45.0)

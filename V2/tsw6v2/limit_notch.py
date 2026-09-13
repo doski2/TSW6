@@ -217,9 +217,17 @@ def _grade_escalation_allowed(
     gradient_pct: float,
     speed_mph: float,
     limit_mph: float,
+    *,
+    downhill_hold: bool = False,
 ) -> bool:
-    """En pendiente no subir a B2/B3 hasta ≤2 mph sobre techo operativo."""
+    """
+    En pendiente no subir a B2/B3 hasta ≤2 mph sobre techo operativo (BRAKE_LIMIT).
+
+    HOLD_DH con overspeed claro (173809Z: 21 mph en zona 15): sí escalar a B2.
+    """
     if is_sloped_for_coast_trim(gradient_pct):
+        if downhill_hold:
+            return speed_mph > limit_mph + LIMIT_CONTAIN_ESCALATE_OVER_MPH
         return speed_mph <= limit_mph + LIMIT_DOWNHILL_COAST_TRIM_MPH
     return True
 
@@ -252,6 +260,7 @@ def apply_notch_hysteresis(
     gradient_pct: float = 0.0,
     defer_commit: bool = False,
     escalate_cap: Callable[[int, int], int] | None = None,
+    downhill_hold: bool = False,
 ) -> tuple[int, str]:
     """
     Muesca de menos a más (B1→B2→B3) y de más a menos (B3→B2→B1).
@@ -267,7 +276,10 @@ def apply_notch_hysteresis(
         apply_zone_m=apply_zone_m,
     )
     may_escalate = _grade_escalation_allowed(
-        gradient_pct, speed_mph, limit_mph
+        gradient_pct,
+        speed_mph,
+        limit_mph,
+        downhill_hold=downhill_hold,
     )
     if prev is None:
         if in_window and not defer_commit:

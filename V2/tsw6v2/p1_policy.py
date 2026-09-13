@@ -11,7 +11,7 @@ from tsw6v2.limit_station_cluster import (
     station_may_ignore_limit_approach,
     station_waits_for_approach_limit,
 )
-from tsw6v2.constants import LIMIT_RELEASE_MAX_OVER_MPH
+from tsw6v2.constants import LIMIT_RELEASE_MAX_OVER_MPH, STATION_APPROACH_PRIORITY_M
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
@@ -22,18 +22,17 @@ from tsw6v2.physics import (
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.signal_plan import (
-    SIGNAL_WATCH_LIMIT_DEFER_M,
     resolve_signal_dist_m,
     should_block_creep_release_from_signal,
-    signal_behind_station,
+    signal_deferred_to_station_at_platform,
     signal_in_play,
+    signal_within_pick_priority_m,
 )
 from tsw6v2.target import BrakeTargetResult
 
 # Margen sobre bd(v→0): sesión 20260909T224556Z entró STATION tarde @ 444 m.
 HORIZON_SLACK_M = 10.0
 # Por debajo: cartel WATCH no gana al andén si el servicio ya debe planificar.
-STATION_APPROACH_PRIORITY_M = 600.0
 STATION_APPROACH_MIN_SPEED_MPH = 15.0
 
 
@@ -44,6 +43,133 @@ def _active_limit_or_none(
     if limit_target is None or not limit_target.apply_now:
         return None
     return limit_target
+
+
+def _ignorable_limit_on_deferred_approach(
+    *,
+    speed_mph: float,
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    gradient_pct: float = 0.0,
+    accel_ms2: Optional[float] = None,
+) -> bool:
+    """Cartel WATCH next en cluster sin exigir freno (164240Z: 50 tras zona 15)."""
+    if (
+        limit_mph is None
+        or limit_dist_m is None
+        or station_dist_m is None
+        or limit_dist_m > STATION_APPROACH_PRIORITY_M
+    ):
+        return False
+    return station_may_ignore_limit_approach(
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        accel_ms2=accel_ms2,
+    )
+
+
+def should_allow_station_watch_when_deferred(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    limit_mph: Optional[float],
+    limit_dist_m: Optional[float],
+    gradient_pct: float = 0.0,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    accel_ms2: Optional[float] = None,
+) -> bool:
+    """
+    Andén diferido pero cartel next ignorable en cluster (164240Z: 50 tras zona 15).
+
+    No activar con cartel 15 real delante (153551Z).
+    """
+    if station_dist_m is None or station_dist_m <= 0:
+        return False
+    if station_dist_m > STATION_APPROACH_PRIORITY_M:
+        return False
+    if not should_defer_station_brake(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        brake_fill_s=brake_fill_s,
+    ):
+        return False
+    return _ignorable_limit_on_deferred_approach(
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        limit_dist_m=limit_dist_m,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        accel_ms2=accel_ms2,
+    )
+
+
+def _deferred_station_limit_target(
+    limit_target: Optional[BrakeTargetResult],
+    limit_dist_m: Optional[float],
+    *,
+    speed_mph: float = 0.0,
+    limit_mph: Optional[float] = None,
+    station_dist_m: Optional[float] = None,
+    gradient_pct: float = 0.0,
+    accel_ms2: Optional[float] = None,
+) -> Optional[BrakeTargetResult]:
+    """
+    Andén lejos: APPLY siempre; WATCH solo si cartel next <600 m (153551Z).
+
+    Cartel WATCH lejano → None (221258Z salida andén).
+    Cartel ignorable en cluster (50 tras zona 15) → None (164240Z).
+    """
+    active = _active_limit_or_none(limit_target)
+    if active is not None:
+        return active
+    if (
+        limit_target is not None
+        and limit_dist_m is not None
+        and limit_dist_m <= STATION_APPROACH_PRIORITY_M
+    ):
+        if _ignorable_limit_on_deferred_approach(
+            speed_mph=speed_mph,
+            limit_mph=limit_mph,
+            limit_dist_m=limit_dist_m,
+            station_dist_m=station_dist_m,
+            gradient_pct=gradient_pct,
+            accel_ms2=accel_ms2,
+        ):
+            return None
+        return limit_target
+    return None
+
+
+def _resolve_deferred_station_pick(
+    *,
+    limit_target: Optional[BrakeTargetResult],
+    station_target: Optional[BrakeTargetResult],
+    limit_dist_m: Optional[float],
+    speed_mph: float,
+    limit_mph: Optional[float],
+    station_dist_m: Optional[float],
+    gradient_pct: float,
+    accel_ms2: Optional[float],
+) -> Optional[BrakeTargetResult]:
+    deferred_limit = _deferred_station_limit_target(
+        limit_target,
+        limit_dist_m,
+        speed_mph=speed_mph,
+        limit_mph=limit_mph,
+        station_dist_m=station_dist_m,
+        gradient_pct=gradient_pct,
+        accel_ms2=accel_ms2,
+    )
+    if deferred_limit is not None:
+        return deferred_limit
+    if station_target is not None and not station_target.apply_now:
+        return station_target
+    return None
 
 
 def should_defer_station_brake(
@@ -159,20 +285,21 @@ def should_prefer_signal_over_limit(
     """
     if signal_target.apply_now:
         return True
-    if limit_target.apply_now or limit_target.downhill_hold:
-        return False
-    dist = resolve_signal_dist_m(signal_dist_m, signal_target)
-    return dist is not None and dist <= SIGNAL_WATCH_LIMIT_DEFER_M
+    return signal_within_pick_priority_m(signal_dist_m, signal_target)
 
 
 def should_prefer_signal_over_station(
     signal_target: BrakeTargetResult,
     station_target: BrakeTargetResult,
+    *,
+    signal_dist_m: Optional[float] = None,
 ) -> bool:
     """Parada a 0: gana el objetivo más cercano (salida andén: señal antes que marcador)."""
-    if signal_behind_station(
-        signal_dist_m=signal_target.distance_m,
+    sig_dist = resolve_signal_dist_m(signal_dist_m, signal_target)
+    if signal_deferred_to_station_at_platform(
+        signal_dist_m=sig_dist,
         station_dist_m=station_target.distance_m,
+        max_station_dist_m=STATION_APPROACH_PRIORITY_M,
     ):
         return False
     if signal_target.apply_now and not station_target.apply_now:
@@ -194,20 +321,20 @@ def limit_release_allowed(
     if target is not None and target.target_kind == "SIGNAL":
         return False
     sig_dist = resolve_signal_dist_m(signal_dist_m, signal_target)
-    # Probe con distancia manda: bloquear RELEASE en creep aunque el plan sea None (143544Z).
-    if sig_dist is not None and should_block_creep_release_from_signal(
+    signal_active = signal_in_play(
         signal_dist_m=sig_dist,
-        speed_mph=speed_mph,
-    ):
-        return False
+        station_dist_m=station_dist,
+    )
+    # Solo bloquear creep si el rojo es obstáculo real (no salida tras andén, 150617Z).
     if (
-        signal_target is not None
-        and signal_target.apply_now
-        and not signal_behind_station(
+        signal_active
+        and should_block_creep_release_from_signal(
             signal_dist_m=sig_dist,
-            station_dist_m=station_dist,
+            speed_mph=speed_mph,
         )
     ):
+        return False
+    if signal_target is not None and signal_target.apply_now and signal_active:
         return False
     if station_dist is None:
         return True
@@ -246,13 +373,19 @@ def _pick_limit_station_target(
 
     if station_target is None:
         if station_deferred:
-            # Sin plan STATION (lejos): no mostrar cartel WATCH (221258Z salida andén).
-            return _active_limit_or_none(limit_target)
+            return _resolve_deferred_station_pick(
+                limit_target=limit_target,
+                station_target=None,
+                limit_dist_m=limit_dist_m,
+                speed_mph=speed_mph,
+                limit_mph=limit_mph,
+                station_dist_m=station_dist_m,
+                gradient_pct=gradient_pct,
+                accel_ms2=accel_ms2,
+            )
         return limit_target
     if limit_target is None:
         if station_dist_m is None:
-            return None
-        if station_deferred:
             return None
         return station_target
 
@@ -307,8 +440,16 @@ def _pick_limit_station_target(
         return station_target
 
     if station_deferred:
-        # Cartel APPLY gana; WATCH no debe ocultar que aún no toca andén.
-        return _active_limit_or_none(limit_target)
+        return _resolve_deferred_station_pick(
+            limit_target=limit_target,
+            station_target=station_target,
+            limit_dist_m=limit_dist_m,
+            speed_mph=speed_mph,
+            limit_mph=limit_mph,
+            station_dist_m=station_dist_m,
+            gradient_pct=gradient_pct,
+            accel_ms2=accel_ms2,
+        )
 
     if limit_target.urgency <= station_target.urgency:
         return limit_target
@@ -353,7 +494,11 @@ def pick_p1_brake_target(
     if chosen is None:
         return signal_target
     if chosen.target_kind == "STATION":
-        if should_prefer_signal_over_station(signal_target, chosen):
+        if should_prefer_signal_over_station(
+            signal_target,
+            chosen,
+            signal_dist_m=signal_dist_m,
+        ):
             return signal_target
         return chosen
     if should_prefer_signal_over_limit(

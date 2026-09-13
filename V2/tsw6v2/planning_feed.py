@@ -29,22 +29,34 @@ class PlanningSnapshot:
 # Rechazar salto HTTP a la siguiente parada tras pasar sin dwell (sesión 20260909T224556Z).
 PLANNING_JUMP_REJECT_M = 500.0
 PLATFORM_PASSED_MAX_M = 80.0
+# TrackData suele devolver ~5 m más lejos que v×dt (sesión 145832Z: 230→235 m).
+PLANNING_HTTP_REGRESSION_M = 1.0
+PLANNING_APPROACH_MIN_SPEED_MPH = 3.0
 
 
 def planning_distance_accept(
     prev_m: Optional[float],
     new_m: float,
-    speed_mph: float,  # reservado: logs en poller/feed
+    speed_mph: float,
     *,
     jump_reject_m: float = PLANNING_JUMP_REJECT_M,
     platform_passed_max_m: float = PLATFORM_PASSED_MAX_M,
+    regression_m: float = PLANNING_HTTP_REGRESSION_M,
+    approach_min_speed_mph: float = PLANNING_APPROACH_MIN_SPEED_MPH,
 ) -> bool:
-    """``False`` si el HTTP salta a la siguiente estación sin parada."""
+    """``False`` si el HTTP salta a la siguiente estación o aleja del andén en marcha."""
     if prev_m is None:
         return True
     # Tras pasar andén (dwell o creep): rechazar salto a cualquier velocidad
     # (sesión 20260911T152306Z: 0→2012 m @ 3.4 mph).
     if new_m > prev_m + jump_reject_m and prev_m < platform_passed_max_m:
+        return False
+    # En marcha: no aceptar HTTP que aleja (confiar en v×dt hasta el próximo poll válido).
+    if (
+        speed_mph >= approach_min_speed_mph
+        and new_m > prev_m + regression_m
+        and new_m < prev_m + jump_reject_m
+    ):
         return False
     return True
 
@@ -61,6 +73,31 @@ def tick_station_distance_m(
         return distance_m
     delta = speed_mph * MPH_TO_MS * dt
     return max(0.0, float(distance_m) - delta)
+
+
+def advance_station_distance_tick(
+    snap: PlanningSnapshot,
+    speed_mph: float,
+    dt: float,
+) -> None:
+    """Un tick de dead-reckoning sobre ``snap`` (HTTP y archivo)."""
+    snap.station_distance_m = tick_station_distance_m(
+        snap.station_distance_m,
+        speed_mph,
+        dt,
+    )
+
+
+def apply_station_distance_reading(
+    snap: PlanningSnapshot,
+    new_dist: float,
+    speed_mph: float,
+) -> bool:
+    """Actualiza ``snap`` si la lectura HTTP/archivo pasa filtros. ``False`` si se ignora."""
+    if not planning_distance_accept(snap.station_distance_m, new_dist, speed_mph):
+        return False
+    snap.station_distance_m = new_dist
+    return True
 
 
 class PlanningFeed:
@@ -87,10 +124,17 @@ class PlanningFeed:
         dt = now - self._last_tick_t
         self._last_tick_t = now
         self._last_speed_mph = float(speed_mph)
-        self._snap.station_distance_m = tick_station_distance_m(
-            self._snap.station_distance_m, speed_mph, dt
-        )
+        advance_station_distance_tick(self._snap, speed_mph, dt)
         return self._snap
+
+    def reset(self) -> None:
+        """Vaciar caché (p. ej. tras cargar partida en modo archivo)."""
+        self._snap = PlanningSnapshot()
+        self._last_tick_t = 0.0
+
+    def force_reload(self) -> None:
+        """Releer ``Planning.txt`` sin esperar intervalo."""
+        self._reload()
 
     def _reload(self) -> None:
         if not self.path.is_file():
@@ -105,10 +149,11 @@ class PlanningFeed:
         data = parse_probe_line(line)
         dist = data.get("station_dist_m")
         if dist is not None:
-            new_dist = float(dist)
-            prev = self._snap.station_distance_m
-            if planning_distance_accept(prev, new_dist, self._last_speed_mph):
-                self._snap.station_distance_m = new_dist
+            apply_station_distance_reading(
+                self._snap,
+                float(dist),
+                self._last_speed_mph,
+            )
         name = data.get("next_stop") or data.get("station_name")
         if isinstance(name, str) and name.strip():
             self._snap.station_name = name.strip()

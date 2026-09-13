@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from tsw6v2.constants import LIMIT_OVER_ACTIVE_MPH, posted_scoring_ceiling_mph
+from tsw6v2.constants import (
+    LIMIT_OVER_ACTIVE_MPH,
+    STATION_APPROACH_PRIORITY_M,
+    posted_scoring_ceiling_mph,
+)
 from tsw6v2.physics import TARGET_CLUSTER_GAP_M, projected_speed_mph_at_distance
 from tsw6v2.target import LIMIT_SCORING_MAX_OVER_MPH, LIMIT_SIGN_PASSED_M
 
@@ -96,7 +100,8 @@ def station_may_ignore_limit_approach(
     Cartel **delante** del andén en cluster y proyección legal al pasarlo.
 
     Centraliza la subregla usada por ``station_waits``, ``merged_approach_overspeed``,
-    ``should_delay_unified_station_plan`` y ``should_prefer_station_in_approach``.
+    ``should_delay_unified_station_plan``, ``should_prefer_station_in_approach`` y
+    ``_ignorable_limit_on_deferred_approach``.
     """
     if limit_mph is None or not cluster_approach_in_range(limit_dist_m, station_dist_m):
         return False
@@ -171,6 +176,29 @@ def station_waits_for_approach_limit(
     ):
         return False
     return speed_mph > limit_mph + LIMIT_SCORING_MAX_OVER_MPH
+
+
+def exit_signal_clustered_with_platform_stop(
+    signal_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+    *,
+    max_station_dist_m: float = STATION_APPROACH_PRIORITY_M,
+    cluster_gap_m: float = TARGET_CLUSTER_GAP_M,
+) -> bool:
+    """
+    Rojo de salida pegado al marker en aproximación final.
+
+    Sesión 164240Z: sig @133 m, stn @137 m — parada en andén, no en poste.
+    """
+    if signal_dist_m is None or station_dist_m is None:
+        return False
+    if station_dist_m <= 0 or station_dist_m > max_station_dist_m:
+        return False
+    return targets_are_clustered(
+        signal_dist_m,
+        station_dist_m,
+        cluster_gap_m=cluster_gap_m,
+    )
 
 
 def merged_approach_overspeed(

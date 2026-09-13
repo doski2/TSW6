@@ -64,6 +64,27 @@ def test_hysteresis_escalates_on_overspeed_when_pick_still_b1() -> None:
     assert phase == "B2"
 
 
+def test_hold_dh_escalates_b2_zone15_overspeed_session_173809() -> None:
+    """21 mph en zona 15: HOLD_DH puede pasar B1→B2 en bajada (173809Z)."""
+    state = LimitBrakeState()
+    state.committed_handle = 3
+    state.committed_phase = "B1"
+    handle, phase = apply_notch_hysteresis(
+        state,
+        handle=3,
+        phase="B1",
+        dist_start=0.0,
+        apply_now=True,
+        apply_zone_m=10.0,
+        speed_mph=21.0,
+        limit_mph=15.2,
+        gradient_pct=-1.0,
+        downhill_hold=True,
+    )
+    assert handle == 2
+    assert phase == "B2"
+
+
 def test_hysteresis_stays_b1_downhill_until_near_ops_target() -> None:
     state = LimitBrakeState()
     state.committed_handle = 3

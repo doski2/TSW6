@@ -28,6 +28,7 @@ def evaluate_station_brake(
     station_anchor_m: Optional[float] = None,
     schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    allow_watch: bool = False,
 ) -> Optional[BrakeTargetResult]:
     if station_distance_m is None or station_distance_m <= 0:
         return None
@@ -51,5 +52,5 @@ def evaluate_station_brake(
         plan,
         speed_mph=speed_mph,
         detail=f"Estación dist={plan.distance_to_target_m:.0f}m",
-        allow_watch=False,
+        allow_watch=allow_watch,
     )

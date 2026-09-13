@@ -13,9 +13,9 @@ from tsw6v2.driver_aid_stations import poll_station_planning
 from tsw6v2.planning_feed import (
     PlanningFeed,
     PlanningSnapshot,
+    advance_station_distance_tick,
+    apply_station_distance_reading,
     default_planning_path,
-    planning_distance_accept,
-    tick_station_distance_m,
     write_planning_snapshot,
 )
 
@@ -53,6 +53,7 @@ class StationPlanning:
         self._cache_lock = threading.Lock()
         self._last_tick_t = 0.0
         self._last_speed_mph = 0.0
+        self._last_probe_seq: Optional[int] = None
         self._source = "none"
         self._schedule_source = ""
         if self.http_enabled and find_api_key() is not None:
@@ -86,7 +87,36 @@ class StationPlanning:
     def close(self) -> None:
         self._stop_event.set()
 
-    def update(self, speed_mph: float) -> PlanningSnapshot:
+    def invalidate(self) -> None:
+        """Partida guardada / discontinuidad probe: vaciar caché y releer HTTP o archivo."""
+        with self._cache_lock:
+            self._snap = PlanningSnapshot()
+        self._file_feed.reset()
+        self._last_tick_t = 0.0
+        if self._http_ok:
+            self._poll_once()
+        else:
+            self._file_feed.force_reload()
+
+    def _note_probe_seq(self, probe_seq: Optional[int]) -> None:
+        if probe_seq is None:
+            return
+        seq = int(probe_seq)
+        last = self._last_probe_seq
+        self._last_probe_seq = seq
+        if last is None:
+            return
+        if seq < last - 50:
+            _log.info("planning: reset tras probe seq %s -> %s (carga / salto)", last, seq)
+            self.invalidate()
+
+    def update(
+        self,
+        speed_mph: float,
+        *,
+        probe_seq: Optional[int] = None,
+    ) -> PlanningSnapshot:
+        self._note_probe_seq(probe_seq)
         now = time.monotonic()
         if self._last_tick_t <= 0:
             self._last_tick_t = now
@@ -96,9 +126,7 @@ class StationPlanning:
 
         if self._http_ok:
             with self._cache_lock:
-                self._snap.station_distance_m = tick_station_distance_m(
-                    self._snap.station_distance_m, speed_mph, dt
-                )
+                advance_station_distance_tick(self._snap, speed_mph, dt)
             return self._snap
         return self._file_feed.update(speed_mph)
 
@@ -124,9 +152,13 @@ class StationPlanning:
         new_dist = float(dist)
         with self._cache_lock:
             prev = self._snap.station_distance_m
-            if not planning_distance_accept(prev, new_dist, self._last_speed_mph):
+            if not apply_station_distance_reading(
+                self._snap,
+                new_dist,
+                self._last_speed_mph,
+            ):
                 _log.info(
-                    "planning: ignorar salto HTTP %.0f -> %.0f m (spd=%.1f)",
+                    "planning: ignorar lectura HTTP %.0f -> %.0f m (spd=%.1f)",
                     prev or -1,
                     new_dist,
                     self._last_speed_mph,
@@ -134,14 +166,11 @@ class StationPlanning:
                 return
             sched = str(result.get("schedule_source") or "")
             self._schedule_source = sched
-            snap = PlanningSnapshot(
-                station_distance_m=new_dist,
-                station_name=str(name) if name else None,
-                service_name=result.get("service_name"),
-                schedule_source=sched,
-                hud_timetable_id=result.get("hud_timetable_id"),
-            )
-            self._snap = snap
+            self._snap.station_name = str(name) if name else None
+            self._snap.service_name = result.get("service_name")
+            self._snap.schedule_source = sched
+            self._snap.hud_timetable_id = result.get("hud_timetable_id")
+            snap = self._snap
         write_planning_snapshot(
             station_distance_m=snap.station_distance_m,
             station_name=snap.station_name,

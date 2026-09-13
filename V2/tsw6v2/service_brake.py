@@ -11,8 +11,26 @@ from tsw6v2.command import (
     release_service_over_brake_command,
 )
 from tsw6v2.physics import should_emit_brake_command
-from tsw6v2.plan import BrakePlan
+from tsw6v2.plan import BrakePlan, BrakePlanStep
 from tsw6v2.target import BrakeTargetResult
+
+
+def _watch_target_from_plan(
+    plan: BrakePlan,
+    *,
+    step: BrakePlanStep,
+    detail: str,
+) -> BrakeTargetResult:
+    return BrakeTargetResult(
+        target_kind=plan.target_kind,
+        distance_m=plan.distance_to_target_m,
+        target_speed_mph=plan.target_speed_mph,
+        handle_notch=step.handle_notch,
+        phase=step.notch,
+        dist_start=step.dist_start,
+        apply_now=False,
+        detail=detail,
+    )
 
 
 def target_from_stop_plan(
@@ -21,13 +39,26 @@ def target_from_stop_plan(
     speed_mph: float,
     detail: str,
     allow_watch: bool = False,
+    max_apply_distance_m: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     """Activo APPLY; opcional WATCH si ``allow_watch`` y aún lejos de ventana."""
     step = plan.active_step
     if step is None:
         return None
+    defer_apply = (
+        max_apply_distance_m is not None
+        and plan.distance_to_target_m > max_apply_distance_m
+    )
+    if defer_apply:
+        if not allow_watch:
+            return None
+        watch = next((s for s in plan.steps if s.dist_start > 0), step)
+        if watch is None:
+            return None
+        return _watch_target_from_plan(plan, step=watch, detail=detail)
+    apply_now = step.apply_now
     emit = should_emit_brake_command(
-        apply_now=step.apply_now,
+        apply_now=apply_now,
         dist_start=step.dist_start,
         speed_mph=speed_mph,
         distance_to_target_m=plan.distance_to_target_m,
@@ -50,16 +81,7 @@ def target_from_stop_plan(
         watch = next((s for s in plan.steps if s.dist_start > 0), step)
         if watch is None:
             return None
-        return BrakeTargetResult(
-            target_kind=plan.target_kind,
-            distance_m=plan.distance_to_target_m,
-            target_speed_mph=plan.target_speed_mph,
-            handle_notch=watch.handle_notch,
-            phase=watch.notch,
-            dist_start=watch.dist_start,
-            apply_now=False,
-            detail=detail,
-        )
+        return _watch_target_from_plan(plan, step=watch, detail=detail)
     return BrakeTargetResult(
         target_kind=plan.target_kind,
         distance_m=plan.distance_to_target_m,

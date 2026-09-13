@@ -374,7 +374,10 @@ class AgentLoop:
             )
             dwell_release: Optional[BrakeCommand] = None
             if self.station_brake_enabled:
-                planning = self._station_planning.update(mph)
+                planning = self._station_planning.update(
+                    mph,
+                    probe_seq=snap.seq,
+                )
                 station_dist_m = planning.station_distance_m
                 prev_station_fsm = self._station_gate.state
                 self._station_gate.update(
