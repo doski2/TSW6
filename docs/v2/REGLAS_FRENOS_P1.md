@@ -204,8 +204,11 @@ Tests: `V2/tests/test_brake_feedback.py`.
 **Perfil vs reacción:** el perfil learner da `a` por muesca (+ `brake_fill_s` en distancia).
 `LIMIT_REACTION_S` (1.5 s) es margen **separado** en el latch — no se resta del feedback.
 
-**Aprendizaje online (sesión P1):** en ventana APPLY con muesca comprometida, cada tick con
-`accel_ms2` de freno actualiza `ema_bands` / `ema` (α=0.10, igual v1). Al cerrar
+**Aprendizaje online (sesión P1):** en ventana APPLY con muesca comprometida, `learn_quality.py`
+acumula ~2 s de muesca estable (Δv ≥ 0.6 mph, misma palanca, presión OK) antes de tocar
+`ema_bands` / `ema` (α=0.10). Con ≥3 muestras en banda, rechaza outliers (`|Δ| > 30 %` de la EMA
+o > 0.08 m/s²). Fill-time: no baja `brake_fill_s` por debajo del default hasta 3 mediciones;
+outliers de fill descartados. JSONL: `learn_kind`, `learn_accepted`, `learn_reject_reason`. Al cerrar
 `run_p1_session.bat`:
 
 ```text
@@ -416,6 +419,12 @@ Capas de supresión (complementarias, no duplicadas):
 1. **Gate** — apaga P1 estación en dwell (`loop.py` → `station_p1_enabled=False`).
 2. **`should_suppress_station_braking_for_departure`** — anula plan con tracción en salida.
 3. **`_station_emergency_suppressed`** — capa emergencia con tope ~15 mph.
+
+**Freno dwell (puertas):** `p1_station_gate.station_dwell_brake_command` — en `STOPPED`
+manda `platform_door_brake_command` (**B1**, muesca 3) cada tick (`loop` prioriza dwell
+sobre P1 cartel). En `DEPARTING` con freno y `spd < 25 mph` → `RELEASE` (v1
+`_hold_platform_brake`). En aproximación (plan STATION activo),
+`command_from_target` usa el mismo umbral `dwell_max_distance_m` (80 m) para B1.
 
 #### Proyección al pasar el cartel (`station_may_ignore_limit_approach`)
 
@@ -669,6 +678,7 @@ RELEASE / COAST_PWR**.
 | 2026-09-13 | Modo station: RELEASE antes de `no_plan` (`224046Z` HOLD_DH zona 15); `pick` sin WATCH con andén diferido + sin `p1tgt` fantasma (`221258Z`); coast-trim subida no en caída posted grande 60→35 |
 | 2026-09-12 | Evaluación dual con snapshots; `limit_horizon.py`; coast trim subida (`coast_trim_deferred`); sin HOLD_DH en salida lenta→rápida en cuesta; caída grande → B2; aire 323 @ 1.55 bar; trace/replay señal |
 | 2026-09-10 | `p1_limit_capas.html`: ramas andén, pick, geometría cluster, FSM gate |
+| 2026-09-13 | Calidad learner: ventana estable, outliers decel/fill, `MIN_FILL_SAMPLES`, JSONL `learn_*` |
 | 2026-09-10 | Cartel tras andén (`213010Z`): `limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M` |
 | 2026-09-10 | FSM dwell `p1_station_gate` + salida `_left_platform` (`210853Z`); RELEASE llano sin cinemática |
 | 2026-09-10 | `HORIZON_SLACK_M` 15→10 m; reacción terminal andén ligeramente más temprana |

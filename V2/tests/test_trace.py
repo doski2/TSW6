@@ -83,6 +83,11 @@ def test_jsonl_trace(tmp_path: Path):
         vehicle="Class 323",
         brake_cyl_bar=3.2,
         brake_fill_s=2.4,
+        brake_fill_n=3,
+        decel_observe_n=12,
+        learn_kind="decel",
+        learn_accepted=True,
+        learn_reject_reason="accepted",
     )
     trace.write_tick(snap, t_ms=50.0, ipc_cmd_id=1)
     trace.close()
@@ -99,6 +104,11 @@ def test_jsonl_trace(tmp_path: Path):
     assert tick["ipc"]["cmd_id"] == 1
     assert tick["brake_cyl_bar"] == 3.2
     assert tick["brake_fill_s"] == 2.4
+    assert tick["brake_fill_n"] == 3
+    assert tick["decel_observe_n"] == 12
+    assert tick["learn_kind"] == "decel"
+    assert tick["learn_accepted"] is True
+    assert tick["learn_reject_reason"] == "accepted"
 
 
 def test_jsonl_trace_signal_fields(tmp_path: Path) -> None:

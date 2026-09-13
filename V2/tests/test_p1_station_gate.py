@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from tsw6v2.constants import NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     StationDwellGate,
     doors_effective,
+    station_dwell_brake_command,
 )
 
 
@@ -141,3 +143,32 @@ def test_gate_stopped_exits_when_planning_lost_at_speed():
     gate.update(speed_mph=0.5, station_dist_m=20.0, doors_telem=True)
     gate.update(speed_mph=15.0, station_dist_m=None, doors_telem=True)
     assert gate.state == "DEPARTING"
+
+
+def test_station_dwell_brake_command_stopped_and_departing() -> None:
+    stopped = station_dwell_brake_command(
+        station_fsm="STOPPED",
+        speed_mph=0.0,
+        lever=4,
+        station_dist_m=30.0,
+    )
+    assert stopped is not None
+    assert stopped.kind == "APPLY"
+    assert stopped.target_notch == SERVICE_MAX_BRAKE
+
+    release = station_dwell_brake_command(
+        station_fsm="DEPARTING",
+        speed_mph=5.0,
+        lever=3,
+        station_dist_m=30.0,
+    )
+    assert release is not None
+    assert release.kind == "RELEASE"
+    assert release.target_notch == NEUTRAL_NOTCH
+
+    assert station_dwell_brake_command(
+        station_fsm=None,
+        speed_mph=0.0,
+        lever=4,
+        station_dist_m=30.0,
+    ) is None

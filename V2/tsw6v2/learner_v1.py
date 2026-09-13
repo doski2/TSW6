@@ -114,48 +114,38 @@ class V1LearnerData:
             return None
         return abs(accel)
 
-    def observe_brake_accel(
+    def commit_brake_decel_sample(
         self,
         *,
-        notch: int,
+        handle: int,
         speed_mph: float,
-        grad_pct: float,
-        accel_ms2: float,
-    ) -> bool:
+        measured_norm: float,
+    ) -> tuple[bool, str]:
         """
         EMA online de aceleración de freno (negativa), normalizada a plano.
 
         Igual convención que v1 ``online_learner`` (``ema_bands`` + ``ema`` combinada).
         """
-        handle = int(notch)
-        if handle not in _BRAKE_HANDLES:
-            return False
-        if float(speed_mph) < MIN_OBSERVE_SPEED_MPH:
-            return False
-        if abs(float(grad_pct)) > MAX_OBSERVE_GRAD_PCT:
-            return False
-        measured = float(accel_ms2)
-        if measured >= -0.05:
-            return False
-
-        measured_norm = measured - gravity_compensation(grad_pct)
+        handle_i = int(handle)
+        if handle_i not in _BRAKE_HANDLES:
+            return False, "not_brake"
         if measured_norm > 0.0:
-            return False
+            return False, "positive_brake"
 
         band = speed_band_index(speed_mph)
         band_ema = self.ema_bands[band]
         band_n = self.n_bands[band]
-        if handle not in band_ema:
-            band_ema[handle] = measured_norm
-            band_n[handle] = 1
+        if handle_i not in band_ema:
+            band_ema[handle_i] = measured_norm
+            band_n[handle_i] = 1
         else:
-            band_ema[handle] = (
-                EMA_ALPHA * measured_norm + (1.0 - EMA_ALPHA) * band_ema[handle]
+            band_ema[handle_i] = (
+                EMA_ALPHA * measured_norm + (1.0 - EMA_ALPHA) * band_ema[handle_i]
             )
-            band_n[handle] = min(band_n.get(handle, 0) + 1, 9999)
+            band_n[handle_i] = min(band_n.get(handle_i, 0) + 1, 9999)
 
         self._recalculate_combined()
-        return True
+        return True, "accepted"
 
     def _recalculate_combined(self) -> None:
         all_notches: set[int] = set()

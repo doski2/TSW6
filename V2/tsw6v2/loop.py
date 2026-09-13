@@ -9,12 +9,7 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path, read_probe_file
 from tsw6v2.bridge.ipc_bus import purge_lua_commands
-from tsw6v2.command import (
-    BrakeCommand,
-    BrakeReleaseState,
-    is_brake_applied,
-    release_brake_command,
-)
+from tsw6v2.command import BrakeCommand, BrakeReleaseState
 from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
     DRIVER_OVERRIDE_COOLDOWN_S,
@@ -22,7 +17,7 @@ from tsw6v2.constants import (
     NEUTRAL_NOTCH,
 )
 from tsw6v2.decision import evaluate_p1_tick
-from tsw6v2.p1_station_gate import StationDwellGate
+from tsw6v2.p1_station_gate import StationDwellGate, station_dwell_brake_command
 from tsw6v2.planning_poller import StationPlanning
 from tsw6v2.ipc import dispatch_step_toward_notch, probe_lever
 from tsw6v2.learner import LearnerProfile
@@ -72,11 +67,16 @@ class AgentSnapshot:
     doors_dmi: Optional[bool] = None
     ipc_cmd_id: Optional[int] = None
     brake_fill_s: Optional[float] = None
+    brake_fill_n: Optional[int] = None
+    decel_observe_n: Optional[int] = None
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
     fb_shortfall: bool = False
     fb_escalated: bool = False
     driver_override_s: float = 0.0
+    learn_kind: Optional[str] = None
+    learn_accepted: Optional[bool] = None
+    learn_reject_reason: Optional[str] = None
 
     @classmethod
     def from_probe(
@@ -107,11 +107,16 @@ class AgentSnapshot:
         doors_dmi: Optional[bool] = None,
         ipc_cmd_id: Optional[int] = None,
         brake_fill_s: Optional[float] = None,
+        brake_fill_n: Optional[int] = None,
+        decel_observe_n: Optional[int] = None,
         fb_a_pred_ms2: Optional[float] = None,
         fb_a_obs_ms2: Optional[float] = None,
         fb_shortfall: bool = False,
         fb_escalated: bool = False,
         driver_override_s: float = 0.0,
+        learn_kind: Optional[str] = None,
+        learn_accepted: Optional[bool] = None,
+        learn_reject_reason: Optional[str] = None,
     ) -> AgentSnapshot:
         if snap is None:
             return cls(tick=tick, target_notch=target_notch, ipc_sent=ipc_sent)
@@ -158,11 +163,16 @@ class AgentSnapshot:
             doors_dmi=snap.doors_dmi,
             ipc_cmd_id=ipc_cmd_id,
             brake_fill_s=brake_fill_s,
+            brake_fill_n=brake_fill_n,
+            decel_observe_n=decel_observe_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
             driver_override_s=driver_override_s,
+            learn_kind=learn_kind,
+            learn_accepted=learn_accepted,
+            learn_reject_reason=learn_reject_reason,
         )
         if ipc_result is not None:
             out.ipc_ok = bool(ipc_result.get("ok"))
@@ -206,6 +216,7 @@ class AgentLoop:
     _learner: LearnerProfile = field(default_factory=LearnerProfile, init=False, repr=False)
     _learner_explicit: bool = field(default=False, init=False, repr=False)
     _profile_path: Optional[Path] = field(default=None, init=False, repr=False)
+    _vehicle_slug: Optional[str] = field(default=None, init=False, repr=False)
     _auto_profile_tried: bool = field(default=False, init=False, repr=False)
     station_planning_http: bool = True
     _station_planning: StationPlanning = field(init=False, repr=False)
@@ -222,6 +233,18 @@ class AgentLoop:
     @property
     def loaded_profile_path(self) -> Optional[Path]:
         return self._profile_path
+
+    @property
+    def profile_save_path(self) -> Optional[Path]:
+        """Ruta para persistir learner (cargada o auto por vehículo)."""
+        if self._profile_path is not None:
+            return self._profile_path
+        if self._vehicle_slug:
+            return LearnerProfile.profile_path_for_vehicle(
+                self._vehicle_slug,
+                profiles_dir=self.profiles_dir,
+            )
+        return None
 
     @property
     def active_learner(self) -> LearnerProfile:
@@ -253,7 +276,12 @@ class AgentLoop:
         """Cierra recursos en segundo plano (planning HTTP)."""
         self._station_planning.close()
 
+    def _note_vehicle(self, vehicle: str) -> None:
+        if vehicle and vehicle != "?":
+            self._vehicle_slug = vehicle
+
     def _try_auto_load_profile(self, vehicle: str) -> None:
+        self._note_vehicle(vehicle)
         if self._auto_profile_tried or self._learner_explicit or not self.auto_profile:
             return
         self._auto_profile_tried = True
@@ -335,6 +363,7 @@ class AgentLoop:
         self._tick += 1
         snap = self.read_probe()
         if snap is not None and snap.vehicle:
+            self._note_vehicle(snap.vehicle)
             self._try_auto_load_profile(snap.vehicle)
         limit_mph: Optional[float] = None
         limit_dist_m: Optional[float] = None
@@ -372,14 +401,13 @@ class AgentLoop:
                 if snap is not None and snap.speed_ms is not None
                 else 0.0
             )
-            dwell_release: Optional[BrakeCommand] = None
+            dwell_cmd: Optional[BrakeCommand] = None
             if self.station_brake_enabled:
                 planning = self._station_planning.update(
                     mph,
                     probe_seq=snap.seq,
                 )
                 station_dist_m = planning.station_distance_m
-                prev_station_fsm = self._station_gate.state
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,
@@ -395,13 +423,12 @@ class AgentLoop:
                     speed_mph=mph,
                 ):
                     station_p1_enabled = False
-                if (
-                    station_fsm == "STOPPED"
-                    and prev_station_fsm != "STOPPED"
-                    and lever is not None
-                    and is_brake_applied(int(lever))
-                ):
-                    dwell_release = release_brake_command(at_target=True)
+                dwell_cmd = station_dwell_brake_command(
+                    station_fsm=station_fsm or None,
+                    speed_mph=mph,
+                    lever=lever,
+                    station_dist_m=station_dist_m,
+                )
             decision = evaluate_p1_tick(
                 self._limit_state,
                 self._release_state,
@@ -428,15 +455,15 @@ class AgentLoop:
             fb_a_obs_ms2 = decision.fb_a_obs_ms2
             fb_shortfall = decision.fb_shortfall
             fb_escalated = decision.fb_escalated
-            if not manual_active and decision.command is not None:
+            if not manual_active and dwell_cmd is not None:
+                p1_cmd = dwell_cmd.kind
+                p1_phase = dwell_cmd.phase or ""
+                p1_reason = dwell_cmd.reason or ""
+                p1_detail = dwell_cmd.reason or ""
+                self._apply_brake_command(dwell_cmd)
+            elif not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(decision.command)
-            elif not manual_active and dwell_release is not None:
-                p1_cmd = dwell_release.kind
-                p1_phase = dwell_release.phase or ""
-                p1_reason = dwell_release.reason or ""
-                p1_detail = "Andén: parada — soltar freno"
-                self._apply_brake_command(dwell_release)
             else:
                 self._maybe_release_driver_control(lever)
             p1_layer = classify_layer(
@@ -468,6 +495,7 @@ class AgentLoop:
                 time.sleep(self.post_ipc_sleep_s)
             snap = self.read_probe()
 
+        learn_ev = self._learner.pop_learn_event()
         return AgentSnapshot.from_probe(
             snap,
             tick=self._tick,
@@ -491,9 +519,14 @@ class AgentLoop:
             station_fsm=station_fsm,
             ipc_cmd_id=ipc_cmd_id,
             brake_fill_s=self._learner.brake_fill_s,
+            brake_fill_n=self._learner.brake_fill_n,
+            decel_observe_n=self._learner.decel_observe_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
             driver_override_s=self.driver_override_remaining_s(),
+            learn_kind=learn_ev.kind if learn_ev else None,
+            learn_accepted=learn_ev.accepted if learn_ev else None,
+            learn_reject_reason=learn_ev.reason if learn_ev else None,
         )

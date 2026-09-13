@@ -6,9 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
-from tsw6v2.constants import NEUTRAL_NOTCH
+from tsw6v2.constants import NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop, AgentSnapshot
+from tsw6v2.planning_feed import PlanningSnapshot
 from tsw6v2.testdata import write_getdata_line
 
 
@@ -179,6 +180,45 @@ class TestAgentLoop:
         assert loop.loaded_profile_path == profile
         assert loop.active_learner.predict_decel(3, 50.0, 0.0) == 0.44
         assert out.vehicle == "Class323"
+
+    def test_dwell_applies_b1_while_stopped_neutral(self, tmp_path: Path) -> None:
+        """TSW exige freno (B1) para abrir puertas; no RELEASE al entrar STOPPED."""
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=4, speed_ms=0.0)
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            station_brake_enabled=True,
+            limit_brake_enabled=False,
+        )
+        loop._station_gate.state = "STOPPED"
+        snap = PlanningSnapshot(station_distance_m=30.0)
+        with patch.object(loop._station_planning, "update", return_value=snap):
+            with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+                from tsw6v2.decision import LimitBrakeDecision
+
+                eval_tick.return_value = LimitBrakeDecision.idle(reason="no_plan")
+                loop.step()
+        assert loop.target_notch == SERVICE_MAX_BRAKE
+
+    def test_dwell_releases_brake_on_departing(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=3, speed_ms=0.0)
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            station_brake_enabled=True,
+            limit_brake_enabled=False,
+        )
+        loop._station_gate.state = "DEPARTING"
+        snap = PlanningSnapshot(station_distance_m=30.0)
+        with patch.object(loop._station_planning, "update", return_value=snap):
+            with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+                from tsw6v2.decision import LimitBrakeDecision
+
+                eval_tick.return_value = LimitBrakeDecision.idle(reason="no_plan")
+                loop.step()
+        assert loop.target_notch == NEUTRAL_NOTCH
 
     def test_auto_profile_skipped_when_explicit(self, tmp_path: Path) -> None:
         profiles = tmp_path / "profiles"

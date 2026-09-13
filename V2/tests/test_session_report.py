@@ -179,6 +179,56 @@ def test_html_shows_fb_and_pressure(tmp_path: Path) -> None:
     assert "FB shortfall" in text
 
 
+def test_html_shows_learn_events(tmp_path: Path) -> None:
+    p = tmp_path / "learn.jsonl"
+    rows = [
+        {"type": "session", "mode": "limit", "route": "test"},
+        {
+            "type": "tick",
+            "tick": 1,
+            "t_ms": 1000,
+            "spd_mph": 55.0,
+            "lever": 3,
+            "brake_cyl_bar": 2.8,
+            "brake_fill_s": 2.5,
+            "brake_fill_n": 1,
+            "decel_observe_n": 0,
+            "learn_kind": "fill",
+            "learn_accepted": True,
+            "learn_reject_reason": "accepted",
+            "p1": {"cmd": "APPLY", "phase": "B1", "reason": "plan"},
+        },
+        {
+            "type": "tick",
+            "tick": 2,
+            "t_ms": 3200,
+            "spd_mph": 52.0,
+            "lever": 3,
+            "brake_cyl_bar": 2.9,
+            "brake_fill_s": 2.5,
+            "brake_fill_n": 1,
+            "decel_observe_n": 0,
+            "learn_kind": "decel",
+            "learn_accepted": False,
+            "learn_reject_reason": "decel_outlier",
+            "p1": {"cmd": "APPLY", "phase": "B1", "reason": "plan"},
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    data = summarize(p)
+    assert data["learn_events"] == 2
+    assert data["learn_accepted"] == 1
+    assert data["learn_reject_reasons"].get("decel_outlier") == 1
+    assert len(data["learn_rows"]) == 2
+    html = tmp_path / "learn.html"
+    write_html_replay(p, html)
+    text = html.read_text(encoding="utf-8")
+    assert "Aprendizaje (learner)" in text
+    assert "Learn OK" in text
+    assert "decel_outlier" in text
+    assert "fill_outlier" not in text
+
+
 def test_finalize_skips_short_session(tmp_path: Path) -> None:
     p = tmp_path / "short.jsonl"
     rows = [

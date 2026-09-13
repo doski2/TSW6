@@ -6,6 +6,8 @@ from pathlib import Path
 import _path  # noqa: F401
 import pytest
 
+from learn_helpers import feed_stable_decel
+
 from tsw6v2.learner import LearnerProfile
 
 
@@ -89,6 +91,15 @@ def test_learner_load_default_missing(tmp_path: Path) -> None:
     assert p.predict_decel(3, 50.0, 0.0) is None
 
 
+def test_learner_profile_path_for_vehicle(tmp_path: Path) -> None:
+    path = LearnerProfile.profile_path_for_vehicle(
+        "Class 323",
+        profiles_dir=tmp_path,
+    )
+    assert path == tmp_path / "class_323.json"
+    assert LearnerProfile.profile_path_for_vehicle("?") is None
+
+
 def test_learner_resolve_profile_path(tmp_path: Path) -> None:
     path = tmp_path / "rvm_bcc_wrm_class323_dms_a_c.json"
     path.write_text('{"decel_by_notch": {"3": 0.5}}', encoding="utf-8")
@@ -116,14 +127,7 @@ def test_learner_observe_brake_decel_updates_ema(tmp_path: Path) -> None:
     before = p.predict_decel(3, 50.0, 0.0)
     assert before is not None
 
-    ok = p.observe_brake_decel(
-        handle=3,
-        speed_mph=50.0,
-        gradient_pct=0.0,
-        accel_ms2=-0.80,
-        lever=3,
-        brake_cyl_bar=2.8,
-    )
+    ok = feed_stable_decel(p, accel=-0.58)
     assert ok is True
     assert p.decel_observe_n == 1
     after = p.predict_decel(3, 50.0, 0.0)

@@ -117,6 +117,8 @@ class JsonlTrace:
             "train_brake": _round_opt(snap.train_brake, 3),
             "brake_cyl_bar": _round_opt(snap.brake_cyl_bar, 2),
             "brake_fill_s": _round_opt(snap.brake_fill_s, 2),
+            "brake_fill_n": snap.brake_fill_n,
+            "decel_observe_n": snap.decel_observe_n,
             "grad_pct": _round_opt(snap.gradient_pct, 2),
             "eff_mph": _round_opt(snap.effective_limit_mph, 2),
             "lim_mph": _round_opt(snap.limit_mph, 2),
@@ -143,6 +145,11 @@ class JsonlTrace:
             row["active_t_ms"] = round(active_t_ms, 1)
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
+        if snap.learn_kind is not None:
+            row["learn_kind"] = snap.learn_kind
+            row["learn_accepted"] = snap.learn_accepted
+            if snap.learn_reject_reason:
+                row["learn_reject_reason"] = snap.learn_reject_reason
         self.write(row)
 
     def close(self) -> None:
@@ -232,6 +239,9 @@ def format_investigate(snap: AgentSnapshot) -> str:
         parts.append(f"fill={snap.brake_fill_s:.1f}s")
     if snap.fb_a_pred_ms2 is not None and snap.fb_a_obs_ms2 is not None:
         parts.append(f"a={snap.fb_a_obs_ms2:.2f}/{snap.fb_a_pred_ms2:.2f}")
+    if snap.learn_kind:
+        tag = "ok" if snap.learn_accepted else (snap.learn_reject_reason or "rej")
+        parts.append(f"learn={snap.learn_kind}:{tag}")
     if snap.driver_override_s > 0:
         parts.append(f"manual={snap.driver_override_s:.0f}s")
     return str(" ".join(parts))

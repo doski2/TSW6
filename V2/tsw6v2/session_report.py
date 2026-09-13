@@ -153,6 +153,16 @@ def summarize(path: Path) -> dict[str, Any]:
         "air_fill_ticks": reasons.get("air_fill", 0),
         "air_recharge_ticks": reasons.get("air_recharge", 0),
         "fb_events": _fb_event_rows(ticks),
+        "learn_events": sum(1 for t in ticks if t.get("learn_kind")),
+        "learn_accepted": sum(1 for t in ticks if t.get("learn_accepted")),
+        "learn_reject_reasons": dict(
+            Counter(
+                str(t.get("learn_reject_reason") or "?")
+                for t in ticks
+                if t.get("learn_kind") and not t.get("learn_accepted")
+            ).most_common(8)
+        ),
+        "learn_rows": _learn_event_rows(ticks),
         "station_ticks": sum(1 for t in ticks if t.get("stn_dist_m") is not None),
         "p1_tgt_station_ticks": sum(1 for t in ticks if t.get("p1_tgt") == "STATION"),
         "station_events": _station_event_rows(ticks),
@@ -344,6 +354,38 @@ def _doors_label(tick: dict[str, Any]) -> str:
     if open_raw is not None and telem is None and dmi is None:
         parts.append(f"open={'1' if open_raw else '0'}")
     return " ".join(parts) if parts else "—"
+
+
+def _learn_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
+    """Ticks con evento de aprendizaje (aceptado o rechazado)."""
+    rows: list[dict[str, Any]] = []
+    for t in ticks:
+        if t.get("learn_kind") is None:
+            continue
+        p1 = t.get("p1") or {}
+        rows.append(
+            {
+                "tick": t["tick"],
+                "t_s": round(_tick_t_s(t), 1),
+                "kind": t.get("learn_kind"),
+                "accepted": bool(t.get("learn_accepted")),
+                "reason": t.get("learn_reject_reason") or "",
+                "spd": t.get("spd_mph"),
+                "p_bar": t.get("brake_cyl_bar"),
+                "fill_s": t.get("brake_fill_s"),
+                "fill_n": t.get("brake_fill_n"),
+                "decel_n": t.get("decel_observe_n"),
+                "phase": p1.get("phase"),
+            }
+        )
+    if len(rows) <= limit:
+        return rows
+    rejected = [r for r in rows if not r["accepted"]]
+    accepted = [r for r in rows if r["accepted"]]
+    keep = rejected[:limit]
+    if len(keep) < limit:
+        keep.extend(accepted[: limit - len(keep)])
+    return keep
 
 
 def _fb_event_rows(ticks: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
@@ -1288,6 +1330,11 @@ puertas telem: <b>{doors_telem}</b> · DMI: <b>{doors_dmi}</b> · abiertas: <b>{
 <th>t(s)</th><th>spd</th><th>P bar</th><th>a_obs</th><th>a_pred</th><th>shortfall</th><th>fase</th><th>why</th>
 </tr></thead><tbody id="fb-body"></tbody></table>
 <p class="leg">Muestra hasta 40 ticks con medición <code>fb</code> (prioriza shortfall). Esperas <code>air_fill</code> = sin presión suficiente para APPLY.</p>
+<h2>Aprendizaje (learner)</h2>
+<table id="learn"><thead><tr>
+<th>t(s)</th><th>tipo</th><th>OK</th><th>motivo</th><th>spd</th><th>P bar</th><th>fill</th><th>n fill</th><th>n decel</th><th>fase</th>
+</tr></thead><tbody id="learn-body"></tbody></table>
+<p class="leg" id="learn-leg">Eventos <code>learn_*</code> del JSONL: ventana estable / outliers fill-decel. Prioriza rechazos en la tabla.</p>
 <h2>Eventos Frenar / Soltar</h2>
 <table id="events"><thead><tr>
 <th>t(s)</th><th>spd</th><th>capa</th><th>cmd</th><th>lim@dist</th><th>ds</th><th>apply</th><th>ipc</th>
@@ -1312,6 +1359,7 @@ const stats = [
   ['Vigilar', s.p1_layers?.WATCH||0], ['Revisar GAP', s.p1_layers?.GAP||0],
   ['FB medido', s.fb_ticks||0], ['FB shortfall', s.fb_shortfall||0],
   ['FB escaló', s.fb_escalated||0], ['Espera aire', s.air_fill_ticks||0],
+  ['Learn OK', s.learn_accepted||0], ['Learn rej', (s.learn_events||0)-(s.learn_accepted||0)],
   ...(s.station_ticks ? [['Andén ticks', s.station_ticks], ['STATION tgt', s.p1_tgt_station_ticks||0]] : []),
   ...(s.signal_red_ticks ? [['Señal rojo', s.signal_red_ticks]] : []),
 ];
@@ -1326,6 +1374,22 @@ document.getElementById('fb-body').innerHTML = fbRows.map(e =>
   `<td>${{e.shortfall?'Y':''}}${{e.escalated?' ↑':''}}</td>`+
   `<td>${{e.phase||''}}</td><td>${{e.reason||''}}</td></tr>`).join('') ||
   '<tr><td colspan="8">Sin bloques fb en JSONL (frena en APPLY para ver medición)</td></tr>';
+
+const learnRows = s.learn_rows || [];
+const learnRej = s.learn_reject_reasons || {{}};
+const learnLeg = document.getElementById('learn-leg');
+if (learnLeg && Object.keys(learnRej).length) {{
+  learnLeg.textContent += ' Rechazos: ' + Object.entries(learnRej).map(([k,v])=>`${{k}}=${{v}}`).join(', ') + '.';
+}}
+document.getElementById('learn-body').innerHTML = learnRows.map(e =>
+  `<tr><td>${{e.t_s}}</td><td>${{e.kind||''}}</td>`+
+  `<td>${{e.accepted?'✓':'✗'}}</td><td>${{e.reason||''}}</td>`+
+  `<td>${{e.spd?.toFixed?.(1)??'—'}}</td>`+
+  `<td>${{e.p_bar?.toFixed?.(1)??'—'}}</td>`+
+  `<td>${{e.fill_s?.toFixed?.(2)??'—'}}</td>`+
+  `<td>${{e.fill_n??'—'}}</td><td>${{e.decel_n??'—'}}</td>`+
+  `<td>${{e.phase||''}}</td></tr>`).join('') ||
+  '<tr><td colspan="10">Sin eventos learn_* (sesión anterior a filtros de calidad o sin muestras válidas)</td></tr>';
 
 const ls = s.p1_layers || {{}};
 document.getElementById('layer-stats').innerHTML = Object.entries(ls)

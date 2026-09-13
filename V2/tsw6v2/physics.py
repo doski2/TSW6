@@ -53,7 +53,8 @@ DEFAULT_REACTION_S = 1.5
 PRESSURE_IDLE_MAX_BAR = 1.5
 # HUD Class 323: reposo ~1.0 bar, B1 en servicio ~1.6 bar (sesión 183116Z).
 PRESSURE_BRAKING_MIN_BAR = 1.55
-BRAKE_FILL_CLAMP = (0.8, 5.0)
+# Suelo 1.5 s: sesiones 181835Z medían ~0.8 s en 1ª transición (IPC+válvula).
+BRAKE_FILL_CLAMP = (1.5, 5.0)
 
 
 @dataclass

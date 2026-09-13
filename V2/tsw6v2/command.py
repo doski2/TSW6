@@ -44,6 +44,7 @@ from tsw6v2.constants import (
 from tsw6v2.limit_containment import downhill_brake_release_floor_mph
 from tsw6v2.limit_horizon import within_next_brake_horizon
 from tsw6v2.planning import is_ascending_limit_exit
+from tsw6v2.station_plan import DEFAULT_STATION_CFG
 from tsw6v2.target import (
     BrakeTargetKind,
     BrakeTargetResult,
@@ -202,7 +203,7 @@ def command_from_target(
         if (
             target_kind == "STATION"
             and speed_mph <= target_speed_mph + RELEASE_MARGIN_MPH
-            and distance_m <= 80.0
+            and distance_m <= DEFAULT_STATION_CFG.dwell_max_distance_m
         ):
             return platform_door_brake_command(distance_m=distance_m)
         if not in_window:
@@ -274,7 +275,7 @@ def platform_door_brake_command(
     *,
     distance_m: Optional[float] = None,
 ) -> BrakeCommand:
-    """B1 en andén: TSW exige freno para abrir puertas; RELEASE al DEPARTING."""
+    """B1 en andén: TSW exige freno para abrir puertas (dwell en ``p1_station_gate``)."""
     return BrakeCommand(
         kind="APPLY",
         target_notch=SERVICE_MAX_BRAKE,

@@ -155,11 +155,14 @@ def session_profile_note(
     loop: AgentLoop,
     profile_path: Optional[Path],
 ) -> Optional[str]:
-    """Ruta de perfil para metadatos JSONL (explícita o auto-cargada)."""
+    """Ruta de perfil para metadatos JSONL (explícita, cargada o auto-guardado)."""
     if profile_path is not None:
         return str(profile_path)
     if loop.loaded_profile_path is not None:
         return str(loop.loaded_profile_path)
+    save = loop.profile_save_path
+    if save is not None:
+        return f"{save} (auto-save)"
     return None
 
 
@@ -182,7 +185,7 @@ def make_session_recorder(
 
 def save_learner_if_dirty(loop: AgentLoop, profile_path: Optional[Path]) -> Optional[str]:
     """Persiste perfil si hubo aprendizaje; devuelve línea para consola."""
-    save_path = profile_path or loop.loaded_profile_path
+    save_path = profile_path or loop.profile_save_path
     active = loop.active_learner
     if save_path is None or not (active.brake_fill_n > 0 or active.decel_observe_n > 0):
         return None

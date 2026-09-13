@@ -8,7 +8,10 @@ puertas y passthrough cuando ``loop`` pone ``station_brake_enabled=False``.
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from tsw6v2.command import BrakeCommand
 
 STATION_STOPPED_MPH = 1.5
 DEPARTING_CLEAR_MPH = 25.0
@@ -190,3 +193,34 @@ class StationDwellGate:
         self.state = "DEPARTING"
         self._departing_at = time.monotonic()
         self._doors_opened = False
+
+
+def station_dwell_brake_command(
+    *,
+    station_fsm: Optional[str],
+    speed_mph: float,
+    lever: Optional[int],
+    station_dist_m: Optional[float],
+) -> Optional["BrakeCommand"]:
+    """
+    Mando dwell: B1 en ``STOPPED`` (puertas TSW); RELEASE en ``DEPARTING`` lento.
+
+    Complementa ``command_from_target`` (B1 en aproximación ``stn ≤ 80 m``) cuando
+    el gate apaga el plan STATION. Misma semántica que v1 ``_hold_platform_brake``.
+    """
+    from tsw6v2.command import (
+        is_brake_applied,
+        platform_door_brake_command,
+        release_brake_command,
+    )
+
+    if station_fsm == "STOPPED":
+        return platform_door_brake_command(distance_m=station_dist_m)
+    if (
+        station_fsm == "DEPARTING"
+        and lever is not None
+        and is_brake_applied(int(lever))
+        and speed_mph < DEPARTING_CLEAR_MPH
+    ):
+        return release_brake_command(at_target=True)
+    return None

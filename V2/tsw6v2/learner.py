@@ -7,8 +7,11 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+import time
+
 from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready
-from tsw6v2.learner_v1 import V1LearnerData
+from tsw6v2.learn_quality import DecelObserveWindow, LearnEvent, decel_outlier_rejected
+from tsw6v2.learner_v1 import MIN_SAMPLES, V1LearnerData, speed_band_index
 
 
 class LearnerProfile:
@@ -27,10 +30,20 @@ class LearnerProfile:
         self._v1 = v1
         self._v1_snapshot = v1_snapshot
         self._decel_observe_n = 0
+        self._decel_window = DecelObserveWindow()
+        self._learn_event: LearnEvent | None = None
 
     @property
     def decel_observe_n(self) -> int:
         return self._decel_observe_n
+
+    def pop_learn_event(self) -> LearnEvent | None:
+        ev = self._learn_event
+        self._learn_event = None
+        return ev
+
+    def _set_learn_event(self, kind: str, accepted: bool, reason: str) -> None:
+        self._learn_event = LearnEvent(kind, accepted, reason)
 
     def _ensure_v1(self) -> V1LearnerData:
         if self._v1 is None:
@@ -48,8 +61,9 @@ class LearnerProfile:
         accel_ms2: Optional[float],
         lever: int | None = None,
         brake_cyl_bar: float | None = None,
+        now: float | None = None,
     ) -> bool:
-        """Registra ``accel_ms2`` del probe en EMA v1 (solo muescas freno)."""
+        """Registra ``accel_ms2`` tras ventana estable + filtros de calidad."""
         if accel_ms2 is None:
             return False
         if not brake_decel_sample_ready(
@@ -57,14 +71,38 @@ class LearnerProfile:
             lever=lever,
             brake_cyl_bar=brake_cyl_bar,
         ):
+            self._set_learn_event("decel", False, "pressure")
             return False
-        v1 = self._ensure_v1()
-        if not v1.observe_brake_accel(
-            notch=handle,
+
+        t = time.monotonic() if now is None else now
+        ready = self._decel_window.feed(
+            t=t,
+            handle=handle,
             speed_mph=speed_mph,
             grad_pct=gradient_pct,
             accel_ms2=float(accel_ms2),
-        ):
+        )
+        if ready is None:
+            reason = self._decel_window.last_reason
+            if not reason.startswith(("accumulating", "stable ")):
+                self._set_learn_event("decel", False, reason)
+            return False
+
+        handle_i, measured_norm, avg_speed, _avg_grad = ready
+        v1 = self._ensure_v1()
+        band = speed_band_index(avg_speed)
+        band_n = v1.n_bands[band].get(handle_i, 0)
+        prior = v1.ema_bands[band].get(handle_i)
+        if band_n >= MIN_SAMPLES and decel_outlier_rejected(measured_norm, prior):
+            self._set_learn_event("decel", False, "decel_outlier")
+            return False
+        ok, reason = v1.commit_brake_decel_sample(
+            handle=handle_i,
+            speed_mph=avg_speed,
+            measured_norm=measured_norm,
+        )
+        self._set_learn_event("decel", ok, reason)
+        if not ok:
             return False
         self._decel_observe_n += 1
         return True
@@ -84,7 +122,9 @@ class LearnerProfile:
         *,
         now: float | None = None,
     ) -> None:
-        self._air.observe(lever, brake_cyl_bar, now=now)
+        ev = self._air.observe(lever, brake_cyl_bar, now=now)
+        if ev is not None:
+            self._set_learn_event(ev.kind, ev.accepted, ev.reason)
 
     def air_ready(
         self,
@@ -178,16 +218,27 @@ class LearnerProfile:
         return False
 
     @classmethod
+    def profile_path_for_vehicle(
+        cls,
+        vehicle: str,
+        profiles_dir: Path | None = None,
+    ) -> Optional[Path]:
+        """Ruta estándar ``logs/profiles/<vehículo>.json`` (crear al guardar)."""
+        if not vehicle or vehicle == "?":
+            return None
+        root = profiles_dir or Path("logs/profiles")
+        slug = vehicle.strip().lower().replace(" ", "_")
+        return root / f"{slug}.json"
+
+    @classmethod
     def resolve_profile_path(
         cls,
         vehicle: str,
         profiles_dir: Path | None = None,
     ) -> Optional[Path]:
         """``logs/profiles/<vehículo>.json`` si existe."""
-        root = profiles_dir or Path("logs/profiles")
-        slug = (vehicle or "?").strip().lower().replace(" ", "_")
-        path = root / f"{slug}.json"
-        return path if path.is_file() else None
+        path = cls.profile_path_for_vehicle(vehicle, profiles_dir=profiles_dir)
+        return path if path is not None and path.is_file() else None
 
     @classmethod
     def load_default(cls, vehicle: str, profiles_dir: Path | None = None) -> LearnerProfile:

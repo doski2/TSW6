@@ -6,6 +6,7 @@ import time
 
 from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready, pressure_for_handle
 from tsw6v2.learner import LearnerProfile
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
 
 
 def test_fill_time_observed() -> None:
@@ -15,7 +16,18 @@ def test_fill_time_observed() -> None:
     air.observe(3, 1.2, now=t0 + 0.1)
     air.observe(3, 2.5, now=t0 + 2.0)
     assert air.brake_fill_n == 1
-    assert 1.8 < air.brake_fill_s < 2.2
+    assert air.brake_fill_s == DEFAULT_BRAKE_FILL_S
+
+
+def test_fill_first_sample_uses_ema_not_raw_elapsed() -> None:
+    """Sesión 181835Z: 1ª medición ~0.8 s no debe fijar fill al mínimo."""
+    air = BrakeAirTracker()
+    t0 = 0.0
+    air.observe(4, 1.0, now=t0)
+    air.observe(2, 1.1, now=t0 + 0.05)
+    air.observe(2, 1.7, now=t0 + 0.85)
+    assert air.brake_fill_n == 1
+    assert air.brake_fill_s == DEFAULT_BRAKE_FILL_S
 
 
 def test_cap_escalation_waits_for_pressure() -> None:

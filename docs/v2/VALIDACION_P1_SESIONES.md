@@ -19,7 +19,7 @@ No sustituye `pytest`; complementa prueba de campo.
 | Prioridad H1 + latch | `limits.py`, `limit_containment.py`, `limit_horizon.py` |
 | Muesca + defer + coast trim | `limit_notch.py`, `command.py` (`coast_trim_deferred`) |
 | Feedback decel + aire | `brake_feedback.py`, `brake_air.py` |
-| EMA online | `learner.py`, `learner_v1.py` |
+| EMA online + calidad | `learner.py`, `learner_v1.py`, `learn_quality.py` |
 | RELEASE cinemático (BRAKE_LIMIT) | `physics.py`, `command.py` |
 | Decisión + IPC | `decision.py`, `loop.py` |
 | Trace | `trace.py`, `session_report.py` |
@@ -80,10 +80,12 @@ Regenerar HTML (si hace falta):
 | --- | --- |
 | **Consola** | `decel_n > 0` solo con frenadas reales; sin errores IPC masivos |
 | **Resumen** | `python scripts\tools\summarize_v2_limit.py …jsonl` — APPLY/RELEASE razonables |
-| **HTML replay** | Paneles presión + decel; stats FB shortfall; tabla Feedback/aire; sección **Señal (rojo)** si hubo ticks rojos |
+| **HTML replay** | Paneles presión + decel; stats FB shortfall; tablas Feedback/aire y **Aprendizaje (learner)** (`learn_*`); sección **Señal (rojo)** si hubo ticks rojos |
 | **Replay offline** | `python V2/scripts/replay_jsonl.py logs/v2/<sesión>.jsonl` — re-evalúa decisiones; comparar `air_fill` / APPLY en zona lenta (ref. `143544Z`) |
+| **Learner JSONL** | `python V2/scripts/analyze_learner_jsonl.py logs/v2/<sesión>.jsonl` — resumen fill / air_fill / fb |
 | **Distancia andén** | Debe **bajar** en marcha (v×dt); si se queda ~230–235 m fija → HTTP TrackData regresando; tras **cargar partida** debe refrescar (ref. `145832Z`) |
-| **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno; `signal_red`/`signal_dist_m` si pasas semáforo rojo |
+| **JSONL** | Bloques `"fb"` con `a_obs_ms2` en APPLY con aire; `p1.reason=air_fill` al inicio de freno; `brake_fill_n` / `decel_observe_n` por tick; `learn_kind` / `learn_accepted` / `learn_reject_reason` en muestras aceptadas o rechazadas; `signal_red`/`signal_dist_m` si pasas semáforo rojo |
+| **Perfil auto** | Metadato sesión `profile: … (auto-save)`; al cerrar `perfil -> logs/profiles/<vehículo>.json` |
 | **Consola investigate** | `sig=ROJO@…m` cuando probe emite rojo |
 | **Perfil** | `n_bands` sube despacio (+20–40/sesión larga OK); `decel_n` en consola al cerrar |
 | **RELEASE** | Bajada: ~55–56 mph proyectado; llano/subida: `spd ≤ objetivo + 0.4` (no undershoot a 44 en 60→50) |

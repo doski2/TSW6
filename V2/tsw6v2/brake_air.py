@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 
 from tsw6v2.constants import NEUTRAL_NOTCH
+from tsw6v2.learn_quality import LearnEvent, fill_outlier_rejected
+from tsw6v2.learner_v1 import EMA_ALPHA
 from tsw6v2.physics import (
     BRAKE_FILL_CLAMP,
     DEFAULT_BRAKE_FILL_S,
@@ -13,7 +15,6 @@ from tsw6v2.physics import (
     PRESSURE_IDLE_MAX_BAR,
 )
 
-EMA_ALPHA = 0.10
 MIN_FILL_SAMPLES = 3
 _COAST_NOTCH = NEUTRAL_NOTCH
 
@@ -61,12 +62,19 @@ class BrakeAirTracker:
     _released_at: float | None = None
     _pressure_at_release: float | None = None
 
-    def observe(self, lever: int, brake_cyl_bar: float | None, *, now: float | None = None) -> None:
+    def observe(
+        self,
+        lever: int,
+        brake_cyl_bar: float | None,
+        *,
+        now: float | None = None,
+    ) -> LearnEvent | None:
         """Un tick: fill-time EMA y marcas de soltar freno."""
         t = time.monotonic() if now is None else now
         lever = int(lever)
         was_coast = self._last_lever >= _COAST_NOTCH
         is_brake = lever < _COAST_NOTCH
+        learn_event: LearnEvent | None = None
 
         if brake_cyl_bar is not None:
             p = float(brake_cyl_bar)
@@ -82,19 +90,24 @@ class BrakeAirTracker:
             ):
                 elapsed = t - self._fill_armed_since
                 if 0.15 < elapsed < 10.0:
-                    if self.brake_fill_n == 0:
-                        self.brake_fill_s = elapsed
-                    else:
-                        self.brake_fill_s = (
-                            EMA_ALPHA * elapsed
-                            + (1.0 - EMA_ALPHA) * self.brake_fill_s
-                        )
-                    self.brake_fill_n += 1
-                    lo, hi = BRAKE_FILL_CLAMP
-                    self.brake_fill_s = max(lo, min(hi, self.brake_fill_s))
+                    learn_event = self._commit_fill_sample(elapsed)
                 self._fill_armed_since = None
 
         self._last_lever = lever
+        return learn_event
+
+    def _commit_fill_sample(self, elapsed: float) -> LearnEvent:
+        if self.brake_fill_n > 0 and fill_outlier_rejected(elapsed, self.brake_fill_s):
+            return LearnEvent("fill", False, "fill_outlier")
+
+        candidate = EMA_ALPHA * elapsed + (1.0 - EMA_ALPHA) * self.brake_fill_s
+        if self.brake_fill_n < MIN_FILL_SAMPLES:
+            candidate = max(candidate, DEFAULT_BRAKE_FILL_S)
+
+        lo, hi = BRAKE_FILL_CLAMP
+        self.brake_fill_s = max(lo, min(hi, candidate))
+        self.brake_fill_n += 1
+        return LearnEvent("fill", True, "accepted")
 
     def air_ready(
         self,
