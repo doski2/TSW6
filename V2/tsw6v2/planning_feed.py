@@ -22,6 +22,7 @@ class PlanningSnapshot:
     station_distance_m: Optional[float] = None
     station_name: Optional[str] = None
     service_name: Optional[str] = None
+    hud_route_name: Optional[str] = None
     schedule_source: str = ""
     hud_timetable_id: Optional[int] = None
 
@@ -32,6 +33,8 @@ PLATFORM_PASSED_MAX_M = 80.0
 # TrackData suele devolver ~5 m más lejos que v×dt (sesión 145832Z: 230→235 m).
 PLANNING_HTTP_REGRESSION_M = 1.0
 PLANNING_APPROACH_MIN_SPEED_MPH = 3.0
+# Salto hacia atrás en marcha (sesión 211414Z: 22184→120 m @ 45 mph).
+PLANNING_APPROACH_PREV_MIN_M = 1000.0
 
 
 def planning_distance_accept(
@@ -43,10 +46,19 @@ def planning_distance_accept(
     platform_passed_max_m: float = PLATFORM_PASSED_MAX_M,
     regression_m: float = PLANNING_HTTP_REGRESSION_M,
     approach_min_speed_mph: float = PLANNING_APPROACH_MIN_SPEED_MPH,
+    approach_prev_min_m: float = PLANNING_APPROACH_PREV_MIN_M,
 ) -> bool:
     """``False`` si el HTTP salta a la siguiente estación o aleja del andén en marcha."""
     if prev_m is None:
         return True
+    # En marcha con distancia consolidada: rechazar yo-yo grande (atrás o adelante).
+    # Tras invalidate() prev=None acepta save/load; prev<1000 m deja pasar 235→1800 m.
+    if (
+        speed_mph >= approach_min_speed_mph
+        and prev_m >= approach_prev_min_m
+        and abs(new_m - prev_m) > jump_reject_m
+    ):
+        return False
     # Tras pasar andén (dwell o creep): rechazar salto a cualquier velocidad
     # (sesión 20260911T152306Z: 0→2012 m @ 3.4 mph).
     if new_m > prev_m + jump_reject_m and prev_m < platform_passed_max_m:

@@ -47,6 +47,12 @@ def load_ticks(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]
         row = json.loads(line)
         if row.get("type") == "session":
             session = row
+        elif row.get("type") == "session_detect":
+            if session is None:
+                session = {"type": "session"}
+            for key, val in row.items():
+                if key != "type" and val is not None:
+                    session[key] = val
         elif row.get("type") == "tick":
             ticks.append(row)
     enrich_ticks_active_time(ticks)
@@ -123,6 +129,7 @@ def summarize(path: Path) -> dict[str, Any]:
 
     return {
         "session": session,
+        "route_display": session_route_display(session),
         "n_ticks": len(ticks),
         "duration_s": round(ticks[-1]["t_ms"] / 1000, 1),
         "active_duration_s": round(_tick_t_s(ticks[-1]), 1),
@@ -1040,6 +1047,28 @@ def _session_warning_html(summary: dict[str, Any]) -> str:
     )
 
 
+def session_route_label(sess: dict[str, Any] | None) -> str:
+    """Ruta para informes: detectada por juego, si no la etiqueta CLI."""
+    if not sess:
+        return "?"
+    detected = sess.get("detected_route")
+    if detected:
+        svc = sess.get("service_name")
+        return f"{detected}" + (f" ({svc})" if svc else "")
+    return str(sess.get("route") or "?")
+
+
+def session_route_display(sess: dict[str, Any] | None) -> str:
+    """Etiqueta de ruta con sufijo CLI si difiere de la detectada."""
+    route = session_route_label(sess)
+    if not sess:
+        return route
+    cli = sess.get("route")
+    if cli and route != cli:
+        return f"{route} [cli={cli}]"
+    return route
+
+
 def _meta_line(summary: dict[str, Any]) -> str:
     sess = summary.get("session") or {}
     dur = summary.get("duration_s")
@@ -1048,8 +1077,8 @@ def _meta_line(summary: dict[str, Any]) -> str:
     if active is not None and dur is not None and float(active) + 5 < float(dur):
         time_part = f"{active}s activo ({dur}s reloj)"
     return (
-        f"modo={sess.get('mode')} ruta={sess.get('route')} git={sess.get('git')} "
-        f"· {summary.get('n_ticks')} ticks · {time_part}"
+        f"modo={sess.get('mode')} ruta={summary.get('route_display', session_route_display(sess))} "
+        f"git={sess.get('git')} · {summary.get('n_ticks')} ticks · {time_part}"
     )
 
 
@@ -1277,7 +1306,7 @@ puertas telem: <b>{doors_telem}</b> · DMI: <b>{doors_dmi}</b> · abiertas: <b>{
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
-<title>P1 replay — {session.get('route', '?') if session else path.name}</title>
+<title>P1 replay — {session_route_display(session) if session else path.name}</title>
 <style>
   body {{ font: 14px/1.4 system-ui, sans-serif; margin: 1rem 1.5rem; background: #0f1115; color: #e6e8ec; }}
   h1 {{ font-size: 1.1rem; font-weight: 600; }}
@@ -1352,7 +1381,7 @@ const s = DATA.summary;
 const meta = document.getElementById('meta');
 const timeLbl = (s.active_duration_s != null && s.active_duration_s + 5 < s.duration_s)
   ? `${{s.active_duration_s}}s activo (${{s.duration_s}}s reloj)` : `${{s.duration_s}}s`;
-meta.textContent = `modo=${{s.session?.mode}} ruta=${{s.session?.route}} git=${{s.session?.git}} · ${{s.n_ticks}} ticks · ${{timeLbl}}`;
+meta.textContent = `modo=${{s.session?.mode}} ruta=${{s.route_display || s.session?.route || '?'}} git=${{s.session?.git}} · ${{s.n_ticks}} ticks · ${{timeLbl}}`;
 
 const stats = [
   ['Frenar', s.apply_ticks], ['Soltar', s.release_ticks], ['IPC', s.ipc_sent],
@@ -1534,7 +1563,7 @@ def print_report(data: dict[str, Any]) -> None:
         return
     s = data["session"] or {}
     print("=== Sesión P1 V2 ===")
-    print(f"  modo={s.get('mode')}  ruta={s.get('route')}  git={s.get('git')}")
+    print(f"  modo={s.get('mode')}  ruta={session_route_label(s)}  git={s.get('git')}")
     print(f"  ticks={data['n_ticks']}  duración={data['duration_s']}s")
     if data["speed_min_max"]:
         print(f"  velocidad {data['speed_min_max'][0]}–{data['speed_min_max'][1]} mph")

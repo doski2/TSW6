@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
+from tsw6v2.command import BrakeCommand
 from tsw6v2.constants import NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop, AgentSnapshot
@@ -44,6 +45,14 @@ class TestAgentLoop:
         loop = AgentLoop()
         loop.request_neutral()
         assert loop.target_notch == NEUTRAL_NOTCH
+
+    def test_apply_release_skipped_when_already_neutral(self) -> None:
+        loop = AgentLoop()
+        loop._apply_brake_command(
+            BrakeCommand(kind="RELEASE", target_notch=NEUTRAL_NOTCH, phase="NEU"),
+            lever=NEUTRAL_NOTCH,
+        )
+        assert loop.target_notch is None
 
     def test_clear_target_when_driver_accelerates(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"

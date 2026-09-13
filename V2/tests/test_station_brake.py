@@ -17,7 +17,11 @@ from tsw6v2.p1_policy import (
     should_prefer_station_in_approach,
 )
 from tsw6v2.station_brake import evaluate_station_brake
-from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED, plan_brake_for_station
+from tsw6v2.station_plan import (
+    STATION_SCHEDULE_SLACK_ENABLED,
+    plan_brake_for_station,
+    should_suppress_station_braking_for_departure,
+)
 from tsw6v2.target import BrakeTargetResult
 
 
@@ -41,6 +45,14 @@ def test_station_schedule_slack_disabled_by_default():
 
 def test_should_defer_station_far():
     assert should_defer_station_brake(speed_mph=60.0, station_dist_m=5000.0)
+
+
+def test_suppress_station_brake_origin_departure_session_214610() -> None:
+    assert should_suppress_station_braking_for_departure(
+        speed_mph=0.0,
+        station_distance_m=24182.5,
+        throttle_notch=2,
+    )
 
 
 def test_station_brake_near_platform():

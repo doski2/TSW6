@@ -6,9 +6,13 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Protocol
 
 from tsw6v2.loop import AgentLoop, AgentSnapshot
+
+
+class PlanningContextSource(Protocol):
+    def planning_context(self) -> dict[str, object]: ...
 from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.session_report import (
     MIN_HTML_DURATION_S,
@@ -46,6 +50,8 @@ class SessionRecorder:
         self.route = route
         self.profile = profile
         self._trace: Optional[JsonlTrace] = None
+        self._loop: Optional[PlanningContextSource] = None
+        self._last_detect_key: Optional[tuple[object, ...]] = None
         self._t0 = time.monotonic()
         self._last_seq: Optional[int] = None
         self._active_t_ms = 0.0
@@ -63,8 +69,30 @@ class SessionRecorder:
             )
         return self._trace
 
+    def bind_loop(self, loop: PlanningContextSource) -> None:
+        """Enlaza el bucle para autodetectar ruta/servicio vía HTTP planning."""
+        self._loop = loop
+
+    def _maybe_emit_route_detect(self, trace: JsonlTrace) -> None:
+        if self._loop is None:
+            return
+        ctx = self._loop.planning_context()
+        key = (
+            ctx.get("detected_route"),
+            ctx.get("service_name"),
+            ctx.get("schedule_source"),
+            ctx.get("hud_timetable_id"),
+        )
+        if not (key[0] or key[1]):
+            return
+        if key == self._last_detect_key:
+            return
+        self._last_detect_key = key
+        trace.write_session_detect(**ctx)
+
     def record(self, snap: AgentSnapshot) -> None:
         trace = self._ensure_trace()
+        self._maybe_emit_route_detect(trace)
         self._active_t_ms, self._last_seq = advance_probe_active_ms(
             self._active_t_ms,
             self._last_seq,
@@ -175,12 +203,14 @@ def make_session_recorder(
     profile_path: Optional[Path] = None,
 ) -> SessionRecorder:
     """Crea ``SessionRecorder`` con perfil resuelto desde loop/CLI."""
-    return SessionRecorder(
+    recorder = SessionRecorder(
         log_path,
         trace_mode=trace_mode,
         route=route,
         profile=session_profile_note(loop, profile_path),
     )
+    recorder.bind_loop(loop)
+    return recorder
 
 
 def save_learner_if_dirty(loop: AgentLoop, profile_path: Optional[Path]) -> Optional[str]:

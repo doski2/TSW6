@@ -76,6 +76,15 @@ class JsonlTrace:
         self._fp.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._fp.flush()
 
+    def write_session_detect(self, **fields: Any) -> None:
+        """Ruta/servicio detectados por HTTP (línea aparte; se fusiona al leer JSONL)."""
+        row = {"type": "session_detect"}
+        for key, val in fields.items():
+            if val is not None and val != "":
+                row[key] = val
+        if len(row) > 1:
+            self.write(row)
+
     def write_tick(
         self,
         snap: AgentSnapshot,
@@ -124,6 +133,9 @@ class JsonlTrace:
             "lim_mph": _round_opt(snap.limit_mph, 2),
             "lim_dist_m": _round_opt(snap.limit_dist_m, 1),
             "stn_dist_m": _round_opt(snap.station_dist_m, 1),
+            "station_name": snap.station_name or None,
+            "service_name": snap.service_name or None,
+            "schedule_source": snap.schedule_source or None,
             "stn_fsm": snap.station_fsm or None,
             "doors_telem": snap.doors_telem,
             "doors_dmi": snap.doors_dmi,
@@ -197,6 +209,8 @@ def format_investigate(snap: AgentSnapshot) -> str:
         if snap.station_dist_m is not None
         else "—"
     )
+    if snap.station_name:
+        stn = f"{stn}({snap.station_name})"
     parts = [
         f"tick={snap.tick}",
         f"spd={spd}",
@@ -206,6 +220,10 @@ def format_investigate(snap: AgentSnapshot) -> str:
         f"ds={ds}",
         f"apply={apply}",
     ]
+    if snap.schedule_source:
+        parts.append(f"sched={snap.schedule_source}")
+    if snap.service_name:
+        parts.append(f"svc={snap.service_name}")
     if snap.station_fsm:
         parts.append(f"fsm={snap.station_fsm}")
     if snap.signal_red is True:

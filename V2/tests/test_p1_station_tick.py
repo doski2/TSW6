@@ -184,6 +184,29 @@ def test_station_watch_overlay_hold_dh_zone15_session_173809() -> None:
     assert decision.reason == "downhill_hold"
 
 
+def test_no_release_while_departing_with_throttle_at_neutral_session_214610() -> None:
+    """Arranque: tracción + neutro — no RELEASE repetidos (214610Z)."""
+    snap = ProbeSnapshot(
+        speed_ms=0.0,
+        speed_limit_ms=4.47,  # 10 mph vigente
+        gradient_pct=0.0,
+        dist_limit_cm=5910.0,
+        next_limit_ms=6.71,  # 15 mph
+        lever_notch=6,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=24182.5,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason != "release"
+    assert decision.command is None or decision.command.kind != "RELEASE"
+
+
 def test_no_limit_release_while_station_braking():
     """Sesión 20260910T123139Z: latch 55 no debe soltar freno de andén @ ~212 m."""
     snap = ProbeSnapshot.from_dict(

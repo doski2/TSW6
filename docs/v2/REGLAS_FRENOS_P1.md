@@ -60,7 +60,8 @@ Código (`constants.py`):
 2. **Contención bajada** (`pick_downhill_containment`) si superas el techo de la zona vigente.
 3. **BRAKE_LIMIT** en WATCH (lejos, bajo techo de zona) — solo calcula; **no** bloquea HOLD_DH.
 
-**Evaluación dual (2026-09-12):** BRAKE_LIMIT y HOLD_DH se calculan sobre **copias**
+##### Evaluación dual (2026-09-12):** BRAKE_LIMIT y HOLD_DH se calculan sobre **copias
+
 (`LimitBrakeState.snapshot()`); solo la ruta ganadora hace `replace_from` al estado vivo. El learner
 solo observa decel en la ruta BRAKE_LIMIT comprometida — evita latch/EMA contaminados por la rama
 perdedora (sesión `201456Z`).
@@ -87,7 +88,9 @@ Excepciones:
 
   en **59.5** si hay presión/coast eficiente (solo **fuera** del horizonte hacia el 55).
 
-- **55→45** (y bajada con cartel next **bajando**): RELEASE al cartel next en **ops+0.5** (45→**44.5**);
+- **55→45** (y bajada con cartel next **bajando**): RELEASE al cartel next en **ops+0.5**
+
+  (45→**44.5**);
 
   no arrastrar B1 hasta ~40; no soltar por `eff_floor` de zona vigente **dentro** del horizonte.
 
@@ -122,7 +125,10 @@ Caso típico: 45→60 @ +1 %%, P6 con tracción @ 55 mph — soltar gas antes de
 (sesión `201456Z`). Tests: `test_coast_trim.py`.
 
 **Excepción caída grande en subida (60→35):** si `posted − next ≥ BRAKE_PLAN_LARGE_DROP_MPH` (18) y
-vas **legal en zona vigente** (p. ej. 56 mph en zona 60) **fuera del horizonte** del cartel 35, **no**
+vas **legal en zona vigente** (p. ej. 56 mph en zona 60) **fuera del horizonte** del cartel 35,
+
+##### no
+
 diferir coast-trim comparando con ops del next (34 mph). Evita `COAST_THROTTLE` a 4 km al salir del
 andén (sesión `221258Z`). Sigue aplicando en 60→55 @ +1 %% (caída posted &lt; 18).
 
@@ -208,7 +214,8 @@ Tests: `V2/tests/test_brake_feedback.py`.
 acumula ~2 s de muesca estable (Δv ≥ 0.6 mph, misma palanca, presión OK) antes de tocar
 `ema_bands` / `ema` (α=0.10). Con ≥3 muestras en banda, rechaza outliers (`|Δ| > 30 %` de la EMA
 o > 0.08 m/s²). Fill-time: no baja `brake_fill_s` por debajo del default hasta 3 mediciones;
-outliers de fill descartados. JSONL: `learn_kind`, `learn_accepted`, `learn_reject_reason`. Al cerrar
+outliers de fill descartados. JSONL: `learn_kind`, `learn_accepted`, `learn_reject_reason`. Al
+cerrar
 `run_p1_session.bat`:
 
 ```text
@@ -263,7 +270,8 @@ HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
 | Sesión `123139Z` | Con `target=STATION` y freno de andén activo → **no** RELEASE de cartel |
 | `_overlay_active_zone_hold` | `p1tgt=STATION`/`SIGNAL` WATCH pero HOLD_DH activo → **mando** HOLD_DH; objetivo HUD sin cambio (`173809Z`) |
 
-Orden en `decision.py`: emergencia → planes cartel/andén/señal (pick) → **RELEASE** → overlay HOLD_DH → idle / APPLY / COAST.
+Orden en `decision.py`: emergencia → planes cartel/andén/señal (pick) → **RELEASE** → overlay
+HOLD_DH → idle / APPLY / COAST.
 
 **Undershoot:** si se pierde la ventana de RELEASE y la velocidad cae mucho por debajo del
 objetivo (`speed < target − LIMIT_RELEASE_MIN_SPEED_BAND_MPH`), el guard anti-parado en escenario
@@ -341,7 +349,8 @@ Constantes señal (`signal_plan.py`):
 | `SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH` | 8 | Umbral “crawl” para bloqueo RELEASE |
 | `SIGNAL_WATCH_LIMIT_DEFER_M` | 150 m | WATCH señal no bloquea HOLD_DH más lejos |
 
-Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → **RELEASE señal heredado** → RELEASE cartel → idle / APPLY / COAST.
+Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → **RELEASE señal heredado**
+→ RELEASE cartel → idle / APPLY / COAST.
 
 **Sesión `225433Z` (SPAD):** rojo @ 1040 m @ 56 mph → solo emergencia @ 61 m (tarde); HOLD_DH @15
 ganaba a señal en recta final. Tras paso 5: `p1tgt=SIGNAL`, `COAST_PWR` lejos, B1+ en ventana.

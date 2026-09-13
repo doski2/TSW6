@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from tsw6v2.loop import AgentSnapshot
+from tsw6v2.session_log import SessionRecorder
+from tsw6v2.session_report import load_ticks
 from tsw6v2.trace import (
     JsonlTrace,
     default_log_path,
@@ -176,6 +178,27 @@ def test_jsonl_trace_station_fields(tmp_path: Path):
     assert tick["stn_dist_m"] == 22.0
     assert tick["stn_fsm"] == "DEPARTING"
     assert tick["p1_tgt"] == "LIMIT"
+
+
+def test_session_recorder_emits_route_detect(tmp_path: Path) -> None:
+    class _Loop:
+        def planning_context(self) -> dict[str, object]:
+            return {
+                "detected_route": "Birmingham Cross-City",
+                "service_name": "2R17",
+                "schedule_source": "hud_db",
+                "hud_timetable_id": 127594,
+            }
+
+    path = tmp_path / "sess.jsonl"
+    rec = SessionRecorder(path, trace_mode="station", route="cross-city")
+    rec.bind_loop(_Loop())
+    rec.record(AgentSnapshot(tick=1, seq=1, speed_mph=0.0))
+    rec.finish(generate_html=False)
+    session, _ = load_ticks(path)
+    assert session is not None
+    assert session["detected_route"] == "Birmingham Cross-City"
+    assert session["service_name"] == "2R17"
 
 
 def test_resolve_session_log_path() -> None:

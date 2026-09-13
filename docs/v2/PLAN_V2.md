@@ -1598,7 +1598,7 @@ Stack: HOLD_DH / BRAKE_LIMIT, muesca + defer, feedback decel (`brake_feedback`),
 filtro
 aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. Andén: `station_plan`
 
-+ `station_brake` + `p1_policy` + `planning_poller`
+- `station_brake` + `p1_policy` + `planning_poller`
 
 (HTTP `DriverAid.TrackData` ~2 s + `v×dt`; fallback `Planning.txt`). **Subfase:** validación campo
 cartel y andén
@@ -1665,7 +1665,8 @@ señal in-game.
 
 #### Siguiente código
 
-**Siguiente código:** cerrar validación **paso 3** + señal in-game (replay `225433Z`); pasos **6–7**
+###### Siguiente código:** cerrar validación **paso 3** + señal in-game (replay `225433Z`); pasos **6–7
+
 tren/servicio.
 Tarjetas in-game: **C1** señales (plan gradual) · **C2** andén (pasos 6–7). Canal:
 [CANAL_CONTROL](../CANAL_CONTROL.md) ·

@@ -14,6 +14,7 @@ from tsw6v2.command import (
     resolve_orphan_limit_brake_release,
     resolve_release_command,
 )
+from tsw6v2.p1_station_gate import should_skip_p1_release
 from tsw6v2.service_brake import should_release_over_braked_for_stop_target
 from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
@@ -275,6 +276,84 @@ def _attempt_signal_inherited_release(
         handle_notch=rel.target_notch,
         target_kind="SIGNAL",
     )
+
+
+_SIGNAL_CLEARED_RELEASE_REF = BrakeTargetResult(
+    target_kind="SIGNAL",
+    distance_m=999.0,
+    target_speed_mph=0.0,
+    handle_notch=3,
+    phase="B1",
+    dist_start=500.0,
+    apply_now=False,
+    detail="",
+)
+
+
+def _attempt_p1_releases(
+    ctx: _TickCtx,
+    prep: _TickPrep,
+    *,
+    limit_state: LimitBrakeState,
+    release_state: BrakeReleaseState,
+    snap: ProbeSnapshot,
+    target: Optional[BrakeTargetResult],
+    station_target: Optional[BrakeTargetResult],
+    signal_target: Optional[BrakeTargetResult],
+    limit_target: Optional[BrakeTargetResult],
+    limit_release_ok: Callable[[Optional[BrakeTargetResult]], bool],
+    limit_brake_enabled: bool,
+    signal_brake_enabled: bool,
+) -> Optional[LimitBrakeDecision]:
+    """Señal heredada → cartel; un solo camino de RELEASE por tick."""
+    if signal_brake_enabled and snap.signal_red is not True and signal_target is None:
+        if (
+            is_brake_applied(prep.lever)
+            and not (station_target is not None and station_target.apply_now)
+            and (
+                target is None
+                or target.target_kind != "STATION"
+                or not target.apply_now
+            )
+            and limit_release_ok(target)
+        ):
+            cleared = _attempt_signal_inherited_release(
+                ctx,
+                prep,
+                limit_state,
+                release_ref=_SIGNAL_CLEARED_RELEASE_REF,
+                reason="Señal pasada/verde: soltar freno heredado",
+            )
+            if cleared is not None:
+                return cleared
+
+    if (
+        signal_brake_enabled
+        and signal_target is not None
+        and not signal_target.apply_now
+        and is_brake_applied(prep.lever)
+        and limit_release_ok(target)
+    ):
+        released = _attempt_signal_inherited_release(
+            ctx,
+            prep,
+            limit_state,
+            release_ref=signal_target,
+            reason="Señal WATCH: reducir freno heredado",
+        )
+        if released is not None:
+            return released
+
+    if limit_release_ok(target):
+        return _attempt_release(
+            prep,
+            limit_state=limit_state,
+            release_state=release_state,
+            snap=snap,
+            limit_brake_enabled=limit_brake_enabled,
+            limit_target=limit_target if limit_brake_enabled else None,
+        )
+    return None
 
 
 def _prepare_tick(
@@ -548,6 +627,7 @@ def evaluate_p1_tick(
     limit_brake_enabled: bool = True,
     station_brake_enabled: bool = True,
     signal_brake_enabled: bool = True,
+    station_fsm: Optional[str] = None,
 ) -> LimitBrakeDecision:
     """Cartel + andén + señal → un ``BrakeCommand`` o sin mando."""
     if not limit_brake_enabled and not station_brake_enabled and not signal_brake_enabled:
@@ -666,62 +746,26 @@ def evaluate_p1_tick(
             speed_mph=ctx.speed_mph,
         )
 
-    # Rojo pasado / verde: soltar B3 heredado (152037Z tras primer semáforo).
-    if (
-        signal_brake_enabled
-        and snap.signal_red is not True
-        and signal_target is None
-        and is_brake_applied(prep.lever)
-        and not (station_target is not None and station_target.apply_now)
-        and (target is None or target.target_kind != "STATION" or not target.apply_now)
-        and _limit_release_ok(target)
-    ):
-        cleared = _attempt_signal_inherited_release(
+    skip_release = should_skip_p1_release(
+        speed_mph=ctx.speed_mph,
+        station_dist_m=station_dist,
+        combined_lever=prep.lever,
+        station_fsm=station_fsm,
+    )
+    if not skip_release:
+        released = _attempt_p1_releases(
             ctx,
-            prep,
-            limit_state,
-            release_ref=BrakeTargetResult(
-                target_kind="SIGNAL",
-                distance_m=999.0,
-                target_speed_mph=0.0,
-                handle_notch=3,
-                phase="B1",
-                dist_start=500.0,
-                apply_now=False,
-                detail="",
-            ),
-            reason="Señal pasada/verde: soltar freno heredado",
-        )
-        if cleared is not None:
-            return cleared
-
-    # Señal WATCH: soltar freno heredado aunque gane cartel HOLD_DH (083405Z).
-    if (
-        signal_brake_enabled
-        and signal_target is not None
-        and not signal_target.apply_now
-        and is_brake_applied(prep.lever)
-        and _limit_release_ok(target)
-    ):
-        released = _attempt_signal_inherited_release(
-            ctx,
-            prep,
-            limit_state,
-            release_ref=signal_target,
-            reason="Señal WATCH: reducir freno heredado",
-        )
-        if released is not None:
-            return released
-
-    # Tras pick: RELEASE cartel no debe soltar freno de andén/señal (sesión 123139Z).
-    if _limit_release_ok(target):
-        released = _attempt_release(
             prep,
             limit_state=limit_state,
             release_state=release_state,
             snap=snap,
-            limit_brake_enabled=limit_brake_enabled,
+            target=target,
+            station_target=station_target,
+            signal_target=signal_target,
             limit_target=limit_target if limit_brake_enabled else None,
+            limit_release_ok=_limit_release_ok,
+            limit_brake_enabled=limit_brake_enabled,
+            signal_brake_enabled=signal_brake_enabled,
         )
         if released is not None:
             return released

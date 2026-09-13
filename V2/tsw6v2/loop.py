@@ -17,7 +17,11 @@ from tsw6v2.constants import (
     NEUTRAL_NOTCH,
 )
 from tsw6v2.decision import evaluate_p1_tick
-from tsw6v2.p1_station_gate import StationDwellGate, station_dwell_brake_command
+from tsw6v2.p1_station_gate import (
+    DEPARTING_CLEAR_MPH,
+    StationDwellGate,
+    station_dwell_brake_command,
+)
 from tsw6v2.planning_poller import StationPlanning
 from tsw6v2.ipc import dispatch_step_toward_notch, probe_lever
 from tsw6v2.learner import LearnerProfile
@@ -60,6 +64,9 @@ class AgentSnapshot:
     p1_layer: str = ""
     p1_target_kind: str = ""
     station_dist_m: Optional[float] = None
+    station_name: Optional[str] = None
+    service_name: Optional[str] = None
+    schedule_source: str = ""
     station_eta: Optional[str] = None
     station_fsm: str = ""
     doors_open: Optional[bool] = None
@@ -100,6 +107,9 @@ class AgentSnapshot:
         p1_layer: str = "",
         p1_target_kind: str = "",
         station_dist_m: Optional[float] = None,
+        station_name: Optional[str] = None,
+        service_name: Optional[str] = None,
+        schedule_source: str = "",
         station_eta: Optional[str] = None,
         station_fsm: str = "",
         doors_open: Optional[bool] = None,
@@ -156,6 +166,9 @@ class AgentSnapshot:
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
+            station_name=station_name,
+            service_name=service_name,
+            schedule_source=schedule_source,
             station_eta=station_eta,
             station_fsm=station_fsm,
             doors_open=snap.doors_open,
@@ -255,6 +268,10 @@ class AgentLoop:
         """``http`` | ``file`` | ``none`` (planning andén)."""
         return self._station_planning.source
 
+    def planning_context(self) -> dict[str, object]:
+        """Servicio/ruta/horario detectados por HTTP (~2 s)."""
+        return self._station_planning.context_snapshot()
+
     @property
     def station_planning_channel(self) -> str:
         """Descripción humana de la fuente de distancia andén."""
@@ -267,10 +284,6 @@ class AgentLoop:
                 return f"{base} + timetable.json"
             return base
         return "Planning.txt (manual o fallback sin -HTTPAPI)"
-
-    @property
-    def station_schedule_source(self) -> str:
-        return self._station_planning.schedule_source
 
     def shutdown(self) -> None:
         """Cierra recursos en segundo plano (planning HTTP)."""
@@ -314,11 +327,18 @@ class AgentLoop:
     def read_probe(self) -> Optional[ProbeSnapshot]:
         return read_probe_file(self.getdata_path)
 
-    def _apply_brake_command(self, cmd: BrakeCommand) -> None:
+    def _apply_brake_command(
+        self,
+        cmd: BrakeCommand,
+        *,
+        lever: Optional[int] = None,
+    ) -> None:
         notch = cmd.target_notch
         if notch is None:
             return
         if cmd.kind in ("RELEASE", "COAST_THROTTLE"):
+            if lever is not None and int(lever) >= int(self.neutral_notch):
+                return
             self.request_neutral()
         elif cmd.kind == "APPLY":
             self.request_notch(notch)
@@ -383,11 +403,28 @@ class AgentLoop:
         fb_escalated = False
 
         station_dist_m: Optional[float] = None
+        station_name: Optional[str] = None
+        service_name: Optional[str] = None
+        schedule_source = ""
         station_fsm = ""
         p1_target_kind = ""
         lever = probe_lever(snap)
         if lever is not None:
             self._check_driver_takeover(int(lever))
+            if (
+                snap is not None
+                and snap.speed_ms is not None
+                and self._target_notch is not None
+            ):
+                mph_early = float(snap.speed_ms) * MS_TO_MPH
+                throttle_early = int(lever) - NEUTRAL_NOTCH
+                target = int(self._target_notch)
+                if (
+                    throttle_early > 0
+                    and mph_early < DEPARTING_CLEAR_MPH
+                    and target >= int(self.neutral_notch)
+                ):
+                    self.clear_target()
 
         station_p1_enabled = self.station_brake_enabled
         manual_active = self._manual_override_active()
@@ -408,6 +445,9 @@ class AgentLoop:
                     probe_seq=snap.seq,
                 )
                 station_dist_m = planning.station_distance_m
+                station_name = planning.station_name
+                service_name = planning.service_name
+                schedule_source = planning.schedule_source
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,
@@ -438,6 +478,7 @@ class AgentLoop:
                 limit_brake_enabled=self.limit_brake_enabled,
                 station_brake_enabled=station_p1_enabled,
                 signal_brake_enabled=self.signal_brake_enabled,
+                station_fsm=station_fsm or None,
             )
             limit_dist_m = decision.limit_dist_m
             limit_mph = decision.limit_mph
@@ -460,10 +501,10 @@ class AgentLoop:
                 p1_phase = dwell_cmd.phase or ""
                 p1_reason = dwell_cmd.reason or ""
                 p1_detail = dwell_cmd.reason or ""
-                self._apply_brake_command(dwell_cmd)
+                self._apply_brake_command(dwell_cmd, lever=lever)
             elif not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
-                self._apply_brake_command(decision.command)
+                self._apply_brake_command(decision.command, lever=lever)
             else:
                 self._maybe_release_driver_control(lever)
             p1_layer = classify_layer(
@@ -515,6 +556,9 @@ class AgentLoop:
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
+            station_name=station_name,
+            service_name=service_name,
+            schedule_source=schedule_source,
             station_eta=None,
             station_fsm=station_fsm,
             ipc_cmd_id=ipc_cmd_id,

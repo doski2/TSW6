@@ -36,3 +36,14 @@ def test_planning_distance_rejects_http_regression_while_approaching():
 def test_planning_distance_accepts_large_jump_after_save_load():
     """Tras cargar partida: salto legítimo a otra posición en ruta."""
     assert planning_distance_accept(235.0, 1800.0, 45.0)
+
+
+def test_planning_distance_rejects_large_yoyo_at_speed():
+    """Sesión 211414Z: yo-yo TrackData hacia atrás o adelante en marcha."""
+    assert not planning_distance_accept(22184.0, 120.8, 45.0)
+    assert not planning_distance_accept(24000.0, 2000.0, 30.0)
+    assert not planning_distance_accept(2000.0, 24000.0, 45.0)
+    # Tras invalidate (prev None) o parado: aceptar primera lectura.
+    assert planning_distance_accept(None, 120.8, 45.0)
+    assert planning_distance_accept(None, 24000.0, 45.0)
+    assert planning_distance_accept(22184.0, 120.8, 2.0)

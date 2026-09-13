@@ -7,8 +7,10 @@ from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     StationDwellGate,
     doors_effective,
+    should_skip_p1_release,
     station_dwell_brake_command,
 )
+from tsw6v2.station_plan import is_origin_station_departure
 
 
 def test_gate_stopped_at_platform_suppresses():
@@ -143,6 +145,40 @@ def test_gate_stopped_exits_when_planning_lost_at_speed():
     gate.update(speed_mph=0.5, station_dist_m=20.0, doors_telem=True)
     gate.update(speed_mph=15.0, station_dist_m=None, doors_telem=True)
     assert gate.state == "DEPARTING"
+
+
+def test_origin_station_departure_detected_session_214610() -> None:
+    """Lichfield TV: next_stop a 24 km + tracción → DEPARTING sin FSM STOPPED."""
+    assert is_origin_station_departure(
+        speed_mph=0.0,
+        station_distance_m=24182.5,
+        throttle_notch=2,
+    )
+    gate = StationDwellGate()
+    gate.update(
+        speed_mph=0.0,
+        station_dist_m=24182.5,
+        doors_telem=False,
+        throttle_notch=6,
+    )
+    assert gate.state == "DEPARTING"
+    assert gate.suppress_station_brake(station_dist_m=24182.5, throttle_notch=6)
+
+
+def test_skip_p1_release_departing_owned_by_dwell() -> None:
+    """DEPARTING: decision no RELEASE; lo hace station_dwell_brake_command."""
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=24182.5,
+        combined_lever=3,
+        station_fsm="DEPARTING",
+    )
+    assert not should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=24182.5,
+        combined_lever=3,
+        station_fsm=None,
+    )
 
 
 def test_station_dwell_brake_command_stopped_and_departing() -> None:

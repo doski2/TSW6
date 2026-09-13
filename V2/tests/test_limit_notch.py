@@ -12,7 +12,7 @@ from tsw6v2.limit_notch import (
 )
 from tsw6v2.limit_state import LimitBrakeState, latch_limit_target
 from tsw6v2.limits import evaluate_limit_brake
-from tsw6v2.physics import DEFAULT_MAX_BRAKE_DECEL
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 
 
 def _latched_state(*, speed_mph: float, distance_m: float) -> LimitBrakeState:
@@ -154,6 +154,40 @@ def test_evaluate_limit_brake_defers_apply_while_legal_in_current_zone() -> None
     assert result is not None
     assert not result.apply_now
     assert result.handle_notch == 3
+
+
+def test_large_drop_60_to_35_late_window_prefers_b2_session_214610() -> None:
+    """60→35 @ 500 m: solo B1 en ventana — mínimo B2 sin escalada air_fill (214610Z)."""
+    root = Path(__file__).resolve().parents[2]
+    path = root / "logs" / "profiles" / "RVM_BCC_WRM_Class323_DMS_A_C.json"
+    predict = None
+    fill_s = DEFAULT_BRAKE_FILL_S
+    if path.is_file():
+        learner = LearnerProfile.from_json(path)
+        predict = learner.predict_decel
+        fill_s = learner.brake_fill_s
+    state = LimitBrakeState()
+    latch_limit_target(
+        state,
+        posted_limit_mph=35.0,
+        distance_m=500.3,
+        speed_mph=56.69,
+        gradient_pct=-0.8,
+        accel_ms2=None,
+        base_decel=DEFAULT_MAX_BRAKE_DECEL,
+        predict_decel=predict,
+        brake_fill_s=fill_s,
+    )
+    latch = state.latch
+    assert latch is not None
+    handle, phase, _ds, apply_now = pick_weakest_sufficient_notch(
+        speed_mph=56.69,
+        distance_m=500.3,
+        latch=latch,
+    )
+    assert handle == 2
+    assert phase == "B2"
+    assert apply_now
 
 
 def test_large_drop_70_to_45_prefers_b2_session_183116() -> None:

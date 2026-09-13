@@ -165,6 +165,9 @@ TURNAROUND_DEPARTURE_MAX_TRAVELED_M = 250.0
 BAD_ANCHOR_DWELL_MAX_TRAVELED_M = 15.0
 SHORT_TURNAROUND_ANCHOR_MAX_M = 200.0
 SHORT_TURNAROUND_MAX_TRAVELED_M = 100.0
+# Próxima parada muy lejos → origen (HUD apunta al siguiente andén, 214610Z).
+ORIGIN_DEPARTURE_MIN_NEXT_STOP_M = 500.0
+ORIGIN_DEPARTURE_MAX_SPEED_MPH = 25.0
 
 
 @dataclass(frozen=True)
@@ -285,6 +288,24 @@ def select_station_active_step(
     )
 
 
+def is_origin_station_departure(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    throttle_notch: int,
+    max_speed_mph: float = ORIGIN_DEPARTURE_MAX_SPEED_MPH,
+) -> bool:
+    """Salida en estación de origen: tracción lenta y next_stop a km."""
+    if (
+        station_distance_m is None
+        or station_distance_m < ORIGIN_DEPARTURE_MIN_NEXT_STOP_M
+    ):
+        return False
+    if not _has_throttle(throttle_notch):
+        return False
+    return speed_mph <= max_speed_mph
+
+
 def is_stale_platform_departure(
     *,
     speed_mph: float,
@@ -313,6 +334,12 @@ def should_suppress_station_braking_for_departure(
     station_anchor_m: Optional[float] = None,
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
 ) -> bool:
+    if is_origin_station_departure(
+        speed_mph=speed_mph,
+        station_distance_m=station_distance_m,
+        throttle_notch=throttle_notch,
+    ):
+        return True
     if is_stale_platform_departure(
         speed_mph=speed_mph,
         station_distance_m=station_distance_m,

@@ -11,6 +11,7 @@ from tsw6v2.session_report import (
     finalize_session_report,
     session_ready_for_browser,
     session_ready_for_html,
+    session_route_label,
     summarize,
     write_html_replay,
 )
@@ -441,6 +442,27 @@ def test_station_event_rows_dedup_apply(tmp_path: Path) -> None:
     rows = _station_event_rows(ticks)
     apply_rows = [r for r in rows if r["event"] == "APPLY andén"]
     assert len(apply_rows) == 1
+
+
+def test_session_detect_merges_into_session(tmp_path: Path) -> None:
+    p = tmp_path / "detect.jsonl"
+    rows = [
+        {"type": "session", "mode": "station", "route": "cross-city"},
+        {
+            "type": "session_detect",
+            "detected_route": "Birmingham Cross-City",
+            "service_name": "2R17",
+            "schedule_source": "hud_db",
+            "hud_timetable_id": 127594,
+        },
+        {"type": "tick", "tick": 1, "t_ms": 0, "spd_mph": 0.0},
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    data = summarize(p)
+    sess = data["session"]
+    assert sess["detected_route"] == "Birmingham Cross-City"
+    assert sess["service_name"] == "2R17"
+    assert session_route_label(sess) == "Birmingham Cross-City (2R17)"
 
 
 def test_enrich_ticks_active_time_skips_menu_pause() -> None:

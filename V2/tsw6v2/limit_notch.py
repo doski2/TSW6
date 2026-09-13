@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from tsw6v2.physics import (
     MPH_TO_MS,
@@ -350,27 +350,50 @@ def pick_weakest_sufficient_notch(
     if not evaluated:
         return SERVICE_HANDLES_WEAK_TO_STRONG[-1][0], "B3", float("inf"), False
 
+    late = [row for row in evaluated if row[2] < 0]
     in_zone = [
         row for row in evaluated
         if is_in_apply_zone(row[2], row[3])
     ]
+    speed_drop = speed_mph - latch.limit_mph
+    large_drop = speed_drop >= BRAKE_PLAN_LARGE_DROP_MPH
+
+    def _strongest_late_b2_up() -> Optional[tuple[int, str, float, bool]]:
+        strong = [row for row in late if row[0] <= 2]
+        if not strong:
+            return None
+        handle, phase, dist_start, _zone, _apply_now = max(
+            strong, key=lambda row: notch_strength(row[0]))
+        return handle, phase, dist_start, True
+
+    def _large_drop_minimum_b2() -> Optional[tuple[int, str, float, bool]]:
+        """Caída grande: B1 tarde u optimista → mínimo B2 (183116Z, 214610Z)."""
+        for row in evaluated:
+            if row[0] == 2 and row[2] >= 0:
+                handle, phase, dist_start, _zone, _apply_now = row
+                return handle, phase, dist_start, True
+        if any(row[0] == 3 for row in late):
+            return _strongest_late_b2_up()
+        return None
+
     if in_zone:
-        speed_drop = speed_mph - latch.limit_mph
-        if speed_drop >= BRAKE_PLAN_LARGE_DROP_MPH:
+        if large_drop:
             # 70→45 @ 63 mph: B1 aprendido optimista — mínimo B2 (sesión 183116Z).
             for row in in_zone:
                 if row[0] <= 2:
                     handle, phase, dist_start, _zone, apply_now = row
                     return handle, phase, dist_start, apply_now
-            for row in evaluated:
-                if row[0] == 2 and row[2] >= 0:
-                    handle, phase, dist_start, _zone, _apply_now = row
-                    return handle, phase, dist_start, True
+            forced = _large_drop_minimum_b2()
+            if forced is not None:
+                return forced
         handle, phase, dist_start, _zone, apply_now = in_zone[0]
         return handle, phase, dist_start, apply_now
 
-    late = [row for row in evaluated if row[2] < 0]
     if late:
+        if large_drop:
+            forced = _large_drop_minimum_b2()
+            if forced is not None:
+                return forced
         # Solo si ninguna muesca cabe en ventana: la más fuerte entre las tardías.
         handle, phase, dist_start, _zone, _apply_now = max(
             late, key=lambda row: notch_strength(row[0]))

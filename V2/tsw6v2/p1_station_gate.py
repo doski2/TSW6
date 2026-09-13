@@ -10,6 +10,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
+from tsw6v2.constants import NEUTRAL_NOTCH
+from tsw6v2.station_plan import (
+    ORIGIN_DEPARTURE_MIN_NEXT_STOP_M,
+    is_origin_station_departure,
+)
+
 if TYPE_CHECKING:
     from tsw6v2.command import BrakeCommand
 
@@ -42,6 +48,55 @@ def doors_effective(
     if doors_telem is False or doors_dmi is False:
         return False
     return None
+
+
+def _power_notch(combined_lever: int) -> int:
+    return max(0, int(combined_lever) - NEUTRAL_NOTCH)
+
+
+def station_departure_active(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """Arranque / salida andén: FSM DEPARTING u origen con tracción."""
+    if station_fsm == "DEPARTING":
+        return speed_mph <= DEPARTING_CLEAR_MPH
+    return is_origin_station_departure(
+        speed_mph=speed_mph,
+        station_distance_m=station_dist_m,
+        throttle_notch=_power_notch(combined_lever),
+        max_speed_mph=DEPARTING_CLEAR_MPH,
+    )
+
+
+def should_skip_p1_release(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """
+    Evita RELEASE duplicado en ``decision`` durante salida.
+
+    ``DEPARTING``: suelta ``station_dwell_brake_command`` en ``loop``.
+    Origen con freno ya suelto: no re-disparar señal/cartel.
+    """
+    if not station_departure_active(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return False
+    if station_fsm == "DEPARTING":
+        return True
+    from tsw6v2.command import is_brake_released
+
+    return is_brake_released(combined_lever)
 
 
 def _left_platform(
@@ -185,6 +240,13 @@ class StationDwellGate:
             if doors_at_stop or (at_platform and self._doors_ever_opened):
                 self.state = "STOPPED"
                 self._doors_opened = open_now
+            elif is_origin_station_departure(
+                speed_mph=speed_mph,
+                station_distance_m=station_dist_m,
+                throttle_notch=_power_notch(throttle_notch),
+                max_speed_mph=DEPARTING_CLEAR_MPH,
+            ):
+                self._enter_departing()
 
         self._clear_station_episode(station_dist_m)
 

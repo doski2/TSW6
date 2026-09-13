@@ -231,9 +231,15 @@ Mercancías (futuro): mantener margen alto y `a` menor en learner, no el mismo 1
 - [ ] C: RELEASE cinemático al 55 (no undershoot a 52–53); sin oscilar B1↔RELEASE cada tick.
 - [ ] D: no suelta freno al inicio de escenario parado.
 - [ ] E: HOLD_DH @60.5; RELEASE coast ~59.5 lejos del next; BRAKE_LIMIT @54 solo en horizonte.
-- [ ] F: modo `station`: tras HOLD_DH en bajada (~15 mph), `RELEASE` aunque andén lejos y `p1tgt` vacío
+- [ ] F: modo `station`: tras HOLD_DH en bajada (~15 mph), `RELEASE` aunque andén lejos y `p1tgt`
+
+  vacío
   (sesión `224046Z`; no B1 pegado hasta ~6 mph).
-- [ ] G: salida andén: cartel 35 @ &gt;3 km → sin `p1tgt` LIMIT ni `COAST_PWR` en zona 60 (`221258Z`).
+
+- [ ] G: salida andén: cartel 35 @ &gt;3 km → sin `p1tgt` LIMIT ni `COAST_PWR` en zona 60
+
+  (`221258Z`).
+
 - [ ] H: IPC responde (como paso 2); sin mandos cuando `p1` vacío lejos del cartel.
 - [ ] I: rojo lejos: `p1tgt=SIGNAL` + `COAST_PWR` o plan (no `no_plan` con rojo @ &gt;500 m;
 
@@ -252,7 +258,9 @@ Mercancías (futuro): mantener margen alto y `a` menor en learner, no el mismo 1
 | Frena muy pronto (B3 lejos) | JSONL: ¿`HOLD_DH` en 60→55? (no debe). `SAFETY_MARGIN` en `constants.py` |
 | Frena muy tarde (spd > lim al cartel) | `SAFETY_MARGIN` en `V2/tsw6v2/constants.py` (hoy **1.10**; subir si hace falta) |
 | No suelta (lever < 4 siempre) | RELEASE bloqueado por bajada o spd > límite + 0.4; en `station` con
-  `pick=None` verificar que `evaluate_p1_tick` no salga antes de `_attempt_release` (fix `224046Z`) |
+
+`pick=None` verificar que `evaluate_p1_tick` no salga antes de `_attempt_release` (fix `224046Z`) |
+
 | `ipc=False` con `target≠lever` | `test-ipc`; ACK timeout; juego en pausa |
 | Cartel “salta” / distancia fija | C.3a odometría — anotar `odo_m` y sesión para delta |
 | SPAD / rebasa señal roja | JSONL: ¿`p1tgt=SIGNAL` lejos? ¿solo emergencia @ &lt;60 m? ¿`signal_red` None
