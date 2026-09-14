@@ -30,9 +30,13 @@ class PlanningSnapshot:
 # Rechazar salto HTTP a la siguiente parada tras pasar sin dwell (sesión 20260909T224556Z).
 PLANNING_JUMP_REJECT_M = 500.0
 PLATFORM_PASSED_MAX_M = 80.0
+# Marker pasado (HUD ≈0 m): aceptar salto a la siguiente parada (225330Z).
+PLATFORM_MARKER_PASSED_M = 5.0
 # TrackData suele devolver ~5 m más lejos que v×dt (sesión 145832Z: 230→235 m).
 PLANNING_HTTP_REGRESSION_M = 1.0
 PLANNING_APPROACH_MIN_SPEED_MPH = 3.0
+# Tras pasar andén: aceptar siguiente parada solo con marcha clara (225330Z).
+PLANNING_NEXT_STOP_MIN_SPEED_MPH = 8.0
 # Salto hacia atrás en marcha (sesión 211414Z: 22184→120 m @ 45 mph).
 PLANNING_APPROACH_PREV_MIN_M = 1000.0
 
@@ -50,6 +54,14 @@ def planning_distance_accept(
 ) -> bool:
     """``False`` si el HTTP salta a la siguiente estación o aleja del andén en marcha."""
     if prev_m is None:
+        return True
+    # Salida: marker pasado (≈0 m) → HTTP de la siguiente parada (km). No confundir con
+    # creep en andén (152306Z @ 3.4 mph) ni salto desde ~52 m aún en plataforma.
+    if (
+        prev_m <= PLATFORM_MARKER_PASSED_M
+        and new_m > jump_reject_m
+        and speed_mph >= PLANNING_NEXT_STOP_MIN_SPEED_MPH
+    ):
         return True
     # En marcha con distancia consolidada: rechazar yo-yo grande (atrás o adelante).
     # Tras invalidate() prev=None acepta save/load; prev<1000 m deja pasar 235→1800 m.

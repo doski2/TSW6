@@ -1,0 +1,36 @@
+---
+description: Reglas Python P1 V2 — frenado, estación, planning
+globs: V2/**
+alwaysApply: false
+---
+
+# V2 / P1
+
+Antes de cambiar lógica de frenos, leer `docs/v2/REGLAS_FRENOS_P1.md`.
+
+## Arquitectura
+
+- Código nuevo solo en `V2/tsw6v2/` + `V2/tests/`.
+- **Prohibido** importar desde `tsw6/` o `archive/` dentro de `tsw6v2/`.
+- Contrato GetData/IPC: `V2/tsw6v2/bridge/` — alinear con `docs/CANAL_CONTROL.md`.
+- Umbrales mph en `constants.py`; no hardcodear posted+0.5 / −1 en módulos sueltos.
+
+## Capas y responsabilidades
+
+| Área | Módulos |
+| --- | --- |
+| Cartel / límite | `limits.py`, `limit_notch.py`, `limit_containment.py`, `decision.py` |
+| Estación / andén | `p1_station_gate.py`, `station_plan.py`, `planning_feed.py` |
+| Comandos IPC | `command.py`, `loop.py` |
+
+Evitar duplicar lógica de salida de andén: `station_departure_active()` en `p1_station_gate.py` es la fuente de verdad; RELEASE solo en `decision._attempt_departing_brake_release()`.
+
+## Al cerrar un cambio
+
+1. Test en `V2/tests/` que cubra el comportamiento (nombre con sesión si viene de campo).
+2. Si cambia decisión cerrada, actualizar `REGLAS_FRENOS_P1.md` (changelog).
+3. `python -m pytest V2/tests/ -q` en verde.
+
+## Depuración campo
+
+Protocolo: `docs/v2/VALIDACION_P1_SESIONES.md`. Trazas JSONL: campos `p1`, `ipc`, `stn_fsm`, `lim_mph`, `stn_dist_m`.

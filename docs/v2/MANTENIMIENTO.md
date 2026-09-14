@@ -352,7 +352,7 @@ Para no inflar el backlog ni duplicar PLAN_V2:
 | Bug reproducible | Issue o nota en bitácora probe con `PROBE_BUILD` y escenario |
 | Refactor sin paso | **No hacer** — ver «No es mantenimiento v2» abajo |
 | Líneas duplicadas / `print` olvidado | [Depurar líneas y duplicados](#depurar-líneas-y-líneas-duplicadas) |
-| Doc rota / enlace | PR pequeño o `fix_markdownlint.py` |
+| Doc rota / enlace | PR pequeño o `scripts/tools/fix_markdownlint.py` |
 | Herramienta CLI nueva | `scripts/tools/` + test + una fila en este doc |
 
 **No es mantenimiento v2:** reabrir `archive/braking_v1_autopilot/coordinator.py` sin paso D1;

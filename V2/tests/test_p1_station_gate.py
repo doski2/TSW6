@@ -8,6 +8,7 @@ from tsw6v2.p1_station_gate import (
     StationDwellGate,
     doors_effective,
     should_skip_p1_release,
+    station_departure_active,
     station_dwell_brake_command,
 )
 from tsw6v2.station_plan import is_origin_station_departure
@@ -165,12 +166,33 @@ def test_origin_station_departure_detected_session_214610() -> None:
     assert gate.suppress_station_brake(station_dist_m=24182.5, throttle_notch=6)
 
 
-def test_skip_p1_release_departing_owned_by_dwell() -> None:
-    """DEPARTING: decision no RELEASE; lo hace station_dwell_brake_command."""
-    assert should_skip_p1_release(
+def test_station_departure_active_origin_and_clear_speed() -> None:
+    assert station_departure_active(
+        speed_mph=10.25,
+        station_dist_m=24025.9,
+        combined_lever=5,
+        station_fsm="DEPARTING",
+    )
+    assert not station_departure_active(
+        speed_mph=30.0,
+        station_dist_m=24025.9,
+        combined_lever=5,
+        station_fsm="DEPARTING",
+    )
+
+
+def test_skip_p1_release_only_when_brake_already_neutral() -> None:
+    """DEPARTING+B1: decision suelta; neutro+tracción: no RELEASE duplicado."""
+    assert not should_skip_p1_release(
         speed_mph=0.0,
         station_dist_m=24182.5,
         combined_lever=3,
+        station_fsm="DEPARTING",
+    )
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=24182.5,
+        combined_lever=6,
         station_fsm="DEPARTING",
     )
     assert not should_skip_p1_release(
@@ -192,15 +214,12 @@ def test_station_dwell_brake_command_stopped_and_departing() -> None:
     assert stopped.kind == "APPLY"
     assert stopped.target_notch == SERVICE_MAX_BRAKE
 
-    release = station_dwell_brake_command(
+    assert station_dwell_brake_command(
         station_fsm="DEPARTING",
         speed_mph=5.0,
         lever=3,
         station_dist_m=30.0,
-    )
-    assert release is not None
-    assert release.kind == "RELEASE"
-    assert release.target_notch == NEUTRAL_NOTCH
+    ) is None
 
     assert station_dwell_brake_command(
         station_fsm=None,

@@ -10,11 +10,17 @@ from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
     is_brake_applied,
+    release_brake_command,
     release_service_over_brake_command,
     resolve_orphan_limit_brake_release,
     resolve_release_command,
+    throttle_notch_from_lever,
 )
-from tsw6v2.p1_station_gate import should_skip_p1_release
+from tsw6v2.p1_station_gate import (
+    DEPARTING_CLEAR_MPH,
+    should_skip_p1_release,
+    station_departure_active,
+)
 from tsw6v2.service_brake import should_release_over_braked_for_stop_target
 from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
@@ -188,10 +194,6 @@ class _TickPrep:
     predict: Optional[PredictDecelFn]
 
 
-def _throttle_notch(lever: int) -> int:
-    return max(0, int(lever) - NEUTRAL_NOTCH)
-
-
 def _escalate_cap_fn(
     learner: LearnerProfile,
     cyl: Optional[float],
@@ -253,6 +255,30 @@ def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
     if target.downhill_hold and cmd.kind == "APPLY":
         return "downhill_hold"
     return "plan"
+
+
+def _attempt_departing_brake_release(
+    ctx: _TickCtx,
+    prep: _TickPrep,
+    *,
+    station_fsm: Optional[str],
+) -> Optional[LimitBrakeDecision]:
+    """Único camino RELEASE en ``DEPARTING`` lento (sustituye dwell, 223013Z)."""
+    if station_fsm != "DEPARTING" or not is_brake_applied(prep.lever):
+        return None
+    if prep.ctx.speed_mph >= DEPARTING_CLEAR_MPH:
+        return None
+    rel = release_brake_command(at_target=True)
+    if rel is None:
+        return None
+    return ctx.decide(
+        rel,
+        "release",
+        phase=rel.phase or "NEU",
+        detail=rel.reason,
+        handle_notch=rel.target_notch,
+        target_kind="STATION",
+    )
 
 
 def _attempt_signal_inherited_release(
@@ -468,7 +494,7 @@ def _attempt_p1_emergency(
         checks.append(("SIGNAL", signal_dist))
     if station_distance_m is not None and station_distance_m > 0:
         checks.append(("STATION", float(station_distance_m)))
-    throttle = _throttle_notch(prep.lever)
+    throttle = throttle_notch_from_lever(prep.lever)
     for kind, dist in checks:
         if (
             kind == "SIGNAL"
@@ -585,7 +611,7 @@ def _finalize_target_decision(
         return ctx.idle("coast_latch", target=target)
 
     cmd = target.to_brake_command(
-        throttle_notch=_throttle_notch(lever),
+        throttle_notch=throttle_notch_from_lever(lever),
         current_notch=lever,
         speed_mph=ctx.speed_mph,
         gradient_pct=grad,
@@ -676,6 +702,17 @@ def evaluate_p1_tick(
             brake_cyl_bar=ctx.cyl,
             release_state=release_state,
         )
+        if (
+            limit_target is not None
+            and station_departure_active(
+                speed_mph=ctx.speed_mph,
+                station_dist_m=station_dist,
+                combined_lever=prep.lever,
+                station_fsm=station_fsm,
+            )
+            and (limit_target.downhill_hold or limit_target.apply_now)
+        ):
+            limit_target = None
 
     station_target: Optional[BrakeTargetResult] = None
     if station_dist is not None:
@@ -693,7 +730,7 @@ def evaluate_p1_tick(
             station_distance_m=station_dist,
             gradient_pct=ctx.grad,
             predict_decel=prep.predict,
-            throttle_notch=_throttle_notch(prep.lever),
+            throttle_notch=throttle_notch_from_lever(prep.lever),
             station_eta=station_eta,
             schedule_slack_enabled=schedule_slack_enabled,
             brake_fill_s=prep.fill_s,
@@ -715,7 +752,7 @@ def evaluate_p1_tick(
             signal_distance_m=signal_dist,
             gradient_pct=ctx.grad,
             predict_decel=prep.predict,
-            throttle_notch=_throttle_notch(prep.lever),
+            throttle_notch=throttle_notch_from_lever(prep.lever),
             station_distance_m=station_dist,
             brake_fill_s=prep.fill_s,
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
@@ -745,6 +782,14 @@ def evaluate_p1_tick(
             signal_dist,
             speed_mph=ctx.speed_mph,
         )
+
+    departing_release = _attempt_departing_brake_release(
+        ctx,
+        prep,
+        station_fsm=station_fsm,
+    )
+    if departing_release is not None:
+        return departing_release
 
     skip_release = should_skip_p1_release(
         speed_mph=ctx.speed_mph,

@@ -184,6 +184,53 @@ def test_station_watch_overlay_hold_dh_zone15_session_173809() -> None:
     assert decision.reason == "downhill_hold"
 
 
+def test_no_downhill_hold_while_departing_session_223013() -> None:
+    """Salida ~10 mph: HOLD_DH no debe frenar (223013Z tick 3071)."""
+    snap = ProbeSnapshot(
+        speed_ms=4.58,  # ~10.25 mph
+        speed_limit_ms=4.47,  # 10 mph vigente
+        gradient_pct=-1.74,
+        dist_limit_cm=5905.0,
+        next_limit_ms=6.71,  # 15 mph
+        lever_notch=4,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=24025.9,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason != "downhill_hold"
+    assert decision.command is None or decision.command.kind != "APPLY"
+
+
+def test_departing_release_from_decision_session_223013() -> None:
+    """DEPARTING+B1: un solo RELEASE vía decision (no dwell duplicado)."""
+    snap = ProbeSnapshot(
+        speed_ms=0.0,
+        speed_limit_ms=4.47,
+        gradient_pct=0.0,
+        dist_limit_cm=5905.0,
+        next_limit_ms=6.71,
+        lever_notch=3,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=24025.9,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason == "release"
+    assert decision.command is not None
+    assert decision.command.kind == "RELEASE"
+
+
 def test_no_release_while_departing_with_throttle_at_neutral_session_214610() -> None:
     """Arranque: tracción + neutro — no RELEASE repetidos (214610Z)."""
     snap = ProbeSnapshot(

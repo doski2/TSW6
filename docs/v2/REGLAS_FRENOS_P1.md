@@ -270,8 +270,7 @@ HOLD_DH — seguir EMA tick a tick hasta estabilizar perfil en campo.
 | Sesión `123139Z` | Con `target=STATION` y freno de andén activo → **no** RELEASE de cartel |
 | `_overlay_active_zone_hold` | `p1tgt=STATION`/`SIGNAL` WATCH pero HOLD_DH activo → **mando** HOLD_DH; objetivo HUD sin cambio (`173809Z`) |
 
-Orden en `decision.py`: emergencia → planes cartel/andén/señal (pick) → **RELEASE** → overlay
-HOLD_DH → idle / APPLY / COAST.
+Orden en `decision.py`: emergencia → planes cartel/andén/señal (pick) → **`_attempt_departing_brake_release`** → **RELEASE** (señal/cartel) → overlay HOLD_DH → idle / APPLY / COAST.
 
 **Undershoot:** si se pierde la ventana de RELEASE y la velocidad cae mucho por debajo del
 objetivo (`speed < target − LIMIT_RELEASE_MIN_SPEED_BAND_MPH`), el guard anti-parado en escenario
@@ -349,8 +348,7 @@ Constantes señal (`signal_plan.py`):
 | `SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH` | 8 | Umbral “crawl” para bloqueo RELEASE |
 | `SIGNAL_WATCH_LIMIT_DEFER_M` | 150 m | WATCH señal no bloquea HOLD_DH más lejos |
 
-Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → **RELEASE señal heredado**
-→ RELEASE cartel → idle / APPLY / COAST.
+Orden en `decision.py`: emergencia → cartel / andén / **señal** (pick) → **RELEASE salida** (`DEPARTING`) → **RELEASE señal heredado** → RELEASE cartel → idle / APPLY / COAST.
 
 **Sesión `225433Z` (SPAD):** rojo @ 1040 m @ 56 mph → solo emergencia @ 61 m (tarde); HOLD_DH @15
 ganaba a señal en recta final. Tras paso 5: `p1tgt=SIGNAL`, `COAST_PWR` lejos, B1+ en ventana.
@@ -409,7 +407,7 @@ Modo `station`: suprime **todo** P1 andén (plan + emergencia) en `STOPPED` / `D
 | Estado | Entrada | Salida |
 | --- | --- | --- |
 | `STOPPED` | `stn ≤ 55 m` y `spd ≤ 1.5` (spawn ~47 m) o puertas abiertas a baja velocidad | Puertas abrir→cerrar → `DEPARTING`; o `_left_platform` (ver abajo) |
-| `DEPARTING` | Tras cerrar puertas | `spd ≥ 25 mph` o timeout 90 s → `None` |
+| `DEPARTING` | Tras cerrar puertas **o** `station_departure_active` (origen con tracción) | `spd ≥ 25 mph` o timeout 90 s → `None` |
 | `None` | En marcha | Condiciones de parada → `STOPPED` |
 
 **Salida sin ciclo puertas** (`_left_platform`): si el tren abandona el andén sin abrir puertas
@@ -423,16 +421,55 @@ Modo `station`: suprime **todo** P1 andén (plan + emergencia) en `STOPPED` / `D
 
 **No** sale solo por velocidad dentro del andén (`12 mph` @ `stn=10 m` sigue `STOPPED`).
 
-Capas de supresión (complementarias, no duplicadas):
+##### Salida andén — mapa de responsabilidades (2026-09-14)
+
+Fuente única **«¿estamos en salida?»**: `station_departure_active()` (`p1_station_gate.py`):
+
+- FSM `DEPARTING` y `spd ≤ 25 mph` (`DEPARTING_CLEAR_MPH`), **o**
+- `is_origin_station_departure` — tracción + `next_stop ≥ 500 m` + `spd ≤ 25 mph` (sesión `214610Z` / `223013Z`).
+
+```text
+station_departure_active()
+        │
+        ├─► Suprimir HOLD_DH / APPLY cartel     (decision, si apply_now o downhill_hold)
+        ├─► _attempt_departing_brake_release    (decision: DEPARTING + B1..B3 → RELEASE)
+        ├─► should_skip_p1_release              (solo si freno YA en neutro — no duplicar)
+        └─► FSM entra DEPARTING                 (gate.update, misma heurística)
+
+station_dwell_brake_command()  →  solo STOPPED → B1 (puertas TSW)
+```
+
+| Acción | Dueño | Condición |
+| --- | --- | --- |
+| B1 en parada (puertas) | `station_dwell_brake_command` | `fsm=STOPPED` |
+| RELEASE al arrancar | `decision._attempt_departing_brake_release` | `fsm=DEPARTING`, freno aplicado, `spd < 25` |
+| No RELEASE duplicado | `should_skip_p1_release` | Salida activa **y** palanca ≥ neutro |
+| No HOLD_DH en creep | `station_departure_active` en `evaluate_p1_tick` | Salida activa — anula `limit_target` con `apply_now` / `downhill_hold` |
+| No plan STATION / emergencia | Gate + `should_suppress_station_braking_for_departure` | Tracción en salida (origen o andén stale) |
+| Señal roja de salida | `should_suppress_signal_braking_for_departure` | Rojo @ ~2 m, tracción, esperar verde; RELEASE vía señal heredada al pasar a verde |
+
+**Prioridad en `loop.py`:** `dwell` (solo `STOPPED`) → `decision` → manual del conductor.
+
+**Helpers compartidos:** `throttle_notch_from_lever()` en `command.py` (antes duplicado en gate/decision).
+
+Sesiones de referencia:
+
+| Sesión | Síntoma | Fix |
+| --- | --- | --- |
+| `214610Z` | RELEASE repetidos con tracción en neutro | `should_skip_p1_release` si freno ya suelto |
+| `223013Z` | HOLD_DH aplica B1 @ ~10 mph en `DEPARTING` | Suprimir cartel/HOLD_DH durante `station_departure_active` |
+| `223013Z` | Oscilación trace `downhill_hold` vs RELEASE | RELEASE unificado en `decision`; dwell solo B1 parada |
+
+Capas de supresión (complementarias — cada una con dueño distinto):
 
 1. **Gate** — apaga P1 estación en dwell (`loop.py` → `station_p1_enabled=False`).
-2. **`should_suppress_station_braking_for_departure`** — anula plan con tracción en salida.
+2. **`should_suppress_station_braking_for_departure`** (`station_plan.py`) — anula plan STATION con tracción.
 3. **`_station_emergency_suppressed`** — capa emergencia con tope ~15 mph.
+4. **`station_departure_active`** — anula cartel/HOLD_DH y centraliza RELEASE de salida.
 
-**Freno dwell (puertas):** `p1_station_gate.station_dwell_brake_command` — en `STOPPED`
-manda `platform_door_brake_command` (**B1**, muesca 3) cada tick (`loop` prioriza dwell
-sobre P1 cartel). En `DEPARTING` con freno y `spd < 25 mph` → `RELEASE` (v1
-`_hold_platform_brake`). En aproximación (plan STATION activo),
+**Freno dwell (puertas):** `station_dwell_brake_command` — en `STOPPED` manda
+`platform_door_brake_command` (**B1**, muesca 3) cada tick (`loop` prioriza dwell sobre P1 cartel).
+**No** hace RELEASE en `DEPARTING` (evita duplicar `decision`). En aproximación (plan STATION activo),
 `command_from_target` usa el mismo umbral `dwell_max_distance_m` (80 m) para B1.
 
 #### Proyección al pasar el cartel (`station_may_ignore_limit_approach`)
@@ -647,12 +684,13 @@ RELEASE / COAST_PWR**.
 | `signal_brake.py` | `evaluate_signal_brake` → `BrakeTargetResult` SIGNAL |
 | `service_brake.py` | `target_from_stop_plan` (andén + señal) |
 | `p1_policy.py` | `pick_p1_brake_target`, `_resolve_deferred_station_pick`, `should_allow_station_watch_when_deferred` |
-| `p1_station_gate.py` | FSM `STOPPED`/`DEPARTING`; suprime P1 andén en dwell |
+| `p1_station_gate.py` | FSM `STOPPED`/`DEPARTING`; `station_departure_active`; dwell B1 parada |
+| `command.py` | `throttle_notch_from_lever`, RELEASE/COAST/APPLY |
 | `planning_poller.py` / `planning_feed.py` | HTTP `DriverAid.TrackData` + anti-salto distancia |
 | `p1_emergency.py` | B3 si distancia crítica al andén / señal |
 | `session_report.py` | Replay HTML/JSONL; puertas, marcadores APPLY, zoom, señal rojo |
 | `trace.py` | JSONL tick + investigate (`sig=ROJO@…m`) |
-| `decision.py` | `evaluate_p1_tick`: emergencia → pick → RELEASE → `_overlay_active_zone_hold` → L4 |
+| `decision.py` | `evaluate_p1_tick`: emergencia → pick → `_attempt_departing_brake_release` → RELEASE → overlay → L4 |
 
 ---
 
@@ -670,6 +708,8 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-14 | Sesión `225330Z`: `COAST_THROTTLE` IPC con tracción (`loop._apply_brake_command` ≠ RELEASE); planning acepta siguiente parada tras marker (`PLATFORM_MARKER_PASSED_M`); helpers `_traction_active` / `_coast_throttle_command` |
+| 2026-09-14 | Salida andén consolidada: `station_departure_active` (fuente única); RELEASE en `decision._attempt_departing_brake_release`; dwell solo B1 `STOPPED`; suprimir HOLD_DH en salida (`223013Z`); `throttle_notch_from_lever` |
 | 2026-09-13 | Sesión `173809Z`: STATION WATCH no bloquea HOLD_DH (`_overlay_active_zone_hold`); escalada B2 en overspeed zona 15 (`downhill_hold` en histéresis); `15→50` no cede horizonte HOLD_DH |
 | 2026-09-13 | Sesión `164240Z`: zona 15 + cartel 50 ignorable → STATION WATCH (`_ignorable_limit_on_deferred_approach`); rojo salida en cluster → STATION gana pick (`signal_deferred_to_station_at_platform`); refactor ramas deferred |
 | 2026-09-13 | Sesión `155148Z`: rojo &lt;150 m gana cartel APPLY; horizonte APPLY 150 m si spd &gt;30 mph (`signal_apply_horizon_m`) |

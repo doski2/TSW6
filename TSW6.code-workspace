@@ -30,5 +30,17 @@
 			"ModifierKey"
 		],
 		"markdown.validate.enabled": false
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-python.python",
+			"anysphere.cursorpyright",
+			"ms-python.debugpy",
+			"sumneko.lua",
+			"davidanson.vscode-markdownlint"
+		],
+		"unwantedRecommendations": [
+			"typescriptteam.native-preview"
+		]
 	}
 }

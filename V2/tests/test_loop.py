@@ -54,6 +54,19 @@ class TestAgentLoop:
         )
         assert loop.target_notch is None
 
+    def test_coast_throttle_requests_neutral_from_power_session_225330(self) -> None:
+        """P2 + COAST_THROTTLE debe pedir neutro (no confundir con RELEASE ya suelto)."""
+        loop = AgentLoop()
+        loop._apply_brake_command(
+            BrakeCommand(
+                kind="COAST_THROTTLE",
+                target_notch=NEUTRAL_NOTCH,
+                reason="Soltar tracción antes de freno",
+            ),
+            lever=6,
+        )
+        assert loop.target_notch == NEUTRAL_NOTCH
+
     def test_clear_target_when_driver_accelerates(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(gd, seq=1, lever=6)
@@ -210,7 +223,7 @@ class TestAgentLoop:
                 loop.step()
         assert loop.target_notch == SERVICE_MAX_BRAKE
 
-    def test_dwell_releases_brake_on_departing(self, tmp_path: Path) -> None:
+    def test_decision_releases_brake_on_departing(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(gd, seq=1, lever=3, speed_ms=0.0)
         loop = AgentLoop(
@@ -223,9 +236,16 @@ class TestAgentLoop:
         snap = PlanningSnapshot(station_distance_m=30.0)
         with patch.object(loop._station_planning, "update", return_value=snap):
             with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+                from tsw6v2.command import release_brake_command
                 from tsw6v2.decision import LimitBrakeDecision
 
-                eval_tick.return_value = LimitBrakeDecision.idle(reason="no_plan")
+                rel = release_brake_command(at_target=True)
+                eval_tick.return_value = LimitBrakeDecision(
+                    command=rel,
+                    reason="release",
+                    phase="NEU",
+                    handle_notch=NEUTRAL_NOTCH,
+                )
                 loop.step()
         assert loop.target_notch == NEUTRAL_NOTCH
 

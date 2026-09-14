@@ -168,7 +168,7 @@ def command_from_target(
         apply_at_remaining_m=apply_at_remaining_m,
         brake_committed=brake_committed,
     )
-    traction = throttle_notch > 0 or current_notch > 4
+    traction = _traction_active(throttle_notch, current_notch)
 
     if target_kind == "SPEED_LIMIT":
         coast_h = speed_limit_pre_coast_horizon_m(
@@ -186,20 +186,12 @@ def command_from_target(
         if not in_window and dist_start > coast_h and not early_coast:
             return None
         if traction:
-            return BrakeCommand(
-                kind="COAST_THROTTLE",
-                target_notch=4,
-                reason="Soltar tracción antes de freno",
-            )
+            return _coast_throttle_command()
         if not in_window:
             return None
     else:
         if traction and dist_start <= 800.0:
-            return BrakeCommand(
-                kind="COAST_THROTTLE",
-                target_notch=4,
-                reason="Soltar tracción antes de freno",
-            )
+            return _coast_throttle_command()
         if (
             target_kind == "STATION"
             and speed_mph <= target_speed_mph + RELEASE_MARGIN_MPH
@@ -319,6 +311,27 @@ def is_brake_applied(handle_notch: int) -> bool:
 
 def is_brake_released(handle_notch: int) -> bool:
     return handle_notch >= NEUTRAL_NOTCH
+
+
+def throttle_notch_from_lever(combined_lever: int) -> int:
+    """Palanca combinada → tracción P0..P4 (neutro = 0)."""
+    return max(0, int(combined_lever) - NEUTRAL_NOTCH)
+
+
+_COAST_THROTTLE_REASON = "Soltar tracción antes de freno"
+
+
+def _traction_active(throttle_notch: int, combined_lever: int) -> bool:
+    """Tracción en plan o palanca real (P1..P4)."""
+    return throttle_notch > 0 or throttle_notch_from_lever(combined_lever) > 0
+
+
+def _coast_throttle_command() -> BrakeCommand:
+    return BrakeCommand(
+        kind="COAST_THROTTLE",
+        target_notch=NEUTRAL_NOTCH,
+        reason=_COAST_THROTTLE_REASON,
+    )
 
 
 def is_downhill_limit_approach(

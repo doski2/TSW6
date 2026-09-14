@@ -9,7 +9,11 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path, read_probe_file
 from tsw6v2.bridge.ipc_bus import purge_lua_commands
-from tsw6v2.command import BrakeCommand, BrakeReleaseState
+from tsw6v2.command import (
+    BrakeCommand,
+    BrakeReleaseState,
+    throttle_notch_from_lever,
+)
 from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
     DRIVER_OVERRIDE_COOLDOWN_S,
@@ -336,10 +340,17 @@ class AgentLoop:
         notch = cmd.target_notch
         if notch is None:
             return
-        if cmd.kind in ("RELEASE", "COAST_THROTTLE"):
-            if lever is not None and int(lever) >= int(self.neutral_notch):
+        neutral = int(self.neutral_notch)
+        lev = int(lever) if lever is not None else neutral
+        if cmd.kind == "RELEASE":
+            # Freno aplicado → neutro; ya en neutro/P: no repetir (214610Z).
+            if lev >= neutral:
                 return
             self.request_neutral()
+        elif cmd.kind == "COAST_THROTTLE":
+            # Tracción → neutro antes de APPLY; no confundir con RELEASE (225330Z).
+            if lev > neutral:
+                self.request_neutral()
         elif cmd.kind == "APPLY":
             self.request_notch(notch)
 
@@ -417,7 +428,7 @@ class AgentLoop:
                 and self._target_notch is not None
             ):
                 mph_early = float(snap.speed_ms) * MS_TO_MPH
-                throttle_early = int(lever) - NEUTRAL_NOTCH
+                throttle_early = throttle_notch_from_lever(int(lever))
                 target = int(self._target_notch)
                 if (
                     throttle_early > 0
@@ -501,6 +512,8 @@ class AgentLoop:
                 p1_phase = dwell_cmd.phase or ""
                 p1_reason = dwell_cmd.reason or ""
                 p1_detail = dwell_cmd.reason or ""
+                p1_handle = dwell_cmd.target_notch
+                p1_apply_now = True
                 self._apply_brake_command(dwell_cmd, lever=lever)
             elif not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
