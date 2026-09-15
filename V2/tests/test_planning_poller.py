@@ -41,12 +41,23 @@ def test_station_planning_http_dead_reckoning():
     src = StationPlanning(http_enabled=False)
     src._http_ok = True
     src._source = "http"
+    src._startup_invalidate_pending = False
+    src._last_probe_seq = 100
     src._snap.station_distance_m = 500.0
-    src.update(60.0)
-    time.sleep(0.05)
-    snap = src.update(60.0)
+    snap = src.update(60.0, probe_seq=103)
     assert snap.station_distance_m is not None
     assert snap.station_distance_m < 500.0
+
+
+def test_station_planning_skips_dead_reckoning_when_probe_seq_frozen():
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    src._source = "http"
+    src._startup_invalidate_pending = False
+    src._last_probe_seq = 100
+    src._snap.station_distance_m = 500.0
+    snap = src.update(60.0, probe_seq=100)
+    assert snap.station_distance_m == 500.0
 
 
 def test_station_planning_rejects_http_regression(monkeypatch):

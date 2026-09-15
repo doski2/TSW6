@@ -1,0 +1,24 @@
+---
+description: Física y contrato de frenado P1
+globs: V2/tsw6v2/**/brak*.py,V2/tsw6v2/**/p1*.py,V2/tsw6v2/decision.py
+alwaysApply: false
+---
+
+# Frenado P1
+
+Antes de cambiar comportamiento de frenado leer:
+`docs/v2/REGLAS_FRENOS_P1.md`
+
+## Principios
+- La distancia de frenado depende de velocidad, desaceleración disponible, gradiente y objetivo.
+- `v²/2a` es una herramienta de cálculo, no una decisión completa.
+- La velocidad y distancia cambian cada tick: los cálculos dinámicos deben actualizarse.
+- No duplicar thresholds: usar `constants.py`.
+- No crear otra lógica de salida de andén.
+
+## Fuente de verdad
+`station_departure_active()` en `p1_station_gate.py` gobierna la condición de salida de andén.
+RELEASE debe pasar por `decision._attempt_departing_brake_release()`.
+
+## Seguridad
+Ante datos insuficientes o incoherentes, priorizar un estado conservador y trazable frente a una acción agresiva.

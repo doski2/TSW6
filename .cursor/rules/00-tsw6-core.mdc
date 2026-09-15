@@ -1,0 +1,49 @@
+---
+description: Contexto general del repo TSW6 y convenciones de trabajo
+alwaysApply: true
+---
+
+# TSW6 — reglas base
+
+## Alcance
+Proyecto de autopilot / asistencia de conducción y frenado P1 para TSW6.
+El código de producto V2 vive en `V2/tsw6v2/`.
+
+## Estructura canónica
+- Producto V2: `V2/tsw6v2/`
+- Tests V2: `V2/tests/`
+- Tests legacy/contrato: `tests/`
+- Herramientas: `scripts/tools/`
+- Legacy/experimentos archivados: `archive/` — solo referencia.
+
+Docs canónicas:
+- `docs/v2/PLAN_V2.md` — decisiones y roadmap.
+- `docs/v2/CODIGO_V2.md` — dónde va cada cosa.
+- `docs/v2/MANTENIMIENTO.md` — validación y operación.
+- `docs/v2/REGLAS_FRENOS_P1.md` — contrato de comportamiento P1.
+- `docs/CANAL_CONTROL.md` — contrato GetData/IPC.
+
+## Reglas de cambio
+- Diff mínimo y localizado.
+- Una responsabilidad = una fuente de verdad.
+- Reutilizar/consolidar antes de crear lógica paralela.
+- No importar `tsw6/` ni `archive/` desde `V2/tsw6v2/`.
+- No crear commits ni push salvo petición explícita.
+- No inventar APIs, campos de telemetría ni comportamiento del juego.
+- Si un dato no está demostrado, marcarlo como UNKNOWN y buscar evidencia.
+- No convertir una hipótesis en documentación normativa.
+- No añadir tests triviales.
+
+## Evidencia
+Clasifica cualquier afirmación técnica como:
+- FACT: demostrado por código, documentación oficial o experimento reproducible.
+- OBSERVATION: observado en una sesión/log.
+- INFERENCE: deducción razonable.
+- UNKNOWN: aún no demostrado.
+
+## Cierre
+Todo cambio debe dejar:
+1. comportamiento coherente con la arquitectura,
+2. tests relevantes,
+3. documentación actualizada si cambia un contrato,
+4. sin duplicidades ni código muerto.

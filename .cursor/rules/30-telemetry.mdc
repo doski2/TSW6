@@ -1,0 +1,26 @@
+---
+description: Telemetría UE4SS/Lua/GetData/IPC
+globs: V2/tsw6v2/bridge/**, V2/**/telemetry*.py
+alwaysApply: false
+---
+
+# Telemetría
+
+La telemetría es evidencia de estado, no una decisión.
+
+## Reglas
+- No inventar campos ni asumir que una variable existe porque el juego la muestra.
+- Diferenciar ausencia, valor cero, valor stale y valor inválido.
+- Mantener timestamps/sequence cuando existan.
+- Considerar jitter, pérdida, duplicación y lecturas parciales.
+- Validar unidades y conversiones en el borde del sistema.
+
+## Diagnóstico
+Cuando una decisión es incorrecta, comprobar en este orden:
+1. ¿el dato externo era correcto?
+2. ¿se parseó correctamente?
+3. ¿se normalizó correctamente?
+4. ¿el modelo lo interpretó correctamente?
+5. ¿la decisión fue correcta con ese estado?
+
+No arreglar un fallo de decisión manipulando silenciosamente la telemetría.

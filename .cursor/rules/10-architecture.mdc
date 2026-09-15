@@ -1,0 +1,35 @@
+---
+description: Límites de arquitectura y flujo de decisión V2
+globs: V2/**
+alwaysApply: false
+---
+
+# Arquitectura V2
+
+Antes de refactorizar o crear un subsistema, consultar `docs/v2/CODIGO_V2.md` y `docs/v2/PLAN_V2.md`.
+
+## Principio
+Probe/telemetría observa. Python interpreta y decide. IPC ejecuta.
+
+No mover decisiones de negocio al lado de captura solo porque sea más cómodo.
+
+## Capas
+1. Entrada: GetData / IPC / datos del juego.
+2. Normalización: convertir datos externos a un estado interno estable.
+3. Modelo: física, tren, límites, estación, señales, learner.
+4. Planning: objetivos futuros y prioridades.
+5. Decision: decidir notch/freno/acción.
+6. Command/Loop: ejecutar y coordinar el ciclo.
+7. Trace/UI: observar; no introducir decisiones paralelas.
+
+## Dependencias
+- Las capas inferiores no deben importar capas superiores para obtener decisiones.
+- Evitar que UI, OCR o logs se conviertan en fuentes de verdad.
+- Si existe una fuente canónica, cualquier nueva implementación debe reutilizarla.
+
+## Cambio de arquitectura
+Si una tarea cruza más de una capa:
+- primero producir plan,
+- identificar contratos afectados,
+- implementar por etapas,
+- ejecutar tests de cada capa.

@@ -1,0 +1,29 @@
+---
+description: Validación, replay y evidencia de campo
+globs: V2/tests/**,tests/**,V2/scripts/**
+alwaysApply: false
+---
+
+# Validación
+
+Validar comportamiento real, no solo cobertura sintáctica.
+
+## Niveles
+1. Unit: funciones y estados.
+2. Integration: flujo entre módulos.
+3. Replay: sesiones JSONL reproducibles.
+4. Campo: comportamiento real en TSW6.
+
+## Regla de regresión
+Un bug de campo debe intentar convertirse en:
+- caso de test,
+- fixture/replay cuando sea posible,
+- evidencia del estado incorrecto,
+- protección contra regresión.
+
+Para sesiones usar las herramientas oficiales del repo, no scripts ad hoc.
+
+Trazas P1 relevantes:
+`p1`, `ipc`, `stn_fsm`, `lim_mph`, `stn_dist_m`.
+
+Nunca declarar "validado en juego" solo porque los tests pasan.

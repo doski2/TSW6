@@ -17,6 +17,7 @@ from tsw6v2.planning_feed import (
     advance_station_distance_tick,
     apply_station_distance_reading,
     default_planning_path,
+    resolve_station_tick_dt,
     write_planning_snapshot,
 )
 
@@ -199,19 +200,25 @@ class StationPlanning:
         *,
         probe_seq: Optional[int] = None,
     ) -> PlanningSnapshot:
-        self._note_probe_seq(probe_seq)
+        if not self._http_ok:
+            self._note_probe_seq(probe_seq)
+            return self._file_feed.update(speed_mph, probe_seq=probe_seq)
+
         now = time.monotonic()
         if self._last_tick_t <= 0:
             self._last_tick_t = now
-        dt = now - self._last_tick_t
+        dt = resolve_station_tick_dt(
+            last_probe_seq=self._last_probe_seq,
+            probe_seq=probe_seq,
+            last_wall_t=self._last_tick_t,
+            now=now,
+        )
         self._last_tick_t = now
         self._last_speed_mph = float(speed_mph)
-
-        if self._http_ok:
-            with self._cache_lock:
-                advance_station_distance_tick(self._snap, speed_mph, dt)
-            return self._snap
-        return self._file_feed.update(speed_mph)
+        self._note_probe_seq(probe_seq)
+        with self._cache_lock:
+            advance_station_distance_tick(self._snap, speed_mph, dt)
+        return self._snap
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():

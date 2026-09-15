@@ -10,6 +10,7 @@ from typing import Optional
 
 from tsw6v2.bridge.getdata import parse_probe_line
 from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.probe_seq import probe_seq_dt_s
 
 
 def default_planning_path() -> Path:
@@ -85,6 +86,22 @@ def planning_distance_accept(
     return True
 
 
+def resolve_station_tick_dt(
+    *,
+    last_probe_seq: int | None,
+    probe_seq: int | None,
+    last_wall_t: float,
+    now: float,
+) -> float:
+    """``dt`` para dead-reckoning: prioriza ``probe_seq``, fallback reloj de pared."""
+    game_dt = probe_seq_dt_s(last_probe_seq, probe_seq)
+    if game_dt is not None:
+        return game_dt
+    if last_wall_t <= 0:
+        return 0.0
+    return max(0.0, now - last_wall_t)
+
+
 def tick_station_distance_m(
     distance_m: Optional[float],
     speed_mph: float,
@@ -135,18 +152,31 @@ class PlanningFeed:
         self._snap = PlanningSnapshot()
         self._last_reload = 0.0
         self._last_tick_t = 0.0
+        self._last_probe_seq: Optional[int] = None
         self._last_speed_mph = 0.0
         self.reload_interval_s = 0.5
 
-    def update(self, speed_mph: float) -> PlanningSnapshot:
+    def update(
+        self,
+        speed_mph: float,
+        *,
+        probe_seq: Optional[int] = None,
+    ) -> PlanningSnapshot:
         now = time.monotonic()
         if self._last_tick_t <= 0:
             self._last_tick_t = now
         if now - self._last_reload >= self.reload_interval_s:
             self._reload()
             self._last_reload = now
-        dt = now - self._last_tick_t
+        dt = resolve_station_tick_dt(
+            last_probe_seq=self._last_probe_seq,
+            probe_seq=probe_seq,
+            last_wall_t=self._last_tick_t,
+            now=now,
+        )
         self._last_tick_t = now
+        if probe_seq is not None:
+            self._last_probe_seq = int(probe_seq)
         self._last_speed_mph = float(speed_mph)
         advance_station_distance_tick(self._snap, speed_mph, dt)
         return self._snap
@@ -155,6 +185,7 @@ class PlanningFeed:
         """Vaciar caché (p. ej. tras cargar partida en modo archivo)."""
         self._snap = PlanningSnapshot()
         self._last_tick_t = 0.0
+        self._last_probe_seq = None
 
     def force_reload(self) -> None:
         """Releer ``Planning.txt`` sin esperar intervalo."""

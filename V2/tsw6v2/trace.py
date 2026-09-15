@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from tsw6v2.constants import PROBE_SEQ_MS
+from tsw6v2.probe_seq import probe_seq_delta_ms
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import format_layer_tag, layer_label
 
@@ -20,10 +20,9 @@ def advance_probe_active_ms(
 ) -> tuple[float, int | None]:
     """Avanza tiempo activo según ``seq`` del probe (~``PROBE_SEQ_MS`` por paso)."""
     if seq is not None:
-        if last_seq is not None:
-            delta = int(seq) - int(last_seq)
-            if delta > 0:
-                active_ms += delta * PROBE_SEQ_MS
+        delta_ms = probe_seq_delta_ms(last_seq, seq)
+        if delta_ms is not None:
+            active_ms += delta_ms
         last_seq = int(seq)
     return active_ms, last_seq
 

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from tsw6v2.planning_feed import planning_distance_accept, tick_station_distance_m
+from tsw6v2.planning_feed import PlanningFeed, planning_distance_accept, tick_station_distance_m
+from tsw6v2.probe_seq import probe_seq_dt_s
 
 
 def test_tick_station_distance_m_advances():
@@ -11,6 +12,20 @@ def test_tick_station_distance_m_advances():
 
 def test_tick_station_distance_m_skips_when_stopped():
     assert tick_station_distance_m(500.0, 0.0, 1.0) == 500.0
+
+
+def test_probe_seq_dt_s_ignores_menu_pause():
+    assert probe_seq_dt_s(100, 100) == 0.0
+    assert probe_seq_dt_s(100, 103) == 0.15
+
+
+def test_planning_feed_skips_dead_reckoning_when_probe_seq_frozen(tmp_path):
+    path = tmp_path / "Planning.txt"
+    path.write_text("station_dist_m=1000.0\n", encoding="utf-8")
+    feed = PlanningFeed(path=path)
+    feed.update(60.0, probe_seq=500)
+    snap = feed.update(60.0, probe_seq=500)
+    assert snap.station_distance_m == 1000.0
 
 
 def test_planning_distance_rejects_jump_after_platform():

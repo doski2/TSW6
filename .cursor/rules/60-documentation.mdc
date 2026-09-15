@@ -1,0 +1,19 @@
+---
+description: Documentación fiable y mantenible del proyecto
+globs: docs/**/*.md
+alwaysApply: false
+---
+
+# Documentación
+
+- Idioma: español en `docs/v2/`.
+- Usar enlaces relativos dentro del árbol documental.
+- No romper anchors existentes.
+- Documentar comportamiento verificado, no el comportamiento deseado.
+- No actualizar una doc para ocultar una implementación fallida.
+- Si una afirmación procede de una hipótesis, marcarla como tal.
+- Los cambios de comportamiento P1 deben reflejarse en `REGLAS_FRENOS_P1.md` y, cuando corresponda, en `MANTENIMIENTO.md` / `PLAN_V2.md`.
+- `docs/NOTAS.txt` es personal; no editar salvo petición explícita.
+
+Tras editar markdown, ejecutar:
+`python scripts/tools/fix_markdownlint.py docs/v2/<archivo>.md --check`

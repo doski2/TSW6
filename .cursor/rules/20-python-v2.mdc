@@ -1,0 +1,35 @@
+---
+description: Python V2 y calidad de implementación
+globs: V2/**/*.py
+alwaysApply: false
+---
+
+# Python V2
+
+## Código
+Nuevo código de producto solo en `V2/tsw6v2/`.
+Tests en `V2/tests/`.
+
+Prohibido importar desde `tsw6/` o `archive/` dentro de `tsw6v2/`.
+
+## Antes de editar
+- localizar implementación existente,
+- localizar tests,
+- leer contrato/documentación afectada,
+- identificar la fuente de verdad.
+
+## Calidad
+- funciones pequeñas con responsabilidad clara,
+- nombres explícitos,
+- evitar estado global innecesario,
+- no duplicar thresholds ni fórmulas,
+- conservar compatibilidad Python del proyecto.
+
+## Verificación
+Para cambios V2:
+`python -m pytest V2/tests/ -q`
+
+Para cambios que afectan contrato/probe:
+`python -m pytest tests/ V2/tests/ -q`
+
+Si no se puede ejecutar una prueba, declararlo explícitamente.
