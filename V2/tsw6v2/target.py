@@ -38,6 +38,7 @@ class BrakeTargetResult:
     apply_now: bool
     detail: str = ""
     downhill_hold: bool = False
+    downhill_coast_watch: bool = False
     coast_trim_deferred: bool = False
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
@@ -48,6 +49,16 @@ class BrakeTargetResult:
     def urgency(self) -> float:
         """Menor dist_start = frenar antes."""
         return self.dist_start
+
+    @property
+    def limit_brake_active(self) -> bool:
+        """Cartel con freno activo (APPLY / HOLD_DH): bloquea RELEASE heredado."""
+        return self.apply_now or self.downhill_hold
+
+    @property
+    def passes_deferred_station_pick(self) -> bool:
+        """Andén lejos: cartel APPLY o vigilar bajada COAST_PWR (211133Z)."""
+        return self.apply_now or self.downhill_coast_watch
 
     def to_brake_command(
         self,

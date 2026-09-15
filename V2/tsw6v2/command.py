@@ -529,9 +529,7 @@ def resolve_orphan_limit_brake_release(
     """
     if not is_brake_applied(handle_notch):
         return None
-    if limit_target is not None and (
-        limit_target.apply_now or limit_target.downhill_hold
-    ):
+    if limit_target is not None and limit_target.limit_brake_active:
         return None
     ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
     if speed_mph > ceiling:

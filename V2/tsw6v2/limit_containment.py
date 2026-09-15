@@ -89,7 +89,7 @@ def _hold_if_over_zone_ceiling(
     ):
         return None
     hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct)
-    if speed_mph <= hold_target:
+    if speed_mph < hold_target:
         return None
     return _build_downhill_hold_result(
         state,
@@ -175,6 +175,7 @@ def try_downhill_coast_watch(
     gradient_pct: float,
     next_limit_mph: Optional[float] = None,
     next_distance_m: Optional[float] = None,
+    coast_ceiling_mph: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     """
     Vigilar bajada bajo techo HOLD: WATCH + ``COAST_THROTTLE`` si hay tracción.
@@ -193,7 +194,10 @@ def try_downhill_coast_watch(
     ):
         return None
     hold_target = posted_zone_hold_ceiling_mph(posted_limit_mph, gradient_pct)
-    if speed_mph >= hold_target:
+    coast_ceiling = (
+        float(coast_ceiling_mph) if coast_ceiling_mph is not None else hold_target
+    )
+    if speed_mph > coast_ceiling:
         return None
     if speed_mph < posted_limit_mph - _DOWNHILL_COAST_WATCH_MIN_UNDER_POSTED_MPH:
         return None
@@ -205,6 +209,7 @@ def try_downhill_coast_watch(
         phase="WATCH",
         dist_start=0.0,
         apply_now=False,
+        downhill_coast_watch=True,
         detail=(
             f"Vigilar bajada @{hold_target:.1f} mph "
             f"(posted {posted_limit_mph:.0f})"

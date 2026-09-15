@@ -4,7 +4,7 @@ import _path  # noqa: F401
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeReleaseState
-from tsw6v2.decision import evaluate_limit_tick
+from tsw6v2.decision import evaluate_limit_tick, evaluate_p1_tick
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
 from tsw6v2.limit_horizon import next_limit_brake_horizon_m, within_next_brake_horizon
 from tsw6v2.p1_layers import classify_layer
@@ -336,6 +336,33 @@ def test_h1_hold_zone_15_overspeed_session_143544() -> None:
     assert r.downhill_hold
     assert r.apply_now
     assert abs(r.target_speed_mph - 15.2) < 0.05
+
+
+def test_h1_coast_watch_station_deferred_session_211133() -> None:
+    """30→50 @ −1.7 %%: andén lejos no debe anular COAST_PWR (211133Z)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 11.22,  # ~25.1 mph
+            "lever_notch": 6,
+            "dist_limit_cm": 84450.0,
+            "next_limit_ms": 22.352,  # 50 mph
+            "speed_limit_ms": 13.4112,  # 30 mph
+            "gradient_pct": -1.72,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=23780.4,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "COAST_THROTTLE"
+    assert decision.reason == "coast_throttle"
+    assert decision.target_kind == "SPEED_LIMIT"
 
 
 def test_h1_coast_watch_below_hold_ceiling_session_150916() -> None:

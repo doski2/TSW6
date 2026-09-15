@@ -22,6 +22,7 @@ from tsw6v2.physics import (
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.signal_plan import (
+    exit_signal_close_behind_platform,
     resolve_signal_dist_m,
     should_block_creep_release_from_signal,
     signal_deferred_to_station_at_platform,
@@ -34,15 +35,6 @@ from tsw6v2.target import BrakeTargetResult
 HORIZON_SLACK_M = 10.0
 # Por debajo: cartel WATCH no gana al andén si el servicio ya debe planificar.
 STATION_APPROACH_MIN_SPEED_MPH = 15.0
-
-
-def _active_limit_or_none(
-    limit_target: Optional[BrakeTargetResult],
-) -> Optional[BrakeTargetResult]:
-    """Solo cartel con APPLY; WATCH no es objetivo P1 con andén diferido."""
-    if limit_target is None or not limit_target.apply_now:
-        return None
-    return limit_target
 
 
 def _ignorable_limit_on_deferred_approach(
@@ -119,14 +111,13 @@ def _deferred_station_limit_target(
     accel_ms2: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     """
-    Andén lejos: APPLY siempre; WATCH solo si cartel next <600 m (153551Z).
+    Andén lejos: APPLY / COAST_PWR bajada siempre; resto WATCH solo <600 m (153551Z).
 
     Cartel WATCH lejano → None (221258Z salida andén).
     Cartel ignorable en cluster (50 tras zona 15) → None (164240Z).
     """
-    active = _active_limit_or_none(limit_target)
-    if active is not None:
-        return active
+    if limit_target is not None and limit_target.passes_deferred_station_pick:
+        return limit_target
     if (
         limit_target is not None
         and limit_dist_m is not None
@@ -296,12 +287,18 @@ def should_prefer_signal_over_station(
 ) -> bool:
     """Parada a 0: gana el objetivo más cercano (salida andén: señal antes que marcador)."""
     sig_dist = resolve_signal_dist_m(signal_dist_m, signal_target)
+    stn_dist = station_target.distance_m
     if signal_deferred_to_station_at_platform(
         signal_dist_m=sig_dist,
-        station_dist_m=station_target.distance_m,
+        station_dist_m=stn_dist,
         max_station_dist_m=STATION_APPROACH_PRIORITY_M,
     ):
         return False
+    if exit_signal_close_behind_platform(
+        signal_dist_m=sig_dist,
+        station_dist_m=stn_dist,
+    ):
+        return True
     if signal_target.apply_now and not station_target.apply_now:
         return True
     if not signal_target.apply_now and station_target.apply_now:
@@ -325,7 +322,7 @@ def limit_release_allowed(
         signal_dist_m=sig_dist,
         station_dist_m=station_dist,
     )
-    # Solo bloquear creep si el rojo es obstáculo real (no salida tras andén, 150617Z).
+    # Bloquear creep si el rojo está en juego (``signal_in_play``).
     if (
         signal_active
         and should_block_creep_release_from_signal(

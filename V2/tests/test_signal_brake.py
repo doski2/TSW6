@@ -14,6 +14,7 @@ from tsw6v2.p1_policy import (
 )
 from tsw6v2.station_brake import evaluate_station_brake
 from tsw6v2.signal_plan import (
+    exit_signal_close_behind_platform,
     signal_behind_station,
     signal_deferred_to_station_at_platform,
     signal_in_play,
@@ -95,6 +96,8 @@ def test_signal_behind_station_when_station_closer_session_150617():
     """Rojo tras andén: stn 120 m, sig 280 m — no planificar parada al semáforo."""
     assert signal_behind_station(signal_dist_m=280.0, station_dist_m=120.0)
     assert not signal_in_play(signal_dist_m=280.0, station_dist_m=120.0)
+    assert exit_signal_close_behind_platform(signal_dist_m=25.6, station_dist_m=21.7)
+    assert signal_in_play(signal_dist_m=25.6, station_dist_m=21.7)
 
 
 def test_signal_deferred_to_station_at_platform_session_164240():
@@ -109,6 +112,10 @@ def test_signal_deferred_to_station_at_platform_session_164240():
     assert not signal_deferred_to_station_at_platform(
         signal_dist_m=620.0,
         station_dist_m=1141.0,
+    )
+    assert not signal_deferred_to_station_at_platform(
+        signal_dist_m=25.6,
+        station_dist_m=21.7,
     )
 
 
@@ -396,6 +403,32 @@ def test_limit_release_blocked_crawl_far_from_red_signal_session_102222():
     )
 
 
+def test_signal_cleared_release_blocked_during_downhill_hold_session_211133():
+    """Verde tras rojo: no RELEASE si HOLD_DH cartel activo (211133Z @31 mph)."""
+    state = LimitBrakeState()
+    snap = ProbeSnapshot(
+        speed_ms=13.94,  # ~31.2 mph
+        speed_limit_ms=13.4112,  # 30 mph
+        gradient_pct=-0.67,
+        dist_limit_cm=77640.0,
+        next_limit_ms=22.352,  # 50 mph
+        lever_notch=3,
+        signal_red=False,
+    )
+    decision = evaluate_p1_tick(
+        state,
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=23700.0,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        signal_brake_enabled=True,
+    )
+    assert decision.reason == "downhill_hold"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+
+
 def test_limit_release_allowed_exit_signal_far_session_150617():
     """Rojo salida @280 m con andén @120 m: no bloquear RELEASE por creep de señal."""
     limit = BrakeTargetResult(
@@ -475,6 +508,54 @@ def test_p1_tick_release_after_signal_cleared_session_152037():
     assert decision.reason == "release"
     assert decision.command is not None
     assert decision.command.kind == "RELEASE"
+
+
+def test_p1_tick_no_release_when_signal_red_unknown():
+    """``signal_red=None`` no cuenta como verde (no RELEASE heredado)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 2.0,
+            "lever_notch": 1,
+            "speed_limit_ms": 13.4,
+            "signal_red": None,
+            "gradient_pct": 0.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=None,
+        limit_brake_enabled=False,
+        station_brake_enabled=False,
+    )
+    assert decision.reason != "release"
+
+
+def test_p1_tick_no_signal_cleared_release_in_platform_zone_session_213920():
+    """213920Z: con plan STATION en zona andén no soltar por señal pasada/verde."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 27924,
+            "speed_ms": 15.93 / 2.237,
+            "lever_notch": 2,
+            "brake_cyl_bar": 1.82,
+            "speed_limit_ms": 20.0 / 2.237,
+            "dist_limit_cm": 302.9 * 100.0,
+            "next_limit_ms": 60.0 / 2.237,
+            "signal_red": False,
+            "gradient_pct": 0.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=54.8,
+    )
+    assert decision.target_kind == "STATION"
+    assert decision.reason != "release"
 
 
 def test_p1_tick_zone_hold_when_next_limit_glitch_session_143544():
@@ -612,6 +693,45 @@ def test_station_beats_exit_signal_cluster_session_164240() -> None:
     )
     assert picked is not None
     assert picked.target_kind == "STATION"
+
+
+def test_signal_beats_station_exit_red_close_behind_marker_session_213920() -> None:
+    """Rojo de salida ~4 m tras marker dentro de 91 m: SIGNAL gana (213920Z tick 32081)."""
+    signal = BrakeTargetResult(
+        target_kind="SIGNAL",
+        distance_m=25.3,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=10.0,
+        apply_now=True,
+        detail="signal",
+    )
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=21.5,
+        target_speed_mph=0.0,
+        handle_notch=2,
+        phase="B2",
+        dist_start=8.0,
+        apply_now=True,
+        detail="station",
+    )
+    assert should_prefer_signal_over_station(signal, station, signal_dist_m=25.3)
+    picked = pick_p1_brake_target(
+        speed_mph=9.91,
+        limit_target=None,
+        station_target=station,
+        signal_target=signal,
+        signal_dist_m=25.3,
+        limit_mph=60.0,
+        limit_dist_m=700.0,
+        station_dist_m=21.5,
+        effective_limit=60.0,
+        gradient_pct=-0.7,
+    )
+    assert picked is not None
+    assert picked.target_kind == "SIGNAL"
 
 
 def test_p1_tick_station_not_signal_exit_cluster_session_164240() -> None:

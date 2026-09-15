@@ -10,8 +10,16 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
-from tsw6v2.command import is_brake_released, throttle_notch_from_lever
-from tsw6v2.station_plan import is_origin_station_departure
+from tsw6v2.command import is_brake_applied, is_brake_released, throttle_notch_from_lever
+from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
+from tsw6v2.limit_containment import try_downhill_coast_watch
+from tsw6v2.limit_state import LimitBrakeState
+from tsw6v2.station_plan import (
+    DEFAULT_STATION_CFG,
+    ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M,
+    is_origin_station_departure,
+)
+from tsw6v2.target import BrakeTargetResult
 
 if TYPE_CHECKING:
     from tsw6v2.command import BrakeCommand
@@ -25,6 +33,17 @@ DOORS_OPEN_MAX_SPEED_MPH = 8.0
 PLATFORM_ROLL_THROUGH_MIN_MPH = 10.0
 # Marker pasado con marcha (hueco 112457Z: paró a 1.48 mph con umbral >1.5).
 MARKER_PASSED_MIN_MPH = 1.0
+
+
+def _live_roll_through_without_doors(
+    *,
+    speed_mph: float,
+    throttle_notch: int,
+) -> bool:
+    """Rollo en andén sin puertas: tracción o neutro ≥10 mph; no con freno B1–B3."""
+    if throttle_notch < 4:
+        return False
+    return throttle_notch > 4 or speed_mph >= PLATFORM_ROLL_THROUGH_MIN_MPH
 
 
 def doors_effective(
@@ -65,6 +84,93 @@ def station_departure_active(
     )
 
 
+def station_departure_suppresses_limit_brake(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """Creep salida: sin HOLD_DH cartel hasta ~11 mph (223013Z; coast watch aparte)."""
+    if not station_departure_active(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return False
+    return speed_mph <= DEFAULT_STATION_CFG.departure_speed_mph
+
+
+def at_origin_platform_parked(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+) -> bool:
+    """Origen Cross-City parado (~24 km al primer stop); no mid-route (~5 km)."""
+    return (
+        station_dist_m is not None
+        and station_dist_m >= ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M
+        and speed_mph <= STATION_STOPPED_MPH
+    )
+
+
+def departing_brake_needs_release(
+    lever: int,
+    brake_cyl_bar: Optional[float],
+) -> bool:
+    """B1–B3 en palanca, o tracción con presión residual (182951Z tick 400)."""
+    if is_brake_applied(lever):
+        return True
+    if throttle_notch_from_lever(lever) <= 0:
+        return False
+    if brake_cyl_bar is None:
+        return False
+    return float(brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
+
+
+def departure_limit_target_or_coast(
+    limit_target: Optional[BrakeTargetResult],
+    state: LimitBrakeState,
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str],
+    posted_limit_mph: Optional[float],
+    gradient_pct: float,
+    next_limit_mph: Optional[float],
+    next_distance_m: Optional[float],
+) -> Optional[BrakeTargetResult]:
+    """
+    Creep salida: HOLD_DH suprimido → coast watch hasta ``departure_speed_mph``.
+
+    Evita ``no_plan`` entre techo zona (~10.2) y fin de creep (~11.2, 182951Z).
+    """
+    if limit_target is None:
+        return None
+    if not station_departure_suppresses_limit_brake(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return limit_target
+    if not limit_target.limit_brake_active:
+        return limit_target
+    if posted_limit_mph is None:
+        return None
+    return try_downhill_coast_watch(
+        state,
+        speed_mph=speed_mph,
+        posted_limit_mph=posted_limit_mph,
+        gradient_pct=gradient_pct,
+        next_limit_mph=next_limit_mph,
+        next_distance_m=next_distance_m,
+        coast_ceiling_mph=DEFAULT_STATION_CFG.departure_speed_mph,
+    )
+
+
 def should_skip_p1_release(
     *,
     speed_mph: float,
@@ -73,19 +179,21 @@ def should_skip_p1_release(
     station_fsm: Optional[str] = None,
 ) -> bool:
     """
-    Evita RELEASE duplicado en salida cuando el freno ya está en neutro.
+    En salida: un solo camino RELEASE (``_attempt_departing_brake_release``).
 
-    Con freno aplicado (B1..B3), ``decision`` suelta vía
-    ``_attempt_departing_brake_release``; señal/cartel no re-disparan.
+    Bloquea RELEASE heredado cartel/señal que pelea con tracción (182951Z).
     """
-    if not station_departure_active(
+    if station_departure_active(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
         combined_lever=combined_lever,
         station_fsm=station_fsm,
     ):
-        return False
-    return is_brake_released(combined_lever)
+        return True
+    return at_origin_platform_parked(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+    )
 
 
 def _left_platform(
@@ -113,7 +221,7 @@ class StationDwellGate:
     Sin lista HTTP de paradas — solo distancia planning + probe puertas.
 
     Passthrough sin puertas: ``_pass_through`` tras DEPARTING, o en vivo
-    (tracción o ≥``PLATFORM_ROLL_THROUGH_MIN_MPH`` en stn≤55 m).
+    (tracción o neutro ≥``PLATFORM_ROLL_THROUGH_MIN_MPH`` en stn≤55 m; no B1–B3).
     """
 
     def __init__(self) -> None:
@@ -141,9 +249,9 @@ class StationDwellGate:
             not self._doors_ever_opened
             and station_dist_m is not None
             and station_dist_m <= PLATFORM_AT_STOP_M
-            and (
-                throttle_notch > 4
-                or speed_mph >= PLATFORM_ROLL_THROUGH_MIN_MPH
+            and _live_roll_through_without_doors(
+                speed_mph=speed_mph,
+                throttle_notch=throttle_notch,
             )
         ):
             return True

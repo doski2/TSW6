@@ -772,7 +772,10 @@ def _render_chart_svg(
         return y_top + 8 + (1.0 - (float(v) - lo) / span) * inner
 
     y_max = max(max(p.get("spd") or 0, p.get("eff") or 0, p.get("lim") or 0) for p in series) + 5
-    y_min = min(p.get("spd") or 0 for p in series) - 2
+    eff_floor = [
+        float(p["eff"]) for p in series if p.get("eff") is not None
+    ]
+    y_min = min(min(p.get("spd") or 0 for p in series), min(eff_floor) if eff_floor else 0.0) - 2
     ds_min, ds_max = _ds_chart_bounds(series)
     dist_min, dist_max = _dist_chart_bounds(series)
     p_min, p_max = _pressure_chart_bounds(series)
@@ -841,13 +844,37 @@ def _render_chart_svg(
 
     panel_frame(y_spd, h_spd, "Velocidad (mph)")
     draw_axis(y_spd, h_spd, y_min, y_max, "")
-    for key, color in (("spd", "#7eb6ff"), ("eff", "#6bcf7f"), ("lim", "#e8a87c")):
+    for key, color, width in (
+        ("spd", "#7eb6ff", "1.5"),
+        ("eff", "#6bcf7f", "2"),
+        ("lim", "#e8a87c", "1.5"),
+    ):
         path = line_path(
             key,
             lambda v, lo=y_min, hi=y_max, yt=y_spd, ht=h_spd: y_in_panel(v, lo, hi, yt, ht),
         )
         if path:
-            out.append(path.replace('stroke-width="1.5"', f'stroke="{color}" stroke-width="1.5"'))
+            out.append(
+                path.replace(
+                    'stroke-width="1.5"',
+                    f'stroke="{color}" stroke-width="{width}"',
+                )
+            )
+    posted_vals = {
+        float(p["eff"])
+        for p in series
+        if p.get("eff") is not None and p.get("lim") is not None and p["eff"] != p["lim"]
+    }
+    for posted in sorted(posted_vals):
+        y_ref = y_in_panel(posted, y_min, y_max, y_spd, h_spd)
+        out.append(
+            f'<line x1="{pad_l}" y1="{y_ref:.1f}" x2="{pad_l + plot_w}" y2="{y_ref:.1f}" '
+            f'stroke="#6bcf7f" stroke-width="1" stroke-dasharray="6,4" opacity="0.55"/>'
+        )
+        out.append(
+            f'<text x="{pad_l + 4}" y="{y_ref - 4:.1f}" fill="#6bcf7f" font-size="9" '
+            f'font-weight="600">posted {posted:.0f}</text>'
+        )
 
     panel_frame(y_dist, h_dist, "Distancia al cartel (m)", bg="#121820")
     draw_axis(y_dist, h_dist, dist_min, dist_max, "m")

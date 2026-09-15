@@ -9,6 +9,7 @@ from tsw6v2.p1_station_gate import (
     doors_effective,
     should_skip_p1_release,
     station_departure_active,
+    station_departure_suppresses_limit_brake,
     station_dwell_brake_command,
 )
 from tsw6v2.station_plan import is_origin_station_departure
@@ -40,6 +41,17 @@ def test_gate_coast_approach_in_platform_allows_station_plan():
     gate = StationDwellGate()
     gate.update(speed_mph=2.0, station_dist_m=20.0, doors_telem=False, throttle_notch=3)
     assert not gate.suppress_station_brake(station_dist_m=20.0, speed_mph=2.0)
+
+
+def test_gate_brake_approach_not_roll_through_session_213920():
+    """213920Z tick 27924: B2 @55 m y ~16 mph no es passthrough (sí plan STATION)."""
+    gate = StationDwellGate()
+    gate.update(speed_mph=15.9, station_dist_m=54.8, doors_telem=False, throttle_notch=2)
+    assert not gate.suppress_station_brake(
+        station_dist_m=54.8,
+        throttle_notch=2,
+        speed_mph=15.9,
+    )
 
 
 def test_gate_coast_9mph_after_power_not_latched():
@@ -166,6 +178,27 @@ def test_origin_station_departure_detected_session_214610() -> None:
     assert gate.suppress_station_brake(station_dist_m=24182.5, throttle_notch=6)
 
 
+def test_station_departure_suppresses_limit_only_in_creep() -> None:
+    assert station_departure_suppresses_limit_brake(
+        speed_mph=10.0,
+        station_dist_m=24025.9,
+        combined_lever=5,
+        station_fsm="DEPARTING",
+    )
+    assert station_departure_suppresses_limit_brake(
+        speed_mph=10.25,
+        station_dist_m=24025.9,
+        combined_lever=5,
+        station_fsm="DEPARTING",
+    )
+    assert not station_departure_suppresses_limit_brake(
+        speed_mph=12.5,
+        station_dist_m=24141.8,
+        combined_lever=4,
+        station_fsm="DEPARTING",
+    )
+
+
 def test_station_departure_active_origin_and_clear_speed() -> None:
     assert station_departure_active(
         speed_mph=10.25,
@@ -181,9 +214,9 @@ def test_station_departure_active_origin_and_clear_speed() -> None:
     )
 
 
-def test_skip_p1_release_only_when_brake_already_neutral() -> None:
-    """DEPARTING+B1: decision suelta; neutro+tracción: no RELEASE duplicado."""
-    assert not should_skip_p1_release(
+def test_skip_p1_release_during_departure() -> None:
+    """Salida: sin RELEASE heredado cartel/señal; solo ``_attempt_departing_brake_release``."""
+    assert should_skip_p1_release(
         speed_mph=0.0,
         station_dist_m=24182.5,
         combined_lever=3,
@@ -195,7 +228,7 @@ def test_skip_p1_release_only_when_brake_already_neutral() -> None:
         combined_lever=6,
         station_fsm="DEPARTING",
     )
-    assert not should_skip_p1_release(
+    assert should_skip_p1_release(
         speed_mph=0.0,
         station_dist_m=24182.5,
         combined_lever=3,

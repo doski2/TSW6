@@ -184,6 +184,76 @@ def test_station_watch_overlay_hold_dh_zone15_session_173809() -> None:
     assert decision.reason == "downhill_hold"
 
 
+def test_downhill_hold_after_departure_creep_session_213920() -> None:
+    """Tras creep salida (>11 mph): cartel 10 debe poder frenar (213920Z)."""
+    snap = ProbeSnapshot(
+        speed_ms=5.6,  # ~12.5 mph
+        speed_limit_ms=4.47,  # 10 mph vigente
+        gradient_pct=-0.35,
+        dist_limit_cm=121600.0,
+        next_limit_ms=13.4112,  # 30 mph
+        lever_notch=4,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=24141.8,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason == "downhill_hold"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+
+
+def test_departure_coast_watch_over_zone_ceiling_session_182951() -> None:
+    """Zona 10 en creep salida: coast watch extendido, no no_plan ni B1 (182951Z)."""
+    snap = ProbeSnapshot(
+        speed_ms=10.5 / 2.237,
+        speed_limit_ms=10.0 / 2.237,
+        gradient_pct=-0.35,
+        dist_limit_cm=4630.0,
+        next_limit_ms=30.0 / 2.237,
+        lever_notch=4,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=None,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason != "no_plan"
+    assert decision.reason != "downhill_hold"
+    assert decision.command is None or decision.command.kind != "APPLY"
+
+
+def test_departure_no_plan_gap_at_zone_ceiling_session_182951() -> None:
+    """Tick 1326: spd == techo HOLD @10.2 — sin hueco no_plan."""
+    snap = ProbeSnapshot(
+        speed_ms=10.2 / 2.237,
+        speed_limit_ms=10.0 / 2.237,
+        gradient_pct=-1.72,
+        dist_limit_cm=4630.0,
+        next_limit_ms=30.0 / 2.237,
+        lever_notch=4,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=None,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason != "no_plan"
+
+
 def test_no_downhill_hold_while_departing_session_223013() -> None:
     """Salida ~10 mph: HOLD_DH no debe frenar (223013Z tick 3071)."""
     snap = ProbeSnapshot(
@@ -222,6 +292,31 @@ def test_departing_release_from_decision_session_223013() -> None:
         BrakeReleaseState(),
         snap,
         station_distance_m=24025.9,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        station_fsm="DEPARTING",
+    )
+    assert decision.reason == "release"
+    assert decision.command is not None
+    assert decision.command.kind == "RELEASE"
+
+
+def test_departing_release_with_throttle_and_residual_air_session_182951() -> None:
+    """DEPARTING+P1: soltar si queda presión con tracción (182951Z tick 400)."""
+    snap = ProbeSnapshot(
+        speed_ms=0.0,
+        speed_limit_ms=10.0 / 2.237,
+        gradient_pct=0.0,
+        dist_limit_cm=5910.0,
+        next_limit_ms=15.0 / 2.237,
+        lever_notch=5,
+        brake_cyl_bar=1.6,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=24182.5,
         limit_brake_enabled=True,
         station_brake_enabled=True,
         station_fsm="DEPARTING",

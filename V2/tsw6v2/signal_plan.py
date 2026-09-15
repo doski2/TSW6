@@ -63,6 +63,20 @@ def signal_behind_station(
     return station_dist_m < signal_dist_m
 
 
+def exit_signal_close_behind_platform(
+    *,
+    signal_dist_m: Optional[float],
+    station_dist_m: Optional[float],
+) -> bool:
+    """Rojo de salida tras marker del andén pero dentro del horizonte (~91 m, 213920Z)."""
+    if signal_dist_m is None or signal_dist_m <= 0:
+        return False
+    return signal_behind_station(
+        signal_dist_m=signal_dist_m,
+        station_dist_m=station_dist_m,
+    ) and signal_dist_m <= SIGNAL_BRAKE_HORIZON_M
+
+
 def signal_deferred_to_station_at_platform(
     *,
     signal_dist_m: Optional[float],
@@ -72,14 +86,17 @@ def signal_deferred_to_station_at_platform(
     """
     Geometría donde la parada es el andén, no el poste (150617Z, 164240Z).
 
-    - Rojo **detrás** del marker (``stn < sig``).
-    - Rojo **pegado** al marker en aproximación final (cluster).
+    - Rojo **lejos** detrás del marker (``stn < sig``, 150617Z).
+    - Rojo **pegado** al marker con marker delante del poste (cluster 164240Z).
     """
     if signal_behind_station(
         signal_dist_m=signal_dist_m,
         station_dist_m=station_dist_m,
     ):
-        return True
+        return not exit_signal_close_behind_platform(
+            signal_dist_m=signal_dist_m,
+            station_dist_m=station_dist_m,
+        )
     return exit_signal_clustered_with_platform_stop(
         signal_dist_m,
         station_dist_m,
@@ -92,13 +109,18 @@ def signal_in_play(
     signal_dist_m: Optional[float],
     station_dist_m: Optional[float],
 ) -> bool:
-    """True si hay señal roja medible y no está detrás del andén."""
+    """True si el rojo cuenta para plan/bloqueo (lejos detrás del marker: no)."""
     if signal_dist_m is None or signal_dist_m <= 0:
         return False
-    return not signal_behind_station(
+    if signal_behind_station(
         signal_dist_m=signal_dist_m,
         station_dist_m=station_dist_m,
-    )
+    ):
+        return exit_signal_close_behind_platform(
+            signal_dist_m=signal_dist_m,
+            station_dist_m=station_dist_m,
+        )
+    return True
 
 
 def signal_apply_horizon_m(speed_mph: float) -> float:

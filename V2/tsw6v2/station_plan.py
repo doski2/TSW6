@@ -167,6 +167,8 @@ SHORT_TURNAROUND_ANCHOR_MAX_M = 200.0
 SHORT_TURNAROUND_MAX_TRAVELED_M = 100.0
 # Próxima parada muy lejos → origen (HUD apunta al siguiente andén, 214610Z).
 ORIGIN_DEPARTURE_MIN_NEXT_STOP_M = 500.0
+# Cross-City origen (~24 km al primer stop); no confundir con mid-route (~5 km).
+ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M = 15000.0
 ORIGIN_DEPARTURE_MAX_SPEED_MPH = 25.0
 
 

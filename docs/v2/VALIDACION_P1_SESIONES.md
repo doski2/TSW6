@@ -111,6 +111,11 @@ Regenerar HTML (si hace falta):
 | Salida andén, cartel 35 @ &gt;3 km | `p1tgt` vacío, capa OK, P6 permitido en zona 60 | `p1tgt=LIMIT` + Vigilar o `COAST_PWR` lejos |
 | HOLD_DH zona 15 en bajada | `RELEASE` tras ~14–15 mph; `reason=downhill_hold` si spd &gt; techo (~15.2); `p1tgt` puede ser STATION | `no_plan`/`command_none` con 16–21 mph en `eff=15` (`173809Z`) |
 | Zona 15 → andén final | `p1tgt=STATION` tras cartel 15 (no LIMIT al next 50); rojo salida no gana al marker | `p1tgt=LIMIT@50` o `SIGNAL` en cluster andén (`164240Z`) |
+| Aproximación andén con freno | `p1tgt=STATION` (plan / `air_fill`) con `stn≤55` y B1–B3 | `SIGNAL release` «pasada/verde» + `no_plan` hasta marker (`213920Z`) |
+| Salida Lichfield creep | `apply_deferred` «Vigilar bajada» en zona 10 hasta ~11 mph; sin `no_plan` @ techo 10.2 | Overspeed 10–11 mph + hueco `no_plan`; RELEASE huérfanos con tracción (`182951Z`) |
+| Salida origen tras rojo | Un RELEASE vía `departing_release`; P1 sin pelear con acelerador | RELEASE `SPEED_LIMIT` repetidos @ neutro; varias pulsaciones para arrancar |
+| Andén 3 final | Rojo salida `stn&lt;sig` ≤91 m → `p1tgt=SIGNAL` | `p1tgt=STATION` + RELEASE erróneo hacia rojo cercano |
+| HTML zona 10 | Línea verde **posted 10** cuando `eff≠lim`; escala Y incluye `eff` | Solo `lim` (next cartel 15/30) |
 
 ### Referencia (sesiones Cross-City guardadas)
 
@@ -132,6 +137,100 @@ Regenerar HTML (si hace falta):
 | `20260913T143544Z` | **Antes fix:** `air_fill` largo + RELEASE creep con rojo — **tras fix:** `brake_decel_sample_ready`; creep bloqueado dentro de horizonte |
 | `20260913T164240Z` | **Antes fix:** tras zona 15 `p1tgt=LIMIT@50`; overspeed ~17 mph; final `p1tgt=SIGNAL` con rojo pegado al andén — **tras fix:** STATION WATCH en aproximación; pick STATION sobre rojo salida en cluster; replay tick 2461/2881 |
 | `20260913T173809Z` | **Antes fix:** overspeed hasta **21 mph** en zona 15; `p1tgt=STATION` pero sin `downhill_hold` — **tras fix:** overlay HOLD_DH con objetivo STATION; escalada B2; replay ~185 ticks `downhill_hold` en `eff=15` |
+| `20260914T213920Z` | **Antes fix:** passthrough gate @ `stn≤55` + spd≥10 con B2 → RELEASE señal heredada + entrada andén ~13.7 mph; overspeed 10/15 salida; andén 3 `SIGNAL` tras marker — **tras fix:** rollo solo neutro/tracción; creep cartel; `exit_signal_close_behind_platform` |
+| `20260915T182951Z` | **Antes fix:** HTML sin `eff` 10; overspeed zona 10 (max ~11.3); `no_plan` @ 10.2 mph; RELEASE huérfanos ticks 296–300; arranque lento tras rojo — **tras fix:** coast watch extendido en creep; `should_skip_p1_release`; `departing_brake_needs_release` con aire residual |
+
+---
+
+## Checklist sesión `182951Z` (Cross-City 5P06 · origen Lichfield TV)
+
+JSONL: `logs/v2/20260915T182951Z_cross-city_station.jsonl`.
+
+### Comandos post-sesión
+
+```bat
+python V2/scripts/replay_jsonl.py logs/v2/20260915T182951Z_cross-city_station.jsonl
+python -m pytest V2/tests/ -q -k "182951"
+```
+
+Regenerar HTML:
+
+```bat
+python -c "from pathlib import Path; from tsw6v2.session_report import write_html_replay; write_html_replay(Path('logs/v2/20260915T182951Z_cross-city_station.jsonl'), Path('logs/v2/20260915T182951Z_cross-city_station.html'))"
+```
+
+### 1. Origen tras semáforo rojo (ticks ~1–400)
+
+- [ ] Rojo @ ~25 m → `p1tgt=SIGNAL` (B1); sin RELEASE «Objetivo alcanzado» huérfano al pasar a verde con tracción.
+- [ ] Sin ráfagas `SPEED_LIMIT release` en origen parado (`stn≈24 km`, `spd≤1.5 mph`) — ticks 296–300 del JSONL antiguo.
+- [ ] `fsm=DEPARTING` + P1: un solo RELEASE si `brake_cyl_bar > 1.5` (tick 400 ref.).
+
+### 2. Zona 10 mph en salida (ticks ~1300–1500)
+
+- [ ] En creep (`spd ≤ ~11 mph`): `apply_deferred` «Vigilar bajada @10.2» — no `downhill_hold` B1.
+- [ ] Sin `no_plan` en `spd == 10.2 mph` (tick 1326 ref.).
+- [ ] Tras `spd > ~11 mph`: `downhill_hold` si supera techo zona.
+
+### 3. HTML / trace
+
+- [ ] Gráfico velocidad: línea **eff** (verde) a 10 mph + etiqueta **posted 10** cuando `lim=30`.
+- [ ] Escala Y baja suficiente para ver zona 10.
+
+### Falsos positivos replay
+
+| Síntoma | Causa | ¿Bug? |
+| --- | --- | --- |
+| `no_plan` alto global | Crucero sin objetivo | Normal |
+| `ipc ack_timeout` tick 1 | Latencia probe al arrancar | Reintentar si persiste in-game |
+
+---
+
+## Checklist sesión `213920Z` (Cross-City 5P06 · Lichfield TV → andén 3)
+
+Servicio de referencia para validar salida Lichfield, parada Lichfield City y aproximación final.
+JSONL: `logs/v2/20260914T213920Z_cross-city_station.jsonl`.
+
+### Comandos post-sesión
+
+```bat
+python V2/scripts/replay_jsonl.py logs/v2/20260914T213920Z_cross-city_station.jsonl
+python V2/scripts/analyze_learner_jsonl.py logs/v2/20260914T213920Z_cross-city_station.jsonl
+python -m pytest V2/tests/ -q -k "213920"
+```
+
+### 1. Origen Lichfield Trent Valley (ticks ~1–522)
+
+- [ ] Semáforo rojo @ ~25 m con andén @ ~24 km → `p1tgt=SIGNAL` (APPLY B1), no STATION.
+- [ ] Sin RELEASE «Señal pasada/verde» con `signal_red=null` y andén lejos.
+
+### 2. Salida Lichfield TV (ticks ~565+)
+
+- [ ] En creep (`spd ≤ ~11 mph`): cartel 10/15 puede suprimirse (`DEPARTING`).
+- [ ] Tras creep (`spd > ~11 mph`): `downhill_hold` / APPLY en zona 10 y 15.
+- [ ] Replay: `zona 15 mph >15.5` residual bajo (orden ~40 ticks; max ~16 mph), no overspeed sostenido.
+
+### 3. Parada Lichfield City andén 1 (ticks ~27900–28100)
+
+- [ ] Con `stn` bajando y freno B1–B3: **no** `SIGNAL release` «pasada/verde» @ ~55 m.
+- [ ] `p1tgt=STATION` hasta parada (`spd` &lt; 3 mph); sin `no_plan` desde ~55 m con ~16 mph.
+- [ ] Sin líneas `P1v2 EMERGENCIA STATION` en replay (telemetría con frenada real).
+
+### 4. Andén 3 final (ticks ~32080+)
+
+- [ ] Rojo salida tras marker (`stn < sig`, sig ≤ 91 m) → `p1tgt=SIGNAL`, no RELEASE hacia andén.
+- [ ] Parada completa sin SPAD.
+
+### 5. Learner (opcional)
+
+- [ ] `analyze_learner_jsonl`: `decel_observe_n` sube modestamente; rechazos `pressure` normales en neutro/llenado.
+- [ ] Sin saltos bruscos de `brake_fill_s` por `fill_outlier`.
+
+### Falsos positivos replay
+
+| Síntoma | Causa | ¿Bug? |
+| --- | --- | --- |
+| `P1v2 EMERGENCIA/CRITICO STATION` en stderr al replay | Telemetría congelada: spd ~13.7 @ 12 m con plan STATION en código nuevo | No si en vivo hubo frenada; sí si persiste in-game tras fix passthrough |
+| `no_plan` alto en resumen replay | Muchos ticks crucero sin objetivo | Normal en sesión larga |
 
 ---
 
@@ -290,6 +389,7 @@ Ejemplo de secuencia esperada:
 | `stn` salta cada ~2 s | Refresh HTTP normal | No |
 | `stn` deriva vs HUD | Solo `v×dt` entre polls | Conocido; C2 `odo_m` |
 | `p1tgt=STATION` muy lejos | `should_defer_station_brake` falló | Revisar dist/velocidad |
+| `stn≤55` + spd≥10 pero `p1tgt≠STATION` | Gate passthrough con freno B1–B3 (213920Z) | Corregido: rollo solo neutro/tracción |
 | Freno al cartel en Sutton/Four Oaks | `station_waits` prioriza LIMIT (recorte invertido, gap > 50 m) | Caso Four Oaks — anotar tramo |
 | Cartel 50 justo tras andén | `p1tgt=LIMIT` con `lim@` ≈ `stn` + 20–50 m | Sesión `213010Z` — regla `limit_sign_beyond_station` |
 | `fsm=STOPPED` toda la sesión | Salida sin puertas; gate no liberó P1 andén | Sesión `210853Z` — `_left_platform` |
@@ -321,6 +421,8 @@ Guardar JSONL en `logs\v2\` con etiqueta `station` en el nombre. Comparar:
 | --- | --- | --- |
 | `210853Z` | `fsm=STOPPED` permanente; sin frenado andén; cartel 50 → ~44 mph | Gate `_left_platform`; RELEASE llano sin cinemática |
 | `213010Z` | Última parada: `LIMIT` al 50 tras andén en vez de `STATION` | `limit_sign_beyond_station` + `LIMIT_AFTER_STATION_MAX_M` |
+| `213920Z` | Lichfield City: RELEASE @ 55 m + entrada ~13.7 mph; salida overspeed 10/15; andén 3 SIGNAL | Passthrough gate + creep cartel + `exit_signal_close_behind_platform` |
+| `182951Z` | Zona 10: `no_plan` @ 10.2; overspeed ~11.3; RELEASE huérfanos origen; HTML sin posted 10 | `departure_limit_target_or_coast`; `should_skip_p1_release`; `departing_brake_needs_release`; HTML `eff` |
 
 ---
 

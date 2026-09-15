@@ -18,6 +18,9 @@ from tsw6v2.command import (
 )
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
+    PLATFORM_AT_STOP_M,
+    departing_brake_needs_release,
+    departure_limit_target_or_coast,
     should_skip_p1_release,
     station_departure_active,
 )
@@ -262,9 +265,17 @@ def _attempt_departing_brake_release(
     prep: _TickPrep,
     *,
     station_fsm: Optional[str],
+    station_dist_m: Optional[float] = None,
 ) -> Optional[LimitBrakeDecision]:
-    """Único camino RELEASE en ``DEPARTING`` lento (sustituye dwell, 223013Z)."""
-    if station_fsm != "DEPARTING" or not is_brake_applied(prep.lever):
+    """Único camino RELEASE en salida lenta (FSM DEPARTING u origen, 223013Z)."""
+    if not departing_brake_needs_release(prep.lever, prep.ctx.cyl):
+        return None
+    if not station_departure_active(
+        speed_mph=prep.ctx.speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=prep.lever,
+        station_fsm=station_fsm,
+    ):
         return None
     if prep.ctx.speed_mph >= DEPARTING_CLEAR_MPH:
         return None
@@ -316,6 +327,15 @@ _SIGNAL_CLEARED_RELEASE_REF = BrakeTargetResult(
 )
 
 
+def _station_platform_blocks_signal_cleared_release(
+    station_target: Optional[BrakeTargetResult],
+) -> bool:
+    """Con plan andén en zona de parada: no tratar señal como pasada/verde."""
+    if station_target is None:
+        return False
+    return station_target.distance_m <= PLATFORM_AT_STOP_M
+
+
 def _attempt_p1_releases(
     ctx: _TickCtx,
     prep: _TickPrep,
@@ -332,9 +352,14 @@ def _attempt_p1_releases(
     signal_brake_enabled: bool,
 ) -> Optional[LimitBrakeDecision]:
     """Señal heredada → cartel; un solo camino de RELEASE por tick."""
-    if signal_brake_enabled and snap.signal_red is not True and signal_target is None:
+    limit_blocks_release = (
+        limit_target is not None and limit_target.limit_brake_active
+    )
+    if signal_brake_enabled and snap.signal_red is False and signal_target is None:
         if (
-            is_brake_applied(prep.lever)
+            not limit_blocks_release
+            and is_brake_applied(prep.lever)
+            and not _station_platform_blocks_signal_cleared_release(station_target)
             and not (station_target is not None and station_target.apply_now)
             and (
                 target is None
@@ -357,6 +382,7 @@ def _attempt_p1_releases(
         signal_brake_enabled
         and signal_target is not None
         and not signal_target.apply_now
+        and not limit_blocks_release
         and is_brake_applied(prep.lever)
         and limit_release_ok(target)
     ):
@@ -702,17 +728,18 @@ def evaluate_p1_tick(
             brake_cyl_bar=ctx.cyl,
             release_state=release_state,
         )
-        if (
-            limit_target is not None
-            and station_departure_active(
-                speed_mph=ctx.speed_mph,
-                station_dist_m=station_dist,
-                combined_lever=prep.lever,
-                station_fsm=station_fsm,
-            )
-            and (limit_target.downhill_hold or limit_target.apply_now)
-        ):
-            limit_target = None
+        limit_target = departure_limit_target_or_coast(
+            limit_target,
+            limit_state,
+            speed_mph=ctx.speed_mph,
+            station_dist_m=station_dist,
+            combined_lever=prep.lever,
+            station_fsm=station_fsm,
+            posted_limit_mph=posted,
+            gradient_pct=ctx.grad,
+            next_limit_mph=prep.next_limit_mph,
+            next_distance_m=prep.dist_m,
+        )
 
     station_target: Optional[BrakeTargetResult] = None
     if station_dist is not None:
@@ -787,6 +814,7 @@ def evaluate_p1_tick(
         ctx,
         prep,
         station_fsm=station_fsm,
+        station_dist_m=station_dist,
     )
     if departing_release is not None:
         return departing_release
