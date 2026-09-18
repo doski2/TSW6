@@ -29,6 +29,7 @@ def poll_station_planning(
     *,
     api_key: Optional[str] = None,
     timetable_path: Optional[Path] = None,
+    exclude_bases: Optional[set[str]] = None,
 ) -> dict[str, Any]:
     """
     Una lectura HTTP: TrackData + PlayerInfo → estaciones filtradas y próxima parada.
@@ -75,7 +76,11 @@ def poll_station_planning(
             out["hud_timetable_id"] = hud_match.get("timetable_id")
             out["hud_route_name"] = hud_match.get("route_name")
             out["hud_stop_names"] = hud_match.get("stop_names")
-        nxt = pick_next_scheduled_stop(stations, hud_match=hud_match)
+        nxt = pick_next_scheduled_stop(
+            stations,
+            hud_match=hud_match,
+            exclude_bases=exclude_bases,
+        )
         if nxt is not None:
             out["next_stop"] = nxt
     return out

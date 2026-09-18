@@ -74,6 +74,16 @@ def test_apply_station_schedule_falls_back_to_timetable_json():
     assert "Wrong Way Stop" not in names
 
 
+def test_pick_next_excludes_served_bases_session_215036():
+    stations = [
+        {"name": "Five Ways", "distance_m": 1200.0, "scheduled": True},
+        {"name": "University, andén 2", "distance_m": 1700.0, "scheduled": True},
+    ]
+    nxt = pick_next_scheduled_stop(stations, exclude_bases={"five ways"})
+    assert nxt is not None
+    assert "university" in nxt["name"].lower()
+
+
 def test_pick_next_uses_hud_order_when_track_empty():
     hud_match = {"stop_names": ["Four Oaks", "Sutton Coldfield"]}
     nxt = pick_next_scheduled_stop([], hud_match=hud_match)

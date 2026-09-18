@@ -349,6 +349,35 @@ def test_no_release_while_departing_with_throttle_at_neutral_session_214610() ->
     assert decision.command is None or decision.command.kind != "RELEASE"
 
 
+def test_no_limit_release_final_approach_session_213633():
+    """213633Z: RELEASE cartel @ 62 m abandonó freno estación."""
+    state = LimitBrakeState()
+    state.committed_handle = 3
+    state.committed_phase = "B3"
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 7.55,  # ~16.9 mph
+            "lever_notch": 2,
+            "brake_cyl_bar": 2.5,
+            "dist_limit_cm": 89500.0,
+            "next_limit_ms": 20.1168,  # 45 mph
+            "speed_limit_ms": 24.5872,  # zona 55
+            "gradient_pct": 0.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        state,
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=62.0,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.reason != "release"
+    assert decision.command is None or decision.command.kind != "RELEASE"
+
+
 def test_no_limit_release_while_station_braking():
     """Sesión 20260910T123139Z: latch 55 no debe soltar freno de andén @ ~212 m."""
     snap = ProbeSnapshot.from_dict(
@@ -374,3 +403,34 @@ def test_no_limit_release_while_station_braking():
     assert decision.target_kind == "STATION"
     assert decision.reason != "release"
     assert decision.command is None or decision.command.kind != "RELEASE"
+
+
+def test_p1_tick_station_apply_after_signal_cluster_session_155851() -> None:
+    """Longbridge: neutro ~13 mph @54 m tras señal — APPLY andén, no no_plan."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 5.82,  # ~13 mph
+            "lever_notch": 4,
+            "brake_cyl_bar": 1.03,
+            "dist_limit_cm": 3810.0,  # lim ~38 m
+            "next_limit_ms": 40.23,  # 90 mph
+            "speed_limit_ms": 8.94,  # 20 mph
+            "gradient_pct": 0.33,
+            "signal_red": None,
+            "signal_dist_cm": None,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=54.9,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        signal_brake_enabled=True,
+    )
+    assert decision.target_kind == "STATION"
+    assert decision.reason != "no_plan"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"

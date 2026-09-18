@@ -581,6 +581,66 @@ def test_p1_tick_zone_hold_when_next_limit_glitch_session_143544():
     assert decision.reason in ("plan", "downhill_hold", "air_fill", "coast_throttle")
 
 
+def test_limit_release_blocked_when_station_apply_now_despite_speed_limit_pick():
+    """213633Z: pick=SPEED_LIMIT no debe abrir RELEASE con plan STATION activo."""
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=280.0,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B2",
+        dist_start=-20.0,
+        apply_now=True,
+        detail="",
+    )
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=900.0,
+        target_speed_mph=44.0,
+        handle_notch=3,
+        phase="B2",
+        dist_start=0.0,
+        apply_now=True,
+        detail="",
+    )
+    assert not limit_release_allowed(
+        280.0,
+        limit,
+        station_target=station,
+        speed_mph=34.0,
+    )
+
+
+def test_limit_release_blocked_station_watch_final_approach():
+    """213633Z: WATCH en aproximación final — mantener freno, no soltar al cartel."""
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=62.0,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B3",
+        dist_start=-80.0,
+        apply_now=False,
+        detail="",
+    )
+    limit = BrakeTargetResult(
+        target_kind="SPEED_LIMIT",
+        distance_m=900.0,
+        target_speed_mph=44.0,
+        handle_notch=3,
+        phase="B2",
+        dist_start=0.0,
+        apply_now=False,
+        detail="",
+    )
+    assert not limit_release_allowed(
+        62.0,
+        limit,
+        station_target=station,
+        speed_mph=17.0,
+    )
+
+
 def test_limit_release_allowed_when_signal_only_watch():
     signal = BrakeTargetResult(
         target_kind="SIGNAL",

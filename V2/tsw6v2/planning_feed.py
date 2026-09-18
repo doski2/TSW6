@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Optional
 
 from tsw6v2.bridge.getdata import parse_probe_line
-from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.constants import MPH_TO_MS, STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+from tsw6v2.driver_aid_stations import station_base_name
 from tsw6v2.probe_seq import probe_seq_dt_s
 
 
@@ -30,7 +31,6 @@ class PlanningSnapshot:
 
 # Rechazar salto HTTP a la siguiente parada tras pasar sin dwell (sesión 20260909T224556Z).
 PLANNING_JUMP_REJECT_M = 500.0
-PLATFORM_PASSED_MAX_M = 80.0
 # Marker pasado (HUD ≈0 m): aceptar salto a la siguiente parada (225330Z).
 PLATFORM_MARKER_PASSED_M = 5.0
 # TrackData suele devolver ~5 m más lejos que v×dt (sesión 145832Z: 230→235 m).
@@ -48,7 +48,7 @@ def planning_distance_accept(
     speed_mph: float,
     *,
     jump_reject_m: float = PLANNING_JUMP_REJECT_M,
-    platform_passed_max_m: float = PLATFORM_PASSED_MAX_M,
+    mid_approach_max_m: float = STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
     regression_m: float = PLANNING_HTTP_REGRESSION_M,
     approach_min_speed_mph: float = PLANNING_APPROACH_MIN_SPEED_MPH,
     approach_prev_min_m: float = PLANNING_APPROACH_PREV_MIN_M,
@@ -72,9 +72,9 @@ def planning_distance_accept(
         and abs(new_m - prev_m) > jump_reject_m
     ):
         return False
-    # Tras pasar andén (dwell o creep): rechazar salto a cualquier velocidad
-    # (sesión 20260911T152306Z: 0→2012 m @ 3.4 mph).
-    if new_m > prev_m + jump_reject_m and prev_m < platform_passed_max_m:
+    # Andén y aproximación final: rechazar salto HTTP a la siguiente parada.
+    # Salida legítima arriba (prev≤5 m @ ≥8 mph). Save/load: prev≥200 m.
+    if new_m > prev_m + jump_reject_m and prev_m < mid_approach_max_m:
         return False
     # En marcha: no aceptar HTTP que aleja (confiar en v×dt hasta el próximo poll válido).
     if (
@@ -133,8 +133,15 @@ def apply_station_distance_reading(
     snap: PlanningSnapshot,
     new_dist: float,
     speed_mph: float,
+    *,
+    new_name: Optional[str] = None,
+    exclude_bases: Optional[set[str]] = None,
 ) -> bool:
     """Actualiza ``snap`` si la lectura HTTP/archivo pasa filtros. ``False`` si se ignora."""
+    stop_name = new_name if new_name is not None else snap.station_name
+    stop_base = station_base_name(stop_name or "")
+    if exclude_bases and stop_base and stop_base in exclude_bases:
+        return False
     if not planning_distance_accept(snap.station_distance_m, new_dist, speed_mph):
         return False
     snap.station_distance_m = new_dist

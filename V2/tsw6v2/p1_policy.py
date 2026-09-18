@@ -11,7 +11,11 @@ from tsw6v2.limit_station_cluster import (
     station_may_ignore_limit_approach,
     station_waits_for_approach_limit,
 )
-from tsw6v2.constants import LIMIT_RELEASE_MAX_OVER_MPH, STATION_APPROACH_PRIORITY_M
+from tsw6v2.constants import (
+    LIMIT_RELEASE_MAX_OVER_MPH,
+    STATION_APPROACH_PRIORITY_M,
+    STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+)
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
@@ -335,12 +339,17 @@ def limit_release_allowed(
         return False
     if station_dist is None:
         return True
+    if station_target is not None and station_target.apply_now:
+        return False
+    if (
+        station_target is not None
+        and 0 < station_dist < STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+    ):
+        return False
     if target is not None and target.target_kind == "STATION":
         return False
     if target is not None and target.target_kind == "SPEED_LIMIT":
         return True
-    if station_target is not None and station_target.apply_now:
-        return False
     # pick=None (andén lejos): aún soltar HOLD_DH / BRAKE_LIMIT (sesión 224046Z).
     return True
 

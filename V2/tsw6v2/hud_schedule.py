@@ -149,10 +149,12 @@ def pick_next_scheduled_stop(
     *,
     hud_match: Optional[dict[str, Any]] = None,
     min_distance_m: float = 100.0,
+    exclude_bases: Optional[set[str]] = None,
 ) -> Optional[dict[str, Any]]:
     hud_names = hud_match.get("stop_names") if hud_match else None
     return resolve_display_next_stop(
         stations,
         hud_stop_names=hud_names,
         min_distance_m=min_distance_m,
+        exclude_bases=exclude_bases,
     )

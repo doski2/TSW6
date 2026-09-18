@@ -54,6 +54,17 @@ def test_gate_brake_approach_not_roll_through_session_213920():
     )
 
 
+def test_gate_approach_after_signal_not_roll_through_session_155851():
+    """155851Z Longbridge: neutro ~13 mph en stn<55 m tras señal — sí plan STATION."""
+    gate = StationDwellGate()
+    gate.update(speed_mph=13.0, station_dist_m=54.9, doors_telem=False, throttle_notch=4)
+    assert not gate.suppress_station_brake(
+        station_dist_m=54.9,
+        throttle_notch=4,
+        speed_mph=13.0,
+    )
+
+
 def test_gate_coast_9mph_after_power_not_latched():
     """142034Z: neutro ~9 mph en andén tras tracción — puede frenar."""
     gate = StationDwellGate()
@@ -160,6 +171,42 @@ def test_gate_stopped_exits_when_planning_lost_at_speed():
     assert gate.state == "DEPARTING"
 
 
+def test_origin_station_departure_rejects_mid_route_approach_session_211032() -> None:
+    """211032Z: stn≈559 m @ 20 mph no es salida de origen (umbral 15 km)."""
+    assert not is_origin_station_departure(
+        speed_mph=20.21,
+        station_distance_m=559.3,
+        throttle_notch=6,
+    )
+    gate = StationDwellGate()
+    gate.update(
+        speed_mph=20.21,
+        station_dist_m=559.3,
+        doors_telem=False,
+        throttle_notch=4,
+    )
+    assert gate.state is None
+    assert not gate.suppress_station_brake(
+        station_dist_m=559.3,
+        speed_mph=20.21,
+        throttle_notch=4,
+    )
+
+
+def test_gate_departing_allows_station_brake_on_mid_route_approach() -> None:
+    gate = StationDwellGate()
+    gate.state = "DEPARTING"
+    gate._departing_at = 0.0
+    assert not gate.suppress_station_brake(
+        station_dist_m=400.0,
+        speed_mph=20.0,
+    )
+    assert gate.suppress_station_brake(
+        station_dist_m=30.0,
+        speed_mph=15.0,
+    )
+
+
 def test_origin_station_departure_detected_session_214610() -> None:
     """Lichfield TV: next_stop a 24 km + tracción → DEPARTING sin FSM STOPPED."""
     assert is_origin_station_departure(
@@ -211,6 +258,22 @@ def test_station_departure_active_origin_and_clear_speed() -> None:
         station_dist_m=24025.9,
         combined_lever=5,
         station_fsm="DEPARTING",
+    )
+
+
+def test_skip_p1_release_final_approach_session_213633() -> None:
+    """Aproximación final: bloquear RELEASE heredado cartel/señal."""
+    assert should_skip_p1_release(
+        speed_mph=17.0,
+        station_dist_m=62.0,
+        combined_lever=2,
+        station_fsm=None,
+    )
+    assert not should_skip_p1_release(
+        speed_mph=10.0,
+        station_dist_m=0.5,
+        combined_lever=6,
+        station_fsm=None,
     )
 
 

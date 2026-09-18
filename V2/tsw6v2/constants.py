@@ -71,6 +71,8 @@ BRAKE_PLAN_LARGE_DROP_MPH = 18.0
 
 # Andén P1: horizonte preferencia STATION y cluster señal salida (p1_policy, signal_plan).
 STATION_APPROACH_PRIORITY_M = 600.0
+# Aproximación final: no RELEASE cartel ni salto HTTP espurio (213633Z, 211417Z).
+STATION_FINAL_APPROACH_RELEASE_BLOCK_M = 200.0
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:

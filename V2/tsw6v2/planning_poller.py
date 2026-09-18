@@ -10,8 +10,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tsw6v2.bridge.http_api import find_api_key, probe_http_api
-from tsw6v2.driver_aid_stations import poll_station_planning
+from tsw6v2.driver_aid_stations import poll_station_planning, station_base_name
 from tsw6v2.planning_feed import (
+    PLANNING_JUMP_REJECT_M,
+    PLANNING_NEXT_STOP_MIN_SPEED_MPH,
+    PLATFORM_MARKER_PASSED_M,
     PlanningFeed,
     PlanningSnapshot,
     advance_station_distance_tick,
@@ -86,6 +89,7 @@ class StationPlanning:
         self._last_probe_seq: Optional[int] = None
         self._startup_invalidate_pending = True
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
+        self._served_bases: set[str] = set()
         self._source = "none"
         if self.http_enabled and find_api_key() is not None:
             self._http_ok = probe_http_api(timeout_s=PLANNING_READ_TIMEOUT_S)
@@ -138,8 +142,37 @@ class StationPlanning:
     def _clear_planning_cache(self) -> None:
         with self._cache_lock:
             self._snap = PlanningSnapshot()
+            self._served_bases = set()
         self._file_feed.reset()
         self._last_tick_t = 0.0
+
+    def _clear_served_bases(self) -> None:
+        with self._cache_lock:
+            if not self._served_bases:
+                return
+            self._served_bases = set()
+
+    def _mark_stop_served(self, name: Optional[str]) -> None:
+        """Llamar con ``_cache_lock`` ya tomado (p. ej. desde ``_poll_once``)."""
+        base = station_base_name(name or "")
+        if base:
+            self._served_bases.add(base)
+
+    def _maybe_mark_departed_stop(
+        self,
+        prev_dist: Optional[float],
+        prev_name: Optional[str],
+        new_dist: float,
+        speed_mph: float,
+    ) -> None:
+        """Tras pasar marker con marcha: excluir esa parada del picker HTTP."""
+        if prev_dist is None or prev_dist > PLATFORM_MARKER_PASSED_M:
+            return
+        if new_dist <= PLANNING_JUMP_REJECT_M:
+            return
+        if speed_mph < PLANNING_NEXT_STOP_MIN_SPEED_MPH:
+            return
+        self._mark_stop_served(prev_name)
 
     def invalidate(self) -> None:
         """Partida guardada / discontinuidad probe: vaciar caché y releer HTTP o archivo."""
@@ -178,20 +211,33 @@ class StationPlanning:
             _log.info("planning: reset tras probe seq %s -> %s (carga / salto)", last, seq)
             self.invalidate()
 
-    def _maybe_reset_schedule_identity(self, result: dict) -> None:
+    def _note_schedule_identity(self, result: dict) -> None:
+        """Actualiza metadatos HUD; no vacía distancia (parpadeo andén, 215536Z)."""
         identity = self._identity_from_poll(result)
         if not any(identity):
             return
         prev = self._schedule_identity
         if prev != ("", "", None) and identity != prev:
+            prev_tid = prev[2]
+            new_tid = identity[2]
+            if (
+                prev_tid is not None
+                and new_tid is not None
+                and prev_tid != new_tid
+            ):
+                _log.info(
+                    "planning: cambio timetable %s -> %s; limpiar paradas servidas",
+                    prev_tid,
+                    new_tid,
+                )
+                self._clear_served_bases()
             _log.info(
-                "planning: reset tras cambio servicio %s / %s -> %s / %s",
+                "planning: cambio servicio %s / %s -> %s / %s (conservar dist)",
                 prev[0] or "?",
                 prev[2] or "?",
                 identity[0] or "?",
                 identity[2] or "?",
             )
-            self._clear_planning_cache()
         self._schedule_identity = identity
 
     def update(
@@ -227,13 +273,15 @@ class StationPlanning:
                 break
 
     def _poll_once(self, *, skip_identity_check: bool = False) -> None:
+        with self._cache_lock:
+            exclude_bases = set(self._served_bases)
         try:
-            result = poll_station_planning()
+            result = poll_station_planning(exclude_bases=exclude_bases)
         except Exception as exc:
             _log.debug("poll_station_planning: %s", exc)
             return
         if not skip_identity_check:
-            self._maybe_reset_schedule_identity(result)
+            self._note_schedule_identity(result)
         self._apply_poll_metadata(result)
         nxt = result.get("next_stop")
         if not isinstance(nxt, dict):
@@ -245,18 +293,28 @@ class StationPlanning:
         new_dist = float(dist)
         with self._cache_lock:
             prev = self._snap.station_distance_m
+            prev_name = self._snap.station_name
             if not apply_station_distance_reading(
                 self._snap,
                 new_dist,
                 self._last_speed_mph,
+                new_name=str(name) if name else None,
+                exclude_bases=self._served_bases,
             ):
                 _log.info(
-                    "planning: ignorar lectura HTTP %.0f -> %.0f m (spd=%.1f)",
+                    "planning: ignorar lectura HTTP %.0f -> %.0f m (spd=%.1f, stop=%s)",
                     prev or -1,
                     new_dist,
                     self._last_speed_mph,
+                    name or "?",
                 )
                 return
+            self._maybe_mark_departed_stop(
+                prev,
+                prev_name,
+                new_dist,
+                self._last_speed_mph,
+            )
             if name:
                 self._snap.station_name = str(name)
             snap = self._snap

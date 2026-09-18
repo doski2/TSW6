@@ -10,13 +10,20 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
-from tsw6v2.command import is_brake_applied, is_brake_released, throttle_notch_from_lever
+from tsw6v2.constants import STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+from tsw6v2.command import (
+    is_brake_applied,
+    is_brake_released,
+    throttle_notch_from_lever,
+)
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 from tsw6v2.limit_containment import try_downhill_coast_watch
 from tsw6v2.limit_state import LimitBrakeState
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
+    ORIGIN_DEPARTURE_MAX_SPEED_MPH,
     ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M,
+    is_departure_creep_context,
     is_origin_station_departure,
 )
 from tsw6v2.target import BrakeTargetResult
@@ -25,7 +32,7 @@ if TYPE_CHECKING:
     from tsw6v2.command import BrakeCommand
 
 STATION_STOPPED_MPH = 1.5
-DEPARTING_CLEAR_MPH = 25.0
+DEPARTING_CLEAR_MPH = ORIGIN_DEPARTURE_MAX_SPEED_MPH
 DEPARTING_MAX_S = 90.0
 PLATFORM_AT_STOP_M = 55.0
 DOORS_OPEN_MAX_SPEED_MPH = 8.0
@@ -40,10 +47,20 @@ def _live_roll_through_without_doors(
     speed_mph: float,
     throttle_notch: int,
 ) -> bool:
-    """Rollo en andén sin puertas: tracción o neutro ≥10 mph; no con freno B1–B3."""
+    """
+    Rollo en andén sin puertas: tracción, o neutro ~10–11 mph (no aproximación rápida).
+
+    155851Z: neutro @13 mph tras parar en señal pegada al andén no es passthrough.
+    """
     if throttle_notch < 4:
         return False
-    return throttle_notch > 4 or speed_mph >= PLATFORM_ROLL_THROUGH_MIN_MPH
+    if throttle_notch > 4:
+        return True
+    return (
+        PLATFORM_ROLL_THROUGH_MIN_MPH
+        <= speed_mph
+        < DEFAULT_STATION_CFG.departure_speed_mph
+    )
 
 
 def doors_effective(
@@ -75,7 +92,7 @@ def station_departure_active(
 ) -> bool:
     """Arranque / salida andén: FSM DEPARTING u origen con tracción."""
     if station_fsm == "DEPARTING":
-        return speed_mph <= DEPARTING_CLEAR_MPH
+        return is_departure_creep_context(station_dist_m, speed_mph)
     return is_origin_station_departure(
         speed_mph=speed_mph,
         station_distance_m=station_dist_m,
@@ -190,10 +207,25 @@ def should_skip_p1_release(
         station_fsm=station_fsm,
     ):
         return True
-    return at_origin_platform_parked(
+    if at_origin_platform_parked(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
-    )
+    ):
+        return True
+    # Marker pasado con marcha: permitir RELEASE cartel (passthrough / siguiente parada).
+    if (
+        station_dist_m is not None
+        and station_dist_m <= 1.0
+        and speed_mph >= MARKER_PASSED_MIN_MPH
+    ):
+        return False
+    # Aproximación final: sin RELEASE cartel/señal heredado (213633Z @ 62 m).
+    if (
+        station_dist_m is not None
+        and 0 < station_dist_m < STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+    ):
+        return True
+    return False
 
 
 def _left_platform(
@@ -231,6 +263,23 @@ class StationDwellGate:
         self._departing_at = 0.0
         self._pass_through = False
 
+    def _departing_suppresses_station_brake(
+        self,
+        *,
+        station_dist_m: Optional[float],
+        speed_mph: float,
+    ) -> bool:
+        """
+        Creep salida sí; aproximación al próximo andén no.
+
+        Sesión 211032Z: ``DEPARTING`` + stn≈559 m @ 20 mph bloqueaba P1 estación.
+        """
+        if self._pass_through and (
+            station_dist_m is None or station_dist_m <= PLATFORM_AT_STOP_M
+        ):
+            return True
+        return is_departure_creep_context(station_dist_m, speed_mph)
+
     def suppress_station_brake(
         self,
         *,
@@ -239,8 +288,13 @@ class StationDwellGate:
         speed_mph: float = 0.0,
     ) -> bool:
         """Suprime plan STATION: dwell, rollo sin puertas, o salida con tracción."""
-        if self.state in ("STOPPED", "DEPARTING"):
+        if self.state == "STOPPED":
             return True
+        if self.state == "DEPARTING":
+            return self._departing_suppresses_station_brake(
+                station_dist_m=station_dist_m,
+                speed_mph=speed_mph,
+            )
         if self._pass_through:
             if station_dist_m is None or station_dist_m <= PLATFORM_AT_STOP_M:
                 return True

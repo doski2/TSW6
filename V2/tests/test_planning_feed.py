@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from tsw6v2.planning_feed import PlanningFeed, planning_distance_accept, tick_station_distance_m
+from tsw6v2.planning_feed import (
+    PlanningFeed,
+    PlanningSnapshot,
+    apply_station_distance_reading,
+    planning_distance_accept,
+    tick_station_distance_m,
+)
 from tsw6v2.probe_seq import probe_seq_dt_s
 
 
@@ -57,6 +63,31 @@ def test_planning_distance_rejects_http_regression_while_approaching():
 def test_planning_distance_accepts_large_jump_after_save_load():
     """Tras cargar partida: salto legítimo a otra posición en ruta."""
     assert planning_distance_accept(235.0, 1800.0, 45.0)
+
+
+def test_planning_distance_rejects_next_stop_jump_in_final_approach():
+    """Sesión 20260917T211417Z: HTTP salta a la siguiente parada @ 91 m en marcha."""
+    assert not planning_distance_accept(90.9, 1229.0, 21.5)
+    assert not planning_distance_accept(120.0, 900.0, 30.0)
+    # Borde superior: save/load y v×dt consolidado quedan fuera de la zona.
+    assert planning_distance_accept(201.0, 1800.0, 45.0)
+
+
+def test_apply_rejects_served_stop_name_session_215036():
+    """215036Z: no aceptar Five Ways fantasma tras pasar el andén."""
+    snap = PlanningSnapshot(
+        station_distance_m=1699.0,
+        station_name="University, andén 2",
+    )
+    assert not apply_station_distance_reading(
+        snap,
+        1200.0,
+        47.6,
+        new_name="Five Ways",
+        exclude_bases={"five ways"},
+    )
+    assert snap.station_distance_m == 1699.0
+    assert snap.station_name == "University, andén 2"
 
 
 def test_planning_distance_rejects_large_yoyo_at_speed():

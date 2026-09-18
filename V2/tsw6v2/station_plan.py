@@ -165,8 +165,6 @@ TURNAROUND_DEPARTURE_MAX_TRAVELED_M = 250.0
 BAD_ANCHOR_DWELL_MAX_TRAVELED_M = 15.0
 SHORT_TURNAROUND_ANCHOR_MAX_M = 200.0
 SHORT_TURNAROUND_MAX_TRAVELED_M = 100.0
-# Próxima parada muy lejos → origen (HUD apunta al siguiente andén, 214610Z).
-ORIGIN_DEPARTURE_MIN_NEXT_STOP_M = 500.0
 # Cross-City origen (~24 km al primer stop); no confundir con mid-route (~5 km).
 ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M = 15000.0
 ORIGIN_DEPARTURE_MAX_SPEED_MPH = 25.0
@@ -290,6 +288,44 @@ def select_station_active_step(
     )
 
 
+def is_mid_route_next_stop(station_distance_m: Optional[float]) -> bool:
+    """Próxima parada en ruta (no origen ~24 km)."""
+    return (
+        station_distance_m is not None
+        and station_distance_m < ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M
+    )
+
+
+def is_platform_dwell_zone(
+    station_distance_m: Optional[float],
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    return (
+        station_distance_m is not None
+        and station_distance_m <= cfg.dwell_max_distance_m
+    )
+
+
+def is_departure_creep_context(
+    station_distance_m: Optional[float],
+    speed_mph: float,
+    *,
+    max_speed_mph: float = ORIGIN_DEPARTURE_MAX_SPEED_MPH,
+) -> bool:
+    """
+    Creep de salida (origen o andén), no aproximación mid-route.
+
+    Usado por FSM ``DEPARTING`` y ``station_departure_active``.
+    """
+    if speed_mph >= max_speed_mph:
+        return False
+    if is_platform_dwell_zone(station_distance_m):
+        return True
+    if is_mid_route_next_stop(station_distance_m):
+        return False
+    return True
+
+
 def is_origin_station_departure(
     *,
     speed_mph: float,
@@ -300,7 +336,7 @@ def is_origin_station_departure(
     """Salida en estación de origen: tracción lenta y next_stop a km."""
     if (
         station_distance_m is None
-        or station_distance_m < ORIGIN_DEPARTURE_MIN_NEXT_STOP_M
+        or station_distance_m < ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M
     ):
         return False
     if not _has_throttle(throttle_notch):
