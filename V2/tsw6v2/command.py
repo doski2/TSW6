@@ -277,6 +277,20 @@ def platform_door_brake_command(
     )
 
 
+def platform_bleed_brake_command(
+    *,
+    distance_m: Optional[float] = None,
+) -> BrakeCommand:
+    """B1 en andén: ventilar cilindros con palanca en neutro (193606Z)."""
+    return BrakeCommand(
+        kind="APPLY",
+        target_notch=SERVICE_MAX_BRAKE,
+        phase="B1",
+        reason="Andén: ventilar cilindros",
+        distance_m=distance_m,
+    )
+
+
 def release_brake_command(*, at_target: bool) -> Optional[BrakeCommand]:
     """Soltar freno a neutro cuando se alcanza el objetivo (Dastsc buildReleaseCommand)."""
     if not at_target:
@@ -688,6 +702,7 @@ __all__ = [
     "resolve_orphan_limit_brake_release",
     "plan_to_brake_command",
     "platform_door_brake_command",
+    "platform_bleed_brake_command",
     "release_brake_command",
     "release_service_over_brake_command",
     "release_target_mph",

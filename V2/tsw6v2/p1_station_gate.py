@@ -8,6 +8,7 @@ puertas y passthrough cuando ``loop`` pone ``station_brake_enabled=False``.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from tsw6v2.constants import STATION_FINAL_APPROACH_RELEASE_BLOCK_M
@@ -22,9 +23,9 @@ from tsw6v2.limit_state import LimitBrakeState
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     ORIGIN_DEPARTURE_MAX_SPEED_MPH,
-    ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M,
     is_departure_creep_context,
-    is_origin_station_departure,
+    is_service_platform_departure,
+    is_service_platform_parked_skip_release,
 )
 from tsw6v2.target import BrakeTargetResult
 
@@ -92,11 +93,16 @@ def station_departure_active(
 ) -> bool:
     """Arranque / salida andén: FSM DEPARTING u origen con tracción."""
     if station_fsm == "DEPARTING":
-        return is_departure_creep_context(station_dist_m, speed_mph)
-    return is_origin_station_departure(
+        return is_departure_creep_context(
+            station_dist_m,
+            speed_mph,
+            station_fsm=station_fsm,
+        )
+    throttle = throttle_notch_from_lever(combined_lever)
+    return is_service_platform_departure(
         speed_mph=speed_mph,
         station_distance_m=station_dist_m,
-        throttle_notch=throttle_notch_from_lever(combined_lever),
+        throttle_notch=throttle,
         max_speed_mph=DEPARTING_CLEAR_MPH,
     )
 
@@ -119,31 +125,151 @@ def station_departure_suppresses_limit_brake(
     return speed_mph <= DEFAULT_STATION_CFG.departure_speed_mph
 
 
-def at_origin_platform_parked(
-    *,
-    speed_mph: float,
-    station_dist_m: Optional[float],
+def departing_brake_needs_release(lever: int) -> bool:
+    """B1–B3 en palanca (RELEASE IPC en salida)."""
+    return is_brake_applied(lever)
+
+
+def _service_platform_residual_pressure(
+    brake_cyl_bar: Optional[float],
 ) -> bool:
-    """Origen Cross-City parado (~24 km al primer stop); no mid-route (~5 km)."""
     return (
-        station_dist_m is not None
-        and station_dist_m >= ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M
-        and speed_mph <= STATION_STOPPED_MPH
+        brake_cyl_bar is not None
+        and float(brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
     )
 
 
-def departing_brake_needs_release(
-    lever: int,
-    brake_cyl_bar: Optional[float],
+def _service_platform_parked_bleed_context(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
 ) -> bool:
-    """B1–B3 en palanca, o tracción con presión residual (182951Z tick 400)."""
-    if is_brake_applied(lever):
-        return True
-    if throttle_notch_from_lever(lever) <= 0:
+    """Andén servicio (origen o mid-route) parado, sin creep de salida."""
+    if station_departure_active(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
         return False
-    if brake_cyl_bar is None:
+    return is_service_platform_parked_skip_release(
+        speed_mph=speed_mph,
+        station_distance_m=station_dist_m,
+    )
+
+
+def _service_platform_skip_cartel_release(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    platform_bleed_episode: bool = False,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """
+    Andén servicio parado: bloquear RELEASE cartel heredado.
+
+    Neutro + presión alta → ``platform_bleed`` (no cartel). Episodio bleed activo
+    + freno en palanca → RELEASE dedicado (195804Z: sin ping-pong B1/neutro).
+    """
+    if not _service_platform_parked_bleed_context(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
         return False
-    return float(brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
+    if is_brake_applied(combined_lever):
+        return platform_bleed_episode
+    return True
+
+
+@dataclass
+class PlatformBleedEpisode:
+    """Un ciclo B1→neutro en andén; evita repetir APPLY mientras ventila (195804Z)."""
+
+    active: bool = False
+
+    def reset(self) -> None:
+        self.active = False
+
+    def note_bleed_apply(self) -> None:
+        self.active = True
+
+    def update(
+        self,
+        *,
+        p1_reason: str,
+        brake_cyl_bar: Optional[float],
+        speed_mph: float,
+        station_dist_m: Optional[float],
+        combined_lever: int,
+        station_fsm: Optional[str],
+    ) -> None:
+        if brake_cyl_bar is not None and float(brake_cyl_bar) <= PRESSURE_IDLE_MAX_BAR:
+            self.reset()
+            return
+        if not _service_platform_parked_bleed_context(
+            speed_mph=speed_mph,
+            station_dist_m=station_dist_m,
+            combined_lever=combined_lever,
+            station_fsm=station_fsm,
+        ):
+            self.reset()
+            return
+        if p1_reason == "platform_bleed":
+            self.note_bleed_apply()
+
+
+def platform_parked_residual_bleed_needed(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    brake_cyl_bar: Optional[float],
+    station_fsm: Optional[str] = None,
+    platform_bleed_episode: bool = False,
+) -> bool:
+    """
+    Andén servicio, palanca en neutro/P y cilindros cargados (193606Z).
+
+    TSW no ventila con mando en neutro: hay que meter B1 y luego RELEASE a neutro.
+    """
+    if not _service_platform_parked_bleed_context(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return False
+    if platform_bleed_episode:
+        return False
+    if not is_brake_released(combined_lever):
+        return False
+    return _service_platform_residual_pressure(brake_cyl_bar)
+
+
+def platform_parked_bleed_release_needed(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
+    platform_bleed_episode: bool = False,
+) -> bool:
+    """Tras APPLY bleed: RELEASE a neutro sin cartel (195804Z)."""
+    if not platform_bleed_episode:
+        return False
+    if not _service_platform_parked_bleed_context(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return False
+    return is_brake_applied(combined_lever)
 
 
 def departure_limit_target_or_coast(
@@ -194,6 +320,8 @@ def should_skip_p1_release(
     station_dist_m: Optional[float],
     combined_lever: int,
     station_fsm: Optional[str] = None,
+    brake_cyl_bar: Optional[float] = None,
+    platform_bleed_episode: bool = False,
 ) -> bool:
     """
     En salida: un solo camino RELEASE (``_attempt_departing_brake_release``).
@@ -207,9 +335,12 @@ def should_skip_p1_release(
         station_fsm=station_fsm,
     ):
         return True
-    if at_origin_platform_parked(
+    if _service_platform_skip_cartel_release(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        platform_bleed_episode=platform_bleed_episode,
+        station_fsm=station_fsm,
     ):
         return True
     # Marker pasado con marcha: permitir RELEASE cartel (passthrough / siguiente parada).

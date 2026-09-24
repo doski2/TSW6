@@ -54,6 +54,17 @@ class TestAgentLoop:
         )
         assert loop.target_notch is None
 
+    def test_release_decision_clears_stale_ipc_target_at_neutral(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=1, lever=NEUTRAL_NOTCH)
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_neutral()
+        with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
+            out = loop.step()
+        assert loop.target_notch is None
+        assert not out.ipc_sent
+        ipc.assert_not_called()
+
     def test_coast_throttle_requests_neutral_from_power_session_225330(self) -> None:
         """P2 + COAST_THROTTLE debe pedir neutro (no confundir con RELEASE ya suelto)."""
         loop = AgentLoop()

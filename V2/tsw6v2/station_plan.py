@@ -167,6 +167,7 @@ SHORT_TURNAROUND_ANCHOR_MAX_M = 200.0
 SHORT_TURNAROUND_MAX_TRAVELED_M = 100.0
 # Cross-City origen (~24 km al primer stop); no confundir con mid-route (~5 km).
 ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M = 15000.0
+ORIGIN_PLATFORM_PARKED_MAX_MPH = 1.5
 ORIGIN_DEPARTURE_MAX_SPEED_MPH = 25.0
 
 
@@ -311,18 +312,19 @@ def is_departure_creep_context(
     speed_mph: float,
     *,
     max_speed_mph: float = ORIGIN_DEPARTURE_MAX_SPEED_MPH,
+    station_fsm: Optional[str] = None,
 ) -> bool:
     """
-    Creep de salida (origen o andén), no aproximación mid-route.
+    Creep de salida con FSM ``DEPARTING``.
 
-    Usado por FSM ``DEPARTING`` y ``station_departure_active``.
+    Dwell y origen siempre; mid-route (~km al next) solo con ``station_fsm``.
     """
     if speed_mph >= max_speed_mph:
         return False
     if is_platform_dwell_zone(station_distance_m):
         return True
     if is_mid_route_next_stop(station_distance_m):
-        return False
+        return station_fsm == "DEPARTING"
     return True
 
 
@@ -342,6 +344,109 @@ def is_origin_station_departure(
     if not _has_throttle(throttle_notch):
         return False
     return speed_mph <= max_speed_mph
+
+
+def _is_mid_route_service_platform_distance(
+    station_distance_m: Optional[float],
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Andén con próxima parada a ~km (p. ej. Five Ways ~1.5 km), no origen ni dwell."""
+    return (
+        is_mid_route_next_stop(station_distance_m)
+        and not is_platform_dwell_zone(station_distance_m, cfg)
+    )
+
+
+def is_mid_route_service_platform_parked(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """
+    Parado en andén con próxima parada a ~km (p. ej. Five Ways 2R99 ~1.5 km).
+
+    No origen Lichfield (~24 km) ni aproximación final (``stn`` dentro de dwell).
+    """
+    if not _is_mid_route_service_platform_distance(station_distance_m, cfg):
+        return False
+    return speed_mph <= cfg.hold_max_speed_mph
+
+
+def is_mid_route_service_departure(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    throttle_notch: int,
+    max_speed_mph: float = ORIGIN_DEPARTURE_MAX_SPEED_MPH,
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Salida primer servicio / andén mid-route: tracción y ``stn`` al siguiente stop en km."""
+    if not _is_mid_route_service_platform_distance(station_distance_m, cfg):
+        return False
+    if not _has_throttle(throttle_notch):
+        return False
+    return speed_mph <= max_speed_mph
+
+
+def is_service_platform_departure(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    throttle_notch: int,
+    max_speed_mph: float = ORIGIN_DEPARTURE_MAX_SPEED_MPH,
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Salida en origen (~24 km) o andén mid-route (~km al next stop)."""
+    return (
+        is_origin_station_departure(
+            speed_mph=speed_mph,
+            station_distance_m=station_distance_m,
+            throttle_notch=throttle_notch,
+            max_speed_mph=max_speed_mph,
+        )
+        or is_mid_route_service_departure(
+            speed_mph=speed_mph,
+            station_distance_m=station_distance_m,
+            throttle_notch=throttle_notch,
+            max_speed_mph=max_speed_mph,
+            cfg=cfg,
+        )
+    )
+
+
+def is_origin_service_platform_parked(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    max_speed_mph: float = ORIGIN_PLATFORM_PARKED_MAX_MPH,
+) -> bool:
+    """Origen Cross-City parado (~24 km al primer stop); no mid-route (~5 km)."""
+    return (
+        station_distance_m is not None
+        and station_distance_m >= ORIGIN_PLATFORM_SKIP_RELEASE_MIN_M
+        and speed_mph <= max_speed_mph
+    )
+
+
+def is_service_platform_parked_skip_release(
+    *,
+    speed_mph: float,
+    station_distance_m: Optional[float],
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Parado en andén de servicio (origen o mid-route): bloquear RELEASE cartel heredado."""
+    return (
+        is_origin_service_platform_parked(
+            speed_mph=speed_mph,
+            station_distance_m=station_distance_m,
+        )
+        or is_mid_route_service_platform_parked(
+            speed_mph=speed_mph,
+            station_distance_m=station_distance_m,
+            cfg=cfg,
+        )
+    )
 
 
 def is_stale_platform_departure(
@@ -372,10 +477,11 @@ def should_suppress_station_braking_for_departure(
     station_anchor_m: Optional[float] = None,
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
 ) -> bool:
-    if is_origin_station_departure(
+    if is_service_platform_departure(
         speed_mph=speed_mph,
         station_distance_m=station_distance_m,
         throttle_notch=throttle_notch,
+        cfg=cfg,
     ):
         return True
     if is_stale_platform_departure(

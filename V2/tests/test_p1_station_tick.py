@@ -301,8 +301,8 @@ def test_departing_release_from_decision_session_223013() -> None:
     assert decision.command.kind == "RELEASE"
 
 
-def test_departing_release_with_throttle_and_residual_air_session_182951() -> None:
-    """DEPARTING+P1: soltar si queda presión con tracción (182951Z tick 400)."""
+def test_departing_no_release_ipc_with_throttle_and_residual_air_session_182951() -> None:
+    """DEPARTING+tracción: aire residual no dispara RELEASE si palanca ya en P (193606Z)."""
     snap = ProbeSnapshot(
         speed_ms=0.0,
         speed_limit_ms=10.0 / 2.237,
@@ -321,9 +321,88 @@ def test_departing_release_with_throttle_and_residual_air_session_182951() -> No
         station_brake_enabled=True,
         station_fsm="DEPARTING",
     )
-    assert decision.reason == "release"
+    assert decision.reason != "release"
+    assert decision.command is None or decision.command.kind != "RELEASE"
+
+
+def test_platform_bleed_no_reapply_while_episode_active_session_195804() -> None:
+    """Tras B1 bleed: no repetir APPLY en neutro con episodio activo (195804Z)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 0.0,
+            "lever_notch": 4,
+            "brake_cyl_bar": 5.16,
+            "dist_limit_cm": 12174.3,
+            "next_limit_ms": 6.7056,
+            "speed_limit_ms": 4.4704,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=1523.1,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        platform_bleed_episode=True,
+    )
+    assert decision.reason != "platform_bleed"
+    assert decision.command is None or decision.command.kind != "APPLY"
+
+
+def test_platform_bleed_release_after_apply_session_195804() -> None:
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 0.0,
+            "lever_notch": 3,
+            "brake_cyl_bar": 5.16,
+            "dist_limit_cm": 12174.3,
+            "next_limit_ms": 6.7056,
+            "speed_limit_ms": 4.4704,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=1523.1,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        platform_bleed_episode=True,
+    )
+    assert decision.reason == "platform_bleed_release"
     assert decision.command is not None
     assert decision.command.kind == "RELEASE"
+
+
+def test_platform_bleed_apply_neutral_high_pressure_session_193606() -> None:
+    """Five Ways: neutro + 5 bar — B1 para ventilar antes de arrancar."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 23528,
+            "speed_ms": 0.0,
+            "lever_notch": 4,
+            "brake_cyl_bar": 5.16,
+            "train_brake": 0.0,
+            "dist_limit_cm": 12174.3,
+            "next_limit_ms": 6.7056,
+            "speed_limit_ms": 4.4704,
+            "gradient_pct": 0.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=1523.1,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.reason == "platform_bleed"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
 
 
 def test_no_release_while_departing_with_throttle_at_neutral_session_214610() -> None:
@@ -401,6 +480,33 @@ def test_no_limit_release_while_station_braking():
         station_brake_enabled=True,
     )
     assert decision.target_kind == "STATION"
+    assert decision.reason != "release"
+    assert decision.command is None or decision.command.kind != "RELEASE"
+
+
+def test_p1_tick_mid_route_service_parked_no_limit_release_session_191546() -> None:
+    """Five Ways 2R99: neutro en andén (~1.5 km al next) — sin RELEASE cartel repetido."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 3436,
+            "speed_ms": 0.0,
+            "lever_notch": 4,
+            "brake_cyl_bar": 2.5,
+            "train_brake": 0.0,
+            "dist_limit_cm": 12174.3,
+            "next_limit_ms": 6.7056,
+            "speed_limit_ms": 4.4704,
+            "gradient_pct": 0.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=1523.1,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
     assert decision.reason != "release"
     assert decision.command is None or decision.command.kind != "RELEASE"
 

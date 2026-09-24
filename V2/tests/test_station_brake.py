@@ -55,6 +55,14 @@ def test_suppress_station_brake_origin_departure_session_214610() -> None:
     )
 
 
+def test_suppress_station_brake_mid_route_departure_session_191546() -> None:
+    assert should_suppress_station_braking_for_departure(
+        speed_mph=8.0,
+        station_distance_m=1523.1,
+        throttle_notch=2,
+    )
+
+
 def test_station_brake_near_platform():
     target = evaluate_station_brake(
         speed_mph=25.0,

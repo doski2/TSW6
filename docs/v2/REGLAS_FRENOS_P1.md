@@ -327,9 +327,9 @@ emergencia (`p1_emergency`).
 
 | Capa | Módulo | Regla |
 | --- | --- | --- |
-| Horizonte | `signal_apply_horizon_m` | **91 m** (~100 yd) en marcha ≤30 mph; **150 m** si spd &gt;30 mph (155148Z); lejos → WATCH |
+| Horizonte | `signal_apply_horizon_m` | **120 m** si 20 &lt; spd ≤30 mph (`200405Z`/`202017Z`); **91 m** si spd ≤20 mph; **150 m** si spd &gt;30 mph (155148Z); lejos → WATCH |
 | Terminal | `SignalBrakeConfig` | **`SIGNAL_TERMINAL_APPROACH_M` = 46 m (~50 yd)** — fase final antes del poste |
-| Plan | `signal_plan.plan_brake_for_signal` | Perfil v→0 (reutiliza `plan_station_service_brake`, sin holgura horario) |
+| Plan | `signal_plan.plan_brake_for_signal` | Perfil v→0 (reutiliza `plan_station_service_brake`, sin holgura horario). Dentro del horizonte: **`_signal_horizon_apply_plan`** fuerza **B1** mientras `B3.dist_start &gt; 0` (no salto a B3); escalón normal cuando B3 ya está due; terminal (&lt;46 m) o spd &gt;30 → `build_immediate_stop_plan` |
 | Eval | `signal_brake.evaluate_signal_brake` | `target_from_stop_plan(..., max_apply_distance_m=HORIZON)` — WATCH lejos, APPLY dentro |
 | Común | `service_brake` | `defer_apply` en `target_from_stop_plan`: fuera del horizonte nunca APPLY (evita parada @ 217 m) |
 | Pick | `pick_p1_brake_target` | Rojo **gana** al cartel (incl. HOLD_DH diferido); vs andén ver geometría plataforma |
@@ -347,7 +347,9 @@ Constantes señal (`signal_plan.py`):
 
 | Constante | Valor | Notas |
 | --- | --- | --- |
-| `SIGNAL_BRAKE_HORIZON_M` | 91 m | ~100 yd — tope APPLY / parada total |
+| `SIGNAL_BRAKE_HORIZON_M` | 91 m | ~100 yd — tope APPLY / parada total (spd ≤20 mph) |
+| `SIGNAL_EARLY_BRAKE_HORIZON_M` | 120 m | Horizonte APPLY 20–30 mph — inicio B1 antes del poste |
+| `SIGNAL_EARLY_BRAKE_MIN_SPEED_MPH` | 20.0 | Umbral inferior del horizonte extendido |
 | `SIGNAL_TERMINAL_APPROACH_M` | 46 m | ~50 yd — terminal approach |
 | `SIGNAL_RELEASE_BLOCK_MIN_DIST_M` | 15 m | Por debajo: creep hasta el poste |
 | `SIGNAL_RELEASE_BLOCK_MAX_SPEED_MPH` | 8 | Umbral “crawl” para bloqueo RELEASE |
@@ -436,24 +438,26 @@ Fuente única **«¿estamos en salida?»**: `station_departure_active()` (`p1_st
 - `is_origin_station_departure` — tracción + `next_stop ≥ 500 m` + `spd ≤ 25 mph` (sesión `214610Z` / `223013Z`).
 
 ```text
-station_departure_active()                    (hasta 25 mph — RELEASE, skip RELEASE, FSM)
+station_departure_active()                    (hasta 25 mph — skip RELEASE cartel, creep, FSM)
         │
         ├─► station_departure_suppresses_limit_brake  (solo creep ≤ departure_speed_mph ~11)
         │         └─► departure_limit_target_or_coast  (HOLD_DH → coast watch hasta ~11 mph)
-        ├─► departing_brake_needs_release       (B1..B3 o P+aire residual > 1.5 bar)
-        ├─► _attempt_departing_brake_release    (único RELEASE en salida)
+        ├─► _attempt_platform_parked_bleed        (neutro + cilindros > 1.5 bar → B1, 1×/episodio)
+        ├─► _attempt_platform_parked_bleed_release  (episodio + B1..B3 → neutro, sin cartel)
+        ├─► _attempt_departing_brake_release    (salida + B1..B3 en palanca → RELEASE)
         ├─► should_skip_p1_release              (bloquea RELEASE heredado cartel/señal)
-        │         └─► at_origin_platform_parked  (origen ~24 km, spd ≤ 1.5 mph)
+        │         └─► _service_platform_skip_cartel_release  (andén ventilado, sin IPC pendiente)
         └─► FSM entra DEPARTING                 (gate.update, misma heurística)
 
-station_dwell_brake_command()  →  solo STOPPED → B1 (puertas TSW)
+station_dwell_brake_command()  →  solo STOPPED → B1 (puertas TSW; distinto de platform_bleed)
 ```
 
 | Acción | Dueño | Condición |
 | --- | --- | --- |
 | B1 en parada (puertas) | `station_dwell_brake_command` | `fsm=STOPPED` |
-| RELEASE al arrancar | `decision._attempt_departing_brake_release` | `station_departure_active` + `departing_brake_needs_release`, `spd < 25` |
-| No RELEASE duplicado | `should_skip_p1_release` | Salida activa **o** origen parado (`stn ≥ 15 km`, `spd ≤ 1.5`) |
+| B1 ventilar cilindros | `decision._attempt_platform_parked_bleed` | Andén servicio + neutro + `brake_cyl > 1.5 bar` |
+| RELEASE al arrancar | `decision._attempt_departing_brake_release` | `station_departure_active` + freno en palanca, `spd < 25` |
+| No RELEASE duplicado | `should_skip_p1_release` | Salida activa **o** andén parado con aire ya bajo |
 | No HOLD_DH en creep | `departure_limit_target_or_coast` | Salida activa **y** `spd ≤ ~11` — sustituye HOLD_DH por coast watch extendido; sin `no_plan` @ techo zona (`182951Z`) |
 | No plan STATION / emergencia | Gate + `should_suppress_station_braking_for_departure` | Tracción en salida (origen o andén stale) |
 | Señal roja de salida | `should_suppress_signal_braking_for_departure` | Rojo @ ~2 m, tracción, esperar verde; RELEASE vía señal heredada al pasar a verde |
@@ -471,7 +475,7 @@ Sesiones de referencia:
 | `223013Z` | Oscilación trace `downhill_hold` vs RELEASE | RELEASE unificado en `decision`; dwell solo B1 parada |
 | `213920Z` | Overspeed 10/15 tras salir Lichfield con `DEPARTING` hasta 25 mph | Cartel solo suprimido en creep; `> ~11 mph` → HOLD_DH en zona |
 | `213920Z` | Andén 3: STATION con rojo salida @ ~18 m (`stn < sig`) | `exit_signal_close_behind_platform` → **SIGNAL** en pick y `signal_in_play` |
-| `182951Z` | `no_plan` @ 10.2 mph en zona 10; overspeed ~11.3; RELEASE huérfanos origen | `departure_limit_target_or_coast`; `should_skip_p1_release` + `at_origin_platform_parked`; `departing_brake_needs_release` |
+| `182951Z` | `no_plan` @ 10.2 mph en zona 10; overspeed ~11.3; RELEASE huérfanos origen | `departure_limit_target_or_coast`; `should_skip_p1_release` + `is_service_platform_parked_skip_release`; `departing_brake_needs_release` |
 
 Capas de supresión (complementarias — cada una con dueño distinto):
 
@@ -721,6 +725,10 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-09-22 | Sesiones `200405Z`/`202017Z`: rojo @ ~90 m @ 22 mph saltaba a B3 — horizonte 120 m + `_signal_horizon_apply_plan` (B1 hasta ventana B3); `_air_apply_block` no bloquea si palanca == target |
+| 2026-09-21 | Sesión `195804Z`: ping-pong B1/neutro — `PlatformBleedEpisode` + `platform_bleed_release` dedicado; cartel bloqueado en episodio |
+| 2026-09-21 | Sesión `193606Z`: andén mid-route neutro + cilindros cargados → `platform_parked_residual_bleed_needed` / APPLY B1; skip RELEASE solo si aire bajo; sin RELEASE fantasma con tracción |
+| 2026-09-21 | Sesión `191546Z`: salida primer servicio mid-route (~1.5 km al next stop): helpers `is_service_platform_*` en `station_plan`; `should_suppress_station_braking_for_departure` incluye mid-route; FSM DEPARTING creep tras marker; limpiar target IPC tras RELEASE en neutro |
 | 2026-09-15 | Sesión `182951Z`: coast watch extendido en creep (`departure_limit_target_or_coast`); RELEASE unificado origen (`should_skip_p1_release`, `departing_brake_needs_release`); HTML línea posted `eff` |
 | 2026-09-15 | Sesión `213920Z`: cartel en salida solo suprimido en creep (`station_departure_suppresses_limit_brake`); rojo salida cercano tras marker → `exit_signal_close_behind_platform` / **SIGNAL**; doc learner (alcance + `analyze_learner_jsonl.py`) |
 | 2026-09-14 | Sesión `225330Z`: `COAST_THROTTLE` IPC con tracción (`loop._apply_brake_command` ≠ RELEASE); planning acepta siguiente parada tras marker (`PLATFORM_MARKER_PASSED_M`); helpers `_traction_active` / `_coast_throttle_command` |

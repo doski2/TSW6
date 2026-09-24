@@ -277,6 +277,73 @@ def test_skip_p1_release_final_approach_session_213633() -> None:
     )
 
 
+def test_mid_route_service_platform_session_191546() -> None:
+    """Five Ways 2R99: parado ~1.5 km al next stop; salida con tracción tras cerrar puertas."""
+    stn = 1523.1
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=NEUTRAL_NOTCH,
+        station_fsm=None,
+        brake_cyl_bar=1.0,
+    )
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=NEUTRAL_NOTCH,
+        station_fsm=None,
+        brake_cyl_bar=5.16,
+    )
+    assert not should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=2,
+        station_fsm=None,
+        brake_cyl_bar=5.16,
+    )
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=3,
+        station_fsm=None,
+        brake_cyl_bar=5.16,
+        platform_bleed_episode=True,
+    )
+    assert not station_departure_active(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=NEUTRAL_NOTCH,
+        station_fsm=None,
+    )
+    assert station_departure_active(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=5,
+        station_fsm=None,
+    )
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=stn,
+        combined_lever=5,
+        station_fsm=None,
+    )
+    assert station_departure_suppresses_limit_brake(
+        speed_mph=8.0,
+        station_dist_m=stn,
+        combined_lever=5,
+        station_fsm=None,
+    )
+
+
+def test_departing_fsm_creep_after_marker_mid_route() -> None:
+    assert station_departure_active(
+        speed_mph=10.0,
+        station_dist_m=1523.0,
+        combined_lever=5,
+        station_fsm="DEPARTING",
+    )
+
+
 def test_skip_p1_release_during_departure() -> None:
     """Salida: sin RELEASE heredado cartel/señal; solo ``_attempt_departing_brake_release``."""
     assert should_skip_p1_release(
@@ -291,11 +358,12 @@ def test_skip_p1_release_during_departure() -> None:
         combined_lever=6,
         station_fsm="DEPARTING",
     )
-    assert should_skip_p1_release(
+    assert not should_skip_p1_release(
         speed_mph=0.0,
         station_dist_m=24182.5,
         combined_lever=3,
         station_fsm=None,
+        brake_cyl_bar=5.0,
     )
 
 

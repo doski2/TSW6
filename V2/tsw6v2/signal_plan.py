@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional
 
 from tsw6v2.constants import STATION_APPROACH_PRIORITY_M
@@ -11,7 +11,7 @@ from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 if TYPE_CHECKING:
     from tsw6v2.target import BrakeTargetResult
 from tsw6v2.limit_station_cluster import exit_signal_clustered_with_platform_stop
-from tsw6v2.plan import BrakePlan, PredictDecelFn
+from tsw6v2.plan import BrakePlan, BrakePlanStep, PredictDecelFn, prefer_weakest_step
 from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     StationBrakeConfig,
@@ -27,6 +27,9 @@ SIGNAL_DEPARTURE_MAX_DIST_M = 25.0
 SIGNAL_WATCH_LIMIT_DEFER_M = 150.0
 # APPLY / parada total solo dentro de ~100 yd (152037Z: no parar a 217 m).
 SIGNAL_BRAKE_HORIZON_M = 91.0
+# 20–30 mph: iniciar B1 antes del horizonte corto (200405Z/202017Z @ ~22 mph).
+SIGNAL_EARLY_BRAKE_HORIZON_M = 120.0
+SIGNAL_EARLY_BRAKE_MIN_SPEED_MPH = 20.0
 SIGNAL_IMMEDIATE_MAX_SPEED_MPH = 30.0
 # Fase final ~50 yd antes del poste (terminal approach).
 SIGNAL_TERMINAL_APPROACH_M = 46.0
@@ -131,6 +134,8 @@ def signal_apply_horizon_m(speed_mph: float) -> float:
     """
     if speed_mph > SIGNAL_IMMEDIATE_MAX_SPEED_MPH:
         return SIGNAL_WATCH_LIMIT_DEFER_M
+    if speed_mph > SIGNAL_EARLY_BRAKE_MIN_SPEED_MPH:
+        return SIGNAL_EARLY_BRAKE_HORIZON_M
     return SIGNAL_BRAKE_HORIZON_M
 
 
@@ -203,13 +208,15 @@ def should_suppress_signal_braking_for_departure(
 
 
 def _plan_to_signal(plan: BrakePlan) -> BrakePlan:
-    return BrakePlan(
-        target_kind="SIGNAL",
-        distance_to_target_m=plan.distance_to_target_m,
-        target_speed_mph=0.0,
-        reaction_margin_m=plan.reaction_margin_m,
-        steps=plan.steps,
-        active_step=plan.active_step,
+    return replace(plan, target_kind="SIGNAL", target_speed_mph=0.0)
+
+
+def _force_apply_step(step: BrakePlanStep) -> BrakePlanStep:
+    return replace(
+        step,
+        dist_start=0.0,
+        meters_until_action_m=0.0,
+        apply_now=True,
     )
 
 
@@ -217,6 +224,35 @@ def _immediate_signal_plan(signal_distance_m: float, speed_mph: float) -> BrakeP
     return _plan_to_signal(
         build_immediate_stop_plan(signal_distance_m, max(speed_mph, 0.1))
     )
+
+
+def _signal_horizon_apply_plan(plan: BrakePlan) -> BrakePlan:
+    """
+    Dentro del horizonte: B1 primero si B3 aún no está due; luego escalón normal.
+
+    Sesiones 200405Z/202017Z: ``select_station_active_step`` saltaba a B3 con B3 fuera
+    de ventana (``dist_start > 0``). Solo capamos hasta que B3.dist_start <= 0.
+    """
+    step = plan.active_step
+    if step is None:
+        return plan
+    b3 = next((s for s in plan.steps if s.notch == "B3"), None)
+    if b3 is not None and b3.dist_start <= 0:
+        return plan
+    due = [s for s in plan.steps if s.dist_start <= 0]
+    pick = prefer_weakest_step(due if due else plan.steps)
+    return replace(plan, active_step=_force_apply_step(pick))
+
+
+def _needs_immediate_signal_stop(
+    *,
+    signal_distance_m: float,
+    speed_mph: float,
+) -> bool:
+    """Parada total inmediata: terminal o velocidad alta en horizonte."""
+    if signal_distance_m <= SIGNAL_TERMINAL_APPROACH_M:
+        return True
+    return speed_mph > SIGNAL_IMMEDIATE_MAX_SPEED_MPH
 
 
 def plan_brake_for_signal(
@@ -252,25 +288,20 @@ def plan_brake_for_signal(
             return _immediate_signal_plan(signal_distance_m, speed_mph)
         return None
 
+    station_cfg_signal = replace(
+        station_cfg,
+        final_stop_max_distance_m=signal_cfg.final_stop_max_distance_m,
+        terminal_approach_m=signal_cfg.terminal_approach_m,
+        station_reaction_time_s=signal_cfg.reaction_time_s,
+    )
     final_stop = plan_station_final_stop(
         speed_mph=speed_mph,
         station_distance_m=signal_distance_m,
         throttle_notch=throttle_notch,
-        cfg=station_cfg,
+        cfg=station_cfg_signal,
     )
     if final_stop is not None:
         return _plan_to_signal(final_stop)
-
-    station_cfg_signal = StationBrakeConfig(
-        final_stop_max_distance_m=signal_cfg.final_stop_max_distance_m,
-        platform_tail_m=station_cfg.platform_tail_m,
-        final_stop_speed_mph=station_cfg.final_stop_speed_mph,
-        hold_max_speed_mph=station_cfg.hold_max_speed_mph,
-        departure_speed_mph=station_cfg.departure_speed_mph,
-        dwell_max_distance_m=station_cfg.dwell_max_distance_m,
-        terminal_approach_m=signal_cfg.terminal_approach_m,
-        station_reaction_time_s=signal_cfg.reaction_time_s,
-    )
     plan = plan_station_service_brake(
         speed_mph=speed_mph,
         station_distance_m=signal_distance_m,
@@ -283,16 +314,15 @@ def plan_brake_for_signal(
         brake_fill_s=brake_fill_s,
         min_speed_ms=0.35,
     )
-    if (
-        speed_mph > 0.5
-        and signal_in_brake_horizon(signal_distance_m, speed_mph)
-        and (
-            plan is None
-            or plan.active_step is None
-            or not plan.active_step.apply_now
-        )
-    ):
-        return _immediate_signal_plan(signal_distance_m, speed_mph)
+    if signal_in_brake_horizon(signal_distance_m, speed_mph):
+        if _needs_immediate_signal_stop(
+            signal_distance_m=signal_distance_m,
+            speed_mph=speed_mph,
+        ):
+            if plan is None or plan.active_step is None or not plan.active_step.apply_now:
+                return _immediate_signal_plan(signal_distance_m, speed_mph)
+        elif plan is not None:
+            plan = _signal_horizon_apply_plan(plan)
     if plan is None:
         return None
     return _plan_to_signal(plan)

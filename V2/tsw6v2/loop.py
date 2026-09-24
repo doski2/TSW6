@@ -23,6 +23,7 @@ from tsw6v2.constants import (
 from tsw6v2.decision import evaluate_p1_tick
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
+    PlatformBleedEpisode,
     StationDwellGate,
     station_dwell_brake_command,
 )
@@ -240,6 +241,11 @@ class AgentLoop:
     _station_gate: StationDwellGate = field(default_factory=StationDwellGate, init=False, repr=False)
     _last_lever: Optional[int] = field(default=None, init=False, repr=False)
     _manual_override_until: float = field(default=0.0, init=False, repr=False)
+    _platform_bleed: PlatformBleedEpisode = field(
+        default_factory=PlatformBleedEpisode,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.learner is not None:
@@ -490,6 +496,7 @@ class AgentLoop:
                 station_brake_enabled=station_p1_enabled,
                 signal_brake_enabled=self.signal_brake_enabled,
                 station_fsm=station_fsm or None,
+                platform_bleed_episode=self._platform_bleed.active,
             )
             limit_dist_m = decision.limit_dist_m
             limit_mph = decision.limit_mph
@@ -518,6 +525,8 @@ class AgentLoop:
             elif not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(decision.command, lever=lever)
+                if p1_cmd == "RELEASE":
+                    self._maybe_release_driver_control(lever)
             else:
                 self._maybe_release_driver_control(lever)
             p1_layer = classify_layer(
@@ -526,6 +535,15 @@ class AgentLoop:
                 apply_now=p1_apply_now,
                 dist_start_m=p1_dist_start_m,
             )
+            if snap is not None:
+                self._platform_bleed.update(
+                    p1_reason=p1_reason,
+                    brake_cyl_bar=snap.brake_cyl_bar,
+                    speed_mph=mph,
+                    station_dist_m=station_dist_m,
+                    combined_lever=int(lever) if lever is not None else self.neutral_notch,
+                    station_fsm=station_fsm or None,
+                )
 
         ipc_result: Optional[dict[str, Any]] = None
         ipc_sent = False

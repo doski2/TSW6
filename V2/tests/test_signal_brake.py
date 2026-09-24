@@ -363,6 +363,47 @@ def test_signal_apply_within_horizon_session_152037():
     assert target.apply_now is True
 
 
+def test_signal_horizon_starts_b1_not_b3_session_202017():
+    """@22 mph y ~90 m: B1 gradual, no salto a B3 (202017Z / 200405Z)."""
+    plan = plan_brake_for_signal(
+        speed_mph=22.0,
+        signal_distance_m=90.0,
+        gradient_pct=0.0,
+    )
+    assert plan is not None
+    assert plan.target_kind == "SIGNAL"
+    assert plan.active_step is not None
+    assert plan.active_step.apply_now is True
+    assert plan.active_step.notch == "B1"
+    assert plan.active_step.handle_notch == 3
+
+    target = evaluate_signal_brake(
+        speed_mph=22.0,
+        signal_distance_m=90.0,
+        gradient_pct=0.0,
+        throttle_notch=0,
+    )
+    assert target is not None
+    assert target.target_kind == "SIGNAL"
+    assert target.apply_now is True
+    assert target.phase == "B1"
+    assert target.handle_notch == 3
+
+
+def test_signal_early_horizon_110m_session_202017():
+    """@22 mph y 110 m: APPLY B1 dentro de horizonte 120 m."""
+    target = evaluate_signal_brake(
+        speed_mph=22.0,
+        signal_distance_m=110.0,
+        gradient_pct=0.0,
+        throttle_notch=0,
+    )
+    assert target is not None
+    assert target.target_kind == "SIGNAL"
+    assert target.apply_now is True
+    assert target.phase == "B1"
+
+
 def test_signal_immediate_stop_crawl_near_post_session_102222():
     """@70 m y ~1 mph: APPLY ahora (dentro de horizonte ~100 yd)."""
     plan = plan_brake_for_signal(

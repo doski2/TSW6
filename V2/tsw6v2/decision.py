@@ -10,6 +10,7 @@ from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
     is_brake_applied,
+    platform_bleed_brake_command,
     release_brake_command,
     release_service_over_brake_command,
     resolve_orphan_limit_brake_release,
@@ -21,6 +22,8 @@ from tsw6v2.p1_station_gate import (
     PLATFORM_AT_STOP_M,
     departing_brake_needs_release,
     departure_limit_target_or_coast,
+    platform_parked_bleed_release_needed,
+    platform_parked_residual_bleed_needed,
     should_skip_p1_release,
     station_departure_active,
 )
@@ -243,6 +246,8 @@ def _air_apply_block(
 ) -> Optional[tuple[str, str]]:
     if learner is None or cmd.kind != "APPLY":
         return None
+    if cmd.target_notch is not None and int(cmd.target_notch) == int(lever):
+        return None
     if learner.inhibit_reapply(cyl):
         return ("air_recharge", "Esperar recarga aire tras soltar")
     if not learner.air_ready(cyl, lever=lever):
@@ -260,6 +265,73 @@ def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
     return "plan"
 
 
+def _attempt_platform_parked_bleed(
+    ctx: _TickCtx,
+    prep: _TickPrep,
+    *,
+    station_fsm: Optional[str],
+    station_dist_m: Optional[float],
+    platform_bleed_episode: bool,
+) -> Optional[LimitBrakeDecision]:
+    """B1 en andén si neutro con cilindros cargados — habilita RELEASE IPC (193606Z)."""
+    if not platform_parked_residual_bleed_needed(
+        speed_mph=prep.ctx.speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=prep.lever,
+        brake_cyl_bar=prep.ctx.cyl,
+        station_fsm=station_fsm,
+        platform_bleed_episode=platform_bleed_episode,
+    ):
+        return None
+    cmd = platform_bleed_brake_command(distance_m=station_dist_m)
+    return ctx.decide(
+        cmd,
+        "platform_bleed",
+        phase=cmd.phase or "B1",
+        detail=cmd.reason,
+        handle_notch=cmd.target_notch,
+        target_kind="STATION",
+    )
+
+
+def _decide_station_neutral_release(
+    ctx: _TickCtx,
+    rel: BrakeCommand,
+    reason: str,
+) -> LimitBrakeDecision:
+    return ctx.decide(
+        rel,
+        reason,
+        phase=rel.phase or "NEU",
+        detail=rel.reason,
+        handle_notch=rel.target_notch,
+        target_kind="STATION",
+    )
+
+
+def _attempt_platform_parked_bleed_release(
+    ctx: _TickCtx,
+    prep: _TickPrep,
+    *,
+    station_fsm: Optional[str],
+    station_dist_m: Optional[float],
+    platform_bleed_episode: bool,
+) -> Optional[LimitBrakeDecision]:
+    """RELEASE a neutro tras B1 bleed — sin cartel (195804Z)."""
+    if not platform_parked_bleed_release_needed(
+        speed_mph=prep.ctx.speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=prep.lever,
+        station_fsm=station_fsm,
+        platform_bleed_episode=platform_bleed_episode,
+    ):
+        return None
+    rel = release_brake_command(at_target=True)
+    if rel is None:
+        return None
+    return _decide_station_neutral_release(ctx, rel, "platform_bleed_release")
+
+
 def _attempt_departing_brake_release(
     ctx: _TickCtx,
     prep: _TickPrep,
@@ -268,7 +340,7 @@ def _attempt_departing_brake_release(
     station_dist_m: Optional[float] = None,
 ) -> Optional[LimitBrakeDecision]:
     """Único camino RELEASE en salida lenta (FSM DEPARTING u origen, 223013Z)."""
-    if not departing_brake_needs_release(prep.lever, prep.ctx.cyl):
+    if not departing_brake_needs_release(prep.lever):
         return None
     if not station_departure_active(
         speed_mph=prep.ctx.speed_mph,
@@ -282,14 +354,7 @@ def _attempt_departing_brake_release(
     rel = release_brake_command(at_target=True)
     if rel is None:
         return None
-    return ctx.decide(
-        rel,
-        "release",
-        phase=rel.phase or "NEU",
-        detail=rel.reason,
-        handle_notch=rel.target_notch,
-        target_kind="STATION",
-    )
+    return _decide_station_neutral_release(ctx, rel, "release")
 
 
 def _attempt_signal_inherited_release(
@@ -680,6 +745,7 @@ def evaluate_p1_tick(
     station_brake_enabled: bool = True,
     signal_brake_enabled: bool = True,
     station_fsm: Optional[str] = None,
+    platform_bleed_episode: bool = False,
 ) -> LimitBrakeDecision:
     """Cartel + andén + señal → un ``BrakeCommand`` o sin mando."""
     if not limit_brake_enabled and not station_brake_enabled and not signal_brake_enabled:
@@ -810,6 +876,26 @@ def evaluate_p1_tick(
             speed_mph=ctx.speed_mph,
         )
 
+    platform_bleed = _attempt_platform_parked_bleed(
+        ctx,
+        prep,
+        station_fsm=station_fsm,
+        station_dist_m=station_dist,
+        platform_bleed_episode=platform_bleed_episode,
+    )
+    if platform_bleed is not None:
+        return platform_bleed
+
+    platform_bleed_release = _attempt_platform_parked_bleed_release(
+        ctx,
+        prep,
+        station_fsm=station_fsm,
+        station_dist_m=station_dist,
+        platform_bleed_episode=platform_bleed_episode,
+    )
+    if platform_bleed_release is not None:
+        return platform_bleed_release
+
     departing_release = _attempt_departing_brake_release(
         ctx,
         prep,
@@ -824,6 +910,8 @@ def evaluate_p1_tick(
         station_dist_m=station_dist,
         combined_lever=prep.lever,
         station_fsm=station_fsm,
+        brake_cyl_bar=prep.ctx.cyl,
+        platform_bleed_episode=platform_bleed_episode,
     )
     if not skip_release:
         released = _attempt_p1_releases(
