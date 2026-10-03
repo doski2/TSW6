@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand
-from tsw6v2.constants import NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
+from tsw6v2.constants import B1_NOTCH, NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop, AgentSnapshot
 from tsw6v2.planning_feed import PlanningSnapshot
@@ -259,6 +259,46 @@ class TestAgentLoop:
                 )
                 loop.step()
         assert loop.target_notch == NEUTRAL_NOTCH
+
+    def test_mc_apply_uses_input_fraction_not_notch_ipc(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=4,
+            train_brake=0.72,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop._apply_brake_command(
+            BrakeCommand(kind="APPLY", target_notch=B1_NOTCH, phase="B1"),
+            lever=4,
+            apply_actuator=True,
+        )
+        assert loop.target_notch is None
+        assert loop.target_input_value == 0.85
+        with patch("tsw6v2.loop.dispatch_to_input_fraction", return_value={"ok": True}) as ipc_frac:
+            with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc_notch:
+                loop.step()
+        ipc_frac.assert_called_once()
+        ipc_notch.assert_not_called()
+        assert ipc_frac.call_args[0][0] == 0.85
+
+    def test_mc_skips_driver_takeover_on_lever_mismatch(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=4,
+            train_brake=0.5,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop.request_input_fraction(0.85)
+        loop._last_lever = 4
+        loop._check_driver_takeover(5)
+        assert loop.target_input_value == 0.85
 
     def test_auto_profile_skipped_when_explicit(self, tmp_path: Path) -> None:
         profiles = tmp_path / "profiles"

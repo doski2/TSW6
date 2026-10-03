@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from tsw6v2.bridge.getdata import default_getdata_path
-from tsw6v2.bridge.ipc_bus import bridge_dir, purge_lua_commands
+from tsw6v2.bridge.ipc_bus import (
+    bridge_dir,
+    dispatch_ipc_master_controller,
+    purge_lua_commands,
+)
 from tsw6v2.constants import IPC_ACK_TIMEOUT_S, PROBE_STALE_S
-from tsw6v2.bridge.ipc_bus import dispatch_ipc_master_controller
 from tsw6v2.diagnostic import _fmt_ipc_result
 from tsw6v2.probe import is_probe_fresh, print_getdata_summary, read_snapshot
 

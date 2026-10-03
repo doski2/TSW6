@@ -10,6 +10,7 @@ from typing import Any, Optional
 import time
 
 from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready
+from tsw6v2.brake_air_profile import BrakeAirProfile
 from tsw6v2.learn_quality import DecelObserveWindow, LearnEvent, decel_outlier_rejected
 from tsw6v2.learner_v1 import MIN_SAMPLES, V1LearnerData, speed_band_index
 
@@ -125,6 +126,14 @@ class LearnerProfile:
         ev = self._air.observe(lever, brake_cyl_bar, now=now)
         if ev is not None:
             self._set_learn_event(ev.kind, ev.accepted, ev.reason)
+
+    def apply_vehicle_brake_profile(
+        self,
+        package: dict[str, Any] | None,
+    ) -> BrakeAirProfile:
+        profile = BrakeAirProfile.from_vehicle_package(package)
+        self._air.set_profile(profile)
+        return profile
 
     def air_ready(
         self,

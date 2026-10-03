@@ -28,12 +28,20 @@ from tsw6v2.p1_station_gate import (
     station_dwell_brake_command,
 )
 from tsw6v2.planning_poller import StationPlanning
-from tsw6v2.ipc import dispatch_step_toward_notch, probe_lever
+from tsw6v2.ipc import dispatch_step_toward_notch, dispatch_to_input_fraction, probe_lever
 from tsw6v2.learner import LearnerProfile
+from tsw6v2.vehicle_package import (
+    apply_vehicle_brake_actuator,
+    combined_notch_to_ipc_value,
+    resolve_vehicle_package,
+    uses_mc_analog_ipc,
+)
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.p1_layers import classify_layer
 
 DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
+# Tolerancia telemetría ``train_brake`` vs objetivo MC (InputValue 0..1).
+MC_INPUT_VALUE_EPS = 0.015
 
 
 @dataclass
@@ -48,6 +56,7 @@ class AgentSnapshot:
     accel_ms2: Optional[float] = None
     gradient_pct: Optional[float] = None
     target_notch: Optional[int] = None
+    target_input_value: Optional[float] = None
     last_cmd_id: Optional[int] = None
     last_ack_ok: Optional[bool] = None
     vehicle: str = "?"
@@ -97,6 +106,7 @@ class AgentSnapshot:
         *,
         tick: int = 0,
         target_notch: Optional[int] = None,
+        target_input_value: Optional[float] = None,
         ipc_sent: bool = False,
         ipc_result: Optional[dict[str, Any]] = None,
         limit_mph: Optional[float] = None,
@@ -134,7 +144,12 @@ class AgentSnapshot:
         learn_reject_reason: Optional[str] = None,
     ) -> AgentSnapshot:
         if snap is None:
-            return cls(tick=tick, target_notch=target_notch, ipc_sent=ipc_sent)
+            return cls(
+                tick=tick,
+                target_notch=target_notch,
+                target_input_value=target_input_value,
+                ipc_sent=ipc_sent,
+            )
         mph = snap.speed_ms * MS_TO_MPH if snap.speed_ms is not None else None
         dist_m = (
             snap.signal_dist_cm / 100.0
@@ -152,6 +167,7 @@ class AgentSnapshot:
             accel_ms2=snap.accel_ms2,
             gradient_pct=snap.gradient_pct,
             target_notch=target_notch,
+            target_input_value=target_input_value,
             last_cmd_id=snap.last_cmd_id,
             last_ack_ok=snap.last_ack_ok,
             vehicle=snap.vehicle or "?",
@@ -227,6 +243,7 @@ class AgentLoop:
     profiles_dir: Optional[Path] = None
 
     _target_notch: Optional[int] = field(default=None, init=False, repr=False)
+    _target_fraction: Optional[float] = field(default=None, init=False, repr=False)
     _next_cmd_id: int = field(default=1, init=False, repr=False)
     _tick: int = field(default=0, init=False, repr=False)
     _limit_state: LimitBrakeState = field(default_factory=LimitBrakeState, init=False, repr=False)
@@ -246,6 +263,8 @@ class AgentLoop:
         init=False,
         repr=False,
     )
+    _brake_air_vehicle: Optional[str] = field(default=None, init=False, repr=False)
+    _vehicle_package: Optional[dict[str, Any]] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.learner is not None:
@@ -303,8 +322,20 @@ class AgentLoop:
         if vehicle and vehicle != "?":
             self._vehicle_slug = vehicle
 
+    def _sync_brake_air_profile(self, vehicle: str) -> None:
+        key = (vehicle or "").strip()
+        if not key or key == "?":
+            return
+        if key != self._brake_air_vehicle:
+            self._brake_air_vehicle = key
+        # Re-aplicar cada tick: ``from_json`` puede sustituir ``_learner`` y borrar perfil.
+        pkg = resolve_vehicle_package(key)
+        self._vehicle_package = pkg
+        self._learner.apply_vehicle_brake_profile(pkg)
+
     def _try_auto_load_profile(self, vehicle: str) -> None:
         self._note_vehicle(vehicle)
+        self._sync_brake_air_profile(vehicle)
         if self._auto_profile_tried or self._learner_explicit or not self.auto_profile:
             return
         self._auto_profile_tried = True
@@ -318,21 +349,38 @@ class AgentLoop:
         loaded = LearnerProfile.from_json(path)
         self._learner = loaded
         self._profile_path = path
+        self._sync_brake_air_profile(vehicle)
 
     def request_notch(self, notch: int) -> None:
+        self._target_fraction = None
         self._target_notch = max(0, min(8, int(notch)))
 
+    def request_input_fraction(self, fraction: float) -> None:
+        self._target_notch = None
+        self._target_fraction = max(0.0, min(1.0, float(fraction)))
+
     def request_neutral(self) -> None:
+        pkg = self._vehicle_package
+        if pkg is not None and uses_mc_analog_ipc(pkg):
+            self.request_input_fraction(
+                combined_notch_to_ipc_value(self.neutral_notch, pkg)
+            )
+            return
         self.request_notch(self.neutral_notch)
 
     def clear_target(self) -> None:
-        if self._target_notch is not None:
+        if self._target_notch is not None or self._target_fraction is not None:
             purge_lua_commands()
         self._target_notch = None
+        self._target_fraction = None
 
     @property
     def target_notch(self) -> Optional[int]:
         return self._target_notch
+
+    @property
+    def target_input_value(self) -> Optional[float]:
+        return self._target_fraction
 
     def read_probe(self) -> Optional[ProbeSnapshot]:
         return read_probe_file(self.getdata_path)
@@ -342,23 +390,35 @@ class AgentLoop:
         cmd: BrakeCommand,
         *,
         lever: Optional[int] = None,
+        apply_actuator: bool = True,
     ) -> None:
+        if apply_actuator:
+            cmd = apply_vehicle_brake_actuator(cmd, self._vehicle_package)
         notch = cmd.target_notch
-        if notch is None:
+        fraction = cmd.target_fraction
+        if notch is None and fraction is None:
             return
         neutral = int(self.neutral_notch)
         lev = int(lever) if lever is not None else neutral
         if cmd.kind == "RELEASE":
             # Freno aplicado → neutro; ya en neutro/P: no repetir (214610Z).
-            if lev >= neutral:
+            if fraction is not None:
+                self.request_input_fraction(fraction)
+            elif lev >= neutral:
                 return
-            self.request_neutral()
+            else:
+                self.request_neutral()
         elif cmd.kind == "COAST_THROTTLE":
             # Tracción → neutro antes de APPLY; no confundir con RELEASE (225330Z).
-            if lev > neutral:
+            if fraction is not None:
+                self.request_input_fraction(fraction)
+            elif lev > neutral:
                 self.request_neutral()
         elif cmd.kind == "APPLY":
-            self.request_notch(notch)
+            if fraction is not None:
+                self.request_input_fraction(fraction)
+            elif notch is not None:
+                self.request_notch(notch)
 
     def driver_override_remaining_s(self) -> float:
         return max(0.0, self._manual_override_until - time.monotonic())
@@ -373,6 +433,8 @@ class AgentLoop:
 
     def _maybe_release_driver_control(self, lever: Optional[int]) -> None:
         """Suelta ``target`` IPC si la palanca ya alcanzó el objetivo."""
+        if self._target_fraction is not None:
+            return
         if self._target_notch is None or lever is None:
             return
         target = int(self._target_notch)
@@ -384,6 +446,9 @@ class AgentLoop:
 
     def _check_driver_takeover(self, lever: int) -> None:
         """Si la palanca se aleja del objetivo IPC, asumir conducción manual."""
+        if self._target_fraction is not None:
+            self._last_lever = lever
+            return
         if self._target_notch is None:
             self._last_lever = lever
             return
@@ -432,6 +497,7 @@ class AgentLoop:
                 snap is not None
                 and snap.speed_ms is not None
                 and self._target_notch is not None
+                and self._target_fraction is None
             ):
                 mph_early = float(snap.speed_ms) * MS_TO_MPH
                 throttle_early = throttle_notch_from_lever(int(lever))
@@ -521,10 +587,14 @@ class AgentLoop:
                 p1_detail = dwell_cmd.reason or ""
                 p1_handle = dwell_cmd.target_notch
                 p1_apply_now = True
-                self._apply_brake_command(dwell_cmd, lever=lever)
+                self._apply_brake_command(dwell_cmd, lever=lever, apply_actuator=True)
             elif not manual_active and decision.command is not None:
                 p1_cmd = decision.command.kind
-                self._apply_brake_command(decision.command, lever=lever)
+                self._apply_brake_command(
+                    decision.command,
+                    lever=lever,
+                    apply_actuator=False,
+                )
                 if p1_cmd == "RELEASE":
                     self._maybe_release_driver_control(lever)
             else:
@@ -548,30 +618,50 @@ class AgentLoop:
         ipc_result: Optional[dict[str, Any]] = None
         ipc_sent = False
 
-        if (
-            not manual_active
-            and snap is not None
-            and self._target_notch is not None
-            and lever is not None
-            and int(lever) != int(self._target_notch)
-        ):
-            ipc_cmd_id = self._next_cmd_id
-            ipc_result = dispatch_step_toward_notch(
-                self._target_notch,
-                cmd_id=self._next_cmd_id,
-                ack_timeout_s=self.ack_timeout_s,
-            )
-            self._next_cmd_id += 1
-            ipc_sent = True
-            if self.post_ipc_sleep_s > 0:
-                time.sleep(self.post_ipc_sleep_s)
-            snap = self.read_probe()
+        if not manual_active and snap is not None:
+            if self._target_fraction is not None:
+                current_frac = snap.train_brake
+                need_ipc = (
+                    current_frac is None
+                    or abs(float(current_frac) - float(self._target_fraction))
+                    > MC_INPUT_VALUE_EPS
+                )
+                if need_ipc:
+                    ipc_cmd_id = self._next_cmd_id
+                    ipc_result = dispatch_to_input_fraction(
+                        self._target_fraction,
+                        cmd_id=self._next_cmd_id,
+                        ack_timeout_s=self.ack_timeout_s,
+                    )
+                    self._next_cmd_id += 1
+                    ipc_sent = True
+                    if self.post_ipc_sleep_s > 0:
+                        time.sleep(self.post_ipc_sleep_s)
+                    snap = self.read_probe()
+            elif (
+                self._target_notch is not None
+                and lever is not None
+                and int(lever) != int(self._target_notch)
+            ):
+                ipc_cmd_id = self._next_cmd_id
+                ipc_result = dispatch_step_toward_notch(
+                    self._target_notch,
+                    cmd_id=self._next_cmd_id,
+                    ack_timeout_s=self.ack_timeout_s,
+                    vehicle=snap.vehicle,
+                )
+                self._next_cmd_id += 1
+                ipc_sent = True
+                if self.post_ipc_sleep_s > 0:
+                    time.sleep(self.post_ipc_sleep_s)
+                snap = self.read_probe()
 
         learn_ev = self._learner.pop_learn_event()
         return AgentSnapshot.from_probe(
             snap,
             tick=self._tick,
             target_notch=self._target_notch,
+            target_input_value=self._target_fraction,
             ipc_sent=ipc_sent,
             ipc_result=ipc_result,
             limit_mph=limit_mph,

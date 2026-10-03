@@ -88,10 +88,11 @@ def clamp_brake_handle(
 
 @dataclass(frozen=True)
 class BrakeCommand:
-    """Mando de freno Dastsc — notch absoluto vía IPC cuando hay plan P1."""
+    """Mando P1 — muesca UK (323) o ``target_fraction`` 0..1 (MC / futuros analógicos)."""
 
     kind: BrakeCommandKind
-    target_notch: Optional[int] = None   # handle combinado UK 0–8
+    target_notch: Optional[int] = None   # planificación / logs (UK 0–8)
+    target_fraction: Optional[float] = None  # actuación IPC en línea PowerBrakeHandle (MC)
     phase: Optional[str] = None        # B1, B2, B3
     reason: str = ""
     distance_m: Optional[float] = None   # para limitar notch 0 (emergencia)
@@ -230,6 +231,7 @@ def plan_to_brake_command(
     throttle_notch: int,
     effective_limit: float,
     current_notch: int,
+    vehicle_package: Optional[dict] = None,
 ) -> tuple[Optional[BrakeCommand], float]:
     """Convierte ``BrakePlan`` vía ``command_from_target`` (tests / cap de perfil)."""
     step = plan.active_step
@@ -252,6 +254,10 @@ def plan_to_brake_command(
         apply_at_remaining_m=step.apply_at_remaining_m,
         detail=f"Aplicar {step.notch} (distStart={step.dist_start:.0f}m)",
     )
+    if cmd is not None:
+        from tsw6v2.vehicle_package import apply_vehicle_brake_actuator
+
+        cmd = apply_vehicle_brake_actuator(cmd, vehicle_package)
     if cmd is not None and cmd.kind in ("APPLY", "RELEASE"):
         return cmd, min(effective_limit, plan.target_speed_mph)
     return cmd, effective_limit

@@ -227,11 +227,13 @@ Código métricas: `tsw6/telemetry/channel_diagnostics.py`.
 | Objeto resuelto | `MasterController` (alias IPC `PowerBrakeHandle`) |
 | Línea | `PowerBrakeHandle:0.7200:cmd_id` — **fracción 0.0–1.0** = `InputValue` |
 | Semántica Lua | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue` |
-| Python | `dispatch_ipc_master_controller(0.72)` (`V2/tsw6v2/bridge/ipc_bus.py`) |
+| Python | P1: `command_from_target` / `plan_to_brake_command` rellenan `BrakeCommand.target_fraction` (fase B1→valor paquete); bucle `dispatch_to_input_fraction` (`vehicle_package.py`, `command.py`, `loop.py`) |
 | Prueba campo | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat` |
 | Prueba unitaria | `V2/tests/test_mc_analog_ipc.py` |
 
 Misma línea física que 323; el probe elige modo por nombre del componente (**FACT:** código `ipc.lua` `is_mc_analog_ctrl`).
+
+P1 L4 aire: paquete puede incluir `"brake_air": {"model": "master_controller"}` — no bloquea APPLY con umbral cilindro 323 (**FACT:** `V2/tsw6v2/brake_air_profile.py`).
 
 ---
 

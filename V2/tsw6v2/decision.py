@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import (
@@ -17,6 +17,7 @@ from tsw6v2.command import (
     resolve_release_command,
     throttle_notch_from_lever,
 )
+from tsw6v2.vehicle_package import apply_vehicle_brake_actuator, resolve_vehicle_package
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     PLATFORM_AT_STOP_M,
@@ -113,6 +114,7 @@ class _TickCtx:
     grad: float
     lever: int
     cyl: Optional[float]
+    vehicle_package: Optional[dict[str, Any]] = None
 
     def decide(
         self,
@@ -131,6 +133,9 @@ class _TickCtx:
         target_kind: str = "",
         station_dist_m: Optional[float] = None,
     ) -> LimitBrakeDecision:
+        # Único sitio MC en tick P1 (323: paquete None → sin target_fraction).
+        if command is not None and self.vehicle_package is not None:
+            command = apply_vehicle_brake_actuator(command, self.vehicle_package)
         return LimitBrakeDecision(
             command,
             phase=phase,
@@ -245,6 +250,8 @@ def _air_apply_block(
     lever: int,
 ) -> Optional[tuple[str, str]]:
     if learner is None or cmd.kind != "APPLY":
+        return None
+    if cmd.target_fraction is not None:
         return None
     if cmd.target_notch is not None and int(cmd.target_notch) == int(lever):
         return None
@@ -484,6 +491,12 @@ def _prepare_tick(
     lever = probe_lever(snap)
     if lever is None:
         lever = NEUTRAL_NOTCH
+    vehicle = (snap.vehicle or "").strip()
+    vehicle_pkg = (
+        resolve_vehicle_package(vehicle)
+        if vehicle and vehicle != "?"
+        else None
+    )
     ctx = _TickCtx(
         dist_m=dist_m,
         next_limit_mph=next_limit_mph,
@@ -492,6 +505,7 @@ def _prepare_tick(
         grad=float(snap.gradient_pct or 0.0),
         lever=lever,
         cyl=snap.brake_cyl_bar,
+        vehicle_package=vehicle_pkg,
     )
     if learner is not None:
         learner.observe_air(lever, ctx.cyl)

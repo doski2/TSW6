@@ -32,6 +32,28 @@ def test_mc_ipc_line_same_path_as_combined() -> None:
 def test_notch_vs_analog_same_wire_different_semantics() -> None:
     assert combined_notch_to_value(3) == 0.375
     assert master_controller_input_value(0.375) == 0.375
+    assert combined_notch_to_value(3) != master_controller_input_value(0.72)
+
+
+def test_dispatch_mc_uses_fraction_not_notch_over_8() -> None:
+    with mock.patch.dict(os.environ, {"TEMP": tempfile.mkdtemp()}, clear=False):
+        with mock.patch(
+            "tsw6v2.bridge.ipc_bus.write_send_command_with_ack",
+            return_value={"ok": True, "value": 0.72, "path": "PowerBrakeHandle"},
+        ) as write_ack:
+            from tsw6v2.ipc import dispatch_step_toward_notch
+
+            pkg = {
+                "layout": "master_controller",
+                "uk_combined_notch_ipc": {"4": 0.72},
+            }
+            dispatch_step_toward_notch(
+                4,
+                cmd_id=1,
+                vehicle_package=pkg,
+            )
+    assert write_ack.called
+    assert write_ack.call_args[0][1] == 0.72
 
 
 def test_dispatch_ipc_master_controller() -> None:

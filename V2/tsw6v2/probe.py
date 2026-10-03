@@ -52,6 +52,7 @@ def print_getdata_summary(snap: Optional[ProbeSnapshot], title: str) -> None:
         return
     mph = snap.speed_ms * MS_TO_MPH if snap.speed_ms is not None else None
     lever = probe_lever(snap)
+    print(f"    vehicle:           {snap.vehicle or '?'}")
     print(f"    speed_mph:         {fmt_num(mph, places=1) if mph is not None else '?'}")
     print(f"    lever_notch:       {lever if lever is not None else '?'}")
     print(f"    train_brake:       {fmt_num(snap.train_brake)}")

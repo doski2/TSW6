@@ -14,6 +14,7 @@ local function lever_input_value(control_name, cmd_value)
     if control_name == "IndependentBrake" then
         return util.clamp_num(num, -1.0, 1.0)
     end
+    -- PBH con SAFE_LEVER_WRITE usa write_pbh_one_step / write_mc_analog_input.
     if control_name == "PowerBrakeHandle" then
         local notch = util.cmd_value_to_notch(num)
         if notch == nil then return nil end
@@ -114,7 +115,7 @@ local function is_mc_analog_ctrl(ctrl)
     local cn = lever_component_name(ctrl)
     if not cn then return false end
     for _, name in ipairs(config.MC_ANALOG_LEVER_NAMES or {}) do
-        if cn == name or string.find(cn, name, 1, true) then
+        if cn == name then
             return true
         end
     end

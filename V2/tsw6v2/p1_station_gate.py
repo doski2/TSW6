@@ -41,6 +41,9 @@ DOORS_OPEN_MAX_SPEED_MPH = 8.0
 PLATFORM_ROLL_THROUGH_MIN_MPH = 10.0
 # Marker pasado con marcha (hueco 112457Z: paró a 1.48 mph con umbral >1.5).
 MARKER_PASSED_MIN_MPH = 1.0
+# Próximo andén: dist planning bajando desde lejos (20261003Z White Plains vía 2).
+APPROACH_PREV_MIN_M = 150.0
+APPROACH_DIST_DROP_M = 5.0
 
 
 def _live_roll_through_without_doors(
@@ -393,6 +396,23 @@ class StationDwellGate:
         self._doors_ever_opened = False
         self._departing_at = 0.0
         self._pass_through = False
+        self._last_station_dist_m: Optional[float] = None
+
+    def _is_approaching_next_stop(
+        self,
+        station_dist_m: Optional[float],
+        speed_mph: float,
+    ) -> bool:
+        """Distancia al next stop bajando desde lejos — no creep de salida del andén."""
+        if station_dist_m is None or self._last_station_dist_m is None:
+            return False
+        if speed_mph <= STATION_STOPPED_MPH:
+            return False
+        prev = float(self._last_station_dist_m)
+        cur = float(station_dist_m)
+        if prev < APPROACH_PREV_MIN_M:
+            return False
+        return cur < prev - APPROACH_DIST_DROP_M
 
     def _departing_suppresses_station_brake(
         self,
@@ -405,6 +425,8 @@ class StationDwellGate:
 
         Sesión 211032Z: ``DEPARTING`` + stn≈559 m @ 20 mph bloqueaba P1 estación.
         """
+        if self._is_approaching_next_stop(station_dist_m, speed_mph):
+            return False
         if self._pass_through and (
             station_dist_m is None or station_dist_m <= PLATFORM_AT_STOP_M
         ):
@@ -500,10 +522,18 @@ class StationDwellGate:
         if open_now:
             self._doors_ever_opened = True
 
+        approaching = self._is_approaching_next_stop(station_dist_m, speed_mph)
+        if station_dist_m is not None:
+            self._last_station_dist_m = float(station_dist_m)
+
         if self.state == "DEPARTING":
-            dwell = time.monotonic() - self._departing_at if self._departing_at else 0.0
-            if speed_mph >= DEPARTING_CLEAR_MPH or dwell >= DEPARTING_MAX_S:
+            if approaching:
                 self._reset_idle()
+                self._clear_station_episode(station_dist_m)
+            else:
+                dwell = time.monotonic() - self._departing_at if self._departing_at else 0.0
+                if speed_mph >= DEPARTING_CLEAR_MPH or dwell >= DEPARTING_MAX_S:
+                    self._reset_idle()
         elif self.state == "STOPPED":
             self._handle_stopped(
                 speed_mph=speed_mph,

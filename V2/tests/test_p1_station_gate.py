@@ -207,6 +207,22 @@ def test_gate_departing_allows_station_brake_on_mid_route_approach() -> None:
     )
 
 
+def test_departing_clears_when_next_stop_distance_drops_session_20261003() -> None:
+    """Segunda parada: DEPARTING a ~21 mph no debe bloquear P1 en dwell."""
+    gate = StationDwellGate()
+    gate.update(speed_mph=0.5, station_dist_m=12.0, doors_telem=True)
+    gate.update(speed_mph=0.5, station_dist_m=12.0, doors_telem=False)
+    assert gate.state == "DEPARTING"
+    gate.update(speed_mph=21.0, station_dist_m=620.0, throttle_notch=6)
+    gate.update(speed_mph=21.0, station_dist_m=560.0, throttle_notch=6)
+    assert gate.state is None
+    assert not gate.suppress_station_brake(
+        station_dist_m=35.0,
+        speed_mph=21.0,
+        throttle_notch=4,
+    )
+
+
 def test_origin_station_departure_detected_session_214610() -> None:
     """Lichfield TV: next_stop a 24 km + tracción → DEPARTING sin FSM STOPPED."""
     assert is_origin_station_departure(

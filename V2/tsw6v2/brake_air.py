@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from tsw6v2.brake_air_profile import BrakeAirProfile
 from tsw6v2.constants import NEUTRAL_NOTCH
 from tsw6v2.learn_quality import LearnEvent, fill_outlier_rejected
 from tsw6v2.learner_v1 import EMA_ALPHA
@@ -57,10 +58,14 @@ class BrakeAirTracker:
 
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S
     brake_fill_n: int = 0
+    _profile: BrakeAirProfile = field(default_factory=BrakeAirProfile.uk_emu)
     _last_lever: int = _COAST_NOTCH
     _fill_armed_since: float | None = None
     _released_at: float | None = None
     _pressure_at_release: float | None = None
+
+    def set_profile(self, profile: BrakeAirProfile) -> None:
+        self._profile = profile
 
     def observe(
         self,
@@ -120,7 +125,10 @@ class BrakeAirTracker:
 
         - En costa (muesca ≥ neutro): HUD 323 ~1 bar en reposo → listo si p ≤ idle.
         - En servicio (muesca < neutro): esperar p ≥ mínimo (air_fill tras APPLY).
+        - MC US: no bloquear APPLY por escala 323 (IPC analog; lever HUD desacoplado).
         """
+        if self._profile.is_master_controller():
+            return True
         if brake_cyl_bar is None:
             return True
         p = float(brake_cyl_bar)
@@ -143,6 +151,8 @@ class BrakeAirTracker:
         Tras soltar: no volver a frenar hasta vaciar cilindro o pasar fill-time.
         Evita bombar B3→neutro→B3 con tanques vacíos.
         """
+        if self._profile.is_master_controller():
+            return False
         if self._released_at is None:
             return False
         if brake_cyl_bar is None:
@@ -166,6 +176,8 @@ class BrakeAirTracker:
         Un escalón por tick y solo si la presión confirma la muesca actual.
         requested/committed: handle UK (3=B1 … 1=B3).
         """
+        if self._profile.is_master_controller():
+            return requested
         if committed is None:
             return requested
         if brake_cyl_bar is None:

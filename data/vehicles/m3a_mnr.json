@@ -4,7 +4,14 @@
   "match": {
     "vehicle_class": "RVM_NYH_MNR_M3a-B_C"
   },
-  "layout": "combined",
+  "layout": "master_controller",
+  "uk_combined_notch_ipc": {
+    "3": 0.85,
+    "4": 0.72
+  },
+  "brake_air": {
+    "model": "master_controller"
+  },
   "controls": {
     "MasterController": {
       "ue_name": "MasterController",
