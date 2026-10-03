@@ -6,13 +6,29 @@ from typing import Callable, Optional
 
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
 from tsw6v2.service_brake import target_from_stop_plan
+from tsw6v2.p1_station_gate import STATION_STOPPED_MPH
 from tsw6v2.station_plan import (
+    STATION_OVERSHOOT_PLAN_DISTANCE_M,
     STATION_SCHEDULE_SLACK_ENABLED,
     plan_brake_for_station,
 )
 from tsw6v2.target import BrakeTargetResult
 
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
+
+
+def station_distance_for_brake_plan(
+    station_distance_m: Optional[float],
+    speed_mph: float,
+) -> Optional[float]:
+    """Telemetría ≤0 con marcha: planificar parada (``evaluate_station_brake`` exige dist > 0)."""
+    if station_distance_m is None:
+        return None
+    if station_distance_m <= 0:
+        if speed_mph > STATION_STOPPED_MPH:
+            return STATION_OVERSHOOT_PLAN_DISTANCE_M
+        return None
+    return station_distance_m
 
 
 def evaluate_station_brake(

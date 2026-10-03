@@ -5,6 +5,8 @@ MPH_TO_MS = 0.44704
 NEUTRAL_NOTCH = 4
 B1_NOTCH = 3
 B1_MIN_TRAIN_BRAKE = 0.25
+# Telemetría ``train_brake`` (InputValue MC) vs objetivo IPC.
+MC_INPUT_VALUE_EPS = 0.015
 # IPC test: subida mínima manómetro tras un paso B1 (M3a MC; OBSERVATION 20261003).
 B1_MIN_CYL_RISE_BAR = 0.15
 PROBE_STALE_S = 2.5

@@ -11,6 +11,7 @@ from tsw6v2.p1_policy import (
     pick_p1_brake_target,
     should_prefer_signal_over_limit,
     should_prefer_signal_over_station,
+    station_priority_over_signal_coast_at_platform,
 )
 from tsw6v2.station_brake import evaluate_station_brake
 from tsw6v2.signal_plan import (
@@ -148,6 +149,37 @@ def test_signal_in_play():
     assert not signal_in_play(signal_dist_m=500.0, station_dist_m=200.0)
     assert signal_in_play(signal_dist_m=29.0, station_dist_m=31.0)
     assert not signal_in_play(signal_dist_m=None, station_dist_m=200.0)
+
+
+def test_far_red_behind_marker_not_in_play_session_20261003() -> None:
+    """Rojo salida ~285 m con andén ~80 m: parada en marker, no en señal."""
+    assert not signal_in_play(signal_dist_m=285.1, station_dist_m=79.9)
+
+
+def test_suppressed_station_brake_still_defers_far_signal() -> None:
+    """FSM suprime plan STATION pero la geometría sigue (no robar pick con SIGNAL WATCH)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 3.4,
+            "lever_notch": 4,
+            "signal_red": True,
+            "signal_dist_cm": 28510.0,
+            "dist_limit_cm": 47020.0,
+            "next_limit_ms": 13.4112,
+            "gradient_pct": 0.0,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=79.9,
+        station_brake_enabled=False,
+        signal_brake_enabled=True,
+    )
+    assert decision.target_kind != "SIGNAL"
 
 
 def test_signal_beats_hold_dh_deferred():
@@ -856,3 +888,44 @@ def test_p1_tick_station_not_signal_exit_cluster_session_164240() -> None:
         station_distance_m=137.0,
     )
     assert decision.target_kind == "STATION"
+
+
+def test_station_wins_over_signal_coast_at_platform_overspeed_session_213959() -> None:
+    signal = BrakeTargetResult(
+        target_kind="SIGNAL",
+        distance_m=217.0,
+        target_speed_mph=0.0,
+        handle_notch=4,
+        phase="B1",
+        dist_start=50.0,
+        apply_now=False,
+        detail="signal watch",
+    )
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=0.0,
+        target_speed_mph=0.0,
+        handle_notch=2,
+        phase="B2",
+        dist_start=5.0,
+        apply_now=True,
+        detail="station",
+    )
+    assert station_priority_over_signal_coast_at_platform(
+        station_dist_m=0.0,
+        speed_mph=12.8,
+        station_target=station,
+        signal_target=signal,
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=12.8,
+        limit_target=None,
+        station_target=station,
+        signal_target=signal,
+        signal_dist_m=217.0,
+        limit_mph=None,
+        limit_dist_m=None,
+        station_dist_m=0.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "STATION"

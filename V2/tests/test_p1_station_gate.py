@@ -171,6 +171,23 @@ def test_gate_stopped_exits_when_planning_lost_at_speed():
     assert gate.state == "DEPARTING"
 
 
+def test_no_departing_enter_on_final_approach_lever_glitch_session_213007() -> None:
+    """213007Z tick 228: lever 5 @ stn≈479 m no debe suprimir plan STATION."""
+    gate = StationDwellGate()
+    gate.update(
+        speed_mph=6.87,
+        station_dist_m=478.9,
+        doors_telem=False,
+        throttle_notch=5,
+    )
+    assert gate.state is None
+    assert not gate.suppress_station_brake(
+        station_dist_m=478.9,
+        speed_mph=6.87,
+        throttle_notch=5,
+    )
+
+
 def test_origin_station_departure_rejects_mid_route_approach_session_211032() -> None:
     """211032Z: stn≈559 m @ 20 mph no es salida de origen (umbral 15 km)."""
     assert not is_origin_station_departure(

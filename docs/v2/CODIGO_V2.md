@@ -12,6 +12,7 @@
 | Legacy autopilot GUI | `tsw6/autopilot/` + `tsw6/braking/v2/__init__.py` (re-export) → `tsw6v2` |
 | Orquestación v1 archivada | `archive/braking_v1_autopilot/` (coordinator, policy, station_plan — referencia) |
 | Cableado D2 (GetData + IPC) | `V2/tsw6v2/bridge/` — contrato [CANAL_CONTROL](../CANAL_CONTROL.md) |
+| Perfil tren (IPC MC) | `data/vehicles/*.json` — `brake_input` 0..1; resolver `vehicle_package.py` |
 
 ## Estructura `V2/`
 
@@ -78,6 +79,16 @@ Andén / prioridad: `station_plan` · `station_brake` · `p1_policy` · `limit_s
 `p1_station_gate` · `planning_poller` · `session_report` — ver
 [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_) y
 [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos).
+
+**Distancia andén (una fuente de verdad):**
+
+| Símbolo | Módulo | Uso |
+| --- | --- | --- |
+| `station_within_dwell_zone` | `station_plan` | ≤ `dwell_max_distance_m` (80 m): no defer horizonte (`p1_policy`), `allow_watch` en dwell (`decision`). |
+| `station_distance_for_brake_plan` | `station_brake` | Entrada única a `evaluate_station_brake` y cheque STATION en emergencia (`decision`): telemetría ≤0 con marcha → `STATION_OVERSHOOT_PLAN_DISTANCE_M` (1 m). |
+| `STATION_COAST_CUTOFF_M` | `physics` | STATION en ventana: no `COAST_THROTTLE` si dist ≤ 100 m (`command`). |
+
+`evaluate_station_brake` sigue rechazando `distance_m ≤ 0`; no llamarlo con geo cruda tras el marcador.
 
 **Reglas de frenado:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md) — tabla «Ventanas y puertas» (no duplicar
 `_in_apply_window` / `should_emit` / `zone_hold_suppressed` / `speed_limit_horizon_commit`).

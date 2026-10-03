@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
+
+if TYPE_CHECKING:
+    from tsw6v2.bridge.getdata import ProbeSnapshot
 
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
+    STATION_COAST_CUTOFF_M,
     brake_command_apply_zone_m,
     is_downhill_gradient,
     is_uphill_gradient,
@@ -203,7 +207,12 @@ def command_from_target(
             return None
     else:
         if traction and dist_start <= 800.0:
-            return _coast_throttle_command()
+            if not (
+                target_kind == "STATION"
+                and in_window
+                and distance_m <= STATION_COAST_CUTOFF_M
+            ):
+                return _coast_throttle_command()
         if (
             target_kind == "STATION"
             and speed_mph <= target_speed_mph + RELEASE_MARGIN_MPH
@@ -344,17 +353,109 @@ def is_brake_released(handle_notch: int) -> bool:
     return handle_notch >= NEUTRAL_NOTCH
 
 
+def brake_applied_from_probe(
+    snap: Optional[ProbeSnapshot],
+    lever: Optional[int],
+    vehicle_package: Optional[dict] = None,
+) -> bool:
+    """
+    ¿Freno de servicio aplicado para RELEASE heredado?
+
+    UK: muesca combinada ``lever_notch``. MC: ``train_brake`` > neutro del paquete
+    o cilindro por encima de ralentí (HUD MC a veces 0 con presión, OBSERVATION 20261003).
+    """
+    lev = int(lever) if lever is not None else NEUTRAL_NOTCH
+    if snap is None:
+        return is_brake_applied(lev)
+    from tsw6v2.constants import MC_INPUT_VALUE_EPS
+    from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
+    from tsw6v2.vehicle_package import (
+        profile_neutral_fraction,
+        uses_mc_analog_ipc,
+        vehicle_package_from_snap,
+    )
+
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if not (pkg and uses_mc_analog_ipc(pkg)):
+        return is_brake_applied(lev)
+    if snap.train_brake is not None:
+        neutral = profile_neutral_fraction(pkg)
+        if neutral is None:
+            return is_brake_applied(lev)
+        if float(snap.train_brake) > float(neutral) + MC_INPUT_VALUE_EPS:
+            return True
+    if (
+        snap.brake_cyl_bar is not None
+        and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
+    ):
+        return True
+    return False
+
+
 def throttle_notch_from_lever(combined_lever: int) -> int:
-    """Palanca combinada → tracción P0..P4 (neutro = 0)."""
+    """Palanca combinada UK 323 → tracción P0..P4 (neutro = 0)."""
     return max(0, int(combined_lever) - NEUTRAL_NOTCH)
+
+
+def combined_lever_for_station_gate(
+    snap: Optional[ProbeSnapshot],
+    lever: Optional[int],
+    vehicle_package: Optional[dict] = None,
+) -> int:
+    """
+    Muesca combinada UK para FSM andén (``StationDwellGate``).
+
+    MC: sin tracción en ``power`` → neutro aunque ``lever_notch`` indique freno (20261003T202046Z).
+    """
+    lev = int(lever) if lever is not None else NEUTRAL_NOTCH
+    if snap is None:
+        return lev
+    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if pkg and uses_mc_analog_ipc(pkg):
+        th = throttle_notch_from_probe(snap, pkg)
+        return NEUTRAL_NOTCH + th if th > 0 else NEUTRAL_NOTCH
+    return lev
+
+
+def throttle_notch_from_probe(
+    snap: Optional[ProbeSnapshot],
+    vehicle_package: Optional[dict] = None,
+) -> int:
+    """
+    Tracción para P1 COAST / salida andén.
+
+    MC: ``lever_notch`` no es escala UK — usar ``power`` (OBSERVATION 20261003Z M3a).
+    """
+    if snap is None:
+        return 0
+    from tsw6v2.bridge.getdata import power_to_combined_notch
+    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if pkg and uses_mc_analog_ipc(pkg):
+        if snap.power is None:
+            return 0
+        if snap.power_neg or float(snap.power) <= 0.0:
+            return 0
+        combined = power_to_combined_notch(snap.power, snap.power_neg)
+        if combined is None or combined <= NEUTRAL_NOTCH:
+            return 0
+        return throttle_notch_from_lever(combined)
+    lever = snap.combined_handle_notch()
+    if lever is None:
+        return 0
+    return throttle_notch_from_lever(int(lever))
 
 
 _COAST_THROTTLE_REASON = "Soltar tracción antes de freno"
 
 
 def _traction_active(throttle_notch: int, combined_lever: int) -> bool:
-    """Tracción en plan o palanca real (P1..P4)."""
-    return throttle_notch > 0 or throttle_notch_from_lever(combined_lever) > 0
+    """COAST previo: ``throttle_notch`` del tick (``throttle_notch_from_probe`` en MC)."""
+    del combined_lever
+    return int(throttle_notch) > 0
 
 
 def _coast_throttle_command() -> BrakeCommand:
@@ -711,6 +812,7 @@ __all__ = [
     "clamp_brake_handle",
     "command_from_target",
     "governor_action_for_command",
+    "brake_applied_from_probe",
     "is_brake_applied",
     "is_brake_released",
     "is_downhill_limit_approach",

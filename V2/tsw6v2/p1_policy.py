@@ -25,6 +25,7 @@ from tsw6v2.physics import (
     decel_for_notch,
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+from tsw6v2.station_plan import DEFAULT_STATION_CFG, station_within_dwell_zone
 from tsw6v2.signal_plan import (
     exit_signal_close_behind_platform,
     resolve_signal_dist_m,
@@ -176,8 +177,8 @@ def should_defer_station_brake(
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
 ) -> bool:
     """No emitir STATION hasta horizonte v→0 de servicio (+ slack)."""
-    if station_dist_m <= 0:
-        return True
+    if station_within_dwell_zone(station_dist_m):
+        return False
     decel = decel_for_notch(SERVICE_DECEL_FRAC_BY_HANDLE[1], base_decel_ms2)
     ctx = brake_ctx_for_decel(
         gradient_pct=gradient_pct,
@@ -281,6 +282,31 @@ def should_prefer_signal_over_limit(
     if signal_target.apply_now:
         return True
     return signal_within_pick_priority_m(signal_dist_m, signal_target)
+
+
+def station_priority_over_signal_coast_at_platform(
+    *,
+    station_dist_m: Optional[float],
+    speed_mph: float,
+    station_target: BrakeTargetResult,
+    signal_target: BrakeTargetResult,
+) -> bool:
+    """
+    Andén / overshoot: no COAST_PWR de señal lejana (213959Z @ stn=0, 13 mph).
+
+    Solo si la señal no pide APPLY ya (parada en poste).
+    """
+    if station_dist_m is None:
+        return False
+    if not station_within_dwell_zone(station_dist_m):
+        return False
+    if speed_mph <= DEFAULT_STATION_CFG.departure_speed_mph:
+        return False
+    if signal_target.apply_now:
+        return False
+    if station_target.apply_now:
+        return True
+    return speed_mph > STATION_APPROACH_MIN_SPEED_MPH * 0.5
 
 
 def should_prefer_signal_over_station(
@@ -505,7 +531,13 @@ def pick_p1_brake_target(
             chosen,
             signal_dist_m=signal_dist_m,
         ):
-            return signal_target
+            if not station_priority_over_signal_coast_at_platform(
+                station_dist_m=station_dist_m,
+                speed_mph=speed_mph,
+                station_target=chosen,
+                signal_target=signal_target,
+            ):
+                return signal_target
         return chosen
     if should_prefer_signal_over_limit(
         signal_target,

@@ -106,41 +106,103 @@ def resolve_vehicle_package(
     return None
 
 
-def _uk_map_from_package(package: dict[str, Any]) -> dict[int, float]:
+def vehicle_package_from_snap(
+    snap: Any,
+    vehicle_package: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Paquete ya cargado o resuelto desde ``snap.vehicle`` (evita duplicar en command/loop)."""
+    if vehicle_package is not None:
+        return vehicle_package
+    if snap is None:
+        return None
+    return resolve_vehicle_package(str(getattr(snap, "vehicle", "") or ""))
+
+
+def _normalize_brake_input_key(key: str) -> str:
+    k = (key or "").strip().upper()
+    if k in ("NEU", "COAST", "RELEASE"):
+        return "NEUTRAL"
+    return k
+
+
+def profile_brake_fraction(
+    package: Optional[dict[str, Any]],
+    phase_or_slot: str,
+) -> Optional[float]:
+    """
+    Fracción 0..1 en línea IPC para MC — **solo** desde ``brake_input`` del paquete.
+
+    Claves: ``neutral``, ``B1``, ``B2``, ``B3`` (alias ``NEU`` → neutral).
+    Si falta ``brake_input``, legado ``uk_combined_notch_ipc``.
+    """
+    if not package or not uses_mc_analog_ipc(package):
+        return None
+    norm = _normalize_brake_input_key(phase_or_slot)
+    block = package.get("brake_input")
+    if isinstance(block, dict):
+        for raw_k, val in block.items():
+            if _normalize_brake_input_key(str(raw_k)) != norm:
+                continue
+            try:
+                return master_controller_input_value(float(val))
+            except (TypeError, ValueError):
+                return None
+    return _legacy_mc_fraction_from_uk_map(package, norm)
+
+
+def profile_neutral_fraction(
+    package: Optional[dict[str, Any]],
+) -> Optional[float]:
+    """Neutro MC del paquete (feedback IPC / ``brake_applied_from_probe``)."""
+    return profile_brake_fraction(package, "neutral")
+
+
+def _legacy_mc_fraction_from_uk_map(
+    package: dict[str, Any],
+    norm_phase: str,
+) -> Optional[float]:
+    """``uk_combined_notch_ipc`` — solo migración; preferir ``brake_input``."""
     raw = package.get("uk_combined_notch_ipc") or {}
     if not isinstance(raw, dict):
-        return {}
-    out: dict[int, float] = {}
-    for key, val in raw.items():
-        try:
-            out[int(key)] = float(val)
-        except (TypeError, ValueError):
-            continue
-    return out
+        return None
+    if norm_phase == "NEUTRAL":
+        key = str(NEUTRAL_NOTCH)
+    else:
+        key = None
+        for notch, label in SERVICE_HANDLES_WEAK_TO_STRONG:
+            if label == norm_phase:
+                key = str(int(notch))
+                break
+        if key is None:
+            return None
+    if key not in raw:
+        return None
+    try:
+        return master_controller_input_value(float(raw[key]))
+    except (TypeError, ValueError):
+        return None
 
 
-# OBSERVATION lab M3a 20261003 — hasta matriz F5 HUD↔InputValue en el paquete.
-_FALLBACK_MC_UK_FRACTION: dict[int, float] = {
-    B1_NOTCH: 0.85,
-    NEUTRAL_NOTCH: 0.72,
-}
-
-
-def ipc_fraction_for_plan(
+def mc_fraction_for_plan_handle(
+    package: Optional[dict[str, Any]],
     *,
     phase: str,
     handle_notch: int,
-    package: Optional[dict[str, Any]],
 ) -> Optional[float]:
-    """Fracción cabina para fase de servicio (B1…) o muesca UK de respaldo."""
+    """Plan P1 (fases B* / muesca lógica UK) → fracción perfil en MC."""
     if not package or not uses_mc_analog_ipc(package):
         return None
     ph = (phase or "").strip().upper()
     if ph in ("B1", "B2", "B3"):
-        for notch, label in SERVICE_HANDLES_WEAK_TO_STRONG:
-            if label == ph:
-                return combined_notch_to_ipc_value(int(notch), package)
-    return combined_notch_to_ipc_value(int(handle_notch), package)
+        frac = profile_brake_fraction(package, ph)
+        if frac is not None:
+            return frac
+    if int(handle_notch) == NEUTRAL_NOTCH:
+        return profile_brake_fraction(package, "neutral")
+    for notch, label in SERVICE_HANDLES_WEAK_TO_STRONG:
+        if int(notch) == int(handle_notch):
+            return profile_brake_fraction(package, label)
+    return profile_brake_fraction(package, "neutral")
 
 
 def apply_vehicle_brake_actuator(
@@ -148,9 +210,9 @@ def apply_vehicle_brake_actuator(
     package: Optional[dict[str, Any]],
 ) -> BrakeCommand:
     """
-    Añade ``target_fraction`` en layout MC (planificación en valores de cabina).
+    Añade ``target_fraction`` en layout MC desde ``brake_input`` del paquete.
 
-    El plan interno puede seguir en fases B1/B2; la muesca UK solo alimenta learner/323.
+    El plan P1 sigue en fases B1–B3 / muesca lógica UK; el cable solo lleva 0..1 del perfil.
     """
     if cmd.target_fraction is not None:
         return cmd
@@ -161,12 +223,18 @@ def apply_vehicle_brake_actuator(
     notch = cmd.target_notch
     if cmd.kind == "RELEASE":
         n = int(notch) if notch is not None else NEUTRAL_NOTCH
-        frac = combined_notch_to_ipc_value(n, package)
+        frac = mc_fraction_for_plan_handle(
+            package, phase="NEU", handle_notch=n
+        )
+        if frac is None:
+            return cmd
         return replace(cmd, target_fraction=frac)
     if notch is None and not cmd.phase:
         return cmd
     n = int(notch) if notch is not None else NEUTRAL_NOTCH
-    frac = ipc_fraction_for_plan(phase=cmd.phase or "", handle_notch=n, package=package)
+    frac = mc_fraction_for_plan_handle(
+        package, phase=cmd.phase or "", handle_notch=n
+    )
     if frac is None:
         return cmd
     return replace(cmd, target_fraction=frac)
@@ -184,14 +252,14 @@ def combined_notch_to_ipc_value(
     notch: int,
     package: Optional[dict[str, Any]] = None,
 ) -> float:
-    """Valor en línea ``PowerBrakeHandle`` (323: muesca/8; MC: fracción cabina)."""
+    """Valor en línea ``PowerBrakeHandle`` (323: muesca/8; MC: ``brake_input`` del paquete)."""
     n = int(notch)
     if package and uses_mc_analog_ipc(package):
-        mapped = _uk_map_from_package(package)
-        if n in mapped:
-            return master_controller_input_value(mapped[n])
-        if n in _FALLBACK_MC_UK_FRACTION:
-            return master_controller_input_value(_FALLBACK_MC_UK_FRACTION[n])
+        frac = mc_fraction_for_plan_handle(
+            package, phase="", handle_notch=n
+        )
+        if frac is not None:
+            return frac
     return combined_notch_to_value(n)
 
 

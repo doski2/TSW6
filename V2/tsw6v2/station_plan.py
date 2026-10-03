@@ -185,6 +185,14 @@ class StationBrakeConfig:
 
 DEFAULT_STATION_CFG = StationBrakeConfig()
 
+# Marcador pasado pero aún en marcha: distancia mínima para ``evaluate_station_brake`` (213959Z).
+STATION_OVERSHOOT_PLAN_DISTANCE_M = 1.0
+
+
+def station_within_dwell_zone(station_distance_m: float) -> bool:
+    """Ventana andén (dwell + overshoot con dist ≤ 0 cuenta como dentro)."""
+    return station_distance_m <= DEFAULT_STATION_CFG.dwell_max_distance_m
+
 
 def _moderate_service_notch_label() -> str:
     return UK_SERVICE_PHASES[1].label

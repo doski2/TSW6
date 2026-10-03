@@ -11,7 +11,10 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from tsw6v2.constants import STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+from tsw6v2.constants import (
+    STATION_APPROACH_PRIORITY_M,
+    STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+)
 from tsw6v2.command import (
     is_brake_applied,
     is_brake_released,
@@ -44,6 +47,20 @@ MARKER_PASSED_MIN_MPH = 1.0
 # Próximo andén: dist planning bajando desde lejos (20261003Z White Plains vía 2).
 APPROACH_PREV_MIN_M = 150.0
 APPROACH_DIST_DROP_M = 5.0
+def _block_departing_enter_on_final_approach(
+    *,
+    station_dist_m: Optional[float],
+    gate_state: Optional[str],
+) -> bool:
+    if gate_state is not None:
+        return False
+    if station_dist_m is None:
+        return False
+    return (
+        PLATFORM_AT_STOP_M
+        < float(station_dist_m)
+        <= STATION_APPROACH_PRIORITY_M
+    )
 
 
 def _live_roll_through_without_doors(
@@ -514,6 +531,7 @@ class StationDwellGate:
         doors_dmi: Optional[bool] = None,
         throttle_notch: int = 4,
     ) -> None:
+        """``throttle_notch`` = muesca combinada UK (4 neutro, >4 tracción); ver ``loop``."""
         open_now = doors_effective(
             doors_open=doors_open,
             doors_telem=doors_telem,
@@ -557,7 +575,11 @@ class StationDwellGate:
                 station_dist_m=station_dist_m,
                 combined_lever=throttle_notch,
             ):
-                self._enter_departing()
+                if not _block_departing_enter_on_final_approach(
+                    station_dist_m=station_dist_m,
+                    gate_state=self.state,
+                ):
+                    self._enter_departing()
 
         self._clear_station_episode(station_dist_m)
 

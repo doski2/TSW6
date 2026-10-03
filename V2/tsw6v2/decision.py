@@ -9,15 +9,20 @@ from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
-    is_brake_applied,
+    brake_applied_from_probe,
+    combined_lever_for_station_gate,
     platform_bleed_brake_command,
     release_brake_command,
     release_service_over_brake_command,
     resolve_orphan_limit_brake_release,
     resolve_release_command,
-    throttle_notch_from_lever,
+    throttle_notch_from_probe,
 )
-from tsw6v2.vehicle_package import apply_vehicle_brake_actuator, resolve_vehicle_package
+from tsw6v2.vehicle_package import (
+    apply_vehicle_brake_actuator,
+    uses_mc_analog_ipc,
+    vehicle_package_from_snap,
+)
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     PLATFORM_AT_STOP_M,
@@ -43,6 +48,7 @@ from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     STATION_SCHEDULE_SLACK_ENABLED,
     should_suppress_station_braking_for_departure,
+    station_within_dwell_zone,
 )
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
@@ -51,7 +57,10 @@ from tsw6v2.signal_plan import (
     should_suppress_signal_braking_for_departure,
     signal_in_play,
 )
-from tsw6v2.station_brake import evaluate_station_brake
+from tsw6v2.station_brake import (
+    evaluate_station_brake,
+    station_distance_for_brake_plan,
+)
 from tsw6v2.target import BrakeTargetResult
 
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
@@ -200,6 +209,8 @@ class _TickPrep:
     dist_m: Optional[float]
     next_limit_mph: Optional[float]
     lever: int
+    combined_lever: int
+    throttle_notch: int
     escalate_cap: Optional[Callable[[int, int], int]]
     fill_s: float
     predict: Optional[PredictDecelFn]
@@ -284,7 +295,7 @@ def _attempt_platform_parked_bleed(
     if not platform_parked_residual_bleed_needed(
         speed_mph=prep.ctx.speed_mph,
         station_dist_m=station_dist_m,
-        combined_lever=prep.lever,
+        combined_lever=prep.combined_lever,
         brake_cyl_bar=prep.ctx.cyl,
         station_fsm=station_fsm,
         platform_bleed_episode=platform_bleed_episode,
@@ -328,7 +339,7 @@ def _attempt_platform_parked_bleed_release(
     if not platform_parked_bleed_release_needed(
         speed_mph=prep.ctx.speed_mph,
         station_dist_m=station_dist_m,
-        combined_lever=prep.lever,
+        combined_lever=prep.combined_lever,
         station_fsm=station_fsm,
         platform_bleed_episode=platform_bleed_episode,
     ):
@@ -347,12 +358,12 @@ def _attempt_departing_brake_release(
     station_dist_m: Optional[float] = None,
 ) -> Optional[LimitBrakeDecision]:
     """Único camino RELEASE en salida lenta (FSM DEPARTING u origen, 223013Z)."""
-    if not departing_brake_needs_release(prep.lever):
+    if not departing_brake_needs_release(prep.combined_lever):
         return None
     if not station_departure_active(
         speed_mph=prep.ctx.speed_mph,
         station_dist_m=station_dist_m,
-        combined_lever=prep.lever,
+        combined_lever=prep.combined_lever,
         station_fsm=station_fsm,
     ):
         return None
@@ -368,13 +379,18 @@ def _attempt_signal_inherited_release(
     ctx: _TickCtx,
     prep: _TickPrep,
     limit_state: LimitBrakeState,
+    snap: ProbeSnapshot,
     *,
     release_ref: BrakeTargetResult,
     reason: str,
 ) -> Optional[LimitBrakeDecision]:
     """Suelta freno de servicio heredado respecto al plan señal (WATCH o rojo pasado)."""
-    if not should_release_over_braked_for_stop_target(release_ref, prep.lever):
+    if not brake_applied_from_probe(snap, prep.lever, ctx.vehicle_package):
         return None
+    pkg = ctx.vehicle_package
+    if not (pkg and uses_mc_analog_ipc(pkg)):
+        if not should_release_over_braked_for_stop_target(release_ref, prep.lever):
+            return None
     rel = release_service_over_brake_command(reason=reason)
     limit_state.clear_commitment()
     return ctx.decide(
@@ -430,7 +446,7 @@ def _attempt_p1_releases(
     if signal_brake_enabled and snap.signal_red is False and signal_target is None:
         if (
             not limit_blocks_release
-            and is_brake_applied(prep.lever)
+            and brake_applied_from_probe(snap, prep.lever, prep.ctx.vehicle_package)
             and not _station_platform_blocks_signal_cleared_release(station_target)
             and not (station_target is not None and station_target.apply_now)
             and (
@@ -444,6 +460,7 @@ def _attempt_p1_releases(
                 ctx,
                 prep,
                 limit_state,
+                snap,
                 release_ref=_SIGNAL_CLEARED_RELEASE_REF,
                 reason="Señal pasada/verde: soltar freno heredado",
             )
@@ -455,13 +472,14 @@ def _attempt_p1_releases(
         and signal_target is not None
         and not signal_target.apply_now
         and not limit_blocks_release
-        and is_brake_applied(prep.lever)
+        and brake_applied_from_probe(snap, prep.lever, prep.ctx.vehicle_package)
         and limit_release_ok(target)
     ):
         released = _attempt_signal_inherited_release(
             ctx,
             prep,
             limit_state,
+            snap,
             release_ref=signal_target,
             reason="Señal WATCH: reducir freno heredado",
         )
@@ -491,12 +509,8 @@ def _prepare_tick(
     lever = probe_lever(snap)
     if lever is None:
         lever = NEUTRAL_NOTCH
-    vehicle = (snap.vehicle or "").strip()
-    vehicle_pkg = (
-        resolve_vehicle_package(vehicle)
-        if vehicle and vehicle != "?"
-        else None
-    )
+    vehicle_pkg = vehicle_package_from_snap(snap)
+    combined_lever = combined_lever_for_station_gate(snap, lever, vehicle_pkg)
     ctx = _TickCtx(
         dist_m=dist_m,
         next_limit_mph=next_limit_mph,
@@ -514,6 +528,8 @@ def _prepare_tick(
         dist_m=dist_m,
         next_limit_mph=next_limit_mph,
         lever=lever,
+        combined_lever=combined_lever,
+        throttle_notch=throttle_notch_from_probe(snap, vehicle_pkg),
         escalate_cap=_escalate_cap_fn(learner, ctx.cyl) if learner else None,
         fill_s=learner.brake_fill_s if learner else DEFAULT_BRAKE_FILL_S,
         predict=predict_decel or (learner.predict_decel if learner else None),
@@ -597,9 +613,14 @@ def _attempt_p1_emergency(
         )
     ):
         checks.append(("SIGNAL", signal_dist))
-    if station_distance_m is not None and station_distance_m > 0:
-        checks.append(("STATION", float(station_distance_m)))
-    throttle = throttle_notch_from_lever(prep.lever)
+    if station_distance_m is not None:
+        emerg_stn = station_distance_for_brake_plan(
+            station_distance_m,
+            prep.ctx.speed_mph,
+        )
+        if emerg_stn is not None:
+            checks.append(("STATION", emerg_stn))
+    throttle = prep.throttle_notch
     for kind, dist in checks:
         if (
             kind == "SIGNAL"
@@ -642,7 +663,9 @@ def _attempt_release(
     limit_brake_enabled: bool = True,
     limit_target: Optional[BrakeTargetResult] = None,
 ) -> Optional[LimitBrakeDecision]:
-    if not limit_brake_enabled or not is_brake_applied(prep.lever):
+    if not limit_brake_enabled or not brake_applied_from_probe(
+        snap, prep.lever, prep.ctx.vehicle_package
+    ):
         return None
     release_state.update(prep.ctx.speed_mph, prep.next_limit_mph)
     latch_ops = (
@@ -699,6 +722,7 @@ def _finalize_target_decision(
     snap: ProbeSnapshot,
     learner: Optional[LearnerProfile],
     lever: int,
+    throttle_notch: int,
     dist_m: Optional[float],
     next_limit_mph: Optional[float],
     grad: float,
@@ -716,7 +740,7 @@ def _finalize_target_decision(
         return ctx.idle("coast_latch", target=target)
 
     cmd = target.to_brake_command(
-        throttle_notch=throttle_notch_from_lever(lever),
+        throttle_notch=throttle_notch,
         current_notch=lever,
         speed_mph=ctx.speed_mph,
         gradient_pct=grad,
@@ -765,13 +789,13 @@ def evaluate_p1_tick(
     if not limit_brake_enabled and not station_brake_enabled and not signal_brake_enabled:
         return LimitBrakeDecision.idle(reason="p1_off")
 
-    station_dist: Optional[float] = None
-    if (
-        station_brake_enabled
-        and station_distance_m is not None
-        and station_distance_m > 0
-    ):
-        station_dist = float(station_distance_m)
+    station_dist_geo: Optional[float] = None
+    if station_distance_m is not None and station_distance_m > 0:
+        station_dist_geo = float(station_distance_m)
+    # ``station_dist``: plan STATION; ``station_dist_geo``: señal/release/FSM geometría.
+    station_dist: Optional[float] = (
+        station_dist_geo if station_brake_enabled else None
+    )
 
     prep = _prepare_tick(snap, learner, predict_decel)
     if prep is None:
@@ -780,7 +804,7 @@ def evaluate_p1_tick(
     emerg = _attempt_p1_emergency(
         prep,
         snap,
-        station_distance_m=station_dist if station_brake_enabled else None,
+        station_distance_m=station_dist_geo,
     )
     if emerg is not None:
         return emerg
@@ -812,8 +836,8 @@ def evaluate_p1_tick(
             limit_target,
             limit_state,
             speed_mph=ctx.speed_mph,
-            station_dist_m=station_dist,
-            combined_lever=prep.lever,
+            station_dist_m=station_dist_geo,
+            combined_lever=prep.combined_lever,
             station_fsm=station_fsm,
             posted_limit_mph=posted,
             gradient_pct=ctx.grad,
@@ -822,22 +846,23 @@ def evaluate_p1_tick(
         )
 
     station_target: Optional[BrakeTargetResult] = None
-    if station_dist is not None:
+    station_plan_dist = station_distance_for_brake_plan(station_dist, ctx.speed_mph)
+    if station_plan_dist is not None:
         station_allow_watch = should_allow_station_watch_when_deferred(
             speed_mph=ctx.speed_mph,
-            station_dist_m=station_dist,
+            station_dist_m=station_plan_dist,
             limit_mph=prep.next_limit_mph,
             limit_dist_m=prep.dist_m,
             gradient_pct=ctx.grad,
             brake_fill_s=prep.fill_s,
             accel_ms2=snap.accel_ms2,
-        )
+        ) or station_within_dwell_zone(station_plan_dist)
         station_target = evaluate_station_brake(
             speed_mph=ctx.speed_mph,
-            station_distance_m=station_dist,
+            station_distance_m=station_plan_dist,
             gradient_pct=ctx.grad,
             predict_decel=prep.predict,
-            throttle_notch=throttle_notch_from_lever(prep.lever),
+            throttle_notch=prep.throttle_notch,
             station_eta=station_eta,
             schedule_slack_enabled=schedule_slack_enabled,
             brake_fill_s=prep.fill_s,
@@ -851,7 +876,7 @@ def evaluate_p1_tick(
         signal_brake_enabled
         and signal_in_play(
             signal_dist_m=signal_dist,
-            station_dist_m=station_dist,
+            station_dist_m=station_dist_geo,
         )
     ):
         signal_target = evaluate_signal_brake(
@@ -859,8 +884,8 @@ def evaluate_p1_tick(
             signal_distance_m=signal_dist,
             gradient_pct=ctx.grad,
             predict_decel=prep.predict,
-            throttle_notch=throttle_notch_from_lever(prep.lever),
-            station_distance_m=station_dist,
+            throttle_notch=prep.throttle_notch,
+            station_distance_m=station_dist_geo,
             brake_fill_s=prep.fill_s,
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
         )
@@ -873,7 +898,7 @@ def evaluate_p1_tick(
         signal_dist_m=signal_dist,
         limit_mph=prep.next_limit_mph,
         limit_dist_m=prep.dist_m,
-        station_dist_m=station_dist,
+        station_dist_m=station_dist_geo,
         effective_limit=ctx.effective,
         gradient_pct=ctx.grad,
         brake_fill_s=prep.fill_s,
@@ -882,7 +907,7 @@ def evaluate_p1_tick(
 
     def _limit_release_ok(pick: Optional[BrakeTargetResult]) -> bool:
         return limit_release_allowed(
-            station_dist,
+            station_dist_geo,
             pick,
             station_target,
             signal_target,
@@ -894,7 +919,7 @@ def evaluate_p1_tick(
         ctx,
         prep,
         station_fsm=station_fsm,
-        station_dist_m=station_dist,
+        station_dist_m=station_dist_geo,
         platform_bleed_episode=platform_bleed_episode,
     )
     if platform_bleed is not None:
@@ -904,7 +929,7 @@ def evaluate_p1_tick(
         ctx,
         prep,
         station_fsm=station_fsm,
-        station_dist_m=station_dist,
+        station_dist_m=station_dist_geo,
         platform_bleed_episode=platform_bleed_episode,
     )
     if platform_bleed_release is not None:
@@ -914,15 +939,15 @@ def evaluate_p1_tick(
         ctx,
         prep,
         station_fsm=station_fsm,
-        station_dist_m=station_dist,
+        station_dist_m=station_dist_geo,
     )
     if departing_release is not None:
         return departing_release
 
     skip_release = should_skip_p1_release(
         speed_mph=ctx.speed_mph,
-        station_dist_m=station_dist,
-        combined_lever=prep.lever,
+        station_dist_m=station_dist_geo,
+        combined_lever=prep.combined_lever,
         station_fsm=station_fsm,
         brake_cyl_bar=prep.ctx.cyl,
         platform_bleed_episode=platform_bleed_episode,
@@ -948,7 +973,7 @@ def evaluate_p1_tick(
     command_target = _overlay_active_zone_hold(target, limit_target)
     if command_target is None:
         if (
-            station_dist is None
+            station_dist_geo is None
             and (not limit_brake_enabled or prep.next_limit_mph is None or prep.dist_m is None)
             and signal_target is None
         ):
@@ -963,6 +988,7 @@ def evaluate_p1_tick(
         snap=snap,
         learner=learner,
         lever=prep.lever,
+        throttle_notch=prep.throttle_notch,
         dist_m=prep.dist_m,
         next_limit_mph=prep.next_limit_mph,
         grad=ctx.grad,

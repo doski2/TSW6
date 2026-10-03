@@ -227,13 +227,29 @@ Código métricas: `tsw6/telemetry/channel_diagnostics.py`.
 | Objeto resuelto | `MasterController` (alias IPC `PowerBrakeHandle`) |
 | Línea | `PowerBrakeHandle:0.7200:cmd_id` — **fracción 0.0–1.0** = `InputValue` |
 | Semántica Lua | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue` |
-| Python | P1: `command_from_target` / `plan_to_brake_command` rellenan `BrakeCommand.target_fraction` (fase B1→valor paquete); bucle `dispatch_to_input_fraction` (`vehicle_package.py`, `command.py`, `loop.py`) |
+| Python | Plan P1 en fases B1–B3 (lógica UK); **wire MC** = `brake_input` en `data/vehicles/<id>.json` (`neutral`, `B1`…`B3` → 0..1) vía `profile_brake_fraction` / `apply_vehicle_brake_actuator`; bucle `dispatch_to_input_fraction` |
+| Paquete | `brake_input` canónico; `uk_combined_notch_ipc` solo legado si falta `brake_input` |
 | Prueba campo | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat` |
 | Prueba unitaria | `V2/tests/test_mc_analog_ipc.py` |
 
 Misma línea física que 323; el probe elige modo por nombre del componente (**FACT:** código `ipc.lua` `is_mc_analog_ctrl`).
 
 P1 L4 aire: paquete puede incluir `"brake_air": {"model": "master_controller"}` — no bloquea APPLY con umbral cilindro 323 (**FACT:** `V2/tsw6v2/brake_air_profile.py`).
+
+**RELEASE heredado (cartel/señal):** en MC no usar solo `lever_notch` UK — `brake_applied_from_probe()` (`command.py`) mira `train_brake` > neutro del paquete o `brake_cyl_bar` > ralentí.
+
+### P1 — distancia a estación (planning HTTP)
+
+En `evaluate_p1_tick` (`decision.py`) conviven dos distancias desde el mismo planning:
+
+| Variable | Cuándo | Uso |
+| --- | --- | --- |
+| `station_dist_geo` | Siempre que planning devuelve metros > 0 | Señal (`signal_in_play`), RELEASE/COAST andén, bleed, `pick`, emergencia |
+| `station_dist` | Solo si `station_brake_enabled` (FSM no suprime plan STATION) | `evaluate_station_brake` / APPLY andén |
+
+Si el FSM suprime el freno de estación (`DEPARTING`, etc.), `station_dist` queda `None` pero **`station_dist_geo` sigue activa** — evita tratar un rojo lejano como “en juego” solo porque no hay plan STATION (**FACT:** regresión sesión `20261003T202046Z`).
+
+Palanca combinada UK para FSM y salida: `combined_lever_for_station_gate()`; en MC la tracción sale de `power`, no de `lever_notch` crudo.
 
 ---
 

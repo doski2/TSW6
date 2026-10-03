@@ -9,8 +9,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tsw6v2.probe_seq import probe_seq_delta_ms
+from tsw6v2.gui_view import format_ipc_target_display
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import format_layer_tag, layer_label
+
+
+def _ipc_target_trace(snap: AgentSnapshot) -> str:
+    return format_ipc_target_display(snap) or "—"
 
 
 def advance_probe_active_ms(
@@ -122,6 +127,7 @@ class JsonlTrace:
             "spd_mph": _round_opt(snap.speed_mph, 2),
             "lever": snap.lever_notch,
             "target": snap.target_notch,
+            "target_frac": _round_opt(snap.target_input_value, 4),
             "train_brake": _round_opt(snap.train_brake, 3),
             "brake_cyl_bar": _round_opt(snap.brake_cyl_bar, 2),
             "brake_fill_s": _round_opt(snap.brake_fill_s, 2),
@@ -243,7 +249,7 @@ def format_investigate(snap: AgentSnapshot) -> str:
     parts.extend([
         f"p1={p1}/{phase}",
         f"h={snap.lever_notch}",
-        f"ipc_tgt={snap.target_notch}",
+        f"ipc_tgt={_ipc_target_trace(snap)}",
         f"ipc={1 if snap.ipc_sent else 0}",
     ])
     if snap.p1_reason:

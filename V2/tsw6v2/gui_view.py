@@ -12,6 +12,7 @@ from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import LAYERS, layer_help, layer_label
 
 from tsw6v2.p1_mode import resolve_gui_p1_mode
+from tsw6v2.vehicle_package import resolve_vehicle_package, uses_mc_analog_ipc
 
 _LAYER_COLORS: dict[str, str] = {
     "BRAKE": "#ef4444",
@@ -26,6 +27,27 @@ _LAYER_COLORS: dict[str, str] = {
     "GAP": "#dc2626",
     "IDLE": "#334155",
 }
+
+
+def format_ipc_target_display(snap: AgentSnapshot) -> Optional[str]:
+    if snap.target_input_value is not None:
+        return f"{snap.target_input_value:.3f}"
+    if snap.target_notch is not None:
+        return str(snap.target_notch)
+    return None
+
+
+def format_lever_display(snap: AgentSnapshot) -> Optional[int | str]:
+    if snap.lever_notch is None:
+        return None
+    pkg = resolve_vehicle_package(snap.vehicle or "")
+    if (
+        pkg
+        and uses_mc_analog_ipc(pkg)
+        and snap.train_brake is not None
+    ):
+        return f"{snap.lever_notch} (MC {snap.train_brake:.2f})"
+    return snap.lever_notch
 
 
 def _dash(val: Optional[float], *, digits: int = 1, suffix: str = "") -> str:
@@ -140,8 +162,8 @@ class TelemetryView:
     loop_hz: float
     p1_mode: str
     speed_mph: Optional[float]
-    lever: Optional[int]
-    ipc_target: Optional[int]
+    lever: Optional[int | str]
+    ipc_target: Optional[str]
     ipc_status: str
     vehicle: str
     brake_air: str
@@ -240,6 +262,8 @@ def build_dashboard(
         air = f"P {snap.brake_cyl_bar:.1f} bar  fill {_dash(snap.brake_fill_s, digits=1, suffix=' s')}"
 
     tgt = snap.p1_target_kind or ""
+    ipc_tgt_disp = format_ipc_target_display(snap)
+    lever_disp = format_lever_display(snap)
     mode_label = mode if mode != "off" else "probe"
     if snap and snap.driver_override_s > 0:
         mode_label = f"{mode_label} · MANUAL {snap.driver_override_s:.0f}s"
@@ -251,8 +275,8 @@ def build_dashboard(
             loop_hz=loop_hz,
             p1_mode=mode_label,
             speed_mph=snap.speed_mph,
-            lever=snap.lever_notch,
-            ipc_target=snap.target_notch,
+            lever=lever_disp,
+            ipc_target=ipc_tgt_disp,
             ipc_status=ipc,
             vehicle=snap.vehicle or "?",
             brake_air=air,

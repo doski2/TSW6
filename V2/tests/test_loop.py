@@ -295,10 +295,52 @@ class TestAgentLoop:
             vehicle="RVM_NYH_MNR_M3a-B_C",
         )
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
         loop.request_input_fraction(0.85)
         loop._last_lever = 4
-        loop._check_driver_takeover(5)
+        snap = loop.read_probe()
+        loop._check_driver_takeover(5, snap)
         assert loop.target_input_value == 0.85
+
+    def test_mc_clears_neutral_fraction_when_train_brake_hud_zero(
+        self, tmp_path: Path
+    ) -> None:
+        """Regresión 203337Z: IPC neutro en bucle con train_brake=0 bloquea palanca."""
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=4,
+            train_brake=0.0,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop.request_input_fraction(0.72)
+        snap = loop.read_probe()
+        assert snap is not None
+        loop._maybe_release_driver_control(4, snap)
+        assert loop.target_input_value is None
+
+    def test_mc_driver_power_clears_fraction_ipc(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=4,
+            train_brake=0.0,
+            power=0.2,
+            power_neg=0,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop.request_input_fraction(0.72)
+        snap = loop.read_probe()
+        assert snap is not None
+        loop._check_driver_takeover(4, snap)
+        assert loop.target_input_value is None
+        assert loop.driver_override_remaining_s() > 0.0
 
     def test_auto_profile_skipped_when_explicit(self, tmp_path: Path) -> None:
         profiles = tmp_path / "profiles"

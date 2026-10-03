@@ -5,9 +5,11 @@
     "vehicle_class": "RVM_NYH_MNR_M3a-B_C"
   },
   "layout": "master_controller",
-  "uk_combined_notch_ipc": {
-    "3": 0.85,
-    "4": 0.72
+  "brake_input": {
+    "neutral": 0.72,
+    "B1": 0.85,
+    "B2": 0.8999999762,
+    "B3": 0.9499999881
   },
   "brake_air": {
     "model": "master_controller"

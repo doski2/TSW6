@@ -16,11 +16,17 @@ from tsw6v2.p1_policy import (
     should_defer_station_brake,
     should_prefer_station_in_approach,
 )
-from tsw6v2.station_brake import evaluate_station_brake
+from tsw6v2.p1_station_gate import STATION_STOPPED_MPH
+from tsw6v2.station_brake import (
+    evaluate_station_brake,
+    station_distance_for_brake_plan,
+)
 from tsw6v2.station_plan import (
+    STATION_OVERSHOOT_PLAN_DISTANCE_M,
     STATION_SCHEDULE_SLACK_ENABLED,
     plan_brake_for_station,
     should_suppress_station_braking_for_departure,
+    station_within_dwell_zone,
 )
 from tsw6v2.target import BrakeTargetResult
 
@@ -45,6 +51,41 @@ def test_station_schedule_slack_disabled_by_default():
 
 def test_should_defer_station_far():
     assert should_defer_station_brake(speed_mph=60.0, station_dist_m=5000.0)
+
+
+def test_should_not_defer_station_within_dwell_horizon_session_213959() -> None:
+    """52 m @ ~8 mph: sí plan STATION (antes no_plan hasta salto planning)."""
+    assert not should_defer_station_brake(speed_mph=7.9, station_dist_m=52.7)
+    tgt = evaluate_station_brake(
+        speed_mph=7.9,
+        station_distance_m=52.7,
+        allow_watch=True,
+    )
+    assert tgt is not None
+
+
+def test_station_within_dwell_zone() -> None:
+    assert station_within_dwell_zone(0.0)
+    assert station_within_dwell_zone(80.0)
+    assert not station_within_dwell_zone(80.1)
+
+
+def test_station_distance_for_brake_plan_overshoot_session_213959() -> None:
+    """Marcador pasado: plan/emergencia usan shim; parado → sin plan."""
+    assert station_distance_for_brake_plan(None, 10.0) is None
+    assert station_distance_for_brake_plan(120.0, 10.0) == 120.0
+    stopped = STATION_STOPPED_MPH
+    assert station_distance_for_brake_plan(0.0, stopped) is None
+    assert station_distance_for_brake_plan(-3.0, stopped) is None
+    moving = stopped + 2.0
+    assert station_distance_for_brake_plan(0.0, moving) == STATION_OVERSHOOT_PLAN_DISTANCE_M
+    assert station_distance_for_brake_plan(-5.0, moving) == STATION_OVERSHOOT_PLAN_DISTANCE_M
+    plan_dist = station_distance_for_brake_plan(0.0, moving)
+    assert evaluate_station_brake(
+        speed_mph=moving,
+        station_distance_m=plan_dist,
+        allow_watch=True,
+    ) is not None
 
 
 def test_suppress_station_brake_origin_departure_session_214610() -> None:

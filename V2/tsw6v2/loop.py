@@ -12,11 +12,13 @@ from tsw6v2.bridge.ipc_bus import purge_lua_commands
 from tsw6v2.command import (
     BrakeCommand,
     BrakeReleaseState,
-    throttle_notch_from_lever,
+    combined_lever_for_station_gate,
+    throttle_notch_from_probe,
 )
 from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
     DRIVER_OVERRIDE_COOLDOWN_S,
+    MC_INPUT_VALUE_EPS,
     MS_TO_MPH,
     NEUTRAL_NOTCH,
 )
@@ -33,6 +35,7 @@ from tsw6v2.learner import LearnerProfile
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     combined_notch_to_ipc_value,
+    profile_neutral_fraction,
     resolve_vehicle_package,
     uses_mc_analog_ipc,
 )
@@ -40,8 +43,8 @@ from tsw6v2.limits import LimitBrakeState
 from tsw6v2.p1_layers import classify_layer
 
 DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
-# Tolerancia telemetría ``train_brake`` vs objetivo MC (InputValue 0..1).
-MC_INPUT_VALUE_EPS = 0.015
+# Tracción HUD MC: asumir takeover si P1 sostiene InputValue (OBSERVATION M3a 20261003).
+_MC_DRIVER_POWER_TAKEOVER = 0.05
 
 
 @dataclass
@@ -431,9 +434,55 @@ class AgentLoop:
             0.5, float(self.driver_override_cooldown_s)
         )
 
-    def _maybe_release_driver_control(self, lever: Optional[int]) -> None:
+    def _fraction_ipc_target_reached(self, snap: ProbeSnapshot) -> bool:
+        """MC: ``train_brake`` a veces 0 con neutro aplicado — no bloquear IPC eterno."""
+        if self._target_fraction is None:
+            return False
+        target = float(self._target_fraction)
+        tb = snap.train_brake
+        if tb is not None and abs(float(tb) - target) <= MC_INPUT_VALUE_EPS:
+            return True
+        pkg = self._vehicle_package
+        if pkg and uses_mc_analog_ipc(pkg):
+            neutral = profile_neutral_fraction(pkg)
+            if neutral is not None and abs(target - neutral) <= MC_INPUT_VALUE_EPS:
+                lev = probe_lever(snap)
+                if lev is not None and int(lev) >= int(self.neutral_notch):
+                    return True
+        return False
+
+    def _clear_fraction_target_if_reached(self, snap: Optional[ProbeSnapshot]) -> None:
+        if snap is not None and self._fraction_ipc_target_reached(snap):
+            self.clear_target()
+
+    def _check_driver_takeover_mc_fraction(
+        self,
+        snap: ProbeSnapshot,
+        lever: int,
+    ) -> None:
+        """``lever_notch`` UK en MC no fiable; usar ``power`` para soltar IPC."""
+        if self._target_fraction is None:
+            return
+        pkg = self._vehicle_package
+        if not (pkg and uses_mc_analog_ipc(pkg)):
+            return
+        if snap.power is not None and not snap.power_neg:
+            if float(snap.power) > _MC_DRIVER_POWER_TAKEOVER:
+                self.clear_target()
+                self._arm_manual_override()
+                return
+        if lever < int(self.neutral_notch):
+            self.clear_target()
+            self._arm_manual_override()
+
+    def _maybe_release_driver_control(
+        self,
+        lever: Optional[int],
+        snap: Optional[ProbeSnapshot] = None,
+    ) -> None:
         """Suelta ``target`` IPC si la palanca ya alcanzó el objetivo."""
         if self._target_fraction is not None:
+            self._clear_fraction_target_if_reached(snap)
             return
         if self._target_notch is None or lever is None:
             return
@@ -444,9 +493,15 @@ class AgentLoop:
         if reached:
             self.clear_target()
 
-    def _check_driver_takeover(self, lever: int) -> None:
+    def _check_driver_takeover(
+        self,
+        lever: int,
+        snap: Optional[ProbeSnapshot] = None,
+    ) -> None:
         """Si la palanca se aleja del objetivo IPC, asumir conducción manual."""
         if self._target_fraction is not None:
+            if snap is not None:
+                self._check_driver_takeover_mc_fraction(snap, lever)
             self._last_lever = lever
             return
         if self._target_notch is None:
@@ -491,8 +546,18 @@ class AgentLoop:
         station_fsm = ""
         p1_target_kind = ""
         lever = probe_lever(snap)
+        throttle_probe = (
+            throttle_notch_from_probe(snap, self._vehicle_package)
+            if snap is not None
+            else 0
+        )
+        combined_lever_gate = (
+            combined_lever_for_station_gate(snap, lever, self._vehicle_package)
+            if snap is not None
+            else int(self.neutral_notch)
+        )
         if lever is not None:
-            self._check_driver_takeover(int(lever))
+            self._check_driver_takeover(int(lever), snap)
             if (
                 snap is not None
                 and snap.speed_ms is not None
@@ -500,10 +565,9 @@ class AgentLoop:
                 and self._target_fraction is None
             ):
                 mph_early = float(snap.speed_ms) * MS_TO_MPH
-                throttle_early = throttle_notch_from_lever(int(lever))
                 target = int(self._target_notch)
                 if (
-                    throttle_early > 0
+                    throttle_probe > 0
                     and mph_early < DEPARTING_CLEAR_MPH
                     and target >= int(self.neutral_notch)
                 ):
@@ -531,18 +595,19 @@ class AgentLoop:
                 station_name = planning.station_name
                 service_name = planning.service_name
                 schedule_source = planning.schedule_source
+                combined_lever = combined_lever_gate
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,
                     doors_open=snap.doors_open,
                     doors_telem=snap.doors_telem,
                     doors_dmi=snap.doors_dmi,
-                    throttle_notch=lever if lever is not None else 4,
+                    throttle_notch=combined_lever,
                 )
                 station_fsm = self._station_gate.state or ""
                 if self._station_gate.suppress_station_brake(
                     station_dist_m=station_dist_m,
-                    throttle_notch=lever if lever is not None else 4,
+                    throttle_notch=combined_lever,
                     speed_mph=mph,
                 ):
                     station_p1_enabled = False
@@ -596,9 +661,9 @@ class AgentLoop:
                     apply_actuator=False,
                 )
                 if p1_cmd == "RELEASE":
-                    self._maybe_release_driver_control(lever)
+                    self._maybe_release_driver_control(lever, snap)
             else:
-                self._maybe_release_driver_control(lever)
+                self._maybe_release_driver_control(lever, snap)
             p1_layer = classify_layer(
                 reason=p1_reason,
                 cmd=p1_cmd or None,
@@ -611,7 +676,7 @@ class AgentLoop:
                     brake_cyl_bar=snap.brake_cyl_bar,
                     speed_mph=mph,
                     station_dist_m=station_dist_m,
-                    combined_lever=int(lever) if lever is not None else self.neutral_notch,
+                    combined_lever=combined_lever_gate,
                     station_fsm=station_fsm or None,
                 )
 
@@ -619,6 +684,7 @@ class AgentLoop:
         ipc_sent = False
 
         if not manual_active and snap is not None:
+            self._clear_fraction_target_if_reached(snap)
             if self._target_fraction is not None:
                 current_frac = snap.train_brake
                 need_ipc = (
