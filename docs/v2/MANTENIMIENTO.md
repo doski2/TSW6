@@ -8,7 +8,7 @@ Checklist operativo que acompaña **cada paso** del § Orden en
 Las **fases** (0–6, capacidades del producto) están en el mismo doc: [§ Fases
 0–6](PLAN_V2.md#fase-0--contrato-io).
 
-**Estado rápido (2026-09-10):** paso **3** — cartel P1 en `V2/tsw6v2/` (**143** tests V2).
+**Estado rápido (2026-10-03):** paso **3** — cartel P1 en `V2/tsw6v2/` (**~370** tests `V2/tests/`).
 Validación campo: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) (protocolo activo; sin
 features nuevas hasta estabilizar perfil).
 `archive/braking_v1_autopilot/` — solo `station_plan.py` + `objectives.py` (ref. pasos 6–7).
@@ -60,6 +60,11 @@ de merge).
 ### Comandos habituales
 
 ```bat
+cd V2
+set PYTHONPATH=..;.
+python -m pytest tests/ -q
+python -m pytest tests/test_h1_downhill.py tests/test_limit_notch.py tests/test_command.py -q
+V2\run_p1_session.bat limit cross-city
 ```
 
 ### Matriz por área tocada
@@ -71,7 +76,9 @@ de merge).
 | IPC / mandos (contrato) | `test_control_channel`, `test_tsw_ipc_bus` |
 | **`V2/tsw6v2/`** | **`V2/tests/`** (criterio producto) |
 | Monitor CLI (v1, delega v2) | `tests/test_tsw_monitor_ipc` (solo parse args) |
-| P1 cartel V2 | `V2/tests/test_release`, `test_decision`, `test_h1_downhill`, `test_command` |
+| P1 cartel V2 | `test_h1_downhill`, `test_limit_notch`, `test_command`, `test_decision`, `test_release`, `test_p1_station_tick` |
+| H1 / salida ascendente | `test_h1_downhill` (`zone_hold_suppressed`, `071613`, `15→40` subida) |
+| Caída grande 90→15 | `test_limit_notch` (`large_drop`, `horizon_commit` vía `test_command`) |
 | Autopilot GUI (cartel) | `tests/test_speed_decider` (`autopilot_limit` → V2) |
 | P1 estación/policy (archive v1) | `archive/braking_v1_autopilot/` — portar con paso 6–7 |
 | Paquete tren G-B | `test_control_layout`, `test_vehicles_json_from_lab`, `test_compare_lab_controls` |
@@ -161,12 +168,14 @@ Alcance: solo **cartel** (`dist_limit_cm` / `next_limit_ms`); sin estación ni s
 - [ ] Probe instalado (`scripts\ue4ss\install_ue4ss_probe.bat`) y juego con UE4SS.
 - [ ] Partida **Class 323** en marcha (recomendado: Cross-City, tramo con carteles 60→55 o 55→45).
 - [ ] Palanca en **neutro (4)** o tracción moderada; sin freno manual al iniciar el agente.
-- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **213** tests).
+- [ ] `pytest V2/tests/ -q` verde en la máquina (referencia actual: **~370** tests).
 - [ ] Opcional: copiar una línea GetData a fixture si encuentras un caso raro.
 
 #### Comandos
 
 ```bat
+V2\run_p1_session.bat limit cross-city
+python -m pytest V2/tests/test_h1_downhill.py V2/tests/test_limit_notch.py -q
 ```
 
 #### Perfil learner (`logs/profiles/`)
@@ -389,14 +398,16 @@ Archive: `station_plan` + `objectives` (estación/señal); coordinator/policy **
 
 | Módulo V2 | Responsabilidad |
 | --- | --- |
-| `planning.py` | GetData cartel, `is_ascending_limit_exit`, `resolve_limit_objective` |
+| `planning.py` | GetData; `zone_hold_suppressed_for_ascending_exit`; `large_zone_to_next_drop` |
 | `limits.py` | Fachada: `evaluate_limit_brake` (HOLD_DH + BRAKE_LIMIT) |
 | `limit_state.py` | Latch, `decel` por muesca, margen reacción + `fill_s` |
 | `limit_notch.py` | Escalón B1→B2→B3, muesca mínima suficiente |
 | `limit_horizon.py` | Horizonte cinemático al cartel siguiente |
-| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon`) |
-| `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE) |
-| `decision.py` | Tick → `BrakeCommand` |
+| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon` + `zone_hold_suppressed`) |
+| `physics.py` | Ventana IPC; `speed_limit_horizon_commit` (plan lejos → mando) |
+| `command.py` | COAST / APPLY / RELEASE |
+| `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE / ascending exit) |
+| `decision.py` | Tick → `BrakeCommand`; overlay HOLD_DH |
 | `autopilot_limit.py` | Puente `speed_decider` → `evaluate_limit_tick` |
 
 Cambiar comportamiento cartel → **solo** `V2/tsw6v2/` + `V2/tests/`. Señal: `signal_plan`,
@@ -452,6 +463,8 @@ dejar `print` en `loop.py` / `ipc.py`.
 | [PLAN_V2](PLAN_V2.md) | Cierre paso, delta, debate |
 | [CODIGO_V2](CODIGO_V2.md) | Nueva carpeta o convención |
 | [MANTENIMIENTO](MANTENIMIENTO.md) | Nuevo comando recurrente |
+| [REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md) | Cambio contrato P1, ventanas IPC/H1, mapa módulos |
+| [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) | Nueva sesión ref. Cross-City o checklist campo |
 | [esqueleto_v2.svg](../assets/esqueleto_v2.svg) | Cambio arquitectura agent/probe |
 
 Política v1/v2: [PLAN_V2 § Política de documentación](PLAN_V2.md#política-de-documentación).

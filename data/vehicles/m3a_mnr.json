@@ -1,0 +1,113 @@
+{
+  "schema": "tsw6-vehicle-package/1",
+  "vehicle_id": "m3a_mnr",
+  "match": {
+    "vehicle_class": "RVM_NYH_MNR_M3a-B_C"
+  },
+  "layout": "combined",
+  "controls": {
+    "MasterController": {
+      "ue_name": "MasterController",
+      "component_class": "IrregularLeverComponent",
+      "scope": "actor",
+      "read_kind": "scalar",
+      "read_value_at_capture": 1.0,
+      "current_notch_id_at_capture": 7,
+      "notches": [
+        {
+          "index": 1,
+          "MinimumInputValue": 0.0,
+          "MaximumInputValue": 0.0
+        },
+        {
+          "index": 2,
+          "MinimumInputValue": 0.2700000107,
+          "MaximumInputValue": 0.6299999952
+        },
+        {
+          "index": 3,
+          "MinimumInputValue": 0.6399999857,
+          "MaximumInputValue": 0.6399999857
+        },
+        {
+          "index": 4,
+          "MinimumInputValue": 0.7200000286,
+          "MaximumInputValue": 0.7200000286
+        },
+        {
+          "index": 5,
+          "MinimumInputValue": 0.8500000238,
+          "MaximumInputValue": 0.8500000238
+        },
+        {
+          "index": 6,
+          "MinimumInputValue": 0.8999999762,
+          "MaximumInputValue": 0.8999999762
+        },
+        {
+          "index": 7,
+          "MinimumInputValue": 0.9499999881,
+          "MaximumInputValue": 0.9499999881
+        }
+      ],
+      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.MasterController"
+    },
+    "Reverser": {
+      "ue_name": "Reverser",
+      "component_class": "IrregularLeverComponent",
+      "scope": "actor",
+      "read_kind": "scalar",
+      "read_value_at_capture": 0.6660000086,
+      "current_notch_id_at_capture": 2,
+      "notches": [
+        {
+          "index": 1,
+          "MinimumInputValue": 0.0,
+          "MaximumInputValue": 0.0
+        },
+        {
+          "index": 2,
+          "MinimumInputValue": 0.3330000043,
+          "MaximumInputValue": 0.3330000043
+        },
+        {
+          "index": 3,
+          "MinimumInputValue": 0.6660000086,
+          "MaximumInputValue": 0.6660000086
+        }
+      ],
+      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.Reverser"
+    },
+    "MasterKey": {
+      "ue_name": "MasterKey",
+      "component_class": "SimpleLeverComponent",
+      "scope": "actor",
+      "read_kind": "scalar",
+      "read_value_at_capture": 1.0,
+      "current_notch_id_at_capture": 1,
+      "notches": [
+        {
+          "index": 0
+        },
+        {
+          "index": 1
+        },
+        {
+          "index": 2
+        }
+      ],
+      "number_of_notches": 2,
+      "ue_path": "SimpleLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.MasterKey"
+    }
+  },
+  "source": {
+    "lab_schema": "tsw6-lab-export/1",
+    "session_id": "20261003T180232Z",
+    "captured_at": "2026-10-03T18:06:26Z",
+    "build": "20261003b",
+    "controls_path": "C:/Users/doski/TSW6/data/lab_exports/exports/20261003T180232Z/controls.json"
+  },
+  "ipc_aliases": {
+    "PowerBrakeHandle": "MasterController"
+  }
+}

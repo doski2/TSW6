@@ -209,6 +209,11 @@ local function infer_layout_hint(levers)
     local names = {}
     for _, lev in ipairs(levers) do
         names[lev.name] = true
+    end
+    if names.MasterController then
+        return "master_controller"
+    end
+    for _, lev in ipairs(levers) do
         local low = string.lower(lev.name or "")
         if string.find(low, "powerbrake", 1, true) or string.find(low, "combined", 1, true) then
             return "combined"

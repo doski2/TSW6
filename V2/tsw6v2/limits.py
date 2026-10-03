@@ -180,6 +180,7 @@ def _evaluate_next_limit_brake(
         latch_limit_target(
             state,
             posted_limit_mph=limit_mph,
+            zone_posted_mph=current_posted_mph,
             distance_m=distance_m,
             speed_mph=speed_mph,
             gradient_pct=gradient_pct,
@@ -248,6 +249,7 @@ def _evaluate_next_limit_brake(
         apply_now=apply_now,
         dist_start=dist_start,
         apply_zone_m=apply_zone_m,
+        distance_m=distance_m,
         predict_decel=predict_decel,
         escalate_cap=escalate_cap,
         lever=lever,

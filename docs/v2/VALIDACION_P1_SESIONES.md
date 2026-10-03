@@ -17,6 +17,8 @@ No sustituye `pytest`; complementa prueba de campo.
 | Pieza | Módulo |
 | --- | --- |
 | Prioridad H1 + latch | `limits.py`, `limit_containment.py`, `limit_horizon.py` |
+| Salida ascendente / zona 40→70 | `planning.zone_hold_suppressed_for_ascending_exit` + `constants.ASCENDING_EXIT_*` |
+| Caída grande + mando lejos | `limit_horizon`, `limit_notch`, `physics.speed_limit_horizon_commit`, `command.py` |
 | Muesca + defer + coast trim | `limit_notch.py`, `command.py` (`coast_trim_deferred`) |
 | Feedback decel + aire | `brake_feedback.py`, `brake_air.py` |
 | EMA online + calidad | `learner.py`, `learner_v1.py`, `learn_quality.py` |
@@ -32,14 +34,23 @@ No sustituye `pytest`; complementa prueba de campo.
 COAST_PWR en WATCH cartel, filtro `tsw_hud.db` en planning V2, aprendizaje por distancia integrada
 (solo EMA tick a tick con filtro aire), latch probe `signal_red` (pérdida ~40 m en marcha).
 
-**Paso 5 (2026-09-13):** `evaluate_signal_brake` — plan gradual v→0 + emergencia. Validación
-in-game pendiente (sesión ref. `225433Z`).
+**Paso 5 (2026-09-13):** `evaluate_signal_brake` — plan gradual v→0 + emergencia.
+
+**Señal en `logs/v2/` (revisión 2026-10-03):** **34** JSONL con `signal_red` en trace. **`225433Z`**
+(`git:6e65295`, **antes** del fix): rojo @ ~1040 m @ ~56 mph con `p1_tgt=null` → primer `SIGNAL` @
+~61 m (SPAD + emergencias en log). **No** usar esa grabación como cierre del paso 5 — es contraste
+«antes». **Tras fix** (mismo tramo ~1 km): `083405Z` / `102222Z` (`git:606e8bd`) → `p1_tgt=SIGNAL`
+desde ~1040 m; criterios WATCH/APPLY ~100 yd → `152037Z`, `153551Z`, `155148Z`, … Ver tabla abajo.
+Replay offline de `225433Z` con código actual **no** sustituye sesión nueva (telemetría + mezcla
+cartel/andén de la grabación).
 
 ---
 
 ## Antes de cada sesión
 
 ```bat
+python -m pytest V2/tests/ -q
+V2\run_p1_session.bat limit cross-city
 ```
 
 - [ ] Probe instalado · Class 323 · Cross-City (o ruta con 60→55).
@@ -129,7 +140,10 @@ Regenerar HTML (si hace falta):
 | `20260912T221258Z` | **Antes fix:** salida andén, cartel 35 @ 4 km → `COAST_PWR` / Vigilar — **tras fix:** `no_plan`, sin `p1tgt`, tracción en zona 60 |
 | `20260912T224046Z` | **Antes fix:** HOLD_DH @ 15 mph en bajada, 0 RELEASE, B1 hasta ~6 mph — **tras fix:** RELEASE con `pick=None` y andén lejos |
 | `20260913T081745Z` | **Antes fix:** HOLD_DH @ 15 mph, cartel 50 @ ~1 km, 0 RELEASE, B1 hasta ~2 mph — **tras fix:** `eff_floor` zona 15 (~14.5) lejos del next; también 10→30 en horizonte (`142034Z`) |
-| `20260912T225433Z` | **Antes fix:** SPAD rojo (solo emergencia @ 61 m; HOLD_DH @15 en final) — **tras fix paso 5:** plan SIGNAL desde lejos; validar in-game |
+| `20260912T225433Z` | **Antes fix** (archivo histórico): SPAD — rojo @1040 m sin `p1_tgt`; `SIGNAL` @ ~61 m |
+| `20260913T083405Z` | **Tras fix:** mismo orden de magnitud ~1040 m → `p1_tgt=SIGNAL` desde el primer rojo lejos |
+| `20260913T102222Z` | **Tras fix:** rojo lejos + plan SIGNAL (sin emergencias en resumen sesión) |
+| `20260913T152037Z` | **Tras fix:** WATCH lejos, APPLY ~100 yd, RELEASE al apagar rojo (cierre C1 operativo) |
 | `20260913T152037Z` | **Antes fix:** parada total @ ~217 m al 1.er semáforo; B3 no suelta tras pasar — **tras fix:** WATCH lejos, APPLY ~100 yd, RELEASE al apagar rojo |
 | `20260913T153551Z` | **Antes fix:** tras 1.er semáforo `pick=None` + `p1tgt=SIGNAL` lejos; cartel 15 @ ~160 m ignorado → B3 tarde y crawl — **tras fix:** cartel WATCH cercano con andén diferido gana sobre señal WATCH @ &gt;150 m |
 | `20260913T155148Z` | **Antes fix:** GAP cartel 15 APPLY + rojo @ ~100 m @ 32 mph → B3 tarde + emergencia — **tras fix:** señal &lt;150 m gana; APPLY hasta 150 m si spd &gt;30 |
@@ -139,6 +153,7 @@ Regenerar HTML (si hace falta):
 | `20260913T173809Z` | **Antes fix:** overspeed hasta **21 mph** en zona 15; `p1tgt=STATION` pero sin `downhill_hold` — **tras fix:** overlay HOLD_DH con objetivo STATION; escalada B2; replay ~185 ticks `downhill_hold` en `eff=15` |
 | `20260914T213920Z` | **Antes fix:** passthrough gate @ `stn≤55` + spd≥10 con B2 → RELEASE señal heredada + entrada andén ~13.7 mph; overspeed 10/15 salida; andén 3 `SIGNAL` tras marker — **tras fix:** rollo solo neutro/tracción; creep cartel; `exit_signal_close_behind_platform` |
 | `20260915T182951Z` | **Antes fix:** HTML sin `eff` 10; overspeed zona 10 (max ~11.3); `no_plan` @ 10.2 mph; RELEASE huérfanos ticks 296–300; arranque lento tras rojo — **tras fix:** coast watch extendido en creep; `should_skip_p1_release`; `departing_brake_needs_release` con aire residual |
+| `20261003T071613Z` | **Antes fix:** salida 15→40 subida sin HOLD; zona **40** @42 mph + next **70** → `no_plan` / STATION sin HOLD (`should_skip` anulaba H1) — **tras fix:** `zone_hold_suppressed`; ticks 44093/44384; pytest `071613` |
 
 ---
 
@@ -265,7 +280,7 @@ Si el perfil diverge mucho en sesión 1: restaurar `.bak.json` y repetir con fil
 | RELEASE ~55 mph y luego ~54 | RELEASE cinemático (proyección `fill`) | No — comportamiento esperado |
 | `decel_n` bajo con sesión larga | Bombeo B1↔costa; poco tiempo con P≥92 % | Tuning futuro; seguir validando |
 | B1 tras HOLD_DH en modo `station` | Antes 2026-09-13: RELEASE no corría con `pick=None` | Corregido — validar `RELEASE` en replay |
-| SPAD con `signal_red` lejos | Antes paso 5: solo emergencia tardía + HOLD_DH final | Plan SIGNAL; validar `225433Z` in-game |
+| SPAD con `signal_red` lejos | `225433Z` = antes fix | `083405Z` / `152037Z` tras fix; HTML sección **Señal** |
 | `signal_red` desaparece @ ~40 m | Probe pierde aspecto en marcha | Latch Lua; anotar sesión |
 
 ---

@@ -1,7 +1,7 @@
 -- ApiExplorerMod — rutas, schema, mapeo HTTP
 local M = {}
 
-M.BUILD = "20260901a"
+M.BUILD = "20261003b"
 M.SCHEMA = "tsw6-lab-export/1"
 M.HTTP_PREFIX = "CurrentFormation/0/Function."
 
@@ -14,6 +14,8 @@ M.USE_FINDALL_CONTROLS = false
 -- Nombres típicos de mandos (G-B / DRIVERINPUT_API). Orden: combined UK primero.
 M.CONTROL_PROBE_NAMES = {
     "PowerBrakeHandle",
+    "MasterController",
+    "PowerHandle",
     "ThrottleAndBrake",
     "CombinedHandle",
     "PowerBrake",
@@ -45,7 +47,14 @@ M.SIM_BRAKE_NODES = {
 }
 
 M.CONTROL_ALIASES = {
-    PowerBrakeHandle = { "PowerBrakeHandle", "ThrottleAndBrake", "CombinedHandle", "PowerBrake" },
+    PowerBrakeHandle = {
+        "PowerBrakeHandle",
+        "MasterController",
+        "PowerHandle",
+        "ThrottleAndBrake",
+        "CombinedHandle",
+        "PowerBrake",
+    },
     TrainBrake = { "TrainBrake", "AutomaticBrake" },
     LocomotiveBrake = { "LocomotiveBrake", "IndependentBrake" },
     DynamicBrake = { "DynamicBrake", "RegenBrakes" },

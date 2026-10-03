@@ -813,7 +813,7 @@ El probe **sí** manda `odo_m` (~20 Hz) y puertas (`doors_telem` / `doors_dmi`);
 | Capa | Qué es | Quién lo usa |
 | --- | --- | --- |
 | `stations[].distance_m` (HTTP) | Lista de paradas; refresco ~2 s + `v×dt` entre medias | `resolve_display_next_stop`, GUI |
-| FSM + `_p1_station_*` | Andén **activo** en APPROACHING (no el `next_stop` ya saltado) | FSM v1 + P1 estación pendiente V2 (paso 6–7) |
+| FSM + `_p1_station_*` | Andén **activo** en APPROACHING (no el `next_stop` ya saltado) | P1 andén en V2 (`station_plan`, `p1_policy`); **FSM producto** = paso **7** |
 | `car_stop_signs` (HUD DB) | Coordenadas tablón | Match horario; **P1 fino pendiente C2** |
 
 **Intento `markers[]` en Lua cada tick:** mismo riesgo que lim2 (TArray / `UScriptStruct`). No en
@@ -876,7 +876,8 @@ Validación: tarjeta **C2** (tras C1) · [DRIVERAID_API.md](../reference/DRIVERA
 ### 4.5 Semáforos
 
 **Diseño completo:** [§3](#3-semáforos-diseño-v2-no-apéndice) (solo rojo, S-Lua, D3/D8 cerrados).
-Aquí: **restricción de canal** y **hueco en código** — el plan ya está; falta cablear C1.
+Aquí: **restricción de canal** — diseño §3. Cableado probe → P1 **cerrado** (paso **5**); campo ref.
+`logs/v2/` (`083405Z`, `152037Z`); `225433Z` = antes fix.
 
 Referencia código: `mods/TelemetryProbeMod/Scripts/telemetry.lua` (`extract_signal_red`),
 `archive/braking_v1_autopilot/objectives.py` (`evaluate_signal_brake` stub).
@@ -1100,7 +1101,7 @@ Hz.
 | --- | --- | --- |
 | **En producción** | Hilo control + `AutopilotSnapshot` + telem/mandos async | — |
 | **Suficiente por ahora** | 323 Cross-City con GUI abierta | Ninguno — no ticket activo |
-| **Aplazado (D1)** | `V2/tsw6v2/` + GUI solo visor | § [Orden](#orden-de-implementación) pasos 2–3 |
+| **Hecho (D1 paso 2)** | `V2/tsw6v2/` + `AgentLoop` + GUI visor / `--console` | Cierre paso **3** = validación campo P1 |
 | **Fuera v2** | Sidecar sin medición; GUI que llama P1 directo | — |
 
 | Alternativa | Cuándo |
@@ -1124,13 +1125,11 @@ Hz.
 
   comportamiento `--console` y GUI.
 
-- **D1 implementado:** `V2/tsw6v2/` con API mínima `step()` → snapshot; GUI sin imports de v1
-
-  (solo snapshot + config).
+- [x] **D1 implementado (paso 2):** `V2/tsw6v2/` + `AgentLoop`; GUI visor sin `braking/v1` en el tick.
 
 - **Sidecar:** solo tras sesión documentada donde tkinter sea el cuello — no anticipar.
 
-Validación: tarjeta **D1** · § [Orden](#orden-de-implementación) pasos 2–3.
+Validación: tarjeta **D1** paso **2** ✅ · paso **3** = campo P1.
 
 ### 4.8 Layout 323 vs freight
 
@@ -1218,7 +1217,7 @@ Diagrama: [esqueleto_v2.svg](../assets/esqueleto_v2.svg) · fuente
 [esqueleto_v2.dot](../assets/esqueleto_v2.dot) ·
 HTML: [esqueleto_v2.html](../assets/esqueleto_v2.html).
 
-**Leyenda:** `*` = pendiente cablear (C1 señal, F-B masa, `is_slipping`). Tachado mental = no entra
+**Leyenda:** `*` = pendiente cablear (**F-B** masa en P1, **9b-a** `is_slipping`, **lim2**). C1 señal ✅. Tachado mental = no entra
 en v2.
 
 ```text
@@ -1262,15 +1261,15 @@ pendiente · `Abierto` = falta medición o proceso · `Aplazado` = fuera del cam
 
 | ID | Tema | Estado | Detalle |
 | --- | --- | --- | --- |
-| **D1** | Producto Python `V2/tsw6v2/` desde cero + migración por pruebas | **Elegido** | Debates, §4.7, ejecución pasos 2–3 |
-| **D2** | Schema GetData versionado (señal, lim2, …) | **En curso** — contrato en [CANAL_CONTROL](../CANAL_CONTROL.md); falta C1 en probe + checklist Fase 0 | [CANAL_CONTROL](../CANAL_CONTROL.md#contrato-getdata-v2) |
+| **D1** | Producto Python `V2/tsw6v2/` desde cero + migración por pruebas | **En curso** | Pasos **2–3** código ✅ (~370 tests); cierre = validación campo + pasos **6–7** |
+| **D2** | Schema GetData versionado (señal, lim2, …) | **En curso** | C1 ✅; proceso atómico para **lim2**, **9b-a**, campos nuevos | [CANAL_CONTROL](../CANAL_CONTROL.md#contrato-getdata-v2) |
 | **D3** | Señales en tick: Lua vs HTTP | **Cerrado** S-Lua | §3 |
 | **D4** | Agente sin GUI en el rewrite | **Elegido** | §4.7, `--console` |
 | **D5** | Política RELEASE (TSW, no V4) | **Elegido** | §2, Fase 2, tests `brake_release` |
 | **D6** | Layout G-B: palancas del paquete | **Elegido** | §4.8, paquete JSON |
 | **D7** | Tests sin juego (fixtures GetData) | **Elegido** | Fase 0/4, `tests/` |
 | **D8** | Ámbar / verde en autopilot | **Cerrado** fuera | §3 |
-| **D9** | Reloj holgura: PC vs `TimeOfDay` | **Abierto** (medición) | §1, Fase 3 — holgura **OFF** hasta cerrar |
+| **D9** | Reloj holgura: PC vs `TimeOfDay` | **Congelado** (2026-10-03) | Holgura **OFF** en producción; sin paso 8 hasta nueva decisión |
 
 **No son debates D** (aplazados o ya cubiertos en fases): sidecar dos procesos (§4.7), SHM
 (§4.2), lim2/cola HTTP (Fase 5), `detect_control_layout` → JSON (transición G-B en §4.8).
@@ -1321,7 +1320,7 @@ Mal: refactor infinito del coordinator archivado. Mal: wipe sin pytest ni sesió
 
 `autopilot_core` en lugar de `V2/tsw6v2/`.
 
-**Implementación:** pendiente — § [Orden](#orden-de-implementación) pasos 2–3.
+**Implementación:** pasos **2–3** en `V2/tsw6v2/` (2026-09 → 2026-10); **cierre D1** cuando paso **3** tenga validación campo y pasos **6–7** (paquete + `PassengerService`) — § [Orden](#orden-de-implementación).
 
 ### D2 — Schema GetData
 
@@ -1477,7 +1476,7 @@ Contrato canónico: [CANAL_CONTROL.md § GetData v2](../CANAL_CONTROL.md#contrat
 
 - [x] Claves GetData canónicas (tabla en CANAL_CONTROL).
 - [x] Huecos documentados: `signal_red` / `signal_dist_cm` (C1), lim2 (parser sí, Lua no).
-- [ ] C1 implementado en probe + fixture pytest (D7).
+- [x] C1 implementado en probe + fixture pytest (D7) — 2026-09-12.
 - [ ] Auditoría: Lua sin ritmo/cluster en hot path.
 
 **Validación:** `test_tsw_ue4ss_reader`, `test_control_schema`; fixture GetData con campos C1;
@@ -1495,29 +1494,28 @@ revisión JSON vs `detect_control_layout` hoy.
 
 ### Fase 2 — Agente + límites + RELEASE
 
-**Hoy en `autopilot_core` (323):** bajada y carteles con una política de soltar — lecciones 323 sí;
-estructura Dastsc no obligatoria.
+**Producto v2 (`V2/tsw6v2/`):** `AgentLoop`, física/learner, cartel P1 ([REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md)),
+andén en `evaluate_p1_tick`, señal gradual — **~370 tests** `V2/tests/`. Runtime: `run_p1_session.bat`.
 
-**Pendiente D1:** `V2/tsw6v2/` + GUI visor; portar comportamiento con test (physics, learner,
-parser);
-mismo comportamiento Cross-City / Four Oaks.
+**Cierre de fase:** validación in-game paso **3** ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md));
+`autopilot_core` / `autopilot_limit` solo puente legacy si alguien arranca v1.
 
-**Validación:** `V2/tests/test_physics`, `test_release`, `test_decision`, `test_h1_downhill`;
-`tests/test_speed_decider` (cartel vía `autopilot_limit`); `--console` y GUI mismo snapshot;
-`loop_hz` ≥ 18 (§4.7).
+**Validación:** `V2/tests/test_physics`, `test_release`, `test_decision`, `test_h1_downhill`,
+`test_p1_station_tick`; `--console` y GUI mismo snapshot; `loop_hz` ≥ 18 (§4.7).
 
 ### Fase 3 — Servicio pasajeros
 
-- [ ] Un horizonte de andén.
-- [ ] FSM puertas como implementación del perfil genérico (no 323 en núcleo).
-- [ ] HUD invertido donde el HUD mienta — `station_waits` en policy (§4.6), no `pace`.
+- [x] Horizonte andén P1 + planning HTTP/`Planning.txt` en V2 (paso **3**; campo en curso).
+- [ ] FSM puertas como implementación del perfil genérico **G-A** (paso **7**; hoy FSM v1 + Lua/DMI).
+- [x] HUD invertido — `station_waits`, cluster andén↔cartel en `p1_policy` / `limit_station_cluster` (§4.6).
 
 **Validación:** `test_station_fsm`, `test_speed_decider`; sesión Cross-City
 andén conocido; revisar §4.6 vs log. (`test_brake_station` archivado con coordinator v1.)
 
 ### Fase 4 — Señales rojas (mínimo viable)
 
-Diseño hecho (§3). **C1 probe + trace cerrados** (2026-09-12). Pendiente plan gradual (paso **5**).
+Diseño hecho (§3). **C1 probe + trace + plan gradual P1** cerrados (2026-09-13). Campo: JSONL post-fix
+en `logs/v2/`; `225433Z` solo contraste histórico.
 
 - [x] `extract_signal_red` en probe → `signal_red` + `signal_dist_cm` (S-Lua).
 - [x] Parser + trace JSONL + replay HTML (`test_trace`, `test_session_report`).
@@ -1564,11 +1562,11 @@ matiz → tabla **Deltas** (no reescribir debates salvo cambio de producto).
 
 | # | Requisito | Estado |
 | --- | --- | --- |
-| P0 | **D1** decidido; implementación `V2/tsw6v2/` | ✅ decisión · ⬜ código (`__init__.py` creado) |
+| P0 | **D1** decidido; implementación `V2/tsw6v2/` | ✅ decisión · ✅ código pasos **2–3** · ⬜ cierre D1 (campo + **6–7**) |
 | P1 | Probe estable ~20 Hz (§4.1) | ✅ |
 | P2 | pytest verde en ámbito del paso (+ suite completa antes de merge) | ✅ suite `tests/` (verificar en cada paso) |
 | P3 | Plan repasado (§1–4, debates, árbol) | ✅ |
-| P4 | Revisión doc: CANAL_CONTROL / delta si el paso tocó contrato | ⬜ por paso |
+| P4 | Revisión doc: CANAL_CONTROL / delta si el paso tocó contrato | 🔄 cada paso (tabla Deltas) |
 
 ### Pasos (orden canónico)
 
@@ -1578,9 +1576,9 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 | --- | --- | --- | --- | --- |
 | 1 | Contrato GetData en [CANAL_CONTROL](../CANAL_CONTROL.md) | P1, P3 | 0 | ✅ doc · ✅ C1+9b-a probe · fixture |
 | 2 | Esqueleto `V2/tsw6v2/` (`loop.py`: snapshot → un mando → IPC), GUI visor | D1, P0 | 2 | ✅ `V2/tests/` · `test-ipc` in-game · `--console`/`gui` |
-| 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | pytest carteles · [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) in-game |
+| 3 | Portar física/learner/parser a `V2/tsw6v2/` (reescritura limpia) | P2 | 2 | ✅ `V2/tests/` ~370 · ⬜ [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) campo |
 | 4 | `extract_signal_red` + fixture pytest | Sesión **C1**, P2 | 4 | ✅ probe `20260902a` · fixture |
-| 5 | `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | ✅ código + pytest; validar in-game `225433Z` |
+| 5 | `evaluate_signal_brake`; rojo en P1 | Paso 4, P2 | 4 | ✅ código + pytest · ✅ campo ref. `083405Z`/`152037Z` (`225433Z` antes fix) |
 | 6 | Paquete JSON `data/vehicles/` + caché palancas G-B | 323 validado, P2 | 1 | `test_control_layout` + IPC |
 | 7 | `PassengerService` genérico + FSM puertas | Paso 6, P2 | 3 | `test_station_fsm` + andén |
 | 8 | TimeOfDay → holgura (o OFF documentado) | D9 medición, P4 | 1, 3 | nota en GUI + §1 |
@@ -1593,26 +1591,38 @@ Cada fila: código + **tests** + **revisión** (P2, P4) + fila Deltas si hubo ma
 (`ApiExplorerMod`);
 desbloquea C1/G-B sin hinchar el probe. No sustituye pasos 1–10.
 
-**Sesión actual:** paso **3** — cartel + **andén P1** en `V2/tsw6v2/`; **157 tests** `V2/tests/`.
-Stack: HOLD_DH / BRAKE_LIMIT, muesca + defer, feedback decel (`brake_feedback`), EMA online con
-filtro
-aire (`brake_air`), RELEASE cinemático BRAKE_LIMIT, trace + `session_report`. Andén: `station_plan`
+**Sesión actual (2026-10-03):** paso **3** — cartel + **andén P1** en `V2/tsw6v2/`; **~370 tests**
+`V2/tests/`. Stack: HOLD_DH / BRAKE_LIMIT, horizonte caída grande (90→15), muesca + defer,
+`physics.speed_limit_horizon_commit` (plan lejos → IPC), feedback decel, RELEASE cinemático, trace +
+`session_report`. Andén: `station_plan` + `station_brake` + `p1_policy` + `planning_poller` (HTTP
+~2 s; fallback `Planning.txt`).
 
-- `station_brake` + `p1_policy` + `planning_poller`
+**Contrato reciente (no reescribir aquí):** reglas y mapa módulos en
+[REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md) — tabla «Ventanas y puertas»,
+`zone_hold_suppressed_for_ascending_exit` (15→40 subida, 40→70 bajada, 35→60 salida); sesión ref.
+`20261003T071613Z` en [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md).
 
-(HTTP `DriverAid.TrackData` ~2 s + `v×dt`; fallback `Planning.txt`). **Subfase:** validación campo
-cartel y andén
-([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) — checklist `station` + HTTP); sesión ref.
-cartel `20260908T225707Z`. Pasos
-**2**, **4** y **5** (código) cerrados. Señal: plan gradual + emergencia; validación in-game
-pendiente (sesión ref. `225433Z`). FSM puertas / servicio comercial = paso **7**. Runtime producto:
-`AgentLoop` + `run_p1_session.bat` — **no** `tsw6/autopilot/`. **Siguiente:** validar paso 3 +
-señal in-game.
+**Subfase:** validación campo cartel y andén ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)).
+Pasos **2**, **4** y **5** (código) cerrados. **Señal:** probe + P1 ✅; evidencia campo en
+`logs/v2/` post-fix (`083405Z`, `152037Z`, …). `225433Z` = solo **antes** fix (no re-cierre).
+FSM puertas = paso **7**. Runtime: `AgentLoop` + `run_p1_session.bat`.
+
+**Decisiones producto (2026-10-03):** **D9 / holgura ETA** — sin cambios (holgura **OFF** como ahora).
+**C2** (tablón / Δ`odo_m` andén) — opcional si una sesión demuestra fallo HTTP+`v×dt`.
+**9b** patinaje — aplazado hasta escenarios **lluvia/nieve** (afecta a todos los trenes; diseño
+global, no más lab 323).
+
+**Siguiente:** cerrar paso **3** en campo con build actual; pasos **6–7** (paquete 323 + servicio).
 
 ### Deltas (cambios al codificar)
 
 | Fecha | Paso | Plan decía | Hicimos / nota |
 | --- | --- | --- | --- |
+| 2026-10-03 | producto | D9 / C2 / 9b | Holgura OFF sin cambio; C2 opcional por sesión; 9b aplazado lluvia/nieve (todos trenes) |
+| 2026-10-03 | 5 / señal | Cierre = repetir `225433Z` | Revisión `logs/v2/`: 34 JSONL con rojo; cierre operativo `083405Z`/`152037Z`; `225433Z` antes fix |
+| 2026-10-03 | doc | Fase 0/2/D1 desfasados vs código | Alinear checklists: C1 ✅, D1 en curso, Fase 2 = `V2/tsw6v2/`, §4.7 D1 hecho paso 2 |
+| 2026-10-03 | 3 / cartel | Salida ascendente / zona 40 | `zone_hold_suppressed_for_ascending_exit` (fuente única H1); `horizon_commit` + caída 90→15; ref. `071613Z` — [REGLAS](REGLAS_FRENOS_P1.md) |
+| 2026-09-30 | 3 / cartel | B1 lejos sin IPC | `speed_limit_horizon_commit` en `command.py` (`214447Z`) |
 | 2026-09-13 | 5 / señal | Stub `evaluate_signal_brake` | `signal_plan` + `signal_brake` + `service_brake`; pick SIGNAL; emergencia con supresión salida; ref. `225433Z` |
 | 2026-09-13 | 3 / estación | RELEASE solo si pick eligió LIMIT | RELEASE cartel/HOLD_DH **antes** de `no_plan`; `_limit_release_allowed` con `pick=None` (`224046Z`) |
 | 2026-09-13 | 3 / estación | Cartel WATCH al salir del andén | `pick_p1`: `_active_limit_or_none` + andén diferido → sin objetivo; HUD sin `p1tgt` (`221258Z`) |
@@ -1645,14 +1655,13 @@ señal in-game.
 
 1. **Paso 3** — cerrar validación in-game ([VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md));
 
-   pytest verde (~600 tests).
+   pytest verde (`V2/tests/`, ~370).
 
-2. **Paso 5** — validar in-game frenada gradual rojo (sesión ref. `225433Z`); C1 probe + código
-
-   **cerrados**.
+2. **Paso 5** — señal: código + sesiones `logs/v2/` post-fix ✅; `225433Z` = histórico SPAD.
 
 3. **Pasos 6–7** — paquete tren + servicio pasajeros; revisación `tsw_hud.db` si falla match.
-4. **Pasos 8–10** — holgura, masa, freight solo con evidencia.
+4. **Pasos 8–10** — paso **8** (D9 holgura) **congelado** OFF; masa F-B off; freight con evidencia;
+   **9b** solo si escenario mojado/nieve (todos los trenes).
 5. **Siempre** — checklist transversal al cerrar cada paso (pytest, delta, probe si Lua).
 
 ---
@@ -1665,9 +1674,6 @@ señal in-game.
 
 #### Siguiente código
 
-###### Siguiente código:** cerrar validación **paso 3** + señal in-game (replay `225433Z`); pasos **6–7
-
-tren/servicio.
-Tarjetas in-game: **C1** señales (plan gradual) · **C2** andén (pasos 6–7). Canal:
-[CANAL_CONTROL](../CANAL_CONTROL.md) ·
-probe: [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).
+Cerrar validación **paso 3** en campo; pasos **6–7** tren/servicio. **C2** andén si falla distancia;
+**C1** cerrado en código + JSONL ref. Canal:
+[CANAL_CONTROL](../CANAL_CONTROL.md) · probe: [PENDIENTE_DYNAMICHUD](../v1/PENDIENTE_DYNAMICHUD.md).

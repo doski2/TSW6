@@ -8,10 +8,10 @@ from typing import Callable, Optional
 from tsw6v2.brake_air import brake_decel_sample_ready
 from tsw6v2.limit_notch import (
     _grade_escalation_allowed,
-    _in_apply_window,
     _step_stronger,
     phase_for_handle,
 )
+from tsw6v2.physics import should_emit_brake_command
 from tsw6v2.limit_state import LimitBrakeState, PredictDecelFn
 from tsw6v2.plan import notch_strength
 
@@ -94,6 +94,7 @@ def apply_weak_decel_feedback(
     apply_now: bool,
     dist_start: float,
     apply_zone_m: float,
+    distance_m: float,
     predict_decel: Optional[PredictDecelFn],
     escalate_cap: Callable[[int, int], int] | None = None,
     lever: int | None = None,
@@ -109,10 +110,14 @@ def apply_weak_decel_feedback(
         state.weak_decel_ticks = 0
         return handle, phase, DecelFeedback()
 
-    in_window = _in_apply_window(
-        apply_now=apply_now,
+    del apply_now, apply_zone_m
+    in_window = should_emit_brake_command(
+        apply_now=False,
         dist_start=dist_start,
-        apply_zone_m=apply_zone_m,
+        speed_mph=speed_mph,
+        distance_to_target_m=distance_m,
+        apply_at_remaining_m=max(0.0, distance_m - dist_start),
+        brake_committed=True,
     )
     if not in_window:
         state.weak_decel_ticks = 0

@@ -44,6 +44,16 @@ def combined_notch_to_value(notch: int) -> float:
     return n / float(NOTCH_MAX)
 
 
+def clamp_unit_fraction(value: float) -> float:
+    """Fracción 0.0–1.0 (p. ej. MasterController InputValue)."""
+    return _clamp(value, 0.0, 1.0)
+
+
+def master_controller_input_value(fraction: float) -> float:
+    """Valor IPC para MC: misma línea PowerBrakeHandle; Lua escribe InputValue directo."""
+    return clamp_unit_fraction(fraction)
+
+
 def resolve_control_path(
     control: str,
     schema: Optional[dict] = None,

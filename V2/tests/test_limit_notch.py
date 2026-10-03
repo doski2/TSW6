@@ -221,6 +221,92 @@ def test_air_ready_323_b1_gauge_session_183116() -> None:
     assert air.cap_escalation(committed=3, requested=2, brake_cyl_bar=1.74) == 2
 
 
+def test_large_drop_90_to_15_early_b1_session_20260929() -> None:
+    """90→15 lejos: B1 APPLY anticipado; andén ~1.8 km no tapa el cartel (20260929Z)."""
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.p1_policy import pick_p1_brake_target
+    from tsw6v2.station_brake import evaluate_station_brake
+
+    early = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=90.0,
+        limit_mph=15.0,
+        distance_m=2700.0,
+        gradient_pct=-0.34,
+        posted_limit_mph=90.0,
+        release_state=BrakeReleaseState(),
+    )
+    assert early is not None
+    assert early.apply_now is True
+    assert early.phase == "B1"
+    assert early.handle_notch == 3
+
+    stn = evaluate_station_brake(
+        speed_mph=85.0,
+        station_distance_m=1831.0,
+        gradient_pct=-0.34,
+        allow_watch=False,
+    )
+    lim = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=85.0,
+        limit_mph=15.0,
+        distance_m=1554.0,
+        gradient_pct=-0.34,
+        posted_limit_mph=90.0,
+        release_state=BrakeReleaseState(),
+    )
+    assert lim is not None and lim.apply_now is True
+    pick = pick_p1_brake_target(
+        speed_mph=85.0,
+        limit_target=lim,
+        station_target=stn,
+        signal_target=None,
+        signal_dist_m=None,
+        limit_mph=15.0,
+        limit_dist_m=1554.0,
+        station_dist_m=1831.0,
+        effective_limit=90.0,
+        gradient_pct=-0.34,
+    )
+    assert pick is not None
+    assert pick.target_kind == "SPEED_LIMIT"
+    assert pick.apply_now is True
+
+
+def test_large_drop_early_apply_emits_command_not_none_session_20260930() -> None:
+    """75 mph @ ~2.25 km: apply_now B1 debe COAST_PWR o APPLY, no command_none."""
+    from tsw6v2.command import BrakeReleaseState
+
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=75.0,
+        limit_mph=15.0,
+        distance_m=2250.0,
+        gradient_pct=-0.34,
+        posted_limit_mph=90.0,
+        release_state=BrakeReleaseState(),
+    )
+    assert r is not None and r.apply_now is True and r.phase == "B1"
+    with_traction = r.to_brake_command(
+        throttle_notch=8,
+        current_notch=8,
+        speed_mph=75.0,
+        gradient_pct=-0.34,
+    )
+    assert with_traction is not None
+    assert with_traction.kind == "COAST_THROTTLE"
+    no_traction = r.to_brake_command(
+        throttle_notch=0,
+        current_notch=4,
+        speed_mph=75.0,
+        gradient_pct=-0.34,
+    )
+    assert no_traction is not None
+    assert no_traction.kind == "APPLY"
+    assert no_traction.phase == "B1"
+
+
 def test_evaluate_70_to_45_with_learner_not_stuck_on_b1() -> None:
     root = Path(__file__).resolve().parents[2]
     path = root / "logs" / "profiles" / "RVM_BCC_WRM_Class323_DMS_A_C.json"

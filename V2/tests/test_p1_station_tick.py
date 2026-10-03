@@ -540,3 +540,53 @@ def test_p1_tick_station_apply_after_signal_cluster_session_155851() -> None:
     assert decision.reason != "no_plan"
     assert decision.command is not None
     assert decision.command.kind == "APPLY"
+
+
+def _snap_zone_40_next_70_downhill(
+    speed_mph: float,
+    *,
+    dist_limit_m: float,
+    lever_notch: int = 5,
+) -> ProbeSnapshot:
+    mph_ms = 1.0 / 2.23693629
+    return ProbeSnapshot(
+        speed_ms=speed_mph * mph_ms,
+        speed_limit_ms=40.0 * mph_ms,
+        next_limit_ms=70.0 * mph_ms,
+        dist_limit_cm=dist_limit_m * 100.0,
+        gradient_pct=-1.35,
+        lever_notch=lever_notch,
+        brake_cyl_bar=1.0,
+    )
+
+
+def test_p1_tick_zone_40_hold_deferred_station_session_20261003_tick_44093() -> None:
+    """42 mph en zona 40, andén ~1.24 km diferido: HOLD_DH, no no_plan/STATION."""
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        _snap_zone_40_next_70_downhill(42.01, dist_limit_m=1380.3, lever_notch=4),
+        station_distance_m=1239.8,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.reason == "downhill_hold"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+    assert decision.command.phase == "B1"
+
+
+def test_p1_tick_zone_40_hold_over_station_plan_session_20261003_tick_44384() -> None:
+    """45 mph en zona 40: LIMIT/HOLD gana al plan STATION lejos (andén diferido)."""
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        _snap_zone_40_next_70_downhill(45.56, dist_limit_m=949.4, lever_notch=4),
+        station_distance_m=949.4,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.target_kind == "SPEED_LIMIT"
+    assert decision.reason == "downhill_hold"
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"

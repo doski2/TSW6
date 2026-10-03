@@ -33,6 +33,7 @@
 
 <nav>
   <a href="#cartel">1. Cartel</a>
+  <a href="#h1">1b. Zona vigente (H1)</a>
   <a href="#pick">2. Prioridad cartel↔andén</a>
   <a href="#geometria">3. Geometría cluster</a>
   <a href="#gate">4. FSM dwell</a>
@@ -76,6 +77,29 @@
   <strong>RELEASE (§8):</strong> en <strong>bajada</strong> puede soltar antes del objetivo si la proyección
   <code>v + a·fill</code> lo permite. En <strong>llano/subida</strong> solo suelta en banda
   <code>spd ≤ objetivo + 0.4 mph</code> (evita undershoot — sesión <code>210853Z</code>).
+</div>
+
+<h2 id="h1">1b. Zona vigente en bajada (H1) — además del cartel <em>siguiente</em></h2>
+<p class="sub">Mismo tick puede haber <code>lim_mph=70</code> adelante y <code>eff=40</code> vigente.
+No confundir BRAKE_LIMIT al next con HOLD_DH de la zona actual.</p>
+
+<table>
+  <thead><tr><th>Situación</th><th>Objetivo / mando</th><th>Función (código)</th></tr></thead>
+  <tbody>
+    <tr><td>Exceso en zona 40, next 70 lejos</td><td><code>HOLD_DH</code> ~40.2 · APPLY B1</td><td><code>try_current_zone_contain</code></td></tr>
+    <tr><td>Salida 15→40/50 en <strong>subida</strong></td><td>Sí contener 15 (no regla 45→60)</td><td><code>zone_hold_suppressed…</code> = false si posted &lt; 30</td></tr>
+    <tr><td>35→60 en <strong>bajada</strong></td><td>Sin HOLD (dejar subir)</td><td>suprimir si posted ≤ 35 y Δ≥25 mph</td></tr>
+    <tr><td>90→15 lejos</td><td>B1 <code>apply_now</code> + COAST/APPLY IPC</td><td><code>speed_limit_horizon_commit</code></td></tr>
+    <tr><td><code>apply_now</code> sin IPC</td><td>Capa <strong>GAP</strong> (revisar)</td><td>Plan ≠ <code>should_emit</code> sin puente</td></tr>
+  </tbody>
+</table>
+
+<div class="warn">
+  <strong>Overlay (<code>173809Z</code>, <code>071613Z</code>):</strong> <code>p1_tgt</code> puede ser
+  <code>STATION</code> (andén diferido) pero el <strong>mando</strong> sigue HOLD_DH si
+  <code>limit_target.downhill_hold</code> y andén solo WATCH — ver
+  <code>decision._overlay_active_zone_hold</code>. Con andén diferido y LIMIT <code>apply_now</code>,
+  el pick puede ser <code>SPEED_LIMIT</code> directamente (zona 40 @ ~42 mph).
 </div>
 
 <!-- ── 2. PICK P1 ────────────────────────────────────────────── -->
@@ -129,7 +153,7 @@
   <!-- defer -->
   <rect x="480" y="260" width="300" height="44" rx="5" fill="#fef3c7" stroke="#f59e0b"/>
   <text x="630" y="278" text-anchor="middle" font-size="11">defer? (stn &gt; bd+10 m)</text>
-  <text x="630" y="295" text-anchor="middle" font-size="10" fill="#666">LIMIT si APPLY; si no None</text>
+  <text x="630" y="295" text-anchor="middle" font-size="10" fill="#666">LIMIT si APPLY/coast_watch; HOLD_DH cuenta</text>
   <line x1="510" y1="235" x2="600" y2="260" stroke="#555" marker-end="url(#arrow)"/>
   <text x="520" y="252" font-size="10" fill="#555">no prefer</text>
 
@@ -237,14 +261,15 @@
 <table>
   <thead><tr><th>Capa</th><th>Código</th><th>¿Manda?</th><th>Cuándo</th></tr></thead>
   <tbody>
-    <tr><td><strong>Vigilar</strong> [WATCH]</td><td><code>command_none</code>, apply_now=false</td><td>No</td><td>Cartel lejos; plan sin ventana.</td></tr>
-    <tr><td><strong>Esperar ventana</strong></td><td><code>apply_deferred</code></td><td>No</td><td>dist_start &gt; 0; margen cinemático.</td></tr>
-    <tr><td><strong>Quitar tracción</strong></td><td><code>COAST_THROTTLE</code></td><td>Sí → neutro</td><td>Tracción antes de frenar.</td></tr>
-    <tr><td><strong>Frenar cartel</strong></td><td><code>APPLY</code> B1–B3 · <code>p1_tgt=LIMIT</code></td><td>Sí</td><td>BRAKE_LIMIT / HOLD_DH.</td></tr>
+    <tr><td><strong>Vigilar</strong> [WATCH]</td><td><code>command_none</code>, apply_now=false</td><td>No</td><td>Cartel lejos; plan sin ventana cinemática.</td></tr>
+    <tr><td><strong>Esperar ventana</strong> [WAIT]</td><td><code>apply_deferred</code></td><td>No</td><td>Plan con ventana; <code>dist_start</code> &gt; 0.</td></tr>
+    <tr><td><strong>Quitar tracción</strong> [COAST_PWR]</td><td><code>COAST_THROTTLE</code></td><td>Sí → neutro</td><td>Tracción antes de APPLY; también horizonte 90→15.</td></tr>
+    <tr><td><strong>Mantener bajada</strong> [HOLD_DH]</td><td><code>downhill_hold</code> · APPLY B1</td><td>Sí</td><td>Zona vigente; puede mandar con <code>p1_tgt=STATION</code> (overlay).</td></tr>
+    <tr><td><strong>Frenar cartel</strong> [BRAKE]</td><td><code>APPLY</code> B1–B3 · <code>p1_tgt=LIMIT</code></td><td>Sí</td><td>BRAKE_LIMIT al cartel siguiente.</td></tr>
     <tr><td><strong>Frenar andén</strong></td><td><code>APPLY</code> B1–B3 · <code>p1_tgt=STATION</code></td><td>Sí</td><td>Perfil v→0; emergencia si tarde.</td></tr>
     <tr><td><strong>Soltar</strong></td><td><code>RELEASE</code></td><td>Sí → neutro</td><td>Banda objetivo; bajada: proyección fill.</td></tr>
     <tr><td><strong>Gate OFF</strong></td><td><code>station_p1_enabled=False</code></td><td>—</td><td><code>fsm=STOPPED|DEPARTING</code>; solo cartel si aplica.</td></tr>
-    <tr><td><strong>GAP</strong></td><td>apply sin cmd</td><td>—</td><td>Revisar JSONL / aire / IPC.</td></tr>
+    <tr><td><strong>GAP</strong></td><td><code>apply_now</code> sin cmd</td><td>—</td><td>Bug umbral (p. ej. plan lejos sin <code>horizon_commit</code>), aire (<code>air_fill</code>) o pick sin overlay.</td></tr>
   </tbody>
 </table>
 
@@ -263,7 +288,9 @@
     <li><code>V2\run_p1_session.bat station cross-city</code> (TSW6 con <code>-HTTPAPI</code>)</li>
     <li>Replay HTML en <code>logs\v2\</code> — panel <code>stn</code>, <code>p1_tgt</code>, <code>stn_fsm</code>, puertas</li>
     <li>Comprobar transición <code>LIMIT→STATION</code>; cartel tras andén (gap &lt; 50 m); parada final <code>stn</code> + <code>spd</code></li>
-    <li>Sesiones ref.: <code>210853Z</code> (gate + RELEASE), <code>213010Z</code> (prioridad andén)</li>
+    <li>Sesiones ref.: <code>210853Z</code> (gate), <code>213010Z</code> (andén), <code>173809Z</code> (overlay HOLD),
+      <code>071613Z</code> (zona 40 + next 70)</li>
+    <li>Reglas detalladas: <a href="REGLAS_FRENOS_P1.md">REGLAS § ventanas y puertas</a></li>
   </ol>
 </div>
 

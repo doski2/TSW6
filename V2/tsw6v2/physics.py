@@ -536,3 +536,19 @@ def should_emit_brake_command(
     ):
         return True
     return False
+
+
+def speed_limit_horizon_commit(
+    *,
+    apply_now: bool,
+    dist_start: float,
+    in_cinematic_window: bool,
+) -> bool:
+    """
+    Plan BRAKE_LIMIT con ``apply_now`` fuera de ventana cinemática (p. ej. 90→15).
+
+    ``limit_notch._in_apply_window`` usa ``apply_now`` para compromiso de muesca;
+    ``should_emit_brake_command`` ignora ``apply_now``. Esta función es el puente
+    en ``command_from_target`` (COAST/APPLY lejos del cartel, sesión 214447Z).
+    """
+    return apply_now and dist_start > 0 and not in_cinematic_window

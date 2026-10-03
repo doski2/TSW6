@@ -5,6 +5,8 @@ MPH_TO_MS = 0.44704
 NEUTRAL_NOTCH = 4
 B1_NOTCH = 3
 B1_MIN_TRAIN_BRAKE = 0.25
+# IPC test: subida mínima manómetro tras un paso B1 (M3a MC; OBSERVATION 20261003).
+B1_MIN_CYL_RISE_BAR = 0.15
 PROBE_STALE_S = 2.5
 IPC_ACK_TIMEOUT_S = 0.35
 IPC_STEP_PAUSE_S = 0.08
@@ -65,6 +67,8 @@ DESCENDING_LIMIT_DELTA_MPH = 0.5
 ASCENDING_EXIT_ZONE_HOLD_MIN_DELTA_MPH = 25.0
 # Zonas 10/15 (Cross-City): siempre contener aunque el cartel siguiente suba mucho (15→50).
 ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH = 30.0
+# Salida 35→60: omitir contención zona; zona ≥40 con next alto (40→70) sigue HOLD si hay exceso.
+ASCENDING_EXIT_COAST_POSTED_MAX_MPH = 35.0
 
 # Caída spd→ops objetivo grande (70→45): mínimo B2 si cabe en ventana.
 BRAKE_PLAN_LARGE_DROP_MPH = 18.0

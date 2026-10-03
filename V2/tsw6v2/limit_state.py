@@ -38,6 +38,7 @@ class LimitBrakeLatch:
     decel_by_handle: dict[int, float]
     learned_by_handle: dict[int, bool]
     reaction_margin_m: float
+    zone_posted_mph: Optional[float] = None  # zona vigente al latch (p. ej. 90→15)
 
 
 @dataclass
@@ -102,6 +103,7 @@ def latch_limit_target(
     state: LimitBrakeState,
     *,
     posted_limit_mph: float,
+    zone_posted_mph: Optional[float] = None,
     distance_m: float,
     speed_mph: float,
     gradient_pct: float,
@@ -122,6 +124,7 @@ def latch_limit_target(
 
     latch = LimitBrakeLatch(
         posted_limit_mph=posted_limit_mph,
+        zone_posted_mph=zone_posted_mph,
         limit_mph=ops_target_mph,
         distance_m=distance_m,
         latched_speed_mph=speed_mph,

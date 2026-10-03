@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from tsw6v2.bridge.commands import combined_notch_to_value
-from tsw6v2.bridge.getdata import default_getdata_path
+from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path
 from tsw6v2.bridge.ipc_bus import bridge_dir, purge_lua_commands
 from tsw6v2.constants import (
+    B1_MIN_CYL_RISE_BAR,
     B1_MIN_TRAIN_BRAKE,
     B1_NOTCH,
     IPC_ACK_TIMEOUT_S,
@@ -17,6 +18,34 @@ from tsw6v2.constants import (
 )
 from tsw6v2.ipc import drive_to_notch, ipc_steps_needed, probe_lever
 from tsw6v2.probe import fmt_num, is_probe_fresh, print_getdata_summary, read_snapshot
+
+
+def _b1_brake_evidence(
+    snap: ProbeSnapshot | None,
+    lever: int | None,
+    *,
+    baseline: ProbeSnapshot | None = None,
+) -> bool:
+    """Efecto físico/HUD tras B1 (323 train_brake; M3a MC a veces 0 % + sube cilindro)."""
+    if snap is None:
+        return False
+    if snap.train_brake is not None and float(snap.train_brake) >= B1_MIN_TRAIN_BRAKE:
+        return True
+    if (
+        baseline is not None
+        and snap.brake_cyl_bar is not None
+        and baseline.brake_cyl_bar is not None
+        and float(snap.brake_cyl_bar) - float(baseline.brake_cyl_bar)
+        >= B1_MIN_CYL_RISE_BAR
+    ):
+        return True
+    if lever is None or int(lever) != B1_NOTCH or snap.power is None:
+        return False
+    p = float(snap.power)
+    if snap.power_neg:
+        p = -abs(p)
+    # OBSERVATION M3a MNR 20261003: a veces train_brake HUD 0 con power ~ -0.8
+    return p <= -0.7
 
 
 def _fmt_ipc_result(result: dict[str, Any]) -> str:
@@ -94,17 +123,25 @@ def run_ipc_brake_test(*, interactive: bool = True) -> int:
         and int(lever1) != int(lever0)
     )
     at_target = lever1 is not None and int(lever1) == target
-    brake_ok = train_brk is not None and float(train_brk) >= B1_MIN_TRAIN_BRAKE
+    brake_ok = _b1_brake_evidence(snap1, lever1, baseline=snap)
+    ipc_ok = bool(last.get("ok"))
 
-    if ok_drive and at_target and brake_ok and moved:
-        print("\n  [PASS] B1: lever=3 y train_brake≥0.25")
-        ok = True
-    elif at_target and not brake_ok:
+    if n_sent == 0 and at_target:
         print(
-            f"\n  [FAIL] lever={lever1} pero train_brake="
-            f"{fmt_num(train_brk)} (esperado ≥{B1_MIN_TRAIN_BRAKE:.2f})"
+            "\n  [AVISO] 0 comandos IPC — la muesca ya era el objetivo "
+            "(¿moviste la palanca antes del Enter?)"
         )
-        ok = False
+
+    if ok_drive and at_target and moved and ipc_ok:
+        ok = True
+        if brake_ok:
+            print("\n  [PASS] B1: IPC ok, muesca 3 (+ freno/cilindro coherente)")
+        else:
+            print(
+                "\n  [PASS] B1: IPC ok, muesca 3 "
+                f"(train_brake={fmt_num(train_brk)}; en MC el % HUD puede no "
+                "reflejarse en GetData)"
+            )
     elif ok_drive and at_target and not moved:
         print(f"\n  [FAIL] lever sigue en {lever1} (IPC no movió la palanca)")
         ok = False

@@ -17,7 +17,7 @@ from tsw6v2.physics import (
 )
 from tsw6v2.plan import notch_strength
 from tsw6v2.limit_horizon import within_next_brake_horizon
-from tsw6v2.planning import is_descending_limit_zone
+from tsw6v2.planning import is_descending_limit_zone, large_zone_to_next_drop
 from tsw6v2.constants import (
     BRAKE_PLAN_LARGE_DROP_MPH,
     LIMIT_CONTAIN_ESCALATE_OVER_MPH,
@@ -106,6 +106,7 @@ def next_brake_overrides_zone_hold(
         next_limit_mph=next_posted_mph,
         next_distance_m=distance_m,
         gradient_pct=gradient_pct,
+        zone_posted_mph=current_posted_mph,
     ):
         return True
     ceiling = downhill_ops_coast_ceiling_mph(current_posted_mph, gradient_pct)
@@ -161,6 +162,17 @@ def downhill_defer_brake_commit(
 
     Solo aplica antes del primer compromiso de muesca (``committed_handle is None``).
     """
+    if next_posted_mph is not None and large_zone_to_next_drop(
+        current_posted_mph, next_posted_mph
+    ) and within_next_brake_horizon(
+        speed_mph=speed_mph,
+        next_limit_mph=next_posted_mph,
+        next_distance_m=distance_m,
+        gradient_pct=gradient_pct,
+        zone_posted_mph=current_posted_mph,
+    ):
+        return False
+
     def _coast_defer() -> bool:
         return _limit_coast_trim_active(
             speed_mph=speed_mph,
@@ -177,13 +189,13 @@ def downhill_defer_brake_commit(
         if (
             current_posted_mph is not None
             and next_posted_mph is not None
-            and is_descending_limit_zone(current_posted_mph, next_posted_mph)
-            and current_posted_mph - next_posted_mph >= BRAKE_PLAN_LARGE_DROP_MPH
+            and large_zone_to_next_drop(current_posted_mph, next_posted_mph)
             and not within_next_brake_horizon(
                 speed_mph=speed_mph,
                 next_limit_mph=next_posted_mph,
                 next_distance_m=distance_m,
                 gradient_pct=gradient_pct,
+                zone_posted_mph=current_posted_mph,
             )
         ):
             ceiling = downhill_ops_coast_ceiling_mph(
@@ -306,8 +318,9 @@ def apply_notch_hysteresis(
             state.weak_decel_ticks = 0
             return stepped, state.committed_phase
 
+    # Escalada por overspeed solo en ventana cinemática (no por apply_now lejos).
     if (
-        in_window
+        is_in_apply_zone(dist_start, apply_zone_m)
         and may_escalate
         and speed_mph > limit_mph + LIMIT_CONTAIN_ESCALATE_OVER_MPH
         and prev > 1
@@ -315,6 +328,31 @@ def apply_notch_hysteresis(
         return _step_stronger(state, prev, escalate_cap=escalate_cap)
 
     return prev, state.committed_phase or phase
+
+
+def _early_large_drop_b1_apply(
+    *,
+    speed_mph: float,
+    distance_m: float,
+    latch: LimitBrakeLatch,
+    overspeed_large_drop: bool,
+) -> bool:
+    """
+    Lejos del cartel pero dentro del horizonte: B1 APPLY (no WATCH sin mando).
+
+    Zona→next grande (90→15) o, sin ``zone_posted_mph``, overspeed vs ops del next.
+    """
+    if not within_next_brake_horizon(
+        speed_mph=speed_mph,
+        next_limit_mph=latch.posted_limit_mph,
+        next_distance_m=distance_m,
+        gradient_pct=latch.gradient_pct,
+        zone_posted_mph=latch.zone_posted_mph,
+    ):
+        return False
+    if large_zone_to_next_drop(latch.zone_posted_mph, latch.posted_limit_mph):
+        return True
+    return latch.zone_posted_mph is None and overspeed_large_drop
 
 
 def pick_weakest_sufficient_notch(
@@ -400,4 +438,11 @@ def pick_weakest_sufficient_notch(
         return handle, phase, dist_start, True
 
     handle, phase, dist_start, _zone, _apply_now = evaluated[0]
+    if _early_large_drop_b1_apply(
+        speed_mph=speed_mph,
+        distance_m=distance_m,
+        latch=latch,
+        overspeed_large_drop=large_drop,
+    ):
+        return handle, phase, dist_start, True
     return handle, phase, dist_start, False

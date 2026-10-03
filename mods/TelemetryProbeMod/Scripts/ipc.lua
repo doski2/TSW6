@@ -101,6 +101,35 @@ local function call_method(ctrl, method, val)
     return false, tostring(err)
 end
 
+local function lever_component_name(ctrl)
+    if not util.ctrl_is_valid(ctrl) then return nil end
+    local ok, n = pcall(function() return util.lua_str(ctrl:GetName()) end)
+    if ok and type(n) == "string" and n ~= "" then return n end
+    ok, n = pcall(function() return util.lua_str(ctrl:GetFName()) end)
+    if ok and type(n) == "string" and n ~= "" then return n end
+    return nil
+end
+
+local function is_mc_analog_ctrl(ctrl)
+    local cn = lever_component_name(ctrl)
+    if not cn then return false end
+    for _, name in ipairs(config.MC_ANALOG_LEVER_NAMES or {}) do
+        if cn == name or string.find(cn, name, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function write_mc_analog_input(ctrl, num, _controller)
+    local v = util.clamp_num(tonumber(num) or 0, 0.0, 1.0)
+    local okc = select(1, call_method(ctrl, "SetCurrentInputValue", v))
+    if okc then return true, "SetCurrentInputValue" end
+    local ok = pcall(function() ctrl.InputValue = v end)
+    if ok then return true, "InputValue" end
+    return false, "no_effect"
+end
+
 local function write_pbh_one_step(ctrl, num, controller)
     local dest = util.cmd_value_to_notch(num)
     local hud_before = telemetry.read_hud_lever_notch(controller)
@@ -141,6 +170,9 @@ end
 local function write_lever_control(name, ctrl, num, controller)
     if not util.ctrl_is_valid(ctrl) then return false, "invalid_ctrl" end
     if name == "PowerBrakeHandle" and config.SAFE_LEVER_WRITE then
+        if is_mc_analog_ctrl(ctrl) then
+            return write_mc_analog_input(ctrl, num, controller)
+        end
         return write_pbh_one_step(ctrl, num, controller)
     end
     local input_val = lever_input_value(name, num)
@@ -167,18 +199,19 @@ function M.apply_control_value(name, value, controller, cmd_id, state)
     end
 
     if name == "PowerBrakeHandle" and config.SAFE_LEVER_WRITE then
-        local direct = get_direct_actor_lever(name, controller)
-        if not direct then
+        local ctrl = get_direct_actor_lever(name, controller)
+            or find_control(name, controller)
+        if not ctrl then
             if cmd_id then state.last_cmd_id = cmd_id end
             state.last_ack_ok = false
             bridge.write_send_ack(name, num, false, cmd_id)
-            print("[TelemetryProbe] WARN direct PBH not found on drivable actor\n")
+            print("[TelemetryProbe] WARN combined lever not found on drivable actor\n")
             return false
         end
-        local ok, _ = write_lever_control(name, direct, num, controller)
+        local ok, _ = write_lever_control(name, ctrl, num, controller)
         if cmd_id then state.last_cmd_id = cmd_id end
         if ok then
-            control_cache[name] = direct
+            control_cache[name] = ctrl
             state.last_ack_ok = true
             last_applied[name] = num
             bridge.write_send_ack(name, num, true, cmd_id)

@@ -306,6 +306,48 @@ def test_h1_downhill_coast_trim_defers_b1_near_target():
     assert r.phase == "B1"
 
 
+def test_zone_hold_suppressed_ascending_exit_table() -> None:
+    from tsw6v2.planning import zone_hold_suppressed_for_ascending_exit
+
+    assert zone_hold_suppressed_for_ascending_exit(15, 40, gradient_pct=1.25) is False
+    assert zone_hold_suppressed_for_ascending_exit(15, 50, gradient_pct=-1.0) is False
+    assert zone_hold_suppressed_for_ascending_exit(35, 60, gradient_pct=-1.0) is True
+    assert zone_hold_suppressed_for_ascending_exit(40, 70, gradient_pct=-1.35) is False
+    assert zone_hold_suppressed_for_ascending_exit(45, 60, gradient_pct=1.05) is True
+
+
+def test_h1_hold_zone_40_overspeed_next_70_session_20261003() -> None:
+    """Zona 40 @42 mph, cartel 70 lejos: HOLD_DH (no tratar como salida 35→60)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=42.01,
+        limit_mph=70.0,
+        distance_m=1380.3,
+        gradient_pct=-1.35,
+        posted_limit_mph=40.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert abs(r.target_speed_mph - 40.2) < 0.05
+
+
+def test_h1_hold_zone_15_to_40_uphill_departure_session_20261003() -> None:
+    """15→40 @ +1.3 %% salida andén: contener zona 15 (no tratar como 45→60)."""
+    r = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=16.0,
+        limit_mph=40.0,
+        distance_m=120.0,
+        gradient_pct=1.25,
+        posted_limit_mph=15.0,
+    )
+    assert r is not None
+    assert r.downhill_hold
+    assert r.apply_now
+    assert abs(r.target_speed_mph - 15.5) < 0.05
+
+
 def test_h1_hold_zone_15_to_50_session_152129() -> None:
     """15→50: zona 15 obligatoria en bajada aunque el cartel siguiente suba mucho."""
     r = evaluate_limit_brake(

@@ -1,6 +1,6 @@
 # Código v2 — dónde va cada pieza
 
-**Plan:** [PLAN_V2.md](PLAN_V2.md) · **Mantenimiento:** [MANTENIMIENTO.md](MANTENIMIENTO.md)
+**Plan:** [PLAN_V2.md](PLAN_V2.md) · **Mantenimiento:** [MANTENIMIENTO.md](MANTENIMIENTO.md) · **P1:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md)
 
 ## Regla principal
 
@@ -16,6 +16,11 @@
 ## Estructura `V2/`
 
 ```text
+V2/
+  tsw6v2/          # producto Python (cartel, andén, señal, loop, IPC)
+  tests/           # pytest producto (~370 tests; ver MANTENIMIENTO)
+  scripts/         # replay JSONL, write_planning.txt, etc.
+  run_p1_session.bat
 ```
 
 `tsw6/braking/v2/` — solo `__init__.py` (re-export `LimitP1Adapter` / tipos). Sin shims de física.
@@ -23,6 +28,11 @@
 ## Comandos
 
 ```bat
+cd V2
+set PYTHONPATH=..;.
+python -m pytest tests/ -q
+V2\run_p1_session.bat limit cross-city
+V2\run_p1_session.bat station cross-city
 ```
 
 `PYTHONPATH` debe incluir la raíz del repo **y** `V2/` (los `.bat` lo configuran).
@@ -32,14 +42,14 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 
 ## v1 vs V2
 
-| Situación | Qué hacer | |
-| --- | --- | --- |
-| Feature nueva cartel/bajada | Solo `V2/tsw6v2/` + `V2/tests/` | |
-| Sesión P1 cartel / andén | `V2\run_p1_session.bat limit\ | station` → `AgentLoop` + `evaluate_p1_tick` |
-| Planning andén sin HTTP | `V2\scripts\write_planning.py <metros>` → `%TEMP%\TSW6Bridge\Planning.txt` | |
-| Legacy GUI v1 (`iniciar_autopilot.bat`) | No usar en producto v2 | |
-| Bug en v1 producción | Arreglo mínimo **o** portar regla a V2 | |
-| Import desde v1 en `tsw6v2/` | **Prohibido** — contrato D2 en `bridge/` | |
+| Situación | Qué hacer |
+| --- | --- |
+| Feature nueva cartel/bajada | Solo `V2/tsw6v2/` + `V2/tests/` |
+| Sesión P1 cartel / andén | `V2\run_p1_session.bat limit\|station` → `AgentLoop` + `evaluate_p1_tick` |
+| Planning andén sin HTTP | `V2\scripts\write_planning.py <metros>` → `%TEMP%\TSW6Bridge\Planning.txt` |
+| Legacy GUI v1 (`iniciar_autopilot.bat`) | No usar en producto v2 |
+| Bug en v1 producción | Arreglo mínimo **o** portar regla a V2 |
+| Import desde v1 en `tsw6v2/` | **Prohibido** — contrato D2 en `bridge/` |
 
 ## Estado (pasos PLAN_V2)
 
@@ -47,22 +57,37 @@ Perfil de deceleración: `logs/profiles/<vehicle>.json` (auto al arrancar sesió
 | --- | --- | --- |
 | 1 | Contrato GetData | Casi cerrado |
 | 2 | Esqueleto `V2/tsw6v2/` | **Cerrado** (pytest + `test-ipc` in-game) |
-| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (~600 tests `V2/tests/`) · `run_p1_session` limit/station |
+| **3** | Física / learner / P1 cartel + andén en V2 | **pytest verde** (`V2/tests/`, ~370) · `run_p1_session` limit/station |
 
-Módulos cartel: `planning` · `limit_state` · `limit_horizon` · `limit_notch` ·
-`limit_containment` · `limits` · `decision` · `trace`. Andén: `station_plan` · `station_brake` ·
-`p1_policy` · `limit_station_cluster` ·
-`p1_station_gate` · `planning_poller` (HTTP `DriverAid.TrackData` + fallback `Planning.txt`) ·
-`session_report` — ver
+### Módulos cartel (orden de lectura)
+
+| Módulo | Rol |
+| --- | --- |
+| `planning.py` | GetData; `large_zone_to_next_drop`; **`zone_hold_suppressed_for_ascending_exit`** (H1 salida ascendente); `is_ascending_limit_exit` |
+| `limit_horizon.py` | Horizonte BRAKE_LIMIT; caída grande 90→15 extendida |
+| `limit_state.py` | Latch; `zone_posted_mph` al enganchar |
+| `limit_notch.py` | Muesca B1–B3; defer; `_early_large_drop_b1_apply` |
+| `limit_containment.py` | HOLD_DH / zone_contain (`pick_downhill_containment`) |
+| `limits.py` | `evaluate_limit_brake` (dual snapshot HOLD vs BRAKE_LIMIT) |
+| `physics.py` | `should_emit_brake_command`; **`speed_limit_horizon_commit`** |
+| `command.py` | COAST / APPLY / RELEASE |
+| `decision.py` | `evaluate_p1_tick`; `_overlay_active_zone_hold` |
+| `trace.py` | JSONL sesión |
+
+Andén / prioridad: `station_plan` · `station_brake` · `p1_policy` · `limit_station_cluster` ·
+`p1_station_gate` · `planning_poller` · `session_report` — ver
 [MANTENIMIENTO § Plan cartel](MANTENIMIENTO.md#plan-cartel-p1-limit_) y
 [REGLAS_FRENOS_P1 §9](REGLAS_FRENOS_P1.md#9-prioridad-cartel--andén-dos-objetivos).
 
-**Reglas de frenado:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md). Umbrales mph en `constants.py`:
-zona vigente **posted+0.5** (`posted_zone_hold_ceiling_mph`); coast **59.5**
-(`posted_zone_coast_floor_mph`); BRAKE_LIMIT al next **posted−1** (`passenger_ops_target_mph`).
+**Reglas de frenado:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md) — tabla «Ventanas y puertas» (no duplicar
+`_in_apply_window` / `should_emit` / `zone_hold_suppressed` / `speed_limit_horizon_commit`).
+
+Umbrales mph en `constants.py`: techo zona `posted_zone_hold_ceiling_mph`; coast
+`posted_zone_coast_floor_mph`; BRAKE_LIMIT al next `passenger_ops_target_mph`; salida ascendente
+`ASCENDING_EXIT_COAST_POSTED_MAX_MPH` (35) vs zonas lentas `ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH` (30).
 
 Fases de producto (0–6): [PLAN_V2 § Fases](PLAN_V2.md#fase-0--contrato-io).
 
 ## Relacionados
 
-- [README v2](README.md) · [PLAN_V2](PLAN_V2.md)
+- [README v2](README.md) · [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md)

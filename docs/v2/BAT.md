@@ -17,6 +17,7 @@ Los `.bat` de la **raíz** son accesos directos; la lógica está en `scripts/`.
 | --- | --- | --- |
 | `install_ue4ss_probe.bat` | `scripts/ue4ss/install_ue4ss_probe.bat` | **xcopy** todo `Scripts/` → `Mods/TelemetryProbeMod/Scripts/` |
 | `install_ue4ss_explorer.bat` | `scripts/ue4ss/install_ue4ss_explorer.bat` | Lab ApiExplorerMod (no con autopilot) |
+| `explorar_tren.bat` | `python -m lab.vehicle_explorer` | GUI sesiones lab → [VEHICLE_LAB.md](v2/VEHICLE_LAB.md) |
 
 **Tras cambiar Lua:** reinstalar probe y **reiniciar TSW** (UE4SS no recarga Lua en caliente).
 

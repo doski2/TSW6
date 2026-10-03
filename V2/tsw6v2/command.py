@@ -19,6 +19,7 @@ from tsw6v2.physics import (
     is_uphill_gradient,
     limit_release_speed_ready,
     should_emit_brake_command,
+    speed_limit_horizon_commit,
     speed_limit_pre_coast_horizon_m,
 )
 
@@ -183,11 +184,21 @@ def command_from_target(
             and coast_trim_deferred
             and is_uphill_gradient(gradient_pct)
         )
-        if not in_window and dist_start > coast_h and not early_coast:
+        early_plan_apply = speed_limit_horizon_commit(
+            apply_now=apply_now,
+            dist_start=dist_start,
+            in_cinematic_window=in_window,
+        )
+        if (
+            not in_window
+            and dist_start > coast_h
+            and not early_coast
+            and not early_plan_apply
+        ):
             return None
         if traction:
             return _coast_throttle_command()
-        if not in_window:
+        if not in_window and not early_plan_apply:
             return None
     else:
         if traction and dist_start <= 800.0:

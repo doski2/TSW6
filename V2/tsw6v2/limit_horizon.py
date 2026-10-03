@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from tsw6v2.limit_state import LIMIT_REACTION_S
 from tsw6v2.physics import (
     DEFAULT_MAX_BRAKE_DECEL,
     brake_ctx_for_decel,
     kinematic_horizon_m,
 )
+from tsw6v2.planning import large_zone_to_next_drop
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+
+# Caída grande (90→15): margen más allá del horizonte cinemático base (20260929Z).
+_LARGE_DROP_HORIZON_SCALE = 1.12
+_LARGE_DROP_HORIZON_EXTRA_M = 150.0
 
 
 def next_limit_brake_horizon_m(
@@ -30,13 +37,33 @@ def next_limit_brake_horizon_m(
     return horizon if horizon == horizon else 0.0
 
 
+def _extended_brake_horizon_m(
+    horizon_m: float,
+    *,
+    zone_posted_mph: Optional[float],
+    next_limit_mph: float,
+) -> float:
+    if not large_zone_to_next_drop(zone_posted_mph, next_limit_mph):
+        return horizon_m
+    return max(
+        horizon_m,
+        horizon_m * _LARGE_DROP_HORIZON_SCALE + _LARGE_DROP_HORIZON_EXTRA_M,
+    )
+
+
 def within_next_brake_horizon(
     *,
     speed_mph: float,
     next_limit_mph: float,
     next_distance_m: float,
     gradient_pct: float,
+    zone_posted_mph: Optional[float] = None,
 ) -> bool:
     """¿Dentro del horizonte BRAKE_LIMIT al cartel siguiente?"""
     horizon = next_limit_brake_horizon_m(speed_mph, next_limit_mph, gradient_pct)
+    horizon = _extended_brake_horizon_m(
+        horizon,
+        zone_posted_mph=zone_posted_mph,
+        next_limit_mph=next_limit_mph,
+    )
     return next_distance_m <= horizon

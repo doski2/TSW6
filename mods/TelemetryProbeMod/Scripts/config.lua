@@ -1,7 +1,7 @@
 -- TelemetryProbeMod v2 — constantes (solo I/O GetData + IPC).
 local M = {}
 
-M.PROBE_BUILD = "20260908c"
+M.PROBE_BUILD = "20261003b"
 M.PROBE_AUTO_START = true
 
 M.HOOK_PATH =
@@ -12,6 +12,8 @@ M.IPC_POLL_INTERVAL_S = 0.05
 M.COMMANDS_ARMED_TTL_S = 0.25
 
 M.SAFE_LEVER_WRITE = true
+-- IrregularLever MC (M3a/M7a): IPC 0..1 → SetCurrentInputValue (no peldaños 323).
+M.MC_ANALOG_LEVER_NAMES = { "MasterController" }
 M.IPC_DELEGATE_HTTP = false
 M.DEBUG_IPC = false
 
@@ -27,9 +29,11 @@ M.ALLOWED_CONTROLS = {
 M.CONTROL_ALIASES = {
     PowerBrakeHandle = {
         "PowerBrakeHandle",
+        "MasterController",
         "ThrottleAndBrake",
         "CombinedHandle",
         "PowerBrake",
+        "PowerHandle",
     },
 }
 

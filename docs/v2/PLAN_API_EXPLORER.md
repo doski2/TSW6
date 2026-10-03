@@ -47,8 +47,8 @@ Lua/HTTPAPI
 | Señal / tema | ¿Probe 20 Hz? | Notas |
 | --- | --- | --- |
 | HUD 16× (`speed`, brakes, `dyn_brake`, …) | ✅ ya en GetData | Sesión `213100Z` |
-| C1 `signalAspectClass` 0/1/2 + distancia | ⬜ cablear probe | Lab cerrado L0.4b |
-| `is_slipping` HUD | ⬜ 9b-a log | Evidencia `214213Z` |
+| C1 `signalAspectClass` 0/1/2 + distancia | ✅ probe (`signal_red`, `signal_dist_cm`) | Lab L0.4b · P1 paso 5 |
+| `is_slipping` / `traction_locked` | ✅ GetData (sin handler P1) | 9b-b aplazado (lluvia/nieve, todos trenes) |
 | `brake_cyl_bar` | ✅ probe `HUD_GetBrakeGauge_1` | Simulation Lua bloqueado; HTTP solo lab |
 | Masa HTTP / `mass_factor` | ❌ F-B off | No correlación vagones |
 | `HUD_GetTractiveEffort` / `HUD_GetAmmeter` | ❌ catálogo 323 | Siempre 0; otro tren puede variar |
@@ -97,6 +97,9 @@ campo en GetData.
 
 **323 y lab:** barrido L0 **cerrado** (build `20260901a`). No hace falta más capturas 323 salvo
 regresión del mod. El valor del mod **crece con cada tren nuevo**.
+
+**GUI Python (tren nuevo):** carpeta `lab/vehicle_explorer/` + `explorar_tren.bat` — ver
+[VEHICLE_LAB.md](VEHICLE_LAB.md) (separado de `V2/tsw6v2/` y de `aprender.bat`).
 
 ---
 
@@ -514,8 +517,8 @@ del 323.
 
 | Pendiente producto | Tipo | ¿Bloquea otro tren? |
 | --- | --- | --- |
-| C1 `signal_red` + `signal_dist_cm` en probe | cablear `main.lua` | No |
-| 9b-a `is_slipping` en GetData | log | No |
+| C1 `signal_red` + `signal_dist_cm` en probe | ✅ `telemetry.lua` | No |
+| 9b-a `is_slipping` en GetData | ✅ emitido; **9b-b** aplazado | No |
 | Paso 6 IPC + `class_323.json` | G-B ya generado L0.7 ✅ | No |
 | Quitar F9 del probe | depuración | No |
 | Mejoras correlator (Δt, rutas DriverAid) | tooling | No |

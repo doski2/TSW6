@@ -11,7 +11,7 @@ from tsw6v2.constants import (
 from tsw6v2.planning import (
     is_ascending_limit_exit,
     is_descending_limit_zone,
-    should_skip_zone_hold_for_ascending_exit,
+    zone_hold_suppressed_for_ascending_exit,
 )
 from tsw6v2.limit_horizon import within_next_brake_horizon
 from tsw6v2.limit_notch import apply_notch_hysteresis, phase_for_handle
@@ -119,6 +119,7 @@ def _defer_zone_contain_for_next_horizon(
             next_limit_mph=next_limit_mph,
             next_distance_m=next_distance_m,
             gradient_pct=gradient_pct,
+            zone_posted_mph=posted_limit_mph,
         )
     )
 
@@ -147,10 +148,10 @@ def try_current_zone_contain(
         gradient_pct=gradient_pct,
     ):
         return None
-    # Salida lenta→rápida en cuesta: no HOLD_DH (sesión 201456Z: 45→60 @ +1 %%).
-    if (
-        is_uphill_gradient(gradient_pct)
-        and is_ascending_limit_exit(posted_limit_mph, next_limit_mph)
+    if zone_hold_suppressed_for_ascending_exit(
+        posted_limit_mph,
+        next_limit_mph,
+        gradient_pct=gradient_pct,
     ):
         return None
     return _hold_if_over_zone_ceiling(
@@ -261,7 +262,12 @@ def pick_downhill_containment(
     """Zona vigente lejos del next o HOLD_DH (60→60 en bajada)."""
     if release_state is not None:
         release_state.update_downhill_zone(speed_mph, posted_limit_mph)
-    if should_skip_zone_hold_for_ascending_exit(posted_limit_mph, next_limit_mph):
+    # Corto total: evita ``try_posted_downhill_hold`` en 35→60 bajada (no solo try_current).
+    if zone_hold_suppressed_for_ascending_exit(
+        posted_limit_mph,
+        next_limit_mph,
+        gradient_pct=gradient_pct,
+    ):
         return None
     zone = try_current_zone_contain(
         state,

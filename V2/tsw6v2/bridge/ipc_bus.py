@@ -13,6 +13,7 @@ from tsw6v2.bridge.commands import (
     combined_notch_to_value,
     clamp_brake_value,
     is_allowed_path,
+    master_controller_input_value,
     resolve_control_path,
 )
 
@@ -300,6 +301,23 @@ def dispatch_ipc_combined_notch(
     return dispatch_ipc_brake(
         COMBINED_BRAKE,
         combined_notch_to_value(notch),
+        schema,
+        cmd_id=cmd_id,
+        ack_timeout_s=ack_timeout_s,
+    )
+
+
+def dispatch_ipc_master_controller(
+    fraction: float,
+    schema: Optional[dict] = None,
+    *,
+    cmd_id: Optional[int] = None,
+    ack_timeout_s: float = 0.12,
+) -> dict[str, Any]:
+    """IPC analog MC 0..1 (M3a: Lua detecta MasterController y escribe InputValue)."""
+    return dispatch_ipc_brake(
+        COMBINED_BRAKE,
+        master_controller_input_value(fraction),
         schema,
         cmd_id=cmd_id,
         ack_timeout_s=ack_timeout_s,

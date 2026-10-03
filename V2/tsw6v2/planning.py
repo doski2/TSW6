@@ -6,13 +6,16 @@ from typing import Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import (
+    ASCENDING_EXIT_COAST_POSTED_MAX_MPH,
     ASCENDING_EXIT_ZONE_HOLD_MIN_DELTA_MPH,
     ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH,
     ASCENDING_LIMIT_DELTA_MPH,
+    BRAKE_PLAN_LARGE_DROP_MPH,
     DESCENDING_LIMIT_DELTA_MPH,
     LIMIT_OVER_ACTIVE_MPH,
     MS_TO_MPH,
 )
+from tsw6v2.physics import is_uphill_gradient
 
 
 def next_speed_limit(snap: Optional[ProbeSnapshot]) -> tuple[Optional[float], Optional[float]]:
@@ -78,6 +81,32 @@ def should_skip_zone_hold_for_ascending_exit(
     )
 
 
+def zone_hold_suppressed_for_ascending_exit(
+    posted_limit_mph: float,
+    next_limit_mph: Optional[float],
+    *,
+    gradient_pct: float = 0.0,
+) -> bool:
+    """
+    ¿Omitir HOLD_DH / contención de zona vigente al ir hacia cartel más alto?
+
+    Fuente única para ``limit_containment`` (``pick_downhill_containment`` y
+    ``try_current_zone_contain``). No confundir con ``should_skip_zone_hold`` a
+    secas: en bajada hace falta además ``posted ≤ ASCENDING_EXIT_COAST_POSTED_MAX_MPH``
+    (35→60 sí, 40→70 no — sesión 071613Z).
+    """
+    if not is_ascending_limit_exit(posted_limit_mph, next_limit_mph):
+        return False
+    if posted_limit_mph < ASCENDING_EXIT_ZONE_HOLD_MIN_POSTED_MPH:
+        return False
+    if is_uphill_gradient(gradient_pct):
+        return True
+    return (
+        should_skip_zone_hold_for_ascending_exit(posted_limit_mph, next_limit_mph)
+        and posted_limit_mph <= ASCENDING_EXIT_COAST_POSTED_MAX_MPH
+    )
+
+
 def is_descending_limit_zone(
     posted_limit_mph: float,
     next_limit_mph: Optional[float],
@@ -89,6 +118,18 @@ def is_descending_limit_zone(
         next_limit_mph is not None
         and next_limit_mph < posted_limit_mph - delta_mph
     )
+
+
+def large_zone_to_next_drop(
+    zone_posted_mph: Optional[float],
+    next_posted_mph: Optional[float],
+) -> bool:
+    """Caída grande zona vigente → cartel siguiente (p. ej. 90→15, 20260929Z)."""
+    if zone_posted_mph is None or next_posted_mph is None:
+        return False
+    if not is_descending_limit_zone(zone_posted_mph, next_posted_mph):
+        return False
+    return zone_posted_mph - next_posted_mph >= BRAKE_PLAN_LARGE_DROP_MPH
 
 
 def resolve_limit_objective(

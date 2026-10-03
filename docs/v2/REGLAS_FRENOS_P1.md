@@ -67,7 +67,18 @@ solo observa decel en la ruta BRAKE_LIMIT comprometida — evita latch/EMA conta
 perdedora (sesión `201456Z`).
 
 **Horizonte cinemático:** `limit_horizon.py` — `next_limit_brake_horizon_m` /
-`within_next_brake_horizon` (fuente única; antes duplicado en contención y `limits`).
+`within_next_brake_horizon` + ``planning.large_zone_to_next_drop`` (90→15: horizonte
+extendido, B1 ``apply_now`` anticipado, sin diferir commit). Fuente única del horizonte
+(en contención, defer y `limit_notch`).
+
+**Ventanas y puertas (una función por concepto — no duplicar):**
+
+| Función | Uso |
+| --- | --- |
+| `limit_notch._in_apply_window` | Compromiso de muesca / learner (`apply_now` cuenta) |
+| `physics.should_emit_brake_command` | Ventana cinemática IPC; feedback decel; ignora `apply_now` |
+| `physics.speed_limit_horizon_commit` | Puente plan→mando: `apply_now` lejos + fuera de cinemática → COAST/APPLY |
+| `planning.zone_hold_suppressed_for_ascending_exit` | ¿Omitir HOLD_DH de **zona vigente** al ir hacia cartel más alto? (`pick_downhill_containment` + `try_current_zone_contain`; no usar `should_skip_zone_hold` sola) |
 
 **Defer** (`limit_notch.downhill_defer_brake_commit`): no comprometer B1 todavía si aún vas legal en
 la zona vigente. Usa `next_brake_overrides_zone_hold` para no diferir dentro del horizonte ni en la
@@ -103,8 +114,11 @@ Excepciones:
 - **60→60** (misma zona): HOLD_DH si `spd >` techo zona.
 - **45→60** (subida de límite en **cuesta**): sin HOLD_DH ni zone_contain — dejar acelerar
 
-  (`is_ascending_limit_exit` + `is_uphill_gradient`; sesión `201456Z`). En llano/bajada la regla
-  `should_skip_zone_hold_for_ascending_exit` sigue aplicando.
+  Una sola función: ``planning.zone_hold_suppressed_for_ascending_exit`` (usada en
+  ``pick_downhill_containment`` y ``try_current_zone_contain``). **15→40/50** subida: no suprimir
+  (`posted < 30`). **35→60** bajada: suprimir (`should_skip` + `posted ≤ 35`). **40→70** bajada con
+  exceso: no suprimir (`071613Z`). **45→60** subida: suprimir (`201456Z`). ``should_skip_zone_hold``
+  solo describe el salto ≥25 mph; no usarla sola en contención.
 
 - **70→45** (caída grande): en ventana APPLY, `pick_weakest` exige **mínimo B2** si
 
@@ -125,10 +139,7 @@ Caso típico: 45→60 @ +1 %%, P6 con tracción @ 55 mph — soltar gas antes de
 (sesión `201456Z`). Tests: `test_coast_trim.py`.
 
 **Excepción caída grande en subida (60→35):** si `posted − next ≥ BRAKE_PLAN_LARGE_DROP_MPH` (18) y
-vas **legal en zona vigente** (p. ej. 56 mph en zona 60) **fuera del horizonte** del cartel 35,
-
-##### no
-
+vas **legal en zona vigente** (p. ej. 56 mph en zona 60) **fuera del horizonte** del cartel 35, **no**
 diferir coast-trim comparando con ops del next (34 mph). Evita `COAST_THROTTLE` a 4 km al salir del
 andén (sesión `221258Z`). Sigue aplicando en 60→55 @ +1 %% (caída posted &lt; 18).
 
@@ -677,18 +688,18 @@ RELEASE / COAST_PWR**.
 | Módulo | Rol |
 | --- | --- |
 | `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE) |
-| `planning.py` | GetData, `is_ascending_limit_exit`, `resolve_limit_objective` |
-| `limit_horizon.py` | Horizonte cinemático BRAKE_LIMIT (`next_limit_brake_horizon_m`) |
-| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon`) |
+| `planning.py` | GetData; `large_zone_to_next_drop`; **`zone_hold_suppressed_for_ascending_exit`**; `should_skip_zone_hold_for_ascending_exit` (solo salto ≥25, no usar sola en contención) |
+| `limit_horizon.py` | Horizonte cinemático BRAKE_LIMIT (`next_limit_brake_horizon_m`); extensión caída grande |
+| `limit_containment.py` | HOLD_DH + zone_contain; llama `zone_hold_suppressed` en pick y `try_current_zone_contain` |
 | `limit_state.py` | Latch BRAKE_LIMIT; `snapshot()` / `replace_from()` |
 | `limit_notch.py` | Muesca + histéresis + defer (`next_brake_overrides_zone_hold`) |
 | `brake_feedback.py` | Bucle corto `a_obs` vs `a_pred` → escalada B1→B2 |
 | `limits.py` | Fachada `evaluate_limit_brake` |
 | `target.py` | `BrakeTargetResult` |
-| `command.py` | RELEASE cinemático + COAST / APPLY |
+| `command.py` | RELEASE cinemático + COAST / APPLY (`speed_limit_horizon_commit` en cartel) |
 | `decision.py` | Tick + L4 aire + RELEASE con `accel_ms2` / perfil |
 | `autopilot_limit.py` | Puente autopilot GUI → `evaluate_limit_tick` |
-| `physics.py` | APPLY `s = v²/2a` + RELEASE `v + a·fill` + proyección `projected_speed_mph_at_distance` |
+| `physics.py` | `should_emit_brake_command`; **`speed_limit_horizon_commit`**; APPLY `s = v²/2a` + RELEASE |
 
 ## Apéndice C — Mapa código andén + prioridad (paso 3)
 
@@ -725,6 +736,11 @@ RELEASE / COAST_PWR**.
 
 | Fecha | Qué |
 | --- | --- |
+| 2026-10-03 | Salida ascendente H1: `zone_hold_suppressed_for_ascending_exit` — fuente única contención (doc tabla ventanas/puertas) |
+| 2026-10-03 | Sesión `071613Z`: zona **40** @42 mph + next **70** — `should_skip` ya no anula HOLD (solo `posted ≤35`); ticks 44093/44384 |
+| 2026-10-03 | Sesión `071613Z`: salida 15→40 en subida sin HOLD — `try_current_zone_contain` alineado con `posted < 30` (no duplicar regla 45→60 en zonas 10/15) |
+| 2026-09-30 | Sesión `214447Z`: B1 `apply_now` en horizonte 90→15 pero `command_none` — `command_from_target` ahora emite COAST/APPLY con `early_plan_apply` |
+| 2026-09-29 | Sesión `191919Z`: 90→15 @ ~90 mph — plan anticipado B1 (horizonte extendido caída grande); señal/andén no sustituyen cartel cuando el 15 va primero |
 | 2026-09-22 | Sesiones `200405Z`/`202017Z`: rojo @ ~90 m @ 22 mph saltaba a B3 — horizonte 120 m + `_signal_horizon_apply_plan` (B1 hasta ventana B3); `_air_apply_block` no bloquea si palanca == target |
 | 2026-09-21 | Sesión `195804Z`: ping-pong B1/neutro — `PlatformBleedEpisode` + `platform_bleed_release` dedicado; cartel bloqueado en episodio |
 | 2026-09-21 | Sesión `193606Z`: andén mid-route neutro + cilindros cargados → `platform_parked_residual_bleed_needed` / APPLY B1; skip RELEASE solo si aire bajo; sin RELEASE fantasma con tracción |
@@ -749,6 +765,7 @@ RELEASE / COAST_PWR**.
 | 2026-09-13 | Paso 5 señal: `evaluate_signal_brake`, `signal_plan`, `service_brake`; rojo gana HOLD_DH; emergencia SIGNAL con supresión salida; sesión ref. `225433Z` |
 | 2026-09-13 | Modo station: RELEASE antes de `no_plan` (`224046Z` HOLD_DH zona 15); `pick` sin WATCH con andén diferido + sin `p1tgt` fantasma (`221258Z`); coast-trim subida no en caída posted grande 60→35 |
 | 2026-09-12 | Evaluación dual con snapshots; `limit_horizon.py`; coast trim subida (`coast_trim_deferred`); sin HOLD_DH en salida lenta→rápida en cuesta; caída grande → B2; aire 323 @ 1.55 bar; trace/replay señal |
+| 2026-10-03 | `p1_limit_capas.html`: §1b H1 (15→40, 40→70, GAP/horizon_commit), overlay HOLD, capas HOLD_DH |
 | 2026-09-10 | `p1_limit_capas.html`: ramas andén, pick, geometría cluster, FSM gate |
 | 2026-09-13 | Calidad learner: ventana estable, outliers decel/fill, `MIN_FILL_SAMPLES`, JSONL `learn_*` |
 | 2026-09-10 | Cartel tras andén (`213010Z`): `limit_sign_beyond_station`, `LIMIT_AFTER_STATION_MAX_M` |

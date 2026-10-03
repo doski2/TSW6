@@ -143,7 +143,7 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 - [x] Huecos C1 documentados (`signal_red`, `signal_dist_cm`)
 - [x] Hueco lim2 documentado (parser sí, Lua no)
 - [x] Huecos §2 documentados (`is_slipping`, masa F-B HTTP — **F-B off** tras conteo vagones)
-- [ ] **9b-a** probe emite `is_slipping` (+ opcional `traction_locked`)
+- [x] **9b-a** probe emite `is_slipping` (+ `traction_locked`) — handler P1 **9b-b** aplazado (lluvia/nieve)
 - [ ] **9** poll masa HTTP (log opcional) — ~~`mass_factor` en `physics.py`~~ **descartado**
 - [ ] Revisión: Lua sin ritmo/cluster en tick (auditoría periódica `main.lua`)
 
@@ -152,8 +152,7 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 ```text
 ```
 
-**Estado D2:** contrato **documentado**; cierre total cuando C1 esté cableado y checklist Fase 0
-marcado en ejecución.
+**Estado D2:** contrato **documentado**; C1 y 9b-a en probe ✅; pendiente auditoría Lua hot path y campos futuros (lim2).
 
 ---
 
@@ -218,6 +217,21 @@ Código métricas: `tsw6/telemetry/channel_diagnostics.py`.
 | UFunction | `SetCurrentOutputValue` (eje −4…+4 = muesca − 4) |
 | Build validado | `20260828a` — `test-ipc` PASS |
 | Escala HUD | 0=B4 … 4=costa … 8=P4 — tabla completa en [histórico B.7](../archive/docs/CANAL_CONTROL_HISTORICO.md#class-323-uk--ipc-validado-2026-08-27-1713) |
+
+---
+
+## M3a MNR — MasterController (analog, build `20261003b`)
+
+| Dato | Valor |
+| --- | --- |
+| Objeto resuelto | `MasterController` (alias IPC `PowerBrakeHandle`) |
+| Línea | `PowerBrakeHandle:0.7200:cmd_id` — **fracción 0.0–1.0** = `InputValue` |
+| Semántica Lua | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue` |
+| Python | `dispatch_ipc_master_controller(0.72)` (`V2/tsw6v2/bridge/ipc_bus.py`) |
+| Prueba campo | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat` |
+| Prueba unitaria | `V2/tests/test_mc_analog_ipc.py` |
+
+Misma línea física que 323; el probe elige modo por nombre del componente (**FACT:** código `ipc.lua` `is_mc_analog_ctrl`).
 
 ---
 

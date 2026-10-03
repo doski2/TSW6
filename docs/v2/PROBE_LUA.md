@@ -1,6 +1,7 @@
 # Probe Lua v2 — auditoría y mapa
 
-**Build:** `20260908c` (revert sync visual VHID; ver nota abajo) · **Plan:** [PLAN_V2
+**Build:** `20261003b` (alias MC + IPC analog `InputValue` 0..1) · **Plan:**
+[PLAN_V2
 §4.1](PLAN_V2.md#41-tick-lua-ue4ss) ·
 **Contrato:** [CANAL_CONTROL](../CANAL_CONTROL.md)
 
@@ -21,7 +22,14 @@
 | `util.lua` | `unwrap_number`, muescas, helpers UE |
 | `bridge.lua` | `%TEMP%\TSW6Bridge\` — GetData, IPC, ACK |
 | `telemetry.lua` | Lectura HUD + DriverAid + `build_line` / `collect_sample` |
-| `ipc.lua` | Mandos IPC — PBH directo en actor (323); solo OutputValue + fallback VHID |
+| `ipc.lua` | Mandos IPC — palanca combinada en actor (`PowerBrakeHandle` o alias); solo OutputValue + fallback VHID |
+
+**`20261003a`:** IPC `PowerBrakeHandle` resuelve también `MasterController` (M3a MNR) vía
+`CONTROL_ALIASES` y `find_control` (antes fallaba con `direct PBH not found` → `lua_rejected`).
+
+**`20261003b`:** si el lever resuelto es `MasterController`, la línea IPC `PowerBrakeHandle:0.7200`
+escribe **InputValue 0..1** (analog). En 323 sigue **un peldaño por comando**. Python:
+`dispatch_ipc_master_controller(0.72)` · prueba campo: `V2\test_ipc_mc.bat`.
 
 **Nota `20260908c`:** los builds `20260908a/b` llamaban `BeginChangingVHID` en cada paso
 (incluso en ACK «already») y **bloqueaban el teclado** del jugador. Revertido a `20260905b`.
