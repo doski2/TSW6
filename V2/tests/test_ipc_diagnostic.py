@@ -17,11 +17,18 @@ def test_b1_evidence_m3a_cyl_rise() -> None:
 
 def test_mc_b1_pass_fraction_and_cylinder() -> None:
     base = ProbeSnapshot(brake_cyl_bar=9.27)
-    after = ProbeSnapshot(brake_cyl_bar=10.78, train_brake=0.0, lever_notch=5)
+    after = ProbeSnapshot(
+        brake_cyl_bar=10.78,
+        train_brake=0.0,
+        lever_notch=3,
+        power=-0.85,
+        power_neg=True,
+    )
     pkg = {
         "layout": "master_controller",
-        "uk_combined_notch_ipc": {"3": 0.85},
+        "brake_input": {"neutral": 0.72, "B3": 0.27},
     }
-    last = {"ok": True, "value": 0.85}
+    expected = 0.72 - (0.72 - 0.27) / 3.0
+    last = {"ok": True, "value": expected}
     assert _mc_b1_ipc_pass(base, after, last, pkg) is True
-    assert _mc_b1_ipc_pass(base, after, {"ok": True, "value": 0.375}, pkg) is False
+    assert _mc_b1_ipc_pass(base, after, {"ok": True, "value": 0.95}, pkg) is False

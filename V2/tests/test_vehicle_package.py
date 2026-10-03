@@ -33,7 +33,9 @@ def test_resolve_m3a_package_from_repo() -> None:
     assert pkg["vehicle_id"] == "m3a_mnr"
     assert uses_mc_analog_ipc(pkg)
     assert profile_brake_fraction(pkg, "neutral") == 0.72
-    assert profile_brake_fraction(pkg, "B1") == 0.85
+    b1 = profile_brake_fraction(pkg, "B1")
+    assert b1 is not None and b1 < 0.72
+    assert abs(b1 - 0.64) < 0.01
 
 
 def test_brake_input_overrides_legacy_uk_map(tmp_path: Path) -> None:
@@ -43,14 +45,15 @@ def test_brake_input_overrides_legacy_uk_map(tmp_path: Path) -> None:
         "vehicle_id": "test_mc",
         "match": {"vehicle_class": "Test_MC_Train"},
         "layout": "master_controller",
-        "brake_input": {"neutral": 0.5, "B1": 0.6},
+        "brake_input": {"neutral": 0.5, "B1": 0.6, "B3": 0.2},
         "uk_combined_notch_ipc": {"3": 0.99, "4": 0.88},
     }
     (tmp_path / "test_mc.json").write_text(json.dumps(pkg), encoding="utf-8")
     loaded = resolve_vehicle_package("Test_MC_Train_x", vehicles_dir=tmp_path)
     assert loaded is not None
     assert profile_brake_fraction(loaded, "B1") == 0.6
-    assert combined_notch_to_ipc_value(B1_NOTCH, loaded) == 0.6
+    # B1 fase → 1/3 entre neutro y B3 en eje MC
+    assert abs(combined_notch_to_ipc_value(B1_NOTCH, loaded) - (0.5 - (0.5 - 0.2) / 3.0)) < 0.01
 
 
 def test_combined_notch_ipc_value_mc_vs_323() -> None:
@@ -62,7 +65,8 @@ def test_combined_notch_ipc_value_mc_vs_323() -> None:
     b1_mc = combined_notch_to_ipc_value(B1_NOTCH, pkg)
     assert b1_323 == 0.375
     assert neutral_mc == 0.72
-    assert b1_mc == 0.85
+    assert b1_mc is not None and b1_mc < neutral_mc
+    assert abs(b1_mc - (neutral_mc - (neutral_mc - 0.27) / 3.0)) < 0.02
     assert b1_323 != neutral_mc
     assert b1_323 != b1_mc
 
@@ -110,7 +114,43 @@ def test_plan_to_brake_command_sets_mc_fraction() -> None:
         vehicle_package=pkg,
     )
     assert cmd is not None
-    assert cmd.target_fraction == 0.85
+    assert cmd.target_fraction is not None
+    assert cmd.target_fraction < 0.72
+
+
+def test_mc_service_brake_fraction_interpolates_session_215905() -> None:
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    neu = profile_brake_fraction(pkg, "neutral")
+    b3 = profile_brake_fraction(pkg, "B3")
+    assert neu is not None and b3 is not None
+    from tsw6v2.vehicle_package import mc_service_brake_fraction
+
+    b1 = mc_service_brake_fraction(pkg, handle_notch=3, phase="B1")
+    mid = mc_service_brake_fraction(pkg, handle_notch=2, phase="B2")
+    full = mc_service_brake_fraction(pkg, handle_notch=1, phase="B3")
+    assert b1 is not None and mid is not None and full is not None
+    assert neu > b1 > mid > full == b3
+    assert abs(b1 - (neu - (neu - b3) / 3.0)) < 0.02
+
+
+def test_m3a_brake_input_below_neutral_not_power_side_session_215007() -> None:
+    """Regresión: B* < neutro (0.72); valores > neutro aceleran (IPC 0.95 → power 1)."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    neu = profile_brake_fraction(pkg, "neutral")
+    assert neu is not None
+    assert neu == 0.72
+    for slot in ("B1", "B2", "B3"):
+        frac = profile_brake_fraction(pkg, slot)
+        assert frac is not None and frac < neu
+    b1 = profile_brake_fraction(pkg, "B1")
+    b2 = profile_brake_fraction(pkg, "B2")
+    b3 = profile_brake_fraction(pkg, "B3")
+    assert b1 is not None and b2 is not None and b3 is not None
+    assert b3 < b2 < b1
 
 
 def test_mc_combined_lever_for_gate_neutral_when_brake_lever() -> None:
@@ -215,13 +255,13 @@ def test_enrich_brake_command_sets_mc_fraction() -> None:
     assert pkg is not None
     cmd = BrakeCommand(kind="APPLY", target_notch=B1_NOTCH, phase="B1")
     out = enrich_brake_command_actuator(cmd, pkg)
-    assert out.target_fraction == 0.85
+    assert out.target_fraction is not None and out.target_fraction < 0.72
     b2 = enrich_brake_command_actuator(
         BrakeCommand(kind="APPLY", target_notch=2, phase="B2"),
         pkg,
     )
     assert b2.target_fraction is not None
-    assert b2.target_fraction != 0.85
+    assert b2.target_fraction < out.target_fraction
     assert out.target_notch == B1_NOTCH
     plain = enrich_brake_command_actuator(cmd, None)
     assert plain.target_fraction is None
@@ -262,9 +302,9 @@ def test_brake_applied_from_probe_mc_input_value() -> None:
     snap_b1 = ProbeSnapshot(
         vehicle="RVM_NYH_MNR_M3a-B_C",
         train_brake=combined_notch_to_ipc_value(B1_NOTCH, pkg),
-        lever_notch=5,
+        lever_notch=B1_NOTCH,
     )
-    assert brake_applied_from_probe(snap_b1, 5, pkg)
+    assert brake_applied_from_probe(snap_b1, B1_NOTCH, pkg)
     snap_cyl = ProbeSnapshot(
         vehicle="RVM_NYH_MNR_M3a-B_C",
         train_brake=0.0,

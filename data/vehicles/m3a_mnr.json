@@ -7,9 +7,9 @@
   "layout": "master_controller",
   "brake_input": {
     "neutral": 0.72,
-    "B1": 0.85,
-    "B2": 0.8999999762,
-    "B3": 0.9499999881
+    "B1": 0.6399999857,
+    "B2": 0.4499999881,
+    "B3": 0.2700000107
   },
   "brake_air": {
     "model": "master_controller"

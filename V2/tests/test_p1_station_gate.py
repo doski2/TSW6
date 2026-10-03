@@ -7,6 +7,7 @@ from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     StationDwellGate,
     doors_effective,
+    blocks_inherited_release_in_station_final_approach,
     should_skip_p1_release,
     station_departure_active,
     station_departure_suppresses_limit_brake,
@@ -308,6 +309,24 @@ def test_skip_p1_release_final_approach_session_213633() -> None:
         combined_lever=6,
         station_fsm=None,
     )
+
+
+def test_skip_p1_release_allows_stopped_final_approach_session_222115() -> None:
+    """Parado ~30 m al marker: no bloquear RELEASE (freno MC heredado)."""
+    assert not blocks_inherited_release_in_station_final_approach(30.5, 0.0)
+    assert not should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=30.5,
+        combined_lever=0,
+        station_fsm=None,
+    )
+
+
+def test_blocks_inherited_release_final_approach_in_motion_only() -> None:
+    assert blocks_inherited_release_in_station_final_approach(62.0, 17.0)
+    assert not blocks_inherited_release_in_station_final_approach(62.0, 1.0)
+    assert not blocks_inherited_release_in_station_final_approach(30.5, 0.0)
+    assert not blocks_inherited_release_in_station_final_approach(250.0, 40.0)
 
 
 def test_mid_route_service_platform_session_191546() -> None:

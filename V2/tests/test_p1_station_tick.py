@@ -590,3 +590,35 @@ def test_p1_tick_zone_40_hold_over_station_plan_session_20261003_tick_44384() ->
     assert decision.reason == "downhill_hold"
     assert decision.command is not None
     assert decision.command.kind == "APPLY"
+
+
+def test_p1_tick_release_after_stop_session_222115() -> None:
+    """Parado ~30 m al marker, freno MC heredado: RELEASE hacia neutro (222115Z)."""
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 3579,
+            "speed_ms": 0.085,
+            "lever_notch": 0,
+            "gradient_pct": 0.0,
+            "dist_limit_cm": 47020.0,
+            "next_limit_ms": 13.4112,
+            "speed_limit_ms": 13.4112,
+            "train_brake": 0.87,
+            "brake_cyl_bar": 9.6,
+            "signal_red": True,
+            "signal_dist_m": 245.9,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=30.5,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+        signal_brake_enabled=True,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "RELEASE"
+    assert decision.reason == "release"

@@ -88,6 +88,8 @@ Andén / prioridad: `station_plan` · `station_brake` · `p1_policy` · `limit_s
 | `station_distance_for_brake_plan` | `station_brake` | Entrada única a `evaluate_station_brake` y cheque STATION en emergencia (`decision`): telemetría ≤0 con marcha → `STATION_OVERSHOOT_PLAN_DISTANCE_M` (1 m). |
 | `STATION_COAST_CUTOFF_M` | `physics` | STATION en ventana: no `COAST_THROTTLE` si dist ≤ 100 m (`command`). |
 
+**IPC MC (M3a):** wire = `mc_service_brake_fraction` (interp. `neutral`↔`B3` en `brake_input`); bucle `loop._mc_ramp_ipc_fraction` + `MC_IPC_FRACTION_STEP`; feedback/release `probe_mc_input_fraction` (no `train_brake` HUD). Claves `B1`/`B2` en JSON son referencia lab — el cable usa solo extremos + intensidad P1.
+
 `evaluate_station_brake` sigue rechazando `distance_m ≤ 0`; no llamarlo con geo cruda tras el marcador.
 
 **Reglas de frenado:** [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md) — tabla «Ventanas y puertas» (no duplicar

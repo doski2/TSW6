@@ -37,6 +37,23 @@ if TYPE_CHECKING:
 
 STATION_STOPPED_MPH = 1.5
 DEPARTING_CLEAR_MPH = ORIGIN_DEPARTURE_MAX_SPEED_MPH
+
+
+def blocks_inherited_release_in_station_final_approach(
+    station_dist_m: Optional[float],
+    speed_mph: float,
+) -> bool:
+    """
+    True si aún hay marcha en aproximación final al marker (213633Z).
+
+    Parado en dwell (222115Z): False → permitir RELEASE heredado / MC.
+    Fuente única para ``should_skip_p1_release`` y ``limit_release_allowed``.
+    """
+    if station_dist_m is None or station_dist_m <= 0:
+        return False
+    if station_dist_m >= STATION_FINAL_APPROACH_RELEASE_BLOCK_M:
+        return False
+    return speed_mph > STATION_STOPPED_MPH
 DEPARTING_MAX_S = 90.0
 PLATFORM_AT_STOP_M = 55.0
 DOORS_OPEN_MAX_SPEED_MPH = 8.0
@@ -370,10 +387,9 @@ def should_skip_p1_release(
         and speed_mph >= MARKER_PASSED_MIN_MPH
     ):
         return False
-    # Aproximación final: sin RELEASE cartel/señal heredado (213633Z @ 62 m).
-    if (
-        station_dist_m is not None
-        and 0 < station_dist_m < STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+    if blocks_inherited_release_in_station_final_approach(
+        station_dist_m,
+        speed_mph,
     ):
         return True
     return False

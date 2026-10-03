@@ -19,6 +19,7 @@ from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
     DRIVER_OVERRIDE_COOLDOWN_S,
     MC_INPUT_VALUE_EPS,
+    MC_IPC_FRACTION_STEP,
     MS_TO_MPH,
     NEUTRAL_NOTCH,
 )
@@ -35,6 +36,7 @@ from tsw6v2.learner import LearnerProfile
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     combined_notch_to_ipc_value,
+    probe_mc_input_fraction,
     profile_neutral_fraction,
     resolve_vehicle_package,
     uses_mc_analog_ipc,
@@ -434,13 +436,33 @@ class AgentLoop:
             0.5, float(self.driver_override_cooldown_s)
         )
 
+    def _mc_fraction_feedback(self, snap: ProbeSnapshot) -> Optional[float]:
+        pkg = self._vehicle_package
+        if pkg and uses_mc_analog_ipc(pkg):
+            return probe_mc_input_fraction(snap, pkg)
+        tb = snap.train_brake
+        return float(tb) if tb is not None else None
+
+    def _mc_ramp_ipc_fraction(self, target: float, current: Optional[float]) -> float:
+        """Un paso hacia ``target`` (frenar/soltar gradual, sesión 215905Z)."""
+        t = float(target)
+        if current is None:
+            return t
+        c = float(current)
+        if abs(c - t) <= MC_INPUT_VALUE_EPS:
+            return t
+        step = float(MC_IPC_FRACTION_STEP)
+        if t < c:
+            return max(t, c - step)
+        return min(t, c + step)
+
     def _fraction_ipc_target_reached(self, snap: ProbeSnapshot) -> bool:
-        """MC: ``train_brake`` a veces 0 con neutro aplicado — no bloquear IPC eterno."""
+        """MC: feedback vía ``probe_mc_input_fraction`` (no ``train_brake`` HUD UK)."""
         if self._target_fraction is None:
             return False
         target = float(self._target_fraction)
-        tb = snap.train_brake
-        if tb is not None and abs(float(tb) - target) <= MC_INPUT_VALUE_EPS:
+        current = self._mc_fraction_feedback(snap)
+        if current is not None and abs(current - target) <= MC_INPUT_VALUE_EPS:
             return True
         pkg = self._vehicle_package
         if pkg and uses_mc_analog_ipc(pkg):
@@ -471,9 +493,7 @@ class AgentLoop:
                 self.clear_target()
                 self._arm_manual_override()
                 return
-        if lever < int(self.neutral_notch):
-            self.clear_target()
-            self._arm_manual_override()
+        # No usar ``lever < NEUTRAL``: en MC muesca UK 3..1 es freno esperado (215905Z).
 
     def _maybe_release_driver_control(
         self,
@@ -686,16 +706,17 @@ class AgentLoop:
         if not manual_active and snap is not None:
             self._clear_fraction_target_if_reached(snap)
             if self._target_fraction is not None:
-                current_frac = snap.train_brake
+                ultimate = float(self._target_fraction)
+                current_frac = self._mc_fraction_feedback(snap)
+                ipc_fraction = self._mc_ramp_ipc_fraction(ultimate, current_frac)
                 need_ipc = (
                     current_frac is None
-                    or abs(float(current_frac) - float(self._target_fraction))
-                    > MC_INPUT_VALUE_EPS
+                    or abs(float(current_frac) - ultimate) > MC_INPUT_VALUE_EPS
                 )
                 if need_ipc:
                     ipc_cmd_id = self._next_cmd_id
                     ipc_result = dispatch_to_input_fraction(
-                        self._target_fraction,
+                        ipc_fraction,
                         cmd_id=self._next_cmd_id,
                         ack_timeout_s=self.ack_timeout_s,
                     )

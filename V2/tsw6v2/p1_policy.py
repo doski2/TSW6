@@ -14,7 +14,6 @@ from tsw6v2.limit_station_cluster import (
 from tsw6v2.constants import (
     LIMIT_RELEASE_MAX_OVER_MPH,
     STATION_APPROACH_PRIORITY_M,
-    STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
 )
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
@@ -25,6 +24,7 @@ from tsw6v2.physics import (
     decel_for_notch,
 )
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+from tsw6v2.p1_station_gate import blocks_inherited_release_in_station_final_approach
 from tsw6v2.station_plan import DEFAULT_STATION_CFG, station_within_dwell_zone
 from tsw6v2.signal_plan import (
     exit_signal_close_behind_platform,
@@ -369,7 +369,11 @@ def limit_release_allowed(
         return False
     if (
         station_target is not None
-        and 0 < station_dist < STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+        and speed_mph is not None
+        and blocks_inherited_release_in_station_final_approach(
+            station_dist,
+            float(speed_mph),
+        )
     ):
         return False
     if target is not None and target.target_kind == "STATION":

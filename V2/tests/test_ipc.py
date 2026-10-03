@@ -57,7 +57,7 @@ class TestDispatchStepMcPackage:
     def test_mc_package_calls_master_controller(self) -> None:
         pkg = {
             "layout": "master_controller",
-            "uk_combined_notch_ipc": {"3": 0.85},
+            "brake_input": {"neutral": 0.72, "B3": 0.27},
         }
         with patch(
             "tsw6v2.ipc.dispatch_ipc_master_controller",
@@ -66,7 +66,7 @@ class TestDispatchStepMcPackage:
             with patch("tsw6v2.ipc.dispatch_ipc_combined_notch") as notch:
                 dispatch_step_toward_notch(3, cmd_id=7, vehicle_package=pkg)
         mc.assert_called_once()
-        assert mc.call_args[0][0] == 0.85
+        assert abs(mc.call_args[0][0] - (0.72 - (0.72 - 0.27) / 3.0)) < 0.02
         notch.assert_not_called()
 
 

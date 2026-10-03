@@ -229,6 +229,8 @@ Código métricas: `tsw6/telemetry/channel_diagnostics.py`.
 | Semántica Lua | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue` |
 | Python | Plan P1 en fases B1–B3 (lógica UK); **wire MC** = `brake_input` en `data/vehicles/<id>.json` (`neutral`, `B1`…`B3` → 0..1) vía `profile_brake_fraction` / `apply_vehicle_brake_actuator`; bucle `dispatch_to_input_fraction` |
 | Paquete | `brake_input` canónico; `uk_combined_notch_ipc` solo legado si falta `brake_input` |
+| Eje MC M3a | **FACT (215007Z):** `InputValue` **&gt; neutro (~0.72)** → tracción; freno servicio **&lt; neutro** (p. ej. B1≈0.64, B3≈0.27). No reutilizar índices de notch &gt; neutro del export. |
+| IPC gradual | `MC_IPC_FRACTION_STEP` (0.05/tick) + `mc_service_brake_fraction` (interp. neutro↔B3); feedback `probe_mc_input_fraction` — no usar `train_brake` HUD como InputValue (215905Z). |
 | Prueba campo | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat` |
 | Prueba unitaria | `V2/tests/test_mc_analog_ipc.py` |
 

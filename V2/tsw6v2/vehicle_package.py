@@ -183,6 +183,78 @@ def _legacy_mc_fraction_from_uk_map(
         return None
 
 
+_MC_PHASE_STRENGTH: dict[str, float] = {
+    "B1": 1.0 / 3.0,
+    "B2": 2.0 / 3.0,
+    "B3": 1.0,
+}
+_MC_HANDLE_STRENGTH: dict[int, float] = {
+    B1_NOTCH: 1.0 / 3.0,
+    2: 2.0 / 3.0,
+    1: 1.0,
+}
+
+
+def mc_service_brake_strength(handle_notch: int, phase: str) -> float:
+    """Intensidad 0..1 entre neutro y B3 (fase P1 o muesca UK 3→2→1)."""
+    ph = (phase or "").strip().upper()
+    if ph in _MC_PHASE_STRENGTH:
+        return _MC_PHASE_STRENGTH[ph]
+    h = int(handle_notch)
+    if h >= NEUTRAL_NOTCH:
+        return 0.0
+    return _MC_HANDLE_STRENGTH.get(h, 1.0)
+
+
+def mc_service_brake_fraction(
+    package: Optional[dict[str, Any]],
+    *,
+    handle_notch: int,
+    phase: str = "",
+) -> Optional[float]:
+    """Interpola en eje MC entre ``neutral`` y ``B3`` según intensidad de servicio."""
+    if not package or not uses_mc_analog_ipc(package):
+        return None
+    neu = profile_brake_fraction(package, "neutral")
+    full = profile_brake_fraction(package, "B3")
+    if neu is None or full is None:
+        return None
+    strength = mc_service_brake_strength(handle_notch, phase)
+    if strength <= 0.0:
+        return neu
+    return master_controller_input_value(neu - strength * (neu - full))
+
+
+def probe_mc_input_fraction(
+    snap: Any,
+    package: Optional[dict[str, Any]],
+) -> Optional[float]:
+    """
+    Posición MC estimada para feedback IPC.
+
+    ``train_brake`` HUD (0..1 aire UK) ≠ ``InputValue`` del MasterController (215905Z).
+    """
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return None
+    from tsw6v2.ipc import probe_lever
+
+    neu = profile_brake_fraction(package, "neutral")
+    if neu is None:
+        return None
+    lev = probe_lever(snap)
+    if lev is None:
+        return None
+    if lev >= NEUTRAL_NOTCH:
+        power = getattr(snap, "power", None)
+        power_neg = bool(getattr(snap, "power_neg", False))
+        if power is not None and not power_neg and float(power) > 0.05:
+            return 1.0
+        return neu
+    return mc_service_brake_fraction(
+        package, handle_notch=int(lev), phase=""
+    )
+
+
 def mc_fraction_for_plan_handle(
     package: Optional[dict[str, Any]],
     *,
@@ -192,16 +264,17 @@ def mc_fraction_for_plan_handle(
     """Plan P1 (fases B* / muesca lógica UK) → fracción perfil en MC."""
     if not package or not uses_mc_analog_ipc(package):
         return None
-    ph = (phase or "").strip().upper()
-    if ph in ("B1", "B2", "B3"):
-        frac = profile_brake_fraction(package, ph)
-        if frac is not None:
-            return frac
-    if int(handle_notch) == NEUTRAL_NOTCH:
+    if int(handle_notch) == NEUTRAL_NOTCH and (phase or "").strip().upper() in (
+        "",
+        "NEU",
+        "NEUTRAL",
+    ):
         return profile_brake_fraction(package, "neutral")
-    for notch, label in SERVICE_HANDLES_WEAK_TO_STRONG:
-        if int(notch) == int(handle_notch):
-            return profile_brake_fraction(package, label)
+    frac = mc_service_brake_fraction(
+        package, handle_notch=int(handle_notch), phase=phase or ""
+    )
+    if frac is not None:
+        return frac
     return profile_brake_fraction(package, "neutral")
 
 

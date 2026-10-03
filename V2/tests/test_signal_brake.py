@@ -714,6 +714,26 @@ def test_limit_release_blocked_station_watch_final_approach():
     )
 
 
+def test_limit_release_allowed_stopped_station_watch_session_222115():
+    """222115Z: parado en dwell con STATION WATCH — permitir RELEASE heredado."""
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=30.5,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B3",
+        dist_start=-50.0,
+        apply_now=False,
+        detail="",
+    )
+    assert limit_release_allowed(
+        30.5,
+        None,
+        station_target=station,
+        speed_mph=0.0,
+    )
+
+
 def test_limit_release_allowed_when_signal_only_watch():
     signal = BrakeTargetResult(
         target_kind="SIGNAL",

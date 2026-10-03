@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand
-from tsw6v2.constants import B1_NOTCH, NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
+from tsw6v2.constants import B1_NOTCH, MC_IPC_FRACTION_STEP, NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.loop import AgentLoop, AgentSnapshot
 from tsw6v2.planning_feed import PlanningSnapshot
@@ -277,13 +277,36 @@ class TestAgentLoop:
             apply_actuator=True,
         )
         assert loop.target_notch is None
-        assert loop.target_input_value == 0.85
+        assert loop.target_input_value is not None
+        assert loop.target_input_value < 0.72
         with patch("tsw6v2.loop.dispatch_to_input_fraction", return_value={"ok": True}) as ipc_frac:
             with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc_notch:
                 loop.step()
         ipc_frac.assert_called_once()
         ipc_notch.assert_not_called()
-        assert ipc_frac.call_args[0][0] == 0.85
+        sent = ipc_frac.call_args[0][0]
+        ultimate = loop.target_input_value
+        assert ultimate is not None and sent > ultimate
+        assert abs(sent - (0.72 - MC_IPC_FRACTION_STEP)) < 0.02
+
+    def test_mc_keeps_ipc_target_when_uk_brake_lever_session_215905(
+        self, tmp_path: Path
+    ) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=3,
+            train_brake=0.05,
+            power=0.0,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop.request_input_fraction(0.27)
+        snap = loop.read_probe()
+        loop._check_driver_takeover(3, snap)
+        assert loop.target_input_value == 0.27
 
     def test_mc_skips_driver_takeover_on_lever_mismatch(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"

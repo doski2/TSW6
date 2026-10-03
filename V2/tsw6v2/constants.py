@@ -5,8 +5,10 @@ MPH_TO_MS = 0.44704
 NEUTRAL_NOTCH = 4
 B1_NOTCH = 3
 B1_MIN_TRAIN_BRAKE = 0.25
-# Telemetría ``train_brake`` (InputValue MC) vs objetivo IPC.
+# Tolerancia posición MC estimada vs objetivo IPC (no usar ``train_brake`` HUD como InputValue).
 MC_INPUT_VALUE_EPS = 0.015
+# Paso máximo por tick hacia ``target_fraction`` (M3a analog; sesión 215905Z).
+MC_IPC_FRACTION_STEP = 0.05
 # IPC test: subida mínima manómetro tras un paso B1 (M3a MC; OBSERVATION 20261003).
 B1_MIN_CYL_RISE_BAR = 0.15
 PROBE_STALE_S = 2.5
