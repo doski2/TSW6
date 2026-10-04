@@ -19,8 +19,8 @@ from tsw6v2.bridge.commands import (
     combined_notch_to_value,
     master_controller_input_value,
 )
-from tsw6v2.constants import B1_NOTCH, NEUTRAL_NOTCH
-from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG
+from tsw6v2.constants import B1_NOTCH, MC_INPUT_VALUE_EPS, NEUTRAL_NOTCH
+from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG, SERVICE_PHASE_BY_HANDLE
 
 _PACKAGE_SCHEMA = "tsw6-vehicle-package/1"
 
@@ -193,8 +193,6 @@ _MC_HANDLE_STRENGTH: dict[int, float] = {
     2: 2.0 / 3.0,
     1: 1.0,
 }
-
-
 def mc_service_brake_strength(handle_notch: int, phase: str) -> float:
     """Intensidad 0..1 entre neutro y B3 (fase P1 o muesca UK 3→2→1)."""
     ph = (phase or "").strip().upper()
@@ -225,17 +223,33 @@ def mc_service_brake_fraction(
     return master_controller_input_value(neu - strength * (neu - full))
 
 
+def _read_snap_mc_input_d2(snap: Any) -> Optional[float]:
+    """GetData ``mc_input`` normalizado (D2). Sin proxy HUD."""
+    if snap is None:
+        return None
+    raw = getattr(snap, "mc_input", None)
+    if raw is None:
+        return None
+    try:
+        return master_controller_input_value(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 def probe_mc_input_fraction(
     snap: Any,
     package: Optional[dict[str, Any]],
 ) -> Optional[float]:
     """
-    Posición MC estimada para feedback IPC.
+    Posición MC para feedback IPC / rampa.
 
-    ``train_brake`` HUD (0..1 aire UK) ≠ ``InputValue`` del MasterController (215905Z).
+    Prioridad: ``mc_input`` (D2) → estimación ``lever_notch`` con mismo cable que P1.
     """
     if snap is None or not package or not uses_mc_analog_ipc(package):
         return None
+    d2 = _read_snap_mc_input_d2(snap)
+    if d2 is not None:
+        return d2
     from tsw6v2.ipc import probe_lever
 
     neu = profile_brake_fraction(package, "neutral")
@@ -250,9 +264,85 @@ def probe_mc_input_fraction(
         if power is not None and not power_neg and float(power) > 0.05:
             return 1.0
         return neu
-    return mc_service_brake_fraction(
-        package, handle_notch=int(lev), phase=""
+    return mc_fraction_for_plan_handle(
+        package, phase="", handle_notch=int(lev)
     )
+
+
+def _mc_feedback_fraction(
+    snap: Any,
+    package: dict[str, Any],
+) -> Optional[float]:
+    """Solo D2 — gates ``platform_bleed_release`` (sin estimación por palanca)."""
+    return _read_snap_mc_input_d2(snap)
+
+
+def mc_platform_bleed_neutral_ipc(
+    snap: Any,
+    package: Optional[dict[str, Any]],
+) -> bool:
+    """IPC/neutro MC alcanzado — no repetir ``platform_bleed_release`` (083123Z)."""
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return False
+    neutral = profile_brake_fraction(package, "neutral")
+    if neutral is None:
+        return False
+    frac = _mc_feedback_fraction(snap, package)
+    if frac is None:
+        return False
+    return float(frac) >= float(neutral) - MC_INPUT_VALUE_EPS
+
+
+def mc_platform_bleed_b1_latched(
+    snap: Any,
+    package: Optional[dict[str, Any]],
+) -> bool:
+    """
+    B1 mantenido antes de RELEASE a neutro en dwell MC.
+
+    UK usa ``is_brake_applied``; MC solo con ``mc_input`` (sin proxy HUD).
+    """
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return False
+    neutral = profile_brake_fraction(package, "neutral")
+    b1 = profile_brake_fraction(package, "B1")
+    b2 = profile_brake_fraction(package, "B2")
+    if neutral is None or b1 is None:
+        return False
+    frac = _mc_feedback_fraction(snap, package)
+    if frac is None:
+        return False
+    f = float(frac)
+    n = float(neutral)
+    b1f = float(b1)
+    if f >= n - MC_INPUT_VALUE_EPS:
+        return False
+    if b2 is not None:
+        b2f = float(b2)
+        return b2f < f <= b1f + 0.08
+    return abs(f - b1f) <= 0.08
+
+
+def _wire_fraction_from_brake_input(
+    package: dict[str, Any],
+    *,
+    phase: str,
+    handle_notch: int,
+) -> Optional[float]:
+    """IPC MC = peldaños ``brake_input`` del lab; interpolación solo si falta clave."""
+    ph = (phase or "").strip().upper()
+    if ph in _MC_PHASE_STRENGTH:
+        wired = profile_brake_fraction(package, ph)
+        if wired is not None:
+            return wired
+    h = int(handle_notch)
+    if h < NEUTRAL_NOTCH:
+        slot = SERVICE_PHASE_BY_HANDLE.get(h)
+        if slot:
+            wired = profile_brake_fraction(package, slot)
+            if wired is not None:
+                return wired
+    return None
 
 
 def mc_fraction_for_plan_handle(
@@ -261,7 +351,7 @@ def mc_fraction_for_plan_handle(
     phase: str,
     handle_notch: int,
 ) -> Optional[float]:
-    """Plan P1 (fases B* / muesca lógica UK) → fracción perfil en MC."""
+    """Plan P1 (fases B* / muesca lógica UK) → fracción ``brake_input`` en MC."""
     if not package or not uses_mc_analog_ipc(package):
         return None
     if int(handle_notch) == NEUTRAL_NOTCH and (phase or "").strip().upper() in (
@@ -270,6 +360,11 @@ def mc_fraction_for_plan_handle(
         "NEUTRAL",
     ):
         return profile_brake_fraction(package, "neutral")
+    wired = _wire_fraction_from_brake_input(
+        package, phase=phase, handle_notch=handle_notch
+    )
+    if wired is not None:
+        return wired
     frac = mc_service_brake_fraction(
         package, handle_notch=int(handle_notch), phase=phase or ""
     )

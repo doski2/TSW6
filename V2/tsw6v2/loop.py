@@ -42,6 +42,7 @@ from tsw6v2.vehicle_package import (
     uses_mc_analog_ipc,
 )
 from tsw6v2.limits import LimitBrakeState
+from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 from tsw6v2.p1_layers import classify_layer
 
 DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
@@ -57,6 +58,7 @@ class AgentSnapshot:
     lever_notch: Optional[int] = None
     train_brake: Optional[float] = None
     dyn_brake: Optional[float] = None
+    mc_input: Optional[float] = None
     brake_cyl_bar: Optional[float] = None
     accel_ms2: Optional[float] = None
     gradient_pct: Optional[float] = None
@@ -168,6 +170,7 @@ class AgentSnapshot:
             lever_notch=probe_lever(snap),
             train_brake=snap.train_brake,
             dyn_brake=snap.dyn_brake,
+            mc_input=snap.mc_input,
             brake_cyl_bar=snap.brake_cyl_bar,
             accel_ms2=snap.accel_ms2,
             gradient_pct=snap.gradient_pct,
@@ -461,13 +464,27 @@ class AgentLoop:
         if self._target_fraction is None:
             return False
         target = float(self._target_fraction)
+        pkg = self._vehicle_package
+        neutral = profile_neutral_fraction(pkg) if pkg else None
+        if (
+            pkg
+            and uses_mc_analog_ipc(pkg)
+            and neutral is not None
+            and abs(target - float(neutral)) <= MC_INPUT_VALUE_EPS
+            and snap.brake_cyl_bar is not None
+            and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
+        ):
+            return False
         current = self._mc_fraction_feedback(snap)
         if current is not None and abs(current - target) <= MC_INPUT_VALUE_EPS:
             return True
-        pkg = self._vehicle_package
         if pkg and uses_mc_analog_ipc(pkg):
-            neutral = profile_neutral_fraction(pkg)
-            if neutral is not None and abs(target - neutral) <= MC_INPUT_VALUE_EPS:
+            if neutral is not None and abs(target - float(neutral)) <= MC_INPUT_VALUE_EPS:
+                if (
+                    snap.brake_cyl_bar is not None
+                    and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
+                ):
+                    return False
                 lev = probe_lever(snap)
                 if lev is not None and int(lev) >= int(self.neutral_notch):
                     return True
@@ -493,6 +510,19 @@ class AgentLoop:
                 self.clear_target()
                 self._arm_manual_override()
                 return
+        neutral = profile_neutral_fraction(pkg)
+        if neutral is not None:
+            target = float(self._target_fraction)
+            if target < float(neutral) - MC_INPUT_VALUE_EPS:
+                prev = self._last_lever
+                if prev is not None:
+                    prev_i = int(prev)
+                    cur_i = int(lever)
+                    neu_i = int(self.neutral_notch)
+                    if cur_i > prev_i and prev_i < neu_i:
+                        self.clear_target()
+                        self._arm_manual_override()
+                        return
         # No usar ``lever < NEUTRAL``: en MC muesca UK 3..1 es freno esperado (215905Z).
 
     def _maybe_release_driver_control(
@@ -636,6 +666,8 @@ class AgentLoop:
                     speed_mph=mph,
                     lever=lever,
                     station_dist_m=station_dist_m,
+                    snap=snap,
+                    vehicle_package=self._vehicle_package,
                 )
             decision = evaluate_p1_tick(
                 self._limit_state,

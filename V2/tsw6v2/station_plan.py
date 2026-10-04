@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from tsw6v2.constants import STATION_APPROACH_PRIORITY_M
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_MAX_BRAKE_DECEL,
@@ -359,9 +360,12 @@ def _is_mid_route_service_platform_distance(
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
 ) -> bool:
     """Andén con próxima parada a ~km (p. ej. Five Ways ~1.5 km), no origen ni dwell."""
+    if station_distance_m is None:
+        return False
     return (
         is_mid_route_next_stop(station_distance_m)
         and not is_platform_dwell_zone(station_distance_m, cfg)
+        and float(station_distance_m) > STATION_APPROACH_PRIORITY_M
     )
 
 

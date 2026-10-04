@@ -27,16 +27,16 @@ from tsw6v2.constants import (
 from tsw6v2.target import (
     LIMIT_SCORING_MAX_OVER_MPH,
     SERVICE_HANDLES_WEAK_TO_STRONG,
+    service_phase_for_handle,
 )
 from tsw6v2.limit_state import LimitBrakeLatch, LimitBrakeState
 
-_PHASE_BY_HANDLE = {3: "B1", 2: "B2", 1: "B3"}
 _ONE_STRONGER = {3: 2, 2: 1, 1: 1}
 _ONE_WEAKER = {1: 2, 2: 3, 3: 3}
 
 
 def phase_for_handle(handle: int) -> str:
-    return _PHASE_BY_HANDLE.get(handle, "B1")
+    return service_phase_for_handle(handle)
 
 
 def _in_apply_window(

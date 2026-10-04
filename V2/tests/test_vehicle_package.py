@@ -52,8 +52,7 @@ def test_brake_input_overrides_legacy_uk_map(tmp_path: Path) -> None:
     loaded = resolve_vehicle_package("Test_MC_Train_x", vehicles_dir=tmp_path)
     assert loaded is not None
     assert profile_brake_fraction(loaded, "B1") == 0.6
-    # B1 fase → 1/3 entre neutro y B3 en eje MC
-    assert abs(combined_notch_to_ipc_value(B1_NOTCH, loaded) - (0.5 - (0.5 - 0.2) / 3.0)) < 0.01
+    assert combined_notch_to_ipc_value(B1_NOTCH, loaded) == 0.6
 
 
 def test_combined_notch_ipc_value_mc_vs_323() -> None:
@@ -66,7 +65,7 @@ def test_combined_notch_ipc_value_mc_vs_323() -> None:
     assert b1_323 == 0.375
     assert neutral_mc == 0.72
     assert b1_mc is not None and b1_mc < neutral_mc
-    assert abs(b1_mc - (neutral_mc - (neutral_mc - 0.27) / 3.0)) < 0.02
+    assert abs(b1_mc - 0.64) < 0.01
     assert b1_323 != neutral_mc
     assert b1_323 != b1_mc
 

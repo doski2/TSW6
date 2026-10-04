@@ -99,6 +99,11 @@ class ProbeSnapshot:
     dyn_brake: Optional[float] = None
     accel_ms2: Optional[float] = None
     brake_cyl_bar: Optional[float] = None
+    brake_g1_red_bar: Optional[float] = None
+    brake_g1_white_bar: Optional[float] = None
+    brake_g2_red_bar: Optional[float] = None
+    brake_g2_white_bar: Optional[float] = None
+    mr_bar: Optional[float] = None
     max_speed_ms: Optional[float] = None
     speed_limit_ms: Optional[float] = None
     gradient_pct: Optional[float] = None
@@ -114,6 +119,7 @@ class ProbeSnapshot:
     traction_locked: Optional[bool] = None
     signal_red: Optional[bool] = None
     signal_dist_cm: Optional[float] = None
+    mc_input: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -132,6 +138,11 @@ class ProbeSnapshot:
             dyn_brake=data.get("dyn_brake"),
             accel_ms2=data.get("accel_ms2"),
             brake_cyl_bar=data.get("brake_cyl_bar"),
+            brake_g1_red_bar=data.get("brake_g1_red_bar"),
+            brake_g1_white_bar=data.get("brake_g1_white_bar"),
+            brake_g2_red_bar=data.get("brake_g2_red_bar"),
+            brake_g2_white_bar=data.get("brake_g2_white_bar"),
+            mr_bar=data.get("mr_bar"),
             max_speed_ms=data.get("max_speed_ms"),
             speed_limit_ms=data.get("speed_limit_ms"),
             gradient_pct=data.get("gradient_pct"),
@@ -147,6 +158,7 @@ class ProbeSnapshot:
             traction_locked=data.get("traction_locked"),
             signal_red=data.get("signal_red"),
             signal_dist_cm=data.get("signal_dist_cm"),
+            mc_input=data.get("mc_input"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 

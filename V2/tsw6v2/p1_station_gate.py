@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from tsw6v2.constants import (
     STATION_APPROACH_PRIORITY_M,
@@ -29,6 +29,7 @@ from tsw6v2.station_plan import (
     is_departure_creep_context,
     is_service_platform_departure,
     is_service_platform_parked_skip_release,
+    station_within_dwell_zone,
 )
 from tsw6v2.target import BrakeTargetResult
 
@@ -197,11 +198,98 @@ def _service_platform_parked_bleed_context(
     )
 
 
+def _dwell_stopped_bleed_zone(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """Parado en ventana dwell (~80 m): origen, Cross-City final, overshoot."""
+    if station_fsm == "DEPARTING":
+        return False
+    if station_dist_m is None or not station_within_dwell_zone(station_dist_m):
+        return False
+    return speed_mph <= STATION_STOPPED_MPH
+
+
+def _mc_approach_stopped_bleed_zone(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """MC parado en cono estación (≤600 m); no confundir con mid-route ~1.5 km (084500Z)."""
+    if station_fsm == "DEPARTING":
+        return False
+    if station_dist_m is None or station_dist_m <= 0:
+        return False
+    if float(station_dist_m) > STATION_APPROACH_PRIORITY_M:
+        return False
+    return speed_mph <= STATION_STOPPED_MPH
+
+
+def _platform_bleed_episode_context(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """Zona donde un ciclo ``platform_bleed`` puede seguir activo (195804Z + 081821Z)."""
+    if _service_platform_parked_bleed_context(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        station_fsm=station_fsm,
+    ):
+        return True
+    return _dwell_stopped_bleed_zone(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        station_fsm=station_fsm,
+    ) or _mc_approach_stopped_bleed_zone(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        station_fsm=station_fsm,
+    )
+
+
+def _dwell_stopped_skip_inherited_release_for_residual(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    brake_cyl_bar: Optional[float],
+    platform_bleed_episode: bool = False,
+    station_fsm: Optional[str] = None,
+) -> bool:
+    """Dwell final (~36 m): igual que origen pero solo con cilindro cargado (081821Z)."""
+    if not (
+        _dwell_stopped_bleed_zone(
+            speed_mph=speed_mph,
+            station_dist_m=station_dist_m,
+            station_fsm=station_fsm,
+        )
+        or _mc_approach_stopped_bleed_zone(
+            speed_mph=speed_mph,
+            station_dist_m=station_dist_m,
+            station_fsm=station_fsm,
+        )
+    ):
+        return False
+    if not _service_platform_residual_pressure(brake_cyl_bar):
+        return False
+    if is_brake_applied(combined_lever):
+        return platform_bleed_episode
+    return True
+
+
 def _service_platform_skip_cartel_release(
     *,
     speed_mph: float,
     station_dist_m: Optional[float],
     combined_lever: int,
+    brake_cyl_bar: Optional[float] = None,
     platform_bleed_episode: bool = False,
     station_fsm: Optional[str] = None,
 ) -> bool:
@@ -211,16 +299,23 @@ def _service_platform_skip_cartel_release(
     Neutro + presión alta → ``platform_bleed`` (no cartel). Episodio bleed activo
     + freno en palanca → RELEASE dedicado (195804Z: sin ping-pong B1/neutro).
     """
-    if not _service_platform_parked_bleed_context(
+    if _service_platform_parked_bleed_context(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
         combined_lever=combined_lever,
         station_fsm=station_fsm,
     ):
-        return False
-    if is_brake_applied(combined_lever):
-        return platform_bleed_episode
-    return True
+        if is_brake_applied(combined_lever):
+            return platform_bleed_episode
+        return True
+    return _dwell_stopped_skip_inherited_release_for_residual(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        brake_cyl_bar=brake_cyl_bar,
+        platform_bleed_episode=platform_bleed_episode,
+        station_fsm=station_fsm,
+    )
 
 
 @dataclass
@@ -248,7 +343,7 @@ class PlatformBleedEpisode:
         if brake_cyl_bar is not None and float(brake_cyl_bar) <= PRESSURE_IDLE_MAX_BAR:
             self.reset()
             return
-        if not _service_platform_parked_bleed_context(
+        if not _platform_bleed_episode_context(
             speed_mph=speed_mph,
             station_dist_m=station_dist_m,
             combined_lever=combined_lever,
@@ -260,6 +355,41 @@ class PlatformBleedEpisode:
             self.note_bleed_apply()
 
 
+def platform_mc_dwell_residual_bleed_needed(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    combined_lever: int,
+    brake_cyl_bar: Optional[float],
+    station_fsm: Optional[str] = None,
+    platform_bleed_episode: bool = False,
+    snap: Optional[Any] = None,
+    vehicle_package: Optional[dict] = None,
+) -> bool:
+    """
+    Parada en dwell MC (p. ej. Cross-City ~36 m): B1 IPC para ventilar cilindros.
+
+    Sin esto solo RELEASE→0.72 no suelta aire con palanca en freno (081821Z).
+    """
+    from tsw6v2.brake_cab import service_brake_held_from_probe
+    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+
+    if platform_bleed_episode:
+        return False
+    if not _mc_approach_stopped_bleed_zone(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        station_fsm=station_fsm,
+    ):
+        return False
+    if not _service_platform_residual_pressure(brake_cyl_bar):
+        return False
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if not (pkg and uses_mc_analog_ipc(pkg)):
+        return False
+    return service_brake_held_from_probe(snap, combined_lever, pkg)
+
+
 def platform_parked_residual_bleed_needed(
     *,
     speed_mph: float,
@@ -268,12 +398,44 @@ def platform_parked_residual_bleed_needed(
     brake_cyl_bar: Optional[float],
     station_fsm: Optional[str] = None,
     platform_bleed_episode: bool = False,
+    snap: Optional[Any] = None,
+    vehicle_package: Optional[dict] = None,
 ) -> bool:
     """
     Andén servicio, palanca en neutro/P y cilindros cargados (193606Z).
 
     TSW no ventila con mando en neutro: hay que meter B1 y luego RELEASE a neutro.
     """
+    from tsw6v2.vehicle_package import (
+        mc_platform_bleed_b1_latched,
+        uses_mc_analog_ipc,
+        vehicle_package_from_snap,
+    )
+
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if platform_bleed_episode and pkg and uses_mc_analog_ipc(pkg):
+        if (
+            _mc_approach_stopped_bleed_zone(
+                speed_mph=speed_mph,
+                station_dist_m=station_dist_m,
+                station_fsm=station_fsm,
+            )
+            and _service_platform_residual_pressure(brake_cyl_bar)
+            and not mc_platform_bleed_b1_latched(snap, pkg)
+        ):
+            return True
+
+    if platform_mc_dwell_residual_bleed_needed(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        combined_lever=combined_lever,
+        brake_cyl_bar=brake_cyl_bar,
+        station_fsm=station_fsm,
+        platform_bleed_episode=platform_bleed_episode,
+        snap=snap,
+        vehicle_package=vehicle_package,
+    ):
+        return True
     if not _service_platform_parked_bleed_context(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
@@ -295,10 +457,30 @@ def platform_parked_bleed_release_needed(
     combined_lever: int,
     station_fsm: Optional[str] = None,
     platform_bleed_episode: bool = False,
+    snap: Optional[Any] = None,
+    vehicle_package: Optional[dict] = None,
 ) -> bool:
     """Tras APPLY bleed: RELEASE a neutro sin cartel (195804Z)."""
+    from tsw6v2.vehicle_package import (
+        mc_platform_bleed_b1_latched,
+        mc_platform_bleed_neutral_ipc,
+        uses_mc_analog_ipc,
+        vehicle_package_from_snap,
+    )
+
     if not platform_bleed_episode:
         return False
+    pkg = vehicle_package_from_snap(snap, vehicle_package)
+    if pkg and uses_mc_analog_ipc(pkg):
+        if not _mc_approach_stopped_bleed_zone(
+            speed_mph=speed_mph,
+            station_dist_m=station_dist_m,
+            station_fsm=station_fsm,
+        ):
+            return False
+        if mc_platform_bleed_neutral_ipc(snap, pkg):
+            return False
+        return mc_platform_bleed_b1_latched(snap, pkg)
     if not _service_platform_parked_bleed_context(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
@@ -376,6 +558,7 @@ def should_skip_p1_release(
         speed_mph=speed_mph,
         station_dist_m=station_dist_m,
         combined_lever=combined_lever,
+        brake_cyl_bar=brake_cyl_bar,
         platform_bleed_episode=platform_bleed_episode,
         station_fsm=station_fsm,
     ):
@@ -612,14 +795,21 @@ def station_dwell_brake_command(
     speed_mph: float,
     lever: Optional[int],
     station_dist_m: Optional[float],
+    snap: Optional[Any] = None,
+    vehicle_package: Optional[dict] = None,
 ) -> Optional["BrakeCommand"]:
     """
     Mando dwell: B1 en ``STOPPED`` (puertas TSW).
 
     RELEASE en ``DEPARTING`` lo hace ``decision._attempt_departing_brake_release``.
     """
+    from tsw6v2.brake_cab import service_brake_held_from_probe
     from tsw6v2.command import platform_door_brake_command
 
     if station_fsm == "STOPPED":
+        # Una vez hay freno de servicio (p. ej. B2 andén MC), no repetir B1/IPC cada tick
+        # (075637Z: bloqueaba RELEASE y palanca al soltar).
+        if service_brake_held_from_probe(snap, lever, vehicle_package):
+            return None
         return platform_door_brake_command(distance_m=station_dist_m)
     return None

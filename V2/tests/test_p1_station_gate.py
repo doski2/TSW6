@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
+    PlatformBleedEpisode,
     StationDwellGate,
     doors_effective,
     blocks_inherited_release_in_station_final_approach,
+    platform_mc_dwell_residual_bleed_needed,
     should_skip_p1_release,
     station_departure_active,
     station_departure_suppresses_limit_brake,
@@ -329,6 +332,20 @@ def test_blocks_inherited_release_final_approach_in_motion_only() -> None:
     assert not blocks_inherited_release_in_station_final_approach(250.0, 40.0)
 
 
+def test_mid_route_parked_not_final_approach_session_084500() -> None:
+    """~340 m al marker no es andén mid-route (Five Ways ~1.5 km)."""
+    from tsw6v2.station_plan import is_service_platform_parked_skip_release
+
+    assert not is_service_platform_parked_skip_release(
+        speed_mph=0.0,
+        station_distance_m=340.9,
+    )
+    assert is_service_platform_parked_skip_release(
+        speed_mph=0.0,
+        station_distance_m=1523.1,
+    )
+
+
 def test_mid_route_service_platform_session_191546() -> None:
     """Five Ways 2R99: parado ~1.5 km al next stop; salida con tracción tras cerrar puertas."""
     stn = 1523.1
@@ -442,4 +459,162 @@ def test_station_dwell_brake_command_stopped_and_departing() -> None:
         speed_mph=0.0,
         lever=4,
         station_dist_m=30.0,
+    ) is None
+
+
+def test_platform_bleed_episode_persists_in_mc_dwell_session_081821() -> None:
+    """Episodio bleed no debe resetearse en dwell ~36 m (no es mid-route parked)."""
+    ep = PlatformBleedEpisode()
+    ep.update(
+        p1_reason="platform_bleed",
+        brake_cyl_bar=9.6,
+        speed_mph=0.0,
+        station_dist_m=36.1,
+        combined_lever=0,
+        station_fsm="STOPPED",
+    )
+    assert ep.active
+    ep.update(
+        p1_reason="platform_bleed_release",
+        brake_cyl_bar=9.6,
+        speed_mph=0.0,
+        station_dist_m=36.1,
+        combined_lever=0,
+        station_fsm="STOPPED",
+    )
+    assert ep.active
+
+
+def test_should_skip_release_dwell_residual_session_222115() -> None:
+    """Dwell parado + cilindro alto: bloquear RELEASE cartel (solo bleed dedicado)."""
+    assert should_skip_p1_release(
+        speed_mph=0.0,
+        station_dist_m=30.5,
+        combined_lever=NEUTRAL_NOTCH,
+        brake_cyl_bar=9.6,
+    )
+
+
+def test_mc_dwell_bleed_release_blocked_until_b1_session_083123() -> None:
+    """083123Z: sin mc_input no RELEASE; con mc_input en banda B1 sí."""
+    from tsw6v2.p1_station_gate import platform_parked_bleed_release_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "lever_notch": 0,
+            "train_brake": 0.87,
+            "brake_cyl_bar": 9.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=39.3,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+    snap_b1 = ProbeSnapshot.from_dict(
+        {
+            "seq": 2,
+            "lever_notch": 0,
+            "mc_input": 0.64,
+            "brake_cyl_bar": 9.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=39.3,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        snap=snap_b1,
+        vehicle_package=pkg,
+    )
+
+
+def test_mc_approach_stopped_bleed_session_084500() -> None:
+    """Parado 340 m con aire: bleed MC (no ruta mid-route UK)."""
+    from tsw6v2.p1_station_gate import platform_parked_residual_bleed_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "lever_notch": 0,
+            "train_brake": 0.87,
+            "brake_cyl_bar": 9.62,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=340.9,
+        combined_lever=0,
+        brake_cyl_bar=9.62,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_platform_mc_dwell_bleed_session_081821() -> None:
+    """Cross-City parado en dwell con aire: ciclo B1→neutro (no solo RELEASE 0.72)."""
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "lever_notch": 0,
+            "train_brake": 0.87,
+            "brake_cyl_bar": 9.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert platform_mc_dwell_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=36.1,
+        combined_lever=0,
+        brake_cyl_bar=9.6,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+    assert not platform_mc_dwell_residual_bleed_needed(
+        speed_mph=6.0,
+        station_dist_m=36.1,
+        combined_lever=0,
+        brake_cyl_bar=9.6,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_station_dwell_skips_repeat_b1_when_service_brake_held_session_075637() -> None:
+    """Tras B2 andén MC: no repetir B1/IPC en STOPPED (permite soltar)."""
+    from tsw6v2.bridge.getdata import ProbeSnapshot
+
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "lever_notch": 0,
+            "train_brake": 0.87,
+            "brake_cyl_bar": 9.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert station_dwell_brake_command(
+        station_fsm="STOPPED",
+        speed_mph=0.0,
+        lever=0,
+        station_dist_m=30.5,
+        snap=snap,
+        vehicle_package=pkg,
     ) is None

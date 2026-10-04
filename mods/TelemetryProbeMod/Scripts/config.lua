@@ -1,7 +1,7 @@
 -- TelemetryProbeMod v2 — constantes (solo I/O GetData + IPC).
 local M = {}
 
-M.PROBE_BUILD = "20261003b"
+M.PROBE_BUILD = "20261004c"
 M.PROBE_AUTO_START = true
 
 M.HOOK_PATH =
@@ -14,6 +14,8 @@ M.COMMANDS_ARMED_TTL_S = 0.25
 M.SAFE_LEVER_WRITE = true
 -- IrregularLever MC (M3a/M7a): IPC 0..1 → SetCurrentInputValue (no peldaños 323).
 M.MC_ANALOG_LEVER_NAMES = { "MasterController" }
+-- Solo leer mc_input en GetData para estas familias (evita tocar lever en 323 / menú).
+M.MC_VEHICLE_MARKERS = { "RVM_NYH", "M7", "M8", "M9" }
 M.IPC_DELEGATE_HTTP = false
 M.DEBUG_IPC = false
 

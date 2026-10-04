@@ -58,6 +58,23 @@ class TestGetData:
         data = parse_probe_line("seq=1 speed_ms=0 brake_cyl_bar=? vehicle=Class323")
         assert data["brake_cyl_bar"] is None
 
+    def test_mc_input_parse_and_snapshot(self) -> None:
+        line = "seq=7 speed_ms=0 mc_input=0.4499999881 vehicle=RVM_NYH_MNR_M3a-B_C"
+        data = parse_probe_line(line)
+        assert data["mc_input"] == pytest.approx(0.45, rel=1e-5)
+        snap = ProbeSnapshot.from_dict(data)
+        assert snap.mc_input == pytest.approx(0.45, rel=1e-5)
+
+    def test_air_investigation_fields_parse(self) -> None:
+        line = (
+            "seq=1 speed_ms=0 brake_cyl_bar=9.6 brake_g1_red_bar=9.6 "
+            "brake_g2_red_bar=8.0 mr_bar=7.5 mc_input=0.72 vehicle=RVM_NYH_MNR_M3a-B_C"
+        )
+        snap = ProbeSnapshot.from_dict(parse_probe_line(line))
+        assert snap.brake_g1_red_bar == pytest.approx(9.6)
+        assert snap.brake_g2_red_bar == pytest.approx(8.0)
+        assert snap.mr_bar == pytest.approx(7.5)
+
     def test_lever_notch_float(self) -> None:
         data = parse_probe_line("seq=1 lever_notch=4.0000 speed_ms=0 vehicle=Class323")
         assert data["lever_notch"] == 4

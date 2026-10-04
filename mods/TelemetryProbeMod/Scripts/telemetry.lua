@@ -203,16 +203,35 @@ local function read_odometer_m(actor)
     return nil
 end
 
-local function read_hud_gauge_pa(actor, method)
+local PA_PER_BAR = 100000.0
+
+local function read_hud_gauge_needles_pa(actor, method)
     local result = {}
     local ok = pcall(function() actor[method](actor, result, {}) end)
     if not ok then
         ok = pcall(function() actor[method](actor, result) end)
-        if not ok then return nil end
+        if not ok then return nil, nil end
     end
-    return util.pick_float(
-        util.out_val(result, "RedNeedle (Pa)", "RedNeedle"),
-        util.out_val(result, "WhiteNeedle (Pa)", "WhiteNeedle"))
+    local red = util.out_val(result, "RedNeedle (Pa)", "RedNeedle")
+    local white = util.out_val(result, "WhiteNeedle (Pa)", "WhiteNeedle")
+    return red, white
+end
+
+local function read_hud_gauge_pa(actor, method)
+    local red, white = read_hud_gauge_needles_pa(actor, method)
+    return util.pick_float(red, white)
+end
+
+local function pa_to_bar(pa)
+    if type(pa) ~= "number" or pa ~= pa or pa < 0 then
+        return nil
+    end
+    return pa / PA_PER_BAR
+end
+
+local function read_brake_gauge_bars(actor, method)
+    local red, white = read_hud_gauge_needles_pa(actor, method)
+    return pa_to_bar(red), pa_to_bar(white)
 end
 
 -- Class 323: Simulation.BrakeCylinder_* no expone escalares en UE4SS tick (lab L0.6).
@@ -247,12 +266,82 @@ local function read_brake_cylinder_bar(actor)
     return nil
 end
 
+local function read_sim_pressure_bar(actor, node_name)
+    local ok, v = pcall(function()
+        local sim = actor.Simulation
+        if not sim then return nil end
+        local node
+        pcall(function() node = sim[node_name] end)
+        if not node then return nil end
+        for _, field in ipairs(config.BRAKE_CYL_PRESSURE_FIELDS) do
+            local raw
+            pcall(function() raw = node[field] end)
+            local p = util.pick_float(raw)
+            if type(p) == "number" and p == p and p >= 0 then
+                return p
+            end
+        end
+        return nil
+    end)
+    if ok and type(v) == "number" and v == v and v >= 0 then return v end
+    return nil
+end
+
 local function read_vehicle_class(actor)
     local classObj = actor:GetClass()
     if classObj and classObj:IsValid() then
         return classObj:GetFName():ToString()
     end
     return "?"
+end
+
+local function vehicle_uses_mc_input(vehicle_name)
+    local name = vehicle_name or ""
+    if name == "" or name == "?" then
+        return false
+    end
+    for _, marker in ipairs(config.MC_VEHICLE_MARKERS or {}) do
+        if string.find(name, marker, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function read_mc_scalar(ctrl)
+    if not util.ctrl_is_valid(ctrl) then
+        return nil
+    end
+    -- Solo InputValue (mismo camino que IPC); evitar GetCurrentInputValue en tick (AV UE4SS).
+    local ok, v = pcall(function() return ctrl.InputValue end)
+    if ok and type(v) == "number" and v == v and v >= 0.0 and v <= 1.0 then
+        return v
+    end
+    return nil
+end
+
+local function read_mc_lever_input(actor)
+    if not actor or not actor.IsValid or not actor:IsValid() then
+        return nil
+    end
+    for _, child_name in ipairs(config.MC_ANALOG_LEVER_NAMES) do
+        local ctrl = util.try_child(actor, child_name)
+        local v = read_mc_scalar(ctrl)
+        if v ~= nil then
+            return v
+        end
+    end
+    local di = util.try_child(actor, "DriverInput") or util.try_child(actor, "DriverInputComponent")
+    if di and di.IsValid and di:IsValid() then
+        for _, child_name in ipairs(config.MC_ANALOG_LEVER_NAMES) do
+            local ctrl = util.try_child(di, child_name)
+            local v = read_mc_scalar(ctrl)
+            if v ~= nil then
+                return v
+            end
+        end
+    end
+    return nil
 end
 
 function M.build_line(sample)
@@ -298,6 +387,24 @@ function M.build_line(sample)
     if sample.traction_locked ~= nil then
         table.insert(parts, "traction_locked=" .. (sample.traction_locked and "1" or "0"))
     end
+    if sample.mc_input ~= nil then
+        table.insert(parts, "mc_input=" .. util.fmt_num(sample.mc_input))
+    end
+    if sample.brake_g1_red_bar ~= nil then
+        table.insert(parts, "brake_g1_red_bar=" .. util.fmt_num(sample.brake_g1_red_bar))
+    end
+    if sample.brake_g1_white_bar ~= nil then
+        table.insert(parts, "brake_g1_white_bar=" .. util.fmt_num(sample.brake_g1_white_bar))
+    end
+    if sample.brake_g2_red_bar ~= nil then
+        table.insert(parts, "brake_g2_red_bar=" .. util.fmt_num(sample.brake_g2_red_bar))
+    end
+    if sample.brake_g2_white_bar ~= nil then
+        table.insert(parts, "brake_g2_white_bar=" .. util.fmt_num(sample.brake_g2_white_bar))
+    end
+    if sample.mr_bar ~= nil then
+        table.insert(parts, "mr_bar=" .. util.fmt_num(sample.mr_bar))
+    end
     return table.concat(parts, " ")
 end
 
@@ -340,6 +447,17 @@ function M.collect_sample(controller, state)
     sample.accel_ms2 = safe_read("accel", function() return read_accel(actor) end)
     sample.brake_cyl_bar = safe_read("brake_cyl", function()
         return read_brake_cylinder_bar(actor)
+    end)
+    do
+        local r1, w1 = read_brake_gauge_bars(actor, "HUD_GetBrakeGauge_1")
+        local r2, w2 = read_brake_gauge_bars(actor, "HUD_GetBrakeGauge_2")
+        if r1 ~= nil then sample.brake_g1_red_bar = r1 end
+        if w1 ~= nil then sample.brake_g1_white_bar = w1 end
+        if r2 ~= nil then sample.brake_g2_red_bar = r2 end
+        if w2 ~= nil then sample.brake_g2_white_bar = w2 end
+    end
+    sample.mr_bar = safe_read("mr_bar", function()
+        return read_sim_pressure_bar(actor, "MR (AirPipe)")
     end)
     sample.odo_m = safe_read("odo", function() return read_odometer_m(actor) end)
     sample.max_speed_ms = safe_read("max_speed", function() return read_max_speed(actor) end)
@@ -386,6 +504,10 @@ function M.collect_sample(controller, state)
     end
 
     sample.vehicle = safe_read("vehicle", function() return read_vehicle_class(actor) end) or "?"
+
+    if vehicle_uses_mc_input(sample.vehicle) then
+        sample.mc_input = safe_read("mc_input", function() return read_mc_lever_input(actor) end)
+    end
 
     if not state.debug_dumped and sample.power ~= nil then
         state.debug_dumped = true

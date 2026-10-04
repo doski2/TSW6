@@ -345,6 +345,74 @@ class TestAgentLoop:
         loop._maybe_release_driver_control(4, snap)
         assert loop.target_input_value is None
 
+    def test_mc_driver_brake_release_clears_fraction_ipc_session_075637(
+        self, tmp_path: Path
+    ) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=0,
+            train_brake=0.87,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            driver_override_cooldown_s=5.0,
+            limit_brake_enabled=True,
+        )
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop.request_input_fraction(0.45)
+        loop._last_lever = 0
+        write_getdata_line(
+            gd,
+            seq=2,
+            lever=1,
+            train_brake=0.87,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        snap = loop.read_probe()
+        assert snap is not None
+        loop._check_driver_takeover(1, snap)
+        assert loop.target_input_value is None
+        assert loop.driver_override_remaining_s() > 0.0
+
+    def test_dwell_stopped_skips_ipc_when_mc_brake_held_session_075637(
+        self, tmp_path: Path
+    ) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=0,
+            speed_ms=0.0,
+            train_brake=0.87,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(
+            getdata_path=gd,
+            post_ipc_sleep_s=0.0,
+            station_brake_enabled=True,
+            limit_brake_enabled=False,
+        )
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop._station_gate.state = "STOPPED"
+        snap = PlanningSnapshot(station_distance_m=30.5)
+        with patch.object(loop._station_planning, "update", return_value=snap):
+            with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+                from tsw6v2.decision import LimitBrakeDecision
+
+                eval_tick.return_value = LimitBrakeDecision.idle(reason="no_plan")
+                with patch(
+                    "tsw6v2.loop.dispatch_to_input_fraction",
+                    return_value={"ok": True},
+                ) as ipc_frac:
+                    out = loop.step()
+        assert loop.target_input_value is None
+        assert not out.ipc_sent
+        ipc_frac.assert_not_called()
+
     def test_mc_driver_power_clears_fraction_ipc(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(

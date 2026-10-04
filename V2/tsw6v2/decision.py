@@ -290,6 +290,7 @@ def _attempt_platform_parked_bleed(
     station_fsm: Optional[str],
     station_dist_m: Optional[float],
     platform_bleed_episode: bool,
+    snap: ProbeSnapshot,
 ) -> Optional[LimitBrakeDecision]:
     """B1 en andén si neutro con cilindros cargados — habilita RELEASE IPC (193606Z)."""
     if not platform_parked_residual_bleed_needed(
@@ -299,6 +300,8 @@ def _attempt_platform_parked_bleed(
         brake_cyl_bar=prep.ctx.cyl,
         station_fsm=station_fsm,
         platform_bleed_episode=platform_bleed_episode,
+        snap=snap,
+        vehicle_package=ctx.vehicle_package,
     ):
         return None
     cmd = platform_bleed_brake_command(distance_m=station_dist_m)
@@ -334,6 +337,7 @@ def _attempt_platform_parked_bleed_release(
     station_fsm: Optional[str],
     station_dist_m: Optional[float],
     platform_bleed_episode: bool,
+    snap: ProbeSnapshot,
 ) -> Optional[LimitBrakeDecision]:
     """RELEASE a neutro tras B1 bleed — sin cartel (195804Z)."""
     if not platform_parked_bleed_release_needed(
@@ -342,6 +346,8 @@ def _attempt_platform_parked_bleed_release(
         combined_lever=prep.combined_lever,
         station_fsm=station_fsm,
         platform_bleed_episode=platform_bleed_episode,
+        snap=snap,
+        vehicle_package=ctx.vehicle_package,
     ):
         return None
     rel = release_brake_command(at_target=True)
@@ -921,6 +927,7 @@ def evaluate_p1_tick(
         station_fsm=station_fsm,
         station_dist_m=station_dist_geo,
         platform_bleed_episode=platform_bleed_episode,
+        snap=snap,
     )
     if platform_bleed is not None:
         return platform_bleed
@@ -931,6 +938,7 @@ def evaluate_p1_tick(
         station_fsm=station_fsm,
         station_dist_m=station_dist_geo,
         platform_bleed_episode=platform_bleed_episode,
+        snap=snap,
     )
     if platform_bleed_release is not None:
         return platform_bleed_release

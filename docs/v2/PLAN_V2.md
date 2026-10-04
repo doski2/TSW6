@@ -1206,6 +1206,7 @@ Misma física `v²/2a` (§2); learner por eje/peso en freight.
 - **blended** / **MasterController** (Acela, DE): documentar en JSON cuando haya tren; no bloquean
 
   323.
+- **MC pasajeros (M3a):** plan de actuación P1 sin muescas UK — [PLAN_ACTUACION_MC.md](PLAN_ACTUACION_MC.md) (fases 0–5, telemetría `mc_input`).
 
 Validación: fase 6 (freight) · [FREIGHT_NA.md](../v1/FREIGHT_NA.md) · §2 G-B.
 

@@ -129,6 +129,7 @@ class JsonlTrace:
             "target": snap.target_notch,
             "target_frac": _round_opt(snap.target_input_value, 4),
             "train_brake": _round_opt(snap.train_brake, 3),
+            "mc_input": _round_opt(snap.mc_input, 4),
             "brake_cyl_bar": _round_opt(snap.brake_cyl_bar, 2),
             "brake_fill_s": _round_opt(snap.brake_fill_s, 2),
             "brake_fill_n": snap.brake_fill_n,

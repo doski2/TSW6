@@ -361,35 +361,14 @@ def brake_applied_from_probe(
     """
     ¿Freno de servicio aplicado para RELEASE heredado?
 
-    UK: muesca combinada ``lever_notch``. MC: ``probe_mc_input_fraction`` &lt; neutro del paquete,
-    o cilindro por encima de ralentí (``train_brake`` HUD ≠ InputValue, 215905Z).
+    Ver ``brake_cab.service_brake_held_from_probe`` (PLAN_ACTUACION_MC).
     """
-    lev = int(lever) if lever is not None else NEUTRAL_NOTCH
-    if snap is None:
-        return is_brake_applied(lev)
-    from tsw6v2.constants import MC_INPUT_VALUE_EPS
-    from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
-    from tsw6v2.vehicle_package import (
-        probe_mc_input_fraction,
-        profile_neutral_fraction,
-        uses_mc_analog_ipc,
-        vehicle_package_from_snap,
-    )
+    from tsw6v2.brake_cab import service_brake_held_from_probe
 
-    pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if not (pkg and uses_mc_analog_ipc(pkg)):
+    if snap is None:
+        lev = int(lever) if lever is not None else NEUTRAL_NOTCH
         return is_brake_applied(lev)
-    neutral = profile_neutral_fraction(pkg)
-    if neutral is not None:
-        est = probe_mc_input_fraction(snap, pkg)
-        if est is not None and float(est) < float(neutral) - MC_INPUT_VALUE_EPS:
-            return True
-    if (
-        snap.brake_cyl_bar is not None
-        and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
-    ):
-        return True
-    return False
+    return service_brake_held_from_probe(snap, lever, vehicle_package)
 
 
 def throttle_notch_from_lever(combined_lever: int) -> int:

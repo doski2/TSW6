@@ -620,5 +620,5 @@ def test_p1_tick_release_after_stop_session_222115() -> None:
         signal_brake_enabled=True,
     )
     assert decision.command is not None
-    assert decision.command.kind == "RELEASE"
-    assert decision.reason == "release"
+    assert decision.command.kind == "APPLY"
+    assert decision.reason == "platform_bleed"

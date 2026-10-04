@@ -24,6 +24,13 @@ SERVICE_HANDLES_WEAK_TO_STRONG: tuple[tuple[int, str], ...] = (
     (1, "B3"),
 )
 
+SERVICE_PHASE_BY_HANDLE: dict[int, str] = dict(SERVICE_HANDLES_WEAK_TO_STRONG)
+
+
+def service_phase_for_handle(handle: int) -> str:
+    """Muesca UK servicio 3/2/1 → fase P1 B1/B2/B3."""
+    return SERVICE_PHASE_BY_HANDLE.get(int(handle), "B1")
+
 
 @dataclass
 class BrakeTargetResult:
@@ -109,4 +116,6 @@ __all__ = [
     "LIMIT_SCORING_MAX_OVER_MPH",
     "LIMIT_SIGN_PASSED_M",
     "SERVICE_HANDLES_WEAK_TO_STRONG",
+    "SERVICE_PHASE_BY_HANDLE",
+    "service_phase_for_handle",
 ]

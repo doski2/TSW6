@@ -8,4 +8,4 @@ estudiado documento estado:
 5.el informe de log muestra nombre equivocado de escenario
 6.revisa la presion de aire si se muestra correctamente en gui m3a
 7.simular un escenario logico para las reglas de frenado
-8.
+8.que lecturas tenemos del tren revisar si tenemos todo

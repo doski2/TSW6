@@ -89,6 +89,7 @@ D2](v2/PLAN_V2.md#d2--schema-getdata)):
 | `signal_dist_cm` | float | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1** | Con `signal_red=1` |
 | `is_slipping` | 0/1 | `HUD_GetIsSlipping` | Log 9b-a; handler 9b-b pendiente |
 | `traction_locked` | 0/1 | `HUD_GetIsTractionLocked` | Opcional con slip |
+| `mc_input` | float | `MasterController.InputValue` (MC / IrregularLever) | Feedback IPC MC; ver [PLAN_ACTUACION_MC](v2/PLAN_ACTUACION_MC.md) |
 
 ### Planning Python (no va en GetData)
 
