@@ -6,30 +6,30 @@ Referencia de los árboles bajo `Root/*` en la HTTPAPI de TSW6 (`-HTTPAPI`, puer
 `Desktop\investigacion tsw 6\apis\` · captura **2026-08-18 UTC** · Class 323 · Cross-City /
 Lichfield City (andén 2) · servicio `2R17`.
 
-| Árbol | Dump JSON | Tamaño | Catálogo | Interés autopilot / física |
-| --- | --- | --- | --- | --- |
-| **DriverAid** | `tsw-api-export-DriverAid-…json` | ~14 KB | [DRIVERAID_API.md](DRIVERAID_API.md) | ✅ Límites, gradiente, estaciones, señales |
-| **CurrentFormation** | `tsw-api-export-CurrentFormation-…json` | ~9 MB | [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | ✅ **Física tren**: masa, freno aire, esfuerzos, HUD |
-| **DriverInput** | `tsw-api-export-DriverInput-…json` | ~1.6 MB | [DRIVERINPUT_API.md](DRIVERINPUT_API.md) | ✅ Mandos **escribibles** (PATCH `/set`) |
-| **Player** | `tsw-api-export-Player-…json` | ~57 KB | [PLAYER_API.md](PLAYER_API.md) | 🟡 `GetDriverAidData`, posición, speeding |
-| **TimeOfDay** | `tsw-api-export-TimeOfDay-…json` | ~2 KB | [TIMEOFDAY_API.md](TIMEOFDAY_API.md) | 🟡 Reloj mundo / horario escenario |
-| **VirtualRailDriver** | `tsw-api-export-VirtualRailDriver-…json` | ~12 KB | [VIRTUALRAILDRIVER_API.md](VIRTUALRAILDRIVER_API.md) | ❌ Debug teclado virtual (no producción) |
+| Árbol                 | Dump JSON                                | Tamaño  | Catálogo                                             | Interés autopilot / física                           |
+| --------------------- | ---------------------------------------- | ------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| **DriverAid**         | `tsw-api-export-DriverAid-…json`         | ~14 KB  | [DRIVERAID_API.md](DRIVERAID_API.md)                 | ✅ Límites, gradiente, estaciones, señales           |
+| **CurrentFormation**  | `tsw-api-export-CurrentFormation-…json`  | ~9 MB   | [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md)   | ✅ **Física tren**: masa, freno aire, esfuerzos, HUD |
+| **DriverInput**       | `tsw-api-export-DriverInput-…json`       | ~1.6 MB | [DRIVERINPUT_API.md](DRIVERINPUT_API.md)             | ✅ Mandos **escribibles** (PATCH `/set`)             |
+| **Player**            | `tsw-api-export-Player-…json`            | ~57 KB  | [PLAYER_API.md](PLAYER_API.md)                       | 🟡 `GetDriverAidData`, posición, speeding            |
+| **TimeOfDay**         | `tsw-api-export-TimeOfDay-…json`         | ~2 KB   | [TIMEOFDAY_API.md](TIMEOFDAY_API.md)                 | 🟡 Reloj mundo / horario escenario                   |
+| **VirtualRailDriver** | `tsw-api-export-VirtualRailDriver-…json` | ~12 KB  | [VIRTUALRAILDRIVER_API.md](VIRTUALRAILDRIVER_API.md) | ❌ Debug teclado virtual (no producción)             |
 
 ---
 
 ## Mapa rápido: ¿de dónde sale cada dato hoy?
 
-| Necesitas… | Fuente TSW6 hoy | HTTPAPI alternativa |
-| --- | --- | --- |
-| Velocidad, muesca UK, aceleración | Probe `HUD_Get*` → `GetData.txt` | `CurrentFormation/0.Function.HUD_Get*` |
-| Gradiente, límite, cola límites | Probe `GetDriverAidData` ~20 Hz | `DriverAid.Data` |
-| Estaciones programadas | HTTP `DriverAid.TrackData` ~2 s | + `tsw_hud.db` |
-| Decel aprendida por muesca | `logs/profiles/*.json` | — |
-| Masa del consist / carga | ❌ no integrado | `CurrentFormation/*/Simulation/*.Mass` |
-| Presión cilindro / MR | 🟡 probe `brake_cyl_bar` | `BrakeCylinder_*_Pressure` |
-| Esfuerzo tracción / freno (N) | 🟡 `BrakeEffort` parado B1–B2 | `HUD_GetTractiveEffort` |
-| Adherencia / patinaje | ❌ (solo `HUD_GetIsSlipping` en probe futuro) | `Axle_*_CurrentTrackAdhesion`, `TM_*_Slip` |
-| Escribir mandos | IPC `SendCommand.txt` (preferido) | `DriverInput/<control>.InputValue` |
+| Necesitas…                        | Fuente TSW6 hoy                               | HTTPAPI alternativa                        |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------ |
+| Velocidad, muesca UK, aceleración | Probe `HUD_Get*` → `GetData.txt`              | `CurrentFormation/0.Function.HUD_Get*`     |
+| Gradiente, límite, cola límites   | Probe `GetDriverAidData` ~20 Hz               | `DriverAid.Data`                           |
+| Estaciones programadas            | HTTP `DriverAid.TrackData` ~2 s               | + `tsw_hud.db`                             |
+| Decel aprendida por muesca        | `logs/profiles/*.json`                        | —                                          |
+| Masa del consist / carga          | ❌ no integrado                               | `CurrentFormation/*/Simulation/*.Mass`     |
+| Presión cilindro / MR             | 🟡 probe `brake_cyl_bar`                      | `BrakeCylinder_*_Pressure`                 |
+| Esfuerzo tracción / freno (N)     | 🟡 `BrakeEffort` parado B1–B2                 | `HUD_GetTractiveEffort`                    |
+| Adherencia / patinaje             | ❌ (solo `HUD_GetIsSlipping` en probe futuro) | `Axle_*_CurrentTrackAdhesion`, `TM_*_Slip` |
+| Escribir mandos                   | IPC `SendCommand.txt` (preferido)             | `DriverInput/<control>.InputValue`         |
 
 ---
 
@@ -37,13 +37,13 @@ Lichfield City (andén 2) · servicio `2R17`.
 
 **Validado in-game 2026-08-26 (Class 323, HTTPAPI en vivo):**
 
-| Campo | Veredicto | Observado |
-| --- | --- | --- |
-| `BrakeEffort (N)` | 🟡 **B1–B2 sí** | Tren **casi parado**: B1 ≈ **5921 N**, B2 ≈ **9347 N**; escala con muesca |
-| `BrakeEffort (N)` en B3 | ❌ Basura | B3 (`brk=1`): **~4.8×10²⁰ N** — sentinel / overflow; **filtrar** |
-| `BrakeEffort` en marcha | ❌ Suele 0 | Frenando a ~15 m/s: **0 N** aunque `acc < 0` y `P21` sube |
-| `BrakeCylinder_2_1.Pressure_BAR` | ✅ **Sí usar** | Escala estable: B1 **2.6** → B2 **3.5** → B3 **4.3** BAR (parado); en marcha hasta ~5.3 |
-| `HUD_GetBrakeGauge_1` | ❌ Inútil 323 | Agujas `0 Pa` siempre en sesión probada |
+| Campo                            | Veredicto       | Observado                                                                               |
+| -------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| `BrakeEffort (N)`                | 🟡 **B1–B2 sí** | Tren **casi parado**: B1 ≈ **5921 N**, B2 ≈ **9347 N**; escala con muesca               |
+| `BrakeEffort (N)` en B3          | ❌ Basura       | B3 (`brk=1`): **~4.8×10²⁰ N** — sentinel / overflow; **filtrar**                        |
+| `BrakeEffort` en marcha          | ❌ Suele 0      | Frenando a ~15 m/s: **0 N** aunque `acc < 0` y `P21` sube                               |
+| `BrakeCylinder_2_1.Pressure_BAR` | ✅ **Sí usar**  | Escala estable: B1 **2.6** → B2 **3.5** → B3 **4.3** BAR (parado); en marcha hasta ~5.3 |
+| `HUD_GetBrakeGauge_1`            | ❌ Inútil 323   | Agujas `0 Pa` siempre en sesión probada                                                 |
 
 Orden sugerido tras la validación:
 
@@ -80,12 +80,12 @@ learner.
 
 ## Referencias TSW6
 
-| Archivo | Relación |
-| --- | --- |
-| [ARQUITECTURA.md](../v1/ARQUITECTURA.md) | Probe vs HTTP vs IPC |
-| [FISICA_Y_APRENDIZAJE.md](../v1/FISICA_Y_APRENDIZAJE.md) | Constantes y learner |
-| [BRAKE_V2.md](../v1/BRAKE_V2.md) | `physics.py`, coordinator |
+| Archivo                                                  | Relación                        |
+| -------------------------------------------------------- | ------------------------------- |
+| [ARQUITECTURA.md](../v1/ARQUITECTURA.md)                 | Probe vs HTTP vs IPC            |
+| [FISICA_Y_APRENDIZAJE.md](../v1/FISICA_Y_APRENDIZAJE.md) | Constantes y learner            |
+| [BRAKE_V2.md](../v1/BRAKE_V2.md)                         | `physics.py`, coordinator       |
 | [FISICA_Y_APRENDIZAJE.md](../v1/FISICA_Y_APRENDIZAJE.md) | Ventana APPLY (metros → física) |
-| [PENDIENTE_DYNAMICHUD.md](../v1/PENDIENTE_DYNAMICHUD.md) | Roadmap probe |
+| [PENDIENTE_DYNAMICHUD.md](../v1/PENDIENTE_DYNAMICHUD.md) | Roadmap probe                   |
 
 #### Última revisión catálogos: 2026-08-26

@@ -58,6 +58,11 @@ class TestGetData:
         data = parse_probe_line("seq=1 speed_ms=0 brake_cyl_bar=? vehicle=Class323")
         assert data["brake_cyl_bar"] is None
 
+    def test_amps_parse_and_snapshot(self) -> None:
+        line = "seq=3 speed_ms=14.3 amps=795.7 vehicle=RVM_NYH_MNR_M3a-A_C"
+        snap = ProbeSnapshot.from_dict(parse_probe_line(line))
+        assert snap.amps == pytest.approx(795.7, rel=1e-4)
+
     def test_mc_input_parse_and_snapshot(self) -> None:
         line = "seq=7 speed_ms=0 mc_input=0.4499999881 vehicle=RVM_NYH_MNR_M3a-B_C"
         data = parse_probe_line(line)

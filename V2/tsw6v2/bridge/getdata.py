@@ -120,6 +120,7 @@ class ProbeSnapshot:
     signal_red: Optional[bool] = None
     signal_dist_cm: Optional[float] = None
     mc_input: Optional[float] = None
+    amps: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -159,6 +160,7 @@ class ProbeSnapshot:
             signal_red=data.get("signal_red"),
             signal_dist_cm=data.get("signal_dist_cm"),
             mc_input=data.get("mc_input"),
+            amps=data.get("amps"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 
@@ -170,6 +172,24 @@ class ProbeSnapshot:
         if notch is not None:
             return notch
         return power_to_combined_notch(self.power, self.power_neg)
+
+
+def probe_identity_ok(
+    seq: Optional[int],
+    vehicle: Optional[str],
+) -> bool:
+    """``seq`` + ``vehicle`` válidos (GetData / AgentSnapshot)."""
+    if seq is None:
+        return False
+    name = (vehicle or "").strip()
+    return bool(name and name != "?")
+
+
+def probe_snapshot_usable(snap: Optional[ProbeSnapshot]) -> bool:
+    """False si GetData no trajo línea usable (hueco tras IPC o F7)."""
+    if snap is None:
+        return False
+    return probe_identity_ok(snap.seq, snap.vehicle)
 
 
 def decode_probe_raw(data: bytes) -> Optional[str]:

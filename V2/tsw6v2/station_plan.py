@@ -195,6 +195,41 @@ def station_within_dwell_zone(station_distance_m: float) -> bool:
     return station_distance_m <= DEFAULT_STATION_CFG.dwell_max_distance_m
 
 
+def is_midroute_service_dwell_stop(
+    station_distance_m: Optional[float],
+    speed_mph: float,
+    *,
+    stopped_mph: float = 1.5,
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Parada servicio en cono final (~35 m) con next_stop mid-route (212610Z)."""
+    if station_distance_m is None or not is_mid_route_next_stop(station_distance_m):
+        return False
+    if station_distance_m > cfg.final_stop_max_distance_m:
+        return False
+    return speed_mph <= stopped_mph
+
+
+# MNR/M3a: marker delante de la cabina con cola en andén (201242Z White Plains ~231 m).
+MIDROUTE_PLATFORM_PARKED_BEFORE_MARKER_MAX_MPH = 0.5
+
+
+def is_midroute_platform_parked_before_marker(
+    station_distance_m: Optional[float],
+    speed_mph: float,
+    *,
+    cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
+) -> bool:
+    """Parado en andén con ``stn`` al marker >> cono final (consist largo)."""
+    if station_distance_m is None or not is_mid_route_next_stop(station_distance_m):
+        return False
+    if station_distance_m <= cfg.dwell_max_distance_m:
+        return False
+    if station_distance_m > STATION_APPROACH_PRIORITY_M:
+        return False
+    return speed_mph <= MIDROUTE_PLATFORM_PARKED_BEFORE_MARKER_MAX_MPH
+
+
 def _moderate_service_notch_label() -> str:
     return UK_SERVICE_PHASES[1].label
 

@@ -15,6 +15,7 @@ def write_getdata_line(
     power: float = 0.0,
     power_neg: int = 0,
     vehicle: str = "Class323",
+    mc_input: float | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     line = (
@@ -23,4 +24,6 @@ def write_getdata_line(
         f"train_brake={train_brake} loco_brake=0 dyn_brake=0 accel_ms2=0 "
         f"vehicle={vehicle}"
     )
+    if mc_input is not None:
+        line += f" mc_input={mc_input}"
     path.write_text(line + "\n", encoding="utf-8")

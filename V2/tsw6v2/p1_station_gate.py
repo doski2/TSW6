@@ -27,6 +27,8 @@ from tsw6v2.station_plan import (
     DEFAULT_STATION_CFG,
     ORIGIN_DEPARTURE_MAX_SPEED_MPH,
     is_departure_creep_context,
+    is_midroute_platform_parked_before_marker,
+    is_midroute_service_dwell_stop,
     is_service_platform_departure,
     is_service_platform_parked_skip_release,
     station_within_dwell_zone,
@@ -100,6 +102,52 @@ def _live_roll_through_without_doors(
         <= speed_mph
         < DEFAULT_STATION_CFG.departure_speed_mph
     )
+
+
+def _snap_doors_open(snap: Optional[Any]) -> bool:
+    if snap is None:
+        return False
+    return (
+        doors_effective(
+            doors_open=getattr(snap, "doors_open", None),
+            doors_telem=getattr(snap, "doors_telem", None),
+            doors_dmi=getattr(snap, "doors_dmi", None),
+        )
+        is True
+    )
+
+
+def platform_dwell_suppresses_platform_bleed(
+    *,
+    station_fsm: Optional[str],
+    snap: Optional[Any] = None,
+) -> bool:
+    """Puertas abiertas en andén: mantener freno dwell, sin ciclo bleed (212610Z)."""
+    if not _snap_doors_open(snap):
+        return False
+    return station_fsm in (None, "STOPPED")
+
+
+def departing_ipc_release_allowed(
+    station_dist_m: Optional[float],
+    *,
+    vehicle_package: Optional[dict] = None,
+) -> bool:
+    """RELEASE creep tras marker o fuera del cono andén (``platform_tail_m`` alarga cola)."""
+    if station_dist_m is None:
+        return True
+    if station_dist_m <= 1.0:
+        return True
+    from tsw6v2.vehicle_package import station_platform_tail_m
+
+    tail_m = station_platform_tail_m(vehicle_package)
+    platform_end_m = PLATFORM_AT_STOP_M
+    if tail_m > 0:
+        platform_end_m = max(
+            platform_end_m,
+            min(tail_m, DEFAULT_STATION_CFG.dwell_max_distance_m),
+        )
+    return station_dist_m > platform_end_m
 
 
 def doors_effective(
@@ -218,14 +266,14 @@ def _mc_approach_stopped_bleed_zone(
     station_dist_m: Optional[float],
     station_fsm: Optional[str] = None,
 ) -> bool:
-    """MC parado en cono estación (≤600 m); no confundir con mid-route ~1.5 km (084500Z)."""
+    """MC parado en ventana dwell (~80 m); no bleed a 200+ m (201242Z)."""
     if station_fsm == "DEPARTING":
         return False
-    if station_dist_m is None or station_dist_m <= 0:
-        return False
-    if float(station_dist_m) > STATION_APPROACH_PRIORITY_M:
-        return False
-    return speed_mph <= STATION_STOPPED_MPH
+    return _dwell_stopped_bleed_zone(
+        speed_mph=speed_mph,
+        station_dist_m=station_dist_m,
+        station_fsm=station_fsm,
+    )
 
 
 def _platform_bleed_episode_context(
@@ -323,12 +371,43 @@ class PlatformBleedEpisode:
     """Un ciclo B1→neutro en andén; evita repetir APPLY mientras ventila (195804Z)."""
 
     active: bool = False
+    _b1_latch_ticks: int = 0
 
     def reset(self) -> None:
         self.active = False
+        self._b1_latch_ticks = 0
 
     def note_bleed_apply(self) -> None:
         self.active = True
+
+    def observe_mc_bleed_feedback(
+        self,
+        snap: Optional[Any],
+        vehicle_package: Optional[dict] = None,
+    ) -> None:
+        """Antes de ``evaluate_p1_tick`` — acumular B1 estable (105359Z)."""
+        from tsw6v2.vehicle_package import (
+            mc_platform_bleed_b1_latched,
+            uses_mc_analog_ipc,
+            vehicle_package_from_snap,
+        )
+
+        if not self.active:
+            self._b1_latch_ticks = 0
+            return
+        pkg = vehicle_package_from_snap(snap, vehicle_package)
+        if not (snap is not None and pkg and uses_mc_analog_ipc(pkg)):
+            self._b1_latch_ticks = 0
+            return
+        if mc_platform_bleed_b1_latched(snap, pkg):
+            self._b1_latch_ticks += 1
+        else:
+            self._b1_latch_ticks = 0
+
+    def mc_b1_confirmed_for_release(self) -> bool:
+        from tsw6v2.constants import PLATFORM_BLEED_B1_CONFIRM_TICKS
+
+        return self._b1_latch_ticks >= int(PLATFORM_BLEED_B1_CONFIRM_TICKS)
 
     def update(
         self,
@@ -407,10 +486,16 @@ def platform_parked_residual_bleed_needed(
     TSW no ventila con mando en neutro: hay que meter B1 y luego RELEASE a neutro.
     """
     from tsw6v2.vehicle_package import (
-        mc_platform_bleed_b1_latched,
+        mc_platform_bleed_should_reapply_b1,
         uses_mc_analog_ipc,
         vehicle_package_from_snap,
     )
+
+    if platform_dwell_suppresses_platform_bleed(
+        station_fsm=station_fsm,
+        snap=snap,
+    ):
+        return False
 
     pkg = vehicle_package_from_snap(snap, vehicle_package)
     if platform_bleed_episode and pkg and uses_mc_analog_ipc(pkg):
@@ -421,7 +506,7 @@ def platform_parked_residual_bleed_needed(
                 station_fsm=station_fsm,
             )
             and _service_platform_residual_pressure(brake_cyl_bar)
-            and not mc_platform_bleed_b1_latched(snap, pkg)
+            and mc_platform_bleed_should_reapply_b1(snap, pkg)
         ):
             return True
 
@@ -457,6 +542,7 @@ def platform_parked_bleed_release_needed(
     combined_lever: int,
     station_fsm: Optional[str] = None,
     platform_bleed_episode: bool = False,
+    platform_bleed_b1_confirmed: bool = False,
     snap: Optional[Any] = None,
     vehicle_package: Optional[dict] = None,
 ) -> bool:
@@ -470,6 +556,11 @@ def platform_parked_bleed_release_needed(
 
     if not platform_bleed_episode:
         return False
+    if platform_dwell_suppresses_platform_bleed(
+        station_fsm=station_fsm,
+        snap=snap,
+    ):
+        return False
     pkg = vehicle_package_from_snap(snap, vehicle_package)
     if pkg and uses_mc_analog_ipc(pkg):
         if not _mc_approach_stopped_bleed_zone(
@@ -479,6 +570,8 @@ def platform_parked_bleed_release_needed(
         ):
             return False
         if mc_platform_bleed_neutral_ipc(snap, pkg):
+            return False
+        if not platform_bleed_b1_confirmed:
             return False
         return mc_platform_bleed_b1_latched(snap, pkg)
     if not _service_platform_parked_bleed_context(
@@ -760,13 +853,27 @@ class StationDwellGate:
             )
             return
         else:
-            at_platform = (
-                station_dist_m is not None
-                and station_dist_m <= PLATFORM_AT_STOP_M
-                and speed_mph <= STATION_STOPPED_MPH
-            )
             doors_at_stop = open_now and speed_mph <= DOORS_OPEN_MAX_SPEED_MPH
-            if doors_at_stop or (at_platform and self._doors_ever_opened):
+            parked_at_platform = (
+                station_dist_m is not None
+                and speed_mph <= STATION_STOPPED_MPH
+                and (
+                    (
+                        station_dist_m <= PLATFORM_AT_STOP_M
+                        and self._doors_ever_opened
+                    )
+                    or is_midroute_service_dwell_stop(
+                        station_dist_m,
+                        speed_mph,
+                        stopped_mph=STATION_STOPPED_MPH,
+                    )
+                    or is_midroute_platform_parked_before_marker(
+                        station_dist_m,
+                        speed_mph,
+                    )
+                )
+            )
+            if doors_at_stop or parked_at_platform:
                 self.state = "STOPPED"
                 self._doors_opened = open_now
             elif station_departure_active(

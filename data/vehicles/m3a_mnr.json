@@ -2,26 +2,17 @@
   "schema": "tsw6-vehicle-package/1",
   "vehicle_id": "m3a_mnr",
   "match": {
-    "vehicle_class": "RVM_NYH_MNR_M3a-B_C"
+    "vehicle_class": "RVM_NYH_MNR_M3a-A_C"
   },
-  "layout": "master_controller",
-  "brake_input": {
-    "neutral": 0.72,
-    "B1": 0.6399999857,
-    "B2": 0.4499999881,
-    "B3": 0.2700000107
-  },
-  "brake_air": {
-    "model": "master_controller"
-  },
+  "layout": "combined",
   "controls": {
     "MasterController": {
       "ue_name": "MasterController",
       "component_class": "IrregularLeverComponent",
       "scope": "actor",
       "read_kind": "scalar",
-      "read_value_at_capture": 1.0,
-      "current_notch_id_at_capture": 7,
+      "read_value_at_capture": 0.6399999857,
+      "current_notch_id_at_capture": 2,
       "notches": [
         {
           "index": 1,
@@ -59,7 +50,7 @@
           "MaximumInputValue": 0.9499999881
         }
       ],
-      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.MasterController"
+      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-A_C_2147478525.MasterController"
     },
     "Reverser": {
       "ue_name": "Reverser",
@@ -85,7 +76,7 @@
           "MaximumInputValue": 0.6660000086
         }
       ],
-      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.Reverser"
+      "ue_path": "IrregularLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-A_C_2147478525.Reverser"
     },
     "MasterKey": {
       "ue_name": "MasterKey",
@@ -106,15 +97,15 @@
         }
       ],
       "number_of_notches": 2,
-      "ue_path": "SimpleLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-B_C_2147478415.MasterKey"
+      "ue_path": "SimpleLeverComponent /GrandCentralCorridor/Map/GrandCentralCorridorMap.GrandCentralCorridorMap:PersistentLevel.RVM_NYH_MNR_M3a-A_C_2147478525.MasterKey"
     }
   },
   "source": {
     "lab_schema": "tsw6-lab-export/1",
-    "session_id": "20261003T180232Z",
-    "captured_at": "2026-10-03T18:06:26Z",
+    "session_id": "20261005T210550Z",
+    "captured_at": "2026-10-05T21:14:35Z",
     "build": "20261003b",
-    "controls_path": "C:/Users/doski/TSW6/data/lab_exports/exports/20261003T180232Z/controls.json"
+    "controls_path": "C:/Users/doski/TSW6/data/lab_exports/exports/20261005T210550Z/controls.json"
   },
   "ipc_aliases": {
     "PowerBrakeHandle": "MasterController"

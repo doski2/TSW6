@@ -34,6 +34,15 @@ class LabSession:
         required = {"session.json", "controls.json", "hud_batch.json", "driver_aid.json"}
         return required.issubset(set(self.files_present))
 
+    @property
+    def has_railbridge(self) -> bool:
+        rb = self.path / "railbridge"
+        return rb.is_dir() and any(rb.glob("*.json"))
+
+    @property
+    def has_notas(self) -> bool:
+        return (self.path / "notas_sesion.md").is_file()
+
 
 def _read_session_meta(session_dir: Path) -> tuple[Optional[str], Optional[str]]:
     meta = session_dir / "session.json"
@@ -104,4 +113,19 @@ def summarize_controls(controls_path: Path) -> list[str]:
                 if item.get("notches"):
                     notches = f" ({len(item['notches'])} notches)"
                 lines.append(f"  • {name}{notches}")
+    if isinstance(lua, dict):
+        doors = lua.get("doors")
+        if isinstance(doors, list) and doors:
+            lines.append(f"doors (F6): {len(doors)} componente(s)")
+            for item in doors[:12]:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name", "?")
+                rv = item.get("read_value")
+                extra = ""
+                if rv is not None:
+                    extra = f" val={rv}"
+                if item.get("open_hint") is True:
+                    extra += " OPEN"
+                lines.append(f"  • {name}{extra}")
     return lines

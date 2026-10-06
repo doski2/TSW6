@@ -21,11 +21,11 @@ Planning · FSM andén · holgura **OFF** (D9) · señal: diseño S-Lua, probe s
 
 ## Este doc vs PLAN_V2
 
-| Aquí (referencia) | [PLAN_V2](../v2/PLAN_V2.md) |
-| --- | --- |
-| Cómo está el probe **hoy** | Qué **debe** cambiar (fases, pasos 1–10) |
-| Reglas Lua, campos GetData, log P1 | Debates, criterios de cierre |
-| Bitácora de sesiones | Tabla **Deltas** al codificar |
+| Aquí (referencia)                  | [PLAN_V2](../v2/PLAN_V2.md)              |
+| ---------------------------------- | ---------------------------------------- |
+| Cómo está el probe **hoy**         | Qué **debe** cambiar (fases, pasos 1–10) |
+| Reglas Lua, campos GetData, log P1 | Debates, criterios de cierre             |
+| Bitácora de sesiones               | Tabla **Deltas** al codificar            |
 
 Si hay conflicto, gana **PLAN_V2**.
 
@@ -35,20 +35,20 @@ Si hay conflicto, gana **PLAN_V2**.
 
 ### Cerrado (referencia — no reabrir salvo regresión)
 
-| Tema | Dónde | Nota |
-| --- | --- | --- |
-| Velocidad probe ~20 Hz | `tsw_telemetry_source` | Tests `test_speed_*` |
-| Mandos IPC | `tsw_ipc_bus` + probe Lua | Preferido frente a teclado |
-| P1 frenado | `braking/v2/` → `SpeedDecider` | Sin `archive/braking_v1/` |
-| RELEASE cartel+andén | `v2/coordinator.py` + `v2/policy.py` | Política TSW (D5) |
-| `station_eta` al plan | `next_stop_arrival` → `station_plan` | No implica holgura ON |
-| Horario HUD en GUI | `hud_timetable.py` | Llegada/salida validado |
-| Gradiente probe | `gradient_pct` GetData | Una fuente; learner elige celda (§2 PLAN) |
-| Un cartel en probe | `dist_limit_cm` / `next_limit_ms` | **Sin** lim2 (TArray revertido) |
-| Ventana APPLY física | `v2/physics.py` | [BRAKE_V2.md](BRAKE_V2.md) |
-| FSM puertas Lua/DMI | `governor_station.py` | Sin OCR |
-| Spawn / DEPARTING / B1 puertas | `governor_station` + policy | 2026-08-28 |
-| Cartel lejano aware | `command_from_target` + `physics.py` | No APPLY @ 2+ mi |
+| Tema                           | Dónde                                | Nota                                      |
+| ------------------------------ | ------------------------------------ | ----------------------------------------- |
+| Velocidad probe ~20 Hz         | `tsw_telemetry_source`               | Tests `test_speed_*`                      |
+| Mandos IPC                     | `tsw_ipc_bus` + probe Lua            | Preferido frente a teclado                |
+| P1 frenado                     | `braking/v2/` → `SpeedDecider`       | Sin `archive/braking_v1/`                 |
+| RELEASE cartel+andén           | `v2/coordinator.py` + `v2/policy.py` | Política TSW (D5)                         |
+| `station_eta` al plan          | `next_stop_arrival` → `station_plan` | No implica holgura ON                     |
+| Horario HUD en GUI             | `hud_timetable.py`                   | Llegada/salida validado                   |
+| Gradiente probe                | `gradient_pct` GetData               | Una fuente; learner elige celda (§2 PLAN) |
+| Un cartel en probe             | `dist_limit_cm` / `next_limit_ms`    | **Sin** lim2 (TArray revertido)           |
+| Ventana APPLY física           | `v2/physics.py`                      | [BRAKE_V2.md](BRAKE_V2.md)                |
+| FSM puertas Lua/DMI            | `governor_station.py`                | Sin OCR                                   |
+| Spawn / DEPARTING / B1 puertas | `governor_station` + policy          | 2026-08-28                                |
+| Cartel lejano aware            | `command_from_target` + `physics.py` | No APPLY @ 2+ mi                          |
 
 ### Siguiente trabajo
 
@@ -78,11 +78,11 @@ puertas, `odo_m`, `brake_cyl_bar` (P1 no usa cilindro §2), IPC ack.
 
 La pestaña **Planning** y el checkbox **Holgura de horario** no son lo mismo.
 
-| Superficie | Holgura OFF (defecto) | Holgura ON |
-| --- | --- | --- |
-| GUI Planning: llegada/salida, tabla | Sigue | Igual |
-| `station_eta` → P1 (`p1eta=`) | Sí se pasa | Igual |
-| Perfil frenado andén | ×1 | Coast / tarde (P-A) |
+| Superficie                          | Holgura OFF (defecto) | Holgura ON          |
+| ----------------------------------- | --------------------- | ------------------- |
+| GUI Planning: llegada/salida, tabla | Sigue                 | Igual               |
+| `station_eta` → P1 (`p1eta=`)       | Sí se pasa            | Igual               |
+| Perfil frenado andén                | ×1                    | Coast / tarde (P-A) |
 
 `schedule_slack=False` por defecto. Reloj = **PC** hasta [TimeOfDay](../reference/TIMEOFDAY_API.md)
 (D9).
@@ -108,20 +108,20 @@ P1 apagado en STOPPED / DEPARTING. Detalle histórico en bitácora.
 
 Arquitectura: [BRAKE_V2.md](BRAKE_V2.md).
 
-| Pieza | Ruta |
-| --- | --- |
-| Decisión | `speed_decider.py` → `BrakeCoordinatorV2.evaluate()` |
-| Mandos | `handle_controller.py` ← `BrakeCommand` |
-| Física | `governor_physics.py` → `v2/physics.py` |
-| Horario parada | `next_stop_arrival` → `station_plan.py` |
+| Pieza          | Ruta                                                 |
+| -------------- | ---------------------------------------------------- |
+| Decisión       | `speed_decider.py` → `BrakeCoordinatorV2.evaluate()` |
+| Mandos         | `handle_controller.py` ← `BrakeCommand`              |
+| Física         | `governor_physics.py` → `v2/physics.py`              |
+| Horario parada | `next_stop_arrival` → `station_plan.py`              |
 
-| Campo log | Significado |
-| --- | --- |
-| `p1dbg` | SPEED_LIMIT, RELEASE, `p1off:STOPPED`, … |
-| `fsm=` | APPROACHING / STOPPED / DEPARTING |
-| `uni=Y` / `gap=` | Cartel+andén unificado |
-| `p1eta=` | Hora llegada al plan; **no** = holgura ON |
-| `arr` / `dep` / `sched` | Claves log horario HUD |
+| Campo log               | Significado                               |
+| ----------------------- | ----------------------------------------- |
+| `p1dbg`                 | SPEED_LIMIT, RELEASE, `p1off:STOPPED`, …  |
+| `fsm=`                  | APPROACHING / STOPPED / DEPARTING         |
+| `uni=Y` / `gap=`        | Cartel+andén unificado                    |
+| `p1eta=`                | Hora llegada al plan; **no** = holgura ON |
+| `arr` / `dep` / `sched` | Claves log horario HUD                    |
 
 ### Señales (estado técnico)
 
@@ -136,12 +136,12 @@ Implementación → [v2/PLAN_V2.md](../v2/PLAN_V2.md) fase 4.
 
 ## Lectura vs escritura
 
-| Capa | Fuente | HTTP |
-| --- | --- | --- |
-| Tick: vel, mandos, cartel, gradiente, puertas, odo | Probe → GetData | No |
-| Mandos | SendCommand.txt IPC | No (mandos) |
-| Planning paradas / horario | HTTP + `tsw_hud.db` | Sí (~2 s) |
-| TimeOfDay | HTTP poll lento | Sí (D9) |
+| Capa                                               | Fuente              | HTTP        |
+| -------------------------------------------------- | ------------------- | ----------- |
+| Tick: vel, mandos, cartel, gradiente, puertas, odo | Probe → GetData     | No          |
+| Mandos                                             | SendCommand.txt IPC | No (mandos) |
+| Planning paradas / horario                         | HTTP + `tsw_hud.db` | Sí (~2 s)   |
+| TimeOfDay                                          | HTTP poll lento     | Sí (D9)     |
 
 **No** HTTP para señales en el tick (§3). **No** HTTP para mandos si probe activo.
 
@@ -149,10 +149,10 @@ Implementación → [v2/PLAN_V2.md](../v2/PLAN_V2.md) fase 4.
 
 ## DynamicHUD (no usar en producción)
 
-| | |
-| --- | --- |
+| ------ | ----------------------------------------------------------- |
+| ------ | ----------------------------------------------------------- |
 | **Sí** | Plantilla UE4SS; referencia `HUD_Get*` / `GetDriverAidData` |
-| **No** | No es el probe de producción; no exporta IPC |
+| **No** | No es el probe de producción; no exporta IPC                |
 
 **TelemetryProbeMod** es el fork de lectura/escritura IPC. DynamicHUD **desactivado** (`mods.txt :
 0`,
@@ -164,11 +164,11 @@ sin `enabled.txt` en `DynamicHUDMod`).
 
 Validado ~20 Hz. **No tocar** salvo regresión.
 
-| Regla | Detalle |
-| --- | --- |
-| Sin caché velocidad | Cada tick lee GetData |
-| Planning aparte | No mezclar con lectura speed |
-| Tests | `test_speed_*`, `test_tsw_ue4ss_reader.py` |
+| Regla               | Detalle                                    |
+| ------------------- | ------------------------------------------ |
+| Sin caché velocidad | Cada tick lee GetData                      |
+| Planning aparte     | No mezclar con lectura speed               |
+| Tests               | `test_speed_*`, `test_tsw_ue4ss_reader.py` |
 
 ---
 
@@ -207,10 +207,10 @@ Probe `gradient_pct` ~20 Hz. Learner elige celda; con `using_learned` no doble `
 
 ### Siguiente (con medición §4.1)
 
-| Campo | Para qué | Ref. |
-| --- | --- | --- |
-| `signal_red` + `signal_dist_cm` | P1 rojo | C1 §3 |
-| `is_slipping` (si F9 estable) | Slip → −1 muesca | §2 fase 1 |
+| Campo                           | Para qué         | Ref.      |
+| ------------------------------- | ---------------- | --------- |
+| `signal_red` + `signal_dist_cm` | P1 rojo          | C1 §3     |
+| `is_slipping` (si F9 estable)   | Slip → −1 muesca | §2 fase 1 |
 
 ### Congelado / no tick (PLAN §2)
 
@@ -236,12 +236,12 @@ IPC: `%TEMP%\TSW6Bridge\GetData.txt` — [CANAL_CONTROL.md](../CANAL_CONTROL.md)
 
 ## Criterios MVP (canal — snapshot)
 
-| # | Criterio | Estado |
-| --- | --- | --- |
-| 1–5 | Hz, IPC, P1 límite+estación, mandos | ✅ |
-| 6 | Spawn/salida andén | Validar en sesión (transversal) |
-| 7 | Señal rojo | v2 pasos 4–5 (C1) |
-| 8 | Holgura + TimeOfDay | v2 paso 8 (D9) o OFF |
+| #   | Criterio                            | Estado                          |
+| --- | ----------------------------------- | ------------------------------- |
+| 1–5 | Hz, IPC, P1 límite+estación, mandos | ✅                              |
+| 6   | Spawn/salida andén                  | Validar en sesión (transversal) |
+| 7   | Señal rojo                          | v2 pasos 4–5 (C1)               |
+| 8   | Holgura + TimeOfDay                 | v2 paso 8 (D9) o OFF            |
 
 Detalle de validación → [v2 §
 Transversal](../v2/PLAN_V2.md#transversal--revisión-tests-y-mantenimiento).
@@ -250,11 +250,11 @@ Transversal](../v2/PLAN_V2.md#transversal--revisión-tests-y-mantenimiento).
 
 ## Referencias rápidas
 
-| Recurso | Ruta |
-| --- | --- |
+| Recurso   | Ruta                                      |
+| --------- | ----------------------------------------- |
 | Mod probe | `mods/TelemetryProbeMod/Scripts/main.lua` |
-| IPC | `%TEMP%\TSW6Bridge\` |
-| Plan | [v2/PLAN_V2.md](../v2/PLAN_V2.md) |
+| IPC       | `%TEMP%\TSW6Bridge\`                      |
+| Plan      | [v2/PLAN_V2.md](../v2/PLAN_V2.md)         |
 
 ---
 
@@ -267,16 +267,16 @@ IPC primero (`mandos=ipc`); teclado fallback; HTTP PATCH sin UE4SS. Detalle:
 
 ## Bitácora
 
-| Fecha | Qué | Resultado |
-| --- | --- | --- |
-| 2026-08-18 | Probe 323 | ~17 Hz; gradiente |
-| 2026-08-22 | Velocidad | Congelada ~20 Hz |
-| 2026-08-23 | HUD horario | `tsw_hud.db`, `car_stop_signs` |
-| 2026-08-24 | P1 v2 | Coordinator; llegada/salida GUI |
-| 2026-08-26 | FSM puertas | Lua/DMI |
-| 2026-08-28 | Andén / spawn | DEPARTING; B1 puertas |
-| 2026-08-29 | Cartel lejano | Aware vs APPLY |
-| 2026-08-29 | Docs v2 | PENDIENTE alineado [PLAN_V2](../v2/PLAN_V2.md); S-Lua; sin lim2/HTTP señal |
+| Fecha      | Qué           | Resultado                                                                  |
+| ---------- | ------------- | -------------------------------------------------------------------------- |
+| 2026-08-18 | Probe 323     | ~17 Hz; gradiente                                                          |
+| 2026-08-22 | Velocidad     | Congelada ~20 Hz                                                           |
+| 2026-08-23 | HUD horario   | `tsw_hud.db`, `car_stop_signs`                                             |
+| 2026-08-24 | P1 v2         | Coordinator; llegada/salida GUI                                            |
+| 2026-08-26 | FSM puertas   | Lua/DMI                                                                    |
+| 2026-08-28 | Andén / spawn | DEPARTING; B1 puertas                                                      |
+| 2026-08-29 | Cartel lejano | Aware vs APPLY                                                             |
+| 2026-08-29 | Docs v2       | PENDIENTE alineado [PLAN_V2](../v2/PLAN_V2.md); S-Lua; sin lim2/HTTP señal |
 
 ---
 

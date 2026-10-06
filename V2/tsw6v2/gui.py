@@ -34,6 +34,10 @@ from tsw6v2.session_log import (
     save_learner_if_dirty,
     session_profile_note,
 )
+from tsw6v2.vehicle_package import (
+    is_generic_cli_route_label,
+    session_route_cli_slug_for_probe,
+)
 
 _UI_MS = 50
 _AI_JSON_MS = 500
@@ -248,6 +252,9 @@ class AgentGuiApp:
         self._log_path = log_path
         self._session_trace_mode = session_trace_mode
         self._session_route = session_route
+        self._session_route_user_set = not is_generic_cli_route_label(session_route)
+        self._session_route_adapted = False
+        self._session_log_deadline: Optional[float] = None
         self._session: Optional[SessionRecorder] = None
         self._profile_path_override = profile_path
         self._open_html_on_close = open_html_on_close
@@ -468,10 +475,40 @@ class AgentGuiApp:
             return ""
         return self.loop.station_planning_channel
 
-    def _ensure_session_recorder(self) -> Optional[SessionRecorder]:
+    @staticmethod
+    def _snap_vehicle(snap: AgentSnapshot) -> str:
+        return str(getattr(snap, "vehicle", "") or "").strip()
+
+    def _maybe_adapt_session_route(self, snap: AgentSnapshot) -> None:
+        if self._session_route_adapted or self._session_route_user_set:
+            return
+        vehicle = self._snap_vehicle(snap)
+        if not vehicle or vehicle == "?":
+            return
+        slug = session_route_cli_slug_for_probe(vehicle)
+        self._session_route_adapted = True
+        if not slug or slug == self._session_route:
+            return
+        self._session_route = slug
+        self._push_event(f"log ruta CLI → {slug} ({vehicle})")
+
+    def _session_logging_ready(self, snap: AgentSnapshot) -> bool:
+        if self._session is not None:
+            return True
+        vehicle = self._snap_vehicle(snap)
+        if vehicle and vehicle != "?":
+            return True
+        if self._session_log_deadline is None:
+            self._session_log_deadline = time.monotonic() + 3.0
+        return time.monotonic() >= self._session_log_deadline
+
+    def _ensure_session_recorder(self, snap: AgentSnapshot) -> Optional[SessionRecorder]:
         if self._log_path is None:
             return None
+        self._maybe_adapt_session_route(snap)
         if self._session is None:
+            if not self._session_logging_ready(snap):
+                return None
             self._session = make_session_recorder(
                 self._log_path,
                 self.loop,
@@ -486,7 +523,7 @@ class AgentGuiApp:
         while self._running:
             t0 = time.perf_counter()
             snap = self.loop.step()
-            recorder = self._ensure_session_recorder()
+            recorder = self._ensure_session_recorder(snap)
             if recorder is not None:
                 recorder.record(snap)
             with self._lock:
@@ -511,6 +548,8 @@ class AgentGuiApp:
         if prev is None:
             if cur.connected:
                 self._push_event(f"tick {cur.telemetry.tick}: probe conectado")
+            return
+        if not cur.connected:
             return
         pt, ct = prev.p1, cur.p1
         if pt.layer != ct.layer or pt.reason != ct.reason:
@@ -623,8 +662,11 @@ class AgentGuiApp:
             planning_source=plan_src,
             profile_path=profile,
         )
-        self._detect_events(self._last_dash, dash)
-        self._last_dash = dash
+        if dash.connected:
+            self._detect_events(self._last_dash, dash)
+            self._last_dash = dash
+        elif self._last_dash is not None:
+            dash = self._last_dash
         self._render_dashboard(dash)
         self._refresh_ai_json(snap, dash)
 
@@ -642,7 +684,13 @@ class AgentGuiApp:
     def _on_close(self) -> None:
         self._running = False
         self.loop.shutdown()
-        recorder = self._ensure_session_recorder()
+        with self._lock:
+            last = self._last
+        recorder = (
+            self._ensure_session_recorder(last)
+            if last is not None
+            else self._session
+        )
         if recorder is not None:
             self._close_result = recorder.finish(open_html=self._open_html_on_close)
         self._learner_save_msg = save_learner_if_dirty(

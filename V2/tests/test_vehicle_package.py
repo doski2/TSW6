@@ -10,28 +10,44 @@ from tsw6v2.constants import B1_NOTCH, NEUTRAL_NOTCH
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand, brake_applied_from_probe
 from tsw6v2.vehicle_package import (
+    apply_vehicle_brake_actuator,
     clear_package_cache,
     combined_notch_to_ipc_value,
     enrich_brake_command_actuator,
     profile_brake_fraction,
     resolve_vehicle_package,
+    session_route_cli_slug_for_probe,
+    station_planning_trusted,
     uses_mc_analog_ipc,
     vehicle_class_matches,
 )
 
 
+def test_station_planning_trusted_m3a_vs_cross_city() -> None:
+    m3a = "RVM_NYH_MNR_M3a-A_C"
+    assert station_planning_trusted(m3a, "Grand Central Corridor (MNR)")
+    assert not station_planning_trusted(m3a, "Birmingham Cross-City")
+    assert station_planning_trusted(m3a, None)
+
+
 def test_vehicle_class_matches_m3a() -> None:
-    klass = "RVM_NYH_MNR_M3a-B_C"
-    probe = f"{klass}_2147478415"
-    assert vehicle_class_matches(probe, klass)
+    klass = "RVM_NYH_MNR_M3a"
+    assert vehicle_class_matches("RVM_NYH_MNR_M3a-A_C", klass)
+    assert vehicle_class_matches("RVM_NYH_MNR_M3a-B_C_2147478415", klass)
 
 
 def test_resolve_m3a_package_from_repo() -> None:
     clear_package_cache()
+    for probe in ("RVM_NYH_MNR_M3a-B_C", "RVM_NYH_MNR_M3a-A_C"):
+        pkg = resolve_vehicle_package(probe)
+        assert pkg is not None
+        assert pkg["vehicle_id"] == "m3a_mnr"
     pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
-    assert pkg is not None
-    assert pkg["vehicle_id"] == "m3a_mnr"
+    assert session_route_cli_slug_for_probe("RVM_NYH_MNR_M3a-B_C") == "gct-mnr"
     assert uses_mc_analog_ipc(pkg)
+    from tsw6v2.vehicle_package import station_platform_tail_m
+
+    assert station_platform_tail_m(pkg) == 85.0
     assert profile_brake_fraction(pkg, "neutral") == 0.72
     b1 = profile_brake_fraction(pkg, "B1")
     assert b1 is not None and b1 < 0.72
@@ -132,6 +148,40 @@ def test_mc_service_brake_fraction_interpolates_session_215905() -> None:
     assert b1 is not None and mid is not None and full is not None
     assert neu > b1 > mid > full == b3
     assert abs(b1 - (neu - (neu - b3) / 3.0)) < 0.02
+
+
+def test_mc_ipc_neutral_hold_and_traction_helpers_m3a() -> None:
+    from tsw6v2.vehicle_package import (
+        mc_has_traction_above_neutral,
+        mc_ipc_target_is_neutral_hold,
+    )
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    assert mc_ipc_target_is_neutral_hold(pkg, 0.72)
+    assert not mc_ipc_target_is_neutral_hold(pkg, 0.64)
+    snap_pwr = ProbeSnapshot.from_dict(
+        {"power": 1.0, "mc_input": 0.85, "vehicle": "RVM_NYH_MNR_M3a-B_C"}
+    )
+    snap_idle = ProbeSnapshot.from_dict(
+        {"power": 0.0, "mc_input": 0.72, "vehicle": "RVM_NYH_MNR_M3a-B_C"}
+    )
+    assert mc_has_traction_above_neutral(snap_pwr, pkg)
+    assert not mc_has_traction_above_neutral(snap_idle, pkg)
+
+
+def test_apply_actuator_coast_throttle_neutral_fraction_m3a() -> None:
+    from tsw6v2.command import BrakeCommand
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    cmd = apply_vehicle_brake_actuator(
+        BrakeCommand(kind="COAST_THROTTLE", target_notch=4),
+        pkg,
+    )
+    assert cmd.target_fraction == 0.72
 
 
 def test_m3a_brake_input_below_neutral_not_power_side_session_215007() -> None:

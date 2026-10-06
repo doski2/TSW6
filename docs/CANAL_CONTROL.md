@@ -12,13 +12,13 @@ documentado; sin cablear.
 
 ## Resumen
 
-| Capa | Rol v2 | Estado |
-| --- | --- | --- |
-| **Probe Lua** | Solo I/O: escribe `GetData.txt`, aplica `SendCommand.txt` | ✅ ~20 Hz Class 323 |
-| **Puente ficheros** | `%TEMP%\TSW6Bridge\` | ✅ producción |
-| **Python** | `TelemetryReader` + `AsyncCommandWriter` | ✅ |
-| **HTTP** | Planning (estaciones, geo, masa) — **no** mandos, **no** límites P1 con F7 | ✅ |
-| **SHM / sockets** | Sustituto del disco | ⏸ aplazado (ver abajo) |
+| Capa                | Rol v2                                                                     | Estado                 |
+| ------------------- | -------------------------------------------------------------------------- | ---------------------- |
+| **Probe Lua**       | Solo I/O: escribe `GetData.txt`, aplica `SendCommand.txt`                  | ✅ ~20 Hz Class 323    |
+| **Puente ficheros** | `%TEMP%\TSW6Bridge\`                                                       | ✅ producción          |
+| **Python**          | `TelemetryReader` + `AsyncCommandWriter`                                   | ✅                     |
+| **HTTP**            | Planning (estaciones, geo, masa) — **no** mandos, **no** límites P1 con F7 | ✅                     |
+| **SHM / sockets**   | Sustituto del disco                                                        | ⏸ aplazado (ver abajo) |
 
 Código: `mods/TelemetryProbeMod/Scripts/main.lua`, `tsw6/telemetry/tsw_ue4ss_reader.py`,
 `tsw6/telemetry/control_channel.py`, `tsw6/telemetry/tsw_ipc_bus.py`.
@@ -29,12 +29,12 @@ Código: `mods/TelemetryProbeMod/Scripts/main.lua`, `tsw6/telemetry/tsw_ue4ss_re
 
 El mod **no llama a HTTP**. El puente es la carpeta `%TEMP%\TSW6Bridge\`:
 
-| Archivo | Quién escribe | Quién lee | Contenido | |
-| --- | --- | --- | --- | --- |
-| `GetData.txt` | **Lua** (~20 Hz) | **Python** | Telemetría — **overwrite** cada ciclo (`io.open` `"w"`) | |
-| `SendCommand.txt` | **Python** | **Lua** | Una línea: `ControlName:cmd:cmd_id` (p. ej. `PowerBrakeHandle:0.3750:42`) | |
-| `TSW6ApplyCommands.flag` | **Python** | **Lua** | Hay mandos armados | |
-| `SendCommandAck.txt` | **Lua** | **Python** | `ControlName:cmd:ok\ | fail:cmd_id` |
+| Archivo                  | Quién escribe    | Quién lee  | Contenido                                                                 |              |
+| ------------------------ | ---------------- | ---------- | ------------------------------------------------------------------------- | ------------ |
+| `GetData.txt`            | **Lua** (~20 Hz) | **Python** | Telemetría — **overwrite** cada ciclo (`io.open` `"w"`)                   |              |
+| `SendCommand.txt`        | **Python**       | **Lua**    | Una línea: `ControlName:cmd:cmd_id` (p. ej. `PowerBrakeHandle:0.3750:42`) |              |
+| `TSW6ApplyCommands.flag` | **Python**       | **Lua**    | Hay mandos armados                                                        |              |
+| `SendCommandAck.txt`     | **Lua**          | **Python** | `ControlName:cmd:ok\                                                      | fail:cmd_id` |
 
 Lua **no** escribe mandos en el puente: los **recibe**, aplica en UE (`SetCurrentOutputValue` en
 323)
@@ -61,46 +61,47 @@ D2](v2/PLAN_V2.md#d2--schema-getdata)):
 
 ### Campos en producción (probe escribe hoy)
 
-| Clave | Tipo | Origen Lua | Uso Python |
-| --- | --- | --- | --- |
-| `seq` | int | contador tick | stale / freeze |
-| `speed_ms` | float | HUD | P1, física |
-| `power` | float | HUD | tracción |
-| `power_neg` | 0/1 | HUD | tracción |
-| `handle_notch` | int | HUD Power derivado | legacy; preferir `lever_notch` |
-| `lever_notch` | int | palanca real | control, ACK match |
-| `last_cmd_id` | int | último IPC aplicado | correlación cola |
-| `last_ack_ok` | 0/1 | resultado último mando | diagnóstico |
-| `train_brake` | float | cabina | freight / display |
-| `loco_brake` | float | cabina | freight |
-| `dyn_brake` | float | cabina | freight |
-| `accel_ms2` | float | física | display |
-| `brake_cyl_bar` | float | Simulation (323: `?`); candidato HUD gauge §2 | learner (fase D); ver [PLAN_V2 §2](v2/PLAN_V2.md) |
-| `max_speed_ms` | float | HUD | display |
-| `speed_limit_ms` | float | DriverAid escalar | límite **vigente** |
-| `gradient_pct` | float | DriverAid | `physics.py` |
-| `vehicle` | string | clase UE | paquete G-B |
-| `dist_limit_cm` | float | 1.º cartel adelante | P1 `limit_brake` |
-| `next_limit_ms` | float | mph del 1.º cartel | P1 `limit_brake` |
-| `odo_m` | float | odómetro | C.3a, estaciones |
-| `doors_telem` | 0/1 | telemetría | FSM (opcional) |
-| `doors_dmi` | 0/1 | DMI | FSM puertas |
-| `signal_red` | 0/1 | `extract_signal_red` — enum 2 o Stop/DANGER/RED; fallback `nextSignals[0]` | P1 emergencia hoy; plan gradual paso 5 |
-| `signal_dist_cm` | float | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1** | Con `signal_red=1` |
-| `is_slipping` | 0/1 | `HUD_GetIsSlipping` | Log 9b-a; handler 9b-b pendiente |
-| `traction_locked` | 0/1 | `HUD_GetIsTractionLocked` | Opcional con slip |
-| `mc_input` | float | `MasterController.InputValue` (MC / IrregularLever) | Feedback IPC MC; ver [PLAN_ACTUACION_MC](v2/PLAN_ACTUACION_MC.md) |
+| Clave             | Tipo   | Origen Lua                                                                                | Uso Python                                                        |
+| ----------------- | ------ | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `seq`             | int    | contador tick                                                                             | stale / freeze                                                    |
+| `speed_ms`        | float  | HUD                                                                                       | P1, física                                                        |
+| `power`           | float  | HUD                                                                                       | tracción                                                          |
+| `power_neg`       | 0/1    | HUD                                                                                       | tracción                                                          |
+| `handle_notch`    | int    | HUD Power derivado                                                                        | legacy; preferir `lever_notch`                                    |
+| `lever_notch`     | int    | palanca real                                                                              | control, ACK match                                                |
+| `last_cmd_id`     | int    | último IPC aplicado                                                                       | correlación cola                                                  |
+| `last_ack_ok`     | 0/1    | resultado último mando                                                                    | diagnóstico                                                       |
+| `train_brake`     | float  | cabina                                                                                    | freight / display                                                 |
+| `loco_brake`      | float  | cabina                                                                                    | freight                                                           |
+| `dyn_brake`       | float  | cabina                                                                                    | freight                                                           |
+| `accel_ms2`       | float  | física                                                                                    | display                                                           |
+| `brake_cyl_bar`   | float  | Simulation (323: `?`); candidato HUD gauge §2                                             | learner (fase D); ver [PLAN_V2 §2](v2/PLAN_V2.md)                 |
+| `max_speed_ms`    | float  | HUD                                                                                       | display                                                           |
+| `speed_limit_ms`  | float  | DriverAid escalar                                                                         | límite **vigente**                                                |
+| `gradient_pct`    | float  | DriverAid                                                                                 | `physics.py`                                                      |
+| `vehicle`         | string | clase UE                                                                                  | paquete G-B                                                       |
+| `dist_limit_cm`   | float  | 1.º cartel adelante                                                                       | P1 `limit_brake`                                                  |
+| `next_limit_ms`   | float  | mph del 1.º cartel                                                                        | P1 `limit_brake`                                                  |
+| `odo_m`           | float  | odómetro                                                                                  | C.3a, estaciones                                                  |
+| `doors_telem`     | 0/1    | telemetría                                                                                | FSM (opcional)                                                    |
+| `doors_dmi`       | 0/1    | DMI                                                                                       | FSM puertas                                                       |
+| `signal_red`      | 0/1    | `extract_signal_red` — enum 2 o Stop/DANGER/RED; fallback `nextSignals[0]`                | P1 emergencia hoy; plan gradual paso 5                            |
+| `signal_dist_cm`  | float  | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1**                                       | Con `signal_red=1`                                                |
+| `is_slipping`     | 0/1    | `HUD_GetIsSlipping`                                                                       | Log 9b-a; handler 9b-b pendiente                                  |
+| `traction_locked` | 0/1    | `HUD_GetIsTractionLocked`                                                                 | Opcional con slip                                                 |
+| `mc_input`        | float  | `MasterController.CurrentInputValue` (0..1; props UE, sin `GetCurrentInputValue` en tick) | Feedback IPC MC; ver [PLAN_ACTUACION_MC](v2/PLAN_ACTUACION_MC.md) |
+| `amps`            | float  | `HUD_GetAmmeter` → `Amps`                                                                 | Log / estudio L0.6f; no regla P1 (probe build ≥ `20261006a`)      |
 
 ### Planning Python (no va en GetData)
 
 Estado interno en `tsw_telemetry_source` — el probe **no** escribe estos campos en
 `GetData.txt` (~20 Hz innecesario para masa).
 
-| Campo | Canal | Plan |
-| --- | --- | --- |
-| `mass_kg` | HTTP `CurrentFormation/0/Simulation/ClampPowerInput.Mass` | Paso **9** F-B — poll arranque + 5 min |
+| Campo         | Canal                                                                                              | Plan                                             |
+| ------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `mass_kg`     | HTTP `CurrentFormation/0/Simulation/ClampPowerInput.Mass`                                          | Paso **9** F-B — poll arranque + 5 min           |
 | `mass_factor` | ~~`mass_kg / mass_ref`~~ **no usar en frenado** (F-B off; conteo 3 vs 6 coches no cuadra con HTTP) | `physics.py` — siempre 1.0 hasta nueva evidencia |
-| `mass_ref_kg` | 1.ª lectura OK o semilla G-B | Evita doble conteo con learner |
+| `mass_ref_kg` | 1.ª lectura OK o semilla G-B                                                                       | Evita doble conteo con learner                   |
 
 Evidencia lab: `data/lab_exports/exports/20260830T213100Z/` (~45 550 kg). Detalle:
 [PLAN_V2 §2 F-B](v2/PLAN_V2.md).
@@ -121,14 +122,14 @@ Evidencia lab: `data/lab_exports/exports/20260830T213100Z/` (~45 550 kg). Deta
 
 ## Contrato SendCommand / ACK {#contrato-ipc}
 
-| Pieza | Regla |
-| --- | --- |
-| Formato mando | `NombreUE:valor_normalizado:cmd_id` — un mando por línea |
-| Escala 323 | `cmd` 0..1 → muesca destino; Lua un paso HUD ±1 hacia destino |
-| Actuador 323 | `SetCurrentOutputValue(muesca − 4)` — ver histórico B.7 |
-| Cola Python | `AsyncCommandWriter` — reassert hasta ack (~120 ms adaptativo, 3 reintentos) |
-| Mandos HTTP | **Fuera** producción 323; teclado A/D solo fallback fuera P1 si ACK fail |
-| Agente v2 (`V2/tsw6v2/`) | **Mismo** puente; no segundo canal sin decisión |
+| Pieza                    | Regla                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| Formato mando            | `NombreUE:valor_normalizado:cmd_id` — un mando por línea                     |
+| Escala 323               | `cmd` 0..1 → muesca destino; Lua un paso HUD ±1 hacia destino                |
+| Actuador 323             | `SetCurrentOutputValue(muesca − 4)` — ver histórico B.7                      |
+| Cola Python              | `AsyncCommandWriter` — reassert hasta ack (~120 ms adaptativo, 3 reintentos) |
+| Mandos HTTP              | **Fuera** producción 323; teclado A/D solo fallback fuera P1 si ACK fail     |
+| Agente v2 (`V2/tsw6v2/`) | **Mismo** puente; no segundo canal sin decisión                              |
 
 **Criterio sesión:** `loop_hz` ≥ 18, `ipc_ok` ≥ 95 %, `KEY=0` en P1, `last_ack_ok=1` en marcha.
 Detalle métricas y veredicto `SESIÓN CANAL`: [histórico § validación](
@@ -144,7 +145,10 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 - [x] Huecos C1 documentados (`signal_red`, `signal_dist_cm`)
 - [x] Hueco lim2 documentado (parser sí, Lua no)
 - [x] Huecos §2 documentados (`is_slipping`, masa F-B HTTP — **F-B off** tras conteo vagones)
-- [x] **9b-a** probe emite `is_slipping` (+ `traction_locked`) — handler P1 **9b-b** aplazado (lluvia/nieve)
+- [x] **9b-a** probe emite `is_slipping` (+ `traction_locked`) — handler P1 **9b-b** aplazado
+
+  (lluvia/nieve)
+
 - [ ] **9** poll masa HTTP (log opcional) — ~~`mass_factor` en `physics.py`~~ **descartado**
 - [ ] Revisión: Lua sin ritmo/cluster en tick (auditoría periódica `main.lua`)
 
@@ -153,7 +157,8 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 ```text
 ```
 
-**Estado D2:** contrato **documentado**; C1 y 9b-a en probe ✅; pendiente auditoría Lua hot path y campos futuros (lim2).
+**Estado D2:** contrato **documentado**; C1 y 9b-a en probe ✅; pendiente auditoría Lua hot path y
+campos futuros (lim2).
 
 ---
 
@@ -162,12 +167,12 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 Decisión 2026-08-28 (resumen; debate completo en
 [histórico](../archive/docs/CANAL_CONTROL_HISTORICO.md#plan-debate--rendimiento--canal-v2-2026-08-28)):
 
-| Opción | Decisión v2 |
-| --- | --- |
-| **A** — pulir tick Python, HTTP fuera del 20 Hz | ✅ hecho (Fase A) |
-| **B** — SHM / pipe binario | ⏸ solo si el **disco** es cuello tras A |
-| **C** — tick nativo Rust/C++ | ⏸ no ahora |
-| **D** — TypeScript | ❌ descartado |
+| Opción                                          | Decisión v2                             |
+| ----------------------------------------------- | --------------------------------------- |
+| **A** — pulir tick Python, HTTP fuera del 20 Hz | ✅ hecho (Fase A)                       |
+| **B** — SHM / pipe binario                      | ⏸ solo si el **disco** es cuello tras A |
+| **C** — tick nativo Rust/C++                    | ⏸ no ahora                              |
+| **D** — TypeScript                              | ❌ descartado                           |
 
 **Hechos:** probe Lua ~1 ms; hitch 2–3 s al **cargar** escenario = aceptado; objetivo **20 Hz
 estables**, no 50 Hz. Lim2/señales/GPS andén no son “canal más rápido” — son**campos nuevos** (D2).
@@ -189,14 +194,14 @@ C](../archive/docs/CANAL_CONTROL_HISTORICO.md#fase-c--planner-sincronizado-con-p
 
 ## Diagnóstico rápido {#diagnostico}
 
-| Síntoma | Causa probable |
-| --- | --- |
-| `seq` congelado | Bucle Python bloqueado o juego pausado/cerrado |
-| `telem_poll` < `loop_hz` | Normal: Lua ~17–20 Hz, Python puede leer más |
-| `ack_timeout` | Mod no cargado, timeout corto, o TSW sin foco |
-| `last_ack_ok=0` | Lua no movió HUD — ver `UE4SS.log`, F9 |
+| Síntoma                      | Causa probable                                       |
+| ---------------------------- | ---------------------------------------------------- |
+| `seq` congelado              | Bucle Python bloqueado o juego pausado/cerrado       |
+| `telem_poll` < `loop_hz`     | Normal: Lua ~17–20 Hz, Python puede leer más         |
+| `ack_timeout`                | Mod no cargado, timeout corto, o TSW sin foco        |
+| `last_ack_ok=0`              | Lua no movió HUD — ver `UE4SS.log`, F9               |
 | `dist_limit_cm` fijo @2495 m | Cartel DriverAid plano — C.3a activo si `odo` avanza |
-| `cf=N` / `match=N` | ACK o palanca no coincide con último `cmd_id` |
+| `cf=N` / `match=N`           | ACK o palanca no coincide con último `cmd_id`        |
 
 **Glosario completo** (`loop_hz`, `work_ms`, `cmd_q`, …):
 [histórico § glosario](../archive/docs/CANAL_CONTROL_HISTORICO.md#glosario-de-campos-en-log).
@@ -212,70 +217,77 @@ Código métricas: `tsw6/telemetry/channel_diagnostics.py`.
 
 ## Class 323 — actuador (referencia)
 
-| Dato | Valor |
-| --- | --- |
-| Objeto | `PowerBrakeHandle` (`IrregularLeverComponent`) |
-| UFunction | `SetCurrentOutputValue` (eje −4…+4 = muesca − 4) |
-| Build validado | `20260828a` — `test-ipc` PASS |
-| Escala HUD | 0=B4 … 4=costa … 8=P4 — tabla completa en [histórico B.7](../archive/docs/CANAL_CONTROL_HISTORICO.md#class-323-uk--ipc-validado-2026-08-27-1713) |
+| Dato           | Valor                                                                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Objeto         | `PowerBrakeHandle` (`IrregularLeverComponent`)                                                                                                   |
+| UFunction      | `SetCurrentOutputValue` (eje −4…+4 = muesca − 4)                                                                                                 |
+| Build validado | `20260828a` — `test-ipc` PASS                                                                                                                    |
+| Escala HUD     | 0=B4 … 4=costa … 8=P4 — tabla completa en [histórico B.7](../archive/docs/CANAL_CONTROL_HISTORICO.md#class-323-uk--ipc-validado-2026-08-27-1713) |
 
 ---
 
 ## M3a MNR — MasterController (analog, build `20261003b`)
 
-| Dato | Valor |
-| --- | --- |
-| Objeto resuelto | `MasterController` (alias IPC `PowerBrakeHandle`) |
-| Línea | `PowerBrakeHandle:0.7200:cmd_id` — **fracción 0.0–1.0** = `InputValue` |
-| Semántica Lua | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue` |
-| Python | Plan P1 en fases B1–B3 (lógica UK); **wire MC** = `brake_input` en `data/vehicles/<id>.json` (`neutral`, `B1`…`B3` → 0..1) vía `profile_brake_fraction` / `apply_vehicle_brake_actuator`; bucle `dispatch_to_input_fraction` |
-| Paquete | `brake_input` canónico; `uk_combined_notch_ipc` solo legado si falta `brake_input` |
-| Eje MC M3a | **FACT (215007Z):** `InputValue` **&gt; neutro (~0.72)** → tracción; freno servicio **&lt; neutro** (p. ej. B1≈0.64, B3≈0.27). No reutilizar índices de notch &gt; neutro del export. |
-| IPC gradual | `MC_IPC_FRACTION_STEP` (0.05/tick) + `mc_service_brake_fraction` (interp. neutro↔B3); feedback `probe_mc_input_fraction` — no usar `train_brake` HUD como InputValue (215905Z). |
-| Prueba campo | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat` |
-| Prueba unitaria | `V2/tests/test_mc_analog_ipc.py` |
+| Dato            | Valor                                                                                                                                                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Objeto resuelto | `MasterController` (alias IPC `PowerBrakeHandle`)                                                                                                                                                                            |
+| Línea           | `PowerBrakeHandle:0.7200:cmd_id` — **fracción 0.0–1.0** = `InputValue`                                                                                                                                                       |
+| Semántica Lua   | Si el lever es MC, **sin** peldaños 323: `SetCurrentInputValue` / `InputValue`                                                                                                                                               |
+| Python          | Plan P1 en fases B1–B3 (lógica UK); **wire MC** = `brake_input` en `data/vehicles/<id>.json` (`neutral`, `B1`…`B3` → 0..1) vía `profile_brake_fraction` / `apply_vehicle_brake_actuator`; bucle `dispatch_to_input_fraction` |
+| Paquete         | `brake_input` canónico; `uk_combined_notch_ipc` solo legado si falta `brake_input`                                                                                                                                           |
+| Eje MC M3a      | **FACT (215007Z):** `InputValue` **&gt; neutro (~0.72)** → tracción; freno servicio **&lt; neutro** (p. ej. B1≈0.64, B3≈0.27). No reutilizar índices de notch &gt; neutro del export.                                        |
+| IPC gradual     | `MC_IPC_FRACTION_STEP` (0.05/tick) + `mc_service_brake_fraction` (interp. neutro↔B3); feedback `probe_mc_input_fraction` — no usar `train_brake` HUD como InputValue (215905Z).                                              |
+| Prueba campo    | `install_ue4ss_probe.bat` → `V2\test_ipc_mc.bat`                                                                                                                                                                             |
+| Prueba unitaria | `V2/tests/test_mc_analog_ipc.py`                                                                                                                                                                                             |
 
-Misma línea física que 323; el probe elige modo por nombre del componente (**FACT:** código `ipc.lua` `is_mc_analog_ctrl`).
+Misma línea física que 323; el probe elige modo por nombre del componente (**FACT:** código
+`ipc.lua` `is_mc_analog_ctrl`).
 
-P1 L4 aire: paquete puede incluir `"brake_air": {"model": "master_controller"}` — no bloquea APPLY con umbral cilindro 323 (**FACT:** `V2/tsw6v2/brake_air_profile.py`).
+P1 L4 aire: paquete puede incluir `"brake_air": {"model": "master_controller"}` — no bloquea APPLY
+con umbral cilindro 323 (**FACT:** `V2/tsw6v2/brake_air_profile.py`).
 
-**RELEASE heredado (cartel/señal):** en MC no usar solo `lever_notch` UK — `brake_applied_from_probe()` (`command.py`) mira `train_brake` > neutro del paquete o `brake_cyl_bar` > ralentí.
+**RELEASE heredado (cartel/señal):** en MC no usar solo `lever_notch` UK —
+`brake_applied_from_probe()` (`command.py`) mira `train_brake` > neutro del paquete o
+`brake_cyl_bar` > ralentí.
 
 ### P1 — distancia a estación (planning HTTP)
 
 En `evaluate_p1_tick` (`decision.py`) conviven dos distancias desde el mismo planning:
 
-| Variable | Cuándo | Uso |
-| --- | --- | --- |
-| `station_dist_geo` | Siempre que planning devuelve metros > 0 | Señal (`signal_in_play`), RELEASE/COAST andén, bleed, `pick`, emergencia |
-| `station_dist` | Solo si `station_brake_enabled` (FSM no suprime plan STATION) | `evaluate_station_brake` / APPLY andén |
+| Variable           | Cuándo                                                        | Uso                                                                      |
+| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `station_dist_geo` | Siempre que planning devuelve metros > 0                      | Señal (`signal_in_play`), RELEASE/COAST andén, bleed, `pick`, emergencia |
+| `station_dist`     | Solo si `station_brake_enabled` (FSM no suprime plan STATION) | `evaluate_station_brake` / APPLY andén                                   |
 
-Si el FSM suprime el freno de estación (`DEPARTING`, etc.), `station_dist` queda `None` pero **`station_dist_geo` sigue activa** — evita tratar un rojo lejano como “en juego” solo porque no hay plan STATION (**FACT:** regresión sesión `20261003T202046Z`).
+Si el FSM suprime el freno de estación (`DEPARTING`, etc.), `station_dist` queda `None` pero
+**`station_dist_geo` sigue activa** — evita tratar un rojo lejano como “en juego” solo porque no hay
+plan STATION (**FACT:** regresión sesión `20261003T202046Z`).
 
-Palanca combinada UK para FSM y salida: `combined_lever_for_station_gate()`; en MC la tracción sale de `power`, no de `lever_notch` crudo.
+Palanca combinada UK para FSM y salida: `combined_lever_for_station_gate()`; en MC la tracción sale
+de `power`, no de `lever_notch` crudo.
 
 ---
 
 ## Orden de trabajo v2
 
-| Prioridad | Tarea | Ref |
-| --- | --- | --- |
-| 1 | Mantener contrato GetData al día (este doc) | D2 |
-| 2 | C1: `signal_red` + `signal_dist_cm` + fixture | PLAN_V2 §3, ejecución paso 4 |
-| 2b | 9b-a: `is_slipping` en probe (solo log; sin handler) | PLAN_V2 §2, sesión `213100Z` |
-| 2c | ~~9: masa F-B~~ log HTTP opcional; **sin** `mass_factor` | PLAN_V2 §2 — F-B off (3 coches / 45 550 kg vs 6 / 44 430 kg) |
-| 3 | Producto `V2/tsw6v2/` mismo puente | D1, §4.7 |
-| 4 | lim2 solo si tramo demuestra hueco | Fase 5 |
-| 5 | SHM solo tras medición disco | Histórico debate B |
+| Prioridad | Tarea                                                    | Ref                                                          |
+| --------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| 1         | Mantener contrato GetData al día (este doc)              | D2                                                           |
+| 2         | C1: `signal_red` + `signal_dist_cm` + fixture            | PLAN_V2 §3, ejecución paso 4                                 |
+| 2b        | 9b-a: `is_slipping` en probe (solo log; sin handler)     | PLAN_V2 §2, sesión `213100Z`                                 |
+| 2c        | ~~9: masa F-B~~ log HTTP opcional; **sin** `mass_factor` | PLAN_V2 §2 — F-B off (3 coches / 45 550 kg vs 6 / 44 430 kg) |
+| 3         | Producto `V2/tsw6v2/` mismo puente                       | D1, §4.7                                                     |
+| 4         | lim2 solo si tramo demuestra hueco                       | Fase 5                                                       |
+| 5         | SHM solo tras medición disco                             | Histórico debate B                                           |
 
 ---
 
 ## Enlaces
 
-| Documento | Contenido |
-| --- | --- |
-| [PLAN_V2.md §4.2](v2/PLAN_V2.md#42-ipc-archivo) | Semántica IPC en el plan producto |
-| [PENDIENTE_DYNAMICHUD.md](v1/PENDIENTE_DYNAMICHUD.md) | Probe Lua, F7, foco desarrollo |
-| [DRIVERINPUT_API.md](reference/DRIVERINPUT_API.md) | Catálogo mandos / perfiles |
-| [FLUJO_FRENOS.md](v1/FLUJO_FRENOS.md) | P1 y prioridad objetivos |
-| [ESTADO.md](v1/ESTADO.md) | Tablero global |
+| Documento                                             | Contenido                         |
+| ----------------------------------------------------- | --------------------------------- |
+| [PLAN_V2.md §4.2](v2/PLAN_V2.md#42-ipc-archivo)       | Semántica IPC en el plan producto |
+| [PENDIENTE_DYNAMICHUD.md](v1/PENDIENTE_DYNAMICHUD.md) | Probe Lua, F7, foco desarrollo    |
+| [DRIVERINPUT_API.md](reference/DRIVERINPUT_API.md)    | Catálogo mandos / perfiles        |
+| [FLUJO_FRENOS.md](v1/FLUJO_FRENOS.md)                 | P1 y prioridad objetivos          |
+| [ESTADO.md](v1/ESTADO.md)                             | Tablero global                    |

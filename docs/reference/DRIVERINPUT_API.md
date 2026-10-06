@@ -17,11 +17,11 @@ producción TSW6 prefiere **IPC** `SendCommand.txt` (menor latencia). HTTPAPI es
 
 ## Cómo leer este documento
 
-| Estado | Significado |
-| --- | --- |
-| ✅ En uso | Autopilot / IPC equivalente |
-| 🟡 Disponible | En dump; no cableado en Python |
-| ❌ No autopiloto | Puertas, MCB, auxiliares |
+| Estado           | Significado                    |
+| ---------------- | ------------------------------ |
+| ✅ En uso        | Autopilot / IPC equivalente    |
+| 🟡 Disponible    | En dump; no cableado en Python |
+| ❌ No autopiloto | Puertas, MCB, auxiliares       |
 
 **Escritura HTTP:**
 
@@ -57,11 +57,11 @@ Upstream (si la copia se queda vieja):
 
 <https://github.com/LiahMartens/tsw-controller-app/tree/main/shared-profiles>
 
-| Buscas | Archivo típico |
-| --- | --- |
-| Class 323 / Cross-City | `class323.tswprofile` |
-| Otra UK EMU | `class314.tswprofile`, `class170.tswprofile`, … |
-| Freight NA | `bnsf_sd40.tswprofile`, `acs64.tswprofile`, … |
+| Buscas                 | Archivo típico                                  |
+| ---------------------- | ----------------------------------------------- |
+| Class 323 / Cross-City | `class323.tswprofile`                           |
+| Otra UK EMU            | `class314.tswprofile`, `class170.tswprofile`, … |
+| Freight NA             | `bnsf_sd40.tswprofile`, `acs64.tswprofile`, …   |
 
 Cómo leer un `.tswprofile` (JSON):
 
@@ -79,16 +79,16 @@ Eso no sustituye `GetData.txt` / `SendCommand.txt`. Solo aclara **qué escribir*
 
 Raíz local: `C:\Users\doski\Desktop\investigacion tsw 6\tsw-controller-app-main\`
 
-| Carpeta / archivo | ¿Aprovechar? | Para qué |
-| --- | --- | --- |
-| `shared-profiles/` + `index.json` | **Sí** | Nombres y rangos por loco |
-| `PROFILE_EXPLAINER.md` | **Sí** (lectura) | `direct_control`, `{SIDE}`, `max_change_rate`, `steps` |
+| Carpeta / archivo                              | ¿Aprovechar?          | Para qué                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `shared-profiles/` + `index.json`              | **Sí**                | Nombres y rangos por loco                                                                                                                                                                                                                                                                                          |
+| `PROFILE_EXPLAINER.md`                         | **Sí** (lectura)      | `direct_control`, `{SIDE}`, `max_change_rate`, `steps`                                                                                                                                                                                                                                                             |
 | `tsw-controller-mod/ue4ss-mod/src/dllmain.cpp` | **Receta**, no el DLL | Escritura nativa: `FindVirtualHIDComponent` → `NotifyBeginInteraction` / `BeginChangingVHIDComponent` → `SetCurrentInputValue` (o `SetNormalisedInputValue` / `SetPushedState`) → `EndUsingVHIDComponent`. `{SIDE}` vía `SeatSide`. Algunos trenes: `CallUpdateFunctions`. Cab debugger: hook `InputValueChanged`. |
-| `go-app/` (app, cab debugger, joysticks) | **No** | Otro producto (HID → tren). No telemetría de vía. |
-| `socket-connection-lib/` | **No** | Su canal; el nuestro es `%TEMP%\TSW6Bridge\` |
-| `PROXY_MODE.md` + `api_control` HTTP | **No** | Palanca por `:31270`; en TSW6 ya descartado |
-| `tsc-controller-mod/` | Solo si TSC | Como Dastsc `SetControlValue`; no TSW |
-| `virtual-controller/` | **No** | App Android / HID virtual |
+| `go-app/` (app, cab debugger, joysticks)       | **No**                | Otro producto (HID → tren). No telemetría de vía.                                                                                                                                                                                                                                                                  |
+| `socket-connection-lib/`                       | **No**                | Su canal; el nuestro es `%TEMP%\TSW6Bridge\`                                                                                                                                                                                                                                                                       |
+| `PROXY_MODE.md` + `api_control` HTTP           | **No**                | Palanca por `:31270`; en TSW6 ya descartado                                                                                                                                                                                                                                                                        |
+| `tsc-controller-mod/`                          | Solo si TSC           | Como Dastsc `SetControlValue`; no TSW                                                                                                                                                                                                                                                                              |
+| `virtual-controller/`                          | **No**                | App Android / HID virtual                                                                                                                                                                                                                                                                                          |
 
 Si el 323 deja de responder a `SetCurrentOutputValue`, el probe ya prueba `SetCurrentInputValue`
 (mismo objeto palanca; `FindVirtualHIDComponent` no hace falta si el hijo existe). No instalar su
@@ -98,15 +98,15 @@ CppMod junto a TelemetryProbe.
 
 ## Mandos de tracción / freno (Class 323)
 
-| Control | `InputValue` | Estado | Notas |
-| --- | --- | --- | --- |
-| `PowerBrakeHandle` | ver peldaños abajo | ✅ IPC | Combinado UK · perfil Liah |
-| `Reverser` | ~0.667 | 🟡 | Teclas; no autopilot |
-| `EmergencyBrake_L` / `_C` | 0 | 🟡 | Distinto del notch 0 del combinado |
-| `ParkingBrake` | 0 | 🟡 | |
-| `RegenBrakes` | 1 | 🟡 | |
-| `Sander` | 0 | 🟡 | |
-| `MasterKey` | 1 | 🟡 | |
+| Control                   | `InputValue`       | Estado | Notas                              |
+| ------------------------- | ------------------ | ------ | ---------------------------------- |
+| `PowerBrakeHandle`        | ver peldaños abajo | ✅ IPC | Combinado UK · perfil Liah         |
+| `Reverser`                | ~0.667             | 🟡     | Teclas; no autopilot               |
+| `EmergencyBrake_L` / `_C` | 0                  | 🟡     | Distinto del notch 0 del combinado |
+| `ParkingBrake`            | 0                  | 🟡     |                                    |
+| `RegenBrakes`             | 1                  | 🟡     |                                    |
+| `Sander`                  | 0                  | 🟡     |                                    |
+| `MasterKey`               | 1                  | 🟡     |                                    |
 
 ### Peldaños `PowerBrakeHandle.InputValue` (Class 323)
 
@@ -116,17 +116,17 @@ Liah: `BeginChangingVHIDComponent` + `SetCurrentInputValue` con los peldaños de
 `SetInputValue()`, que crashea). En `UE4SS.log`: `PBH write OK via SetCurrentOutputValue` o `via
 VHID SetCurrentInputValue`.
 
-| Muesca HUD | InputValue | Significado |
-| --- | --- | --- |
-| 0 | −1.0 | Emergencia HUD (no está en el perfil Liah; 8 peldaños hardware) |
-| 1 | −0.6 | B3 |
-| 2 | −0.4 | B2 |
-| 3 | −0.2 | B1 |
-| 4 | 0 | Neutro |
-| 5 | 0.25 | P1 |
-| 6 | 0.5 | P2 |
-| 7 | 0.75 | P3 |
-| 8 | 1.0 | P4 |
+| Muesca HUD | InputValue | Significado                                                     |
+| ---------- | ---------- | --------------------------------------------------------------- |
+| 0          | −1.0       | Emergencia HUD (no está en el perfil Liah; 8 peldaños hardware) |
+| 1          | −0.6       | B3                                                              |
+| 2          | −0.4       | B2                                                              |
+| 3          | −0.2       | B1                                                              |
+| 4          | 0          | Neutro                                                          |
+| 5          | 0.25       | P1                                                              |
+| 6          | 0.5        | P2                                                              |
+| 7          | 0.75       | P3                                                              |
+| 8          | 1.0        | P4                                                              |
 
 Origen: `shared-profiles/class323.tswprofile` (`min` −0.6, `max` 1, `steps` −0.6…1). No calibrar
 cada tick con `NumberOfNotches`.
@@ -135,23 +135,23 @@ cada tick con `NumberOfNotches`.
 
 ## Seguridad y auxiliares (no autopiloto)
 
-| Grupo | Ejemplos | Estado |
-| --- | --- | --- |
-| Puertas | `DoorControlPanel_*`, `CabDoor_*` | ❌ FSM estación usa telemetría puertas |
-| MCB | `MCB_TrainBrake`, `MCB_Sand`, `MCB_LocalDoors*` | ❌ |
-| Pantógrafo | `PantographRaise` / `Lower` | ❌ |
-| Luces / bocina | `HeadlightsMarkerLights`, `Horn` | ❌ |
-| Limpiaparabrisas | `WiperControl`, `WiperBladesSet` | ❌ |
+| Grupo            | Ejemplos                                        | Estado                                 |
+| ---------------- | ----------------------------------------------- | -------------------------------------- |
+| Puertas          | `DoorControlPanel_*`, `CabDoor_*`               | ❌ FSM estación usa telemetría puertas |
+| MCB              | `MCB_TrainBrake`, `MCB_Sand`, `MCB_LocalDoors*` | ❌                                     |
+| Pantógrafo       | `PantographRaise` / `Lower`                     | ❌                                     |
+| Luces / bocina   | `HeadlightsMarkerLights`, `Horn`                | ❌                                     |
+| Limpiaparabrisas | `WiperControl`, `WiperBladesSet`                | ❌                                     |
 
 ---
 
 ## Relación con CurrentFormation
 
-| Lectura (HUD) | Escritura (DriverInput) |
-| --- | --- |
-| `HUD_GetPowerHandle` | `PowerBrakeHandle.InputValue` |
-| `HUD_GetTrainBrakeHandle` | (mismo eje en UK combined) |
-| `HUD_GetAcceleration` | — (solo lectura) |
+| Lectura (HUD)             | Escritura (DriverInput)       |
+| ------------------------- | ----------------------------- |
+| `HUD_GetPowerHandle`      | `PowerBrakeHandle.InputValue` |
+| `HUD_GetTrainBrakeHandle` | (mismo eje en UK combined)    |
+| `HUD_GetAcceleration`     | — (solo lectura)              |
 
 La simulación interna (`Simulation_BrakeInput_InputValue`) refleja el mando **después** de la
 palanca; no sustituye escribir `DriverInput`.
@@ -160,11 +160,11 @@ palanca; no sustituye escribir `DriverInput`.
 
 ## Referencias
 
-| Archivo | Relación |
-| --- | --- |
-| [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | Lectura HUD / física |
-| [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md) | Índice |
-| `tsw6/telemetry/tsw_ipc_bus.py` | Mandos preferidos |
-| `tsw6/telemetry/tsw_command_bus.py` | PATCH HTTP + peldaños Class 323 |
+| Archivo                                            | Relación                        |
+| -------------------------------------------------- | ------------------------------- |
+| [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md) | Lectura HUD / física            |
+| [TSW_HTTPAPI_INDEX.md](TSW_HTTPAPI_INDEX.md)       | Índice                          |
+| `tsw6/telemetry/tsw_ipc_bus.py`                    | Mandos preferidos               |
+| `tsw6/telemetry/tsw_command_bus.py`                | PATCH HTTP + peldaños Class 323 |
 
 #### Última revisión: 2026-08-28

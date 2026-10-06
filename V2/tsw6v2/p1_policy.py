@@ -27,7 +27,6 @@ from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.p1_station_gate import blocks_inherited_release_in_station_final_approach
 from tsw6v2.station_plan import DEFAULT_STATION_CFG, station_within_dwell_zone
 from tsw6v2.signal_plan import (
-    exit_signal_close_behind_platform,
     resolve_signal_dist_m,
     should_block_creep_release_from_signal,
     signal_deferred_to_station_at_platform,
@@ -324,11 +323,6 @@ def should_prefer_signal_over_station(
         max_station_dist_m=STATION_APPROACH_PRIORITY_M,
     ):
         return False
-    if exit_signal_close_behind_platform(
-        signal_dist_m=sig_dist,
-        station_dist_m=stn_dist,
-    ):
-        return True
     if signal_target.apply_now and not station_target.apply_now:
         return True
     if not signal_target.apply_now and station_target.apply_now:

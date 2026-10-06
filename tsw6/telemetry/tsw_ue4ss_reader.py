@@ -146,6 +146,8 @@ class ProbeSnapshot:
     # C1 (PLAN_V2 §3): solo si rojo adelante.
     signal_red: Optional[bool] = None
     signal_dist_cm: Optional[float] = None
+    mc_input: Optional[float] = None
+    amps: Optional[float] = None
     vehicle: str = "?"
 
     @classmethod
@@ -179,6 +181,8 @@ class ProbeSnapshot:
             traction_locked=data.get("traction_locked"),
             signal_red=data.get("signal_red"),
             signal_dist_cm=data.get("signal_dist_cm"),
+            mc_input=data.get("mc_input"),
+            amps=data.get("amps"),
             vehicle=str(data.get("vehicle") or "?"),
         )
 
@@ -285,12 +289,19 @@ def default_log_path() -> Path:
     return LOGS_DIR / f"ue4ss_probe_{stamp}.txt"
 
 
+def _csv_bool(val: Optional[bool]) -> str:
+    if val is None:
+        return ""
+    return "1" if val else "0"
+
+
 class SessionLogger:
     """Escribe CSV + línea cruda GetData.txt para compartir sesiones de diagnóstico."""
 
     _CSV_HEADER = (
         "time_s,seq,hz,speed_mph,limit_mph,max_mph,handle_notch,power,"
-        "train_brake,loco_brake,dyn_brake,accel_ms2,gradient_pct,vehicle"
+        "train_brake,loco_brake,dyn_brake,accel_ms2,gradient_pct,"
+        "amps,doors_telem,doors_dmi,mc_input,vehicle"
     )
 
     def __init__(self, path: Path, getdata_path: Path) -> None:
@@ -346,6 +357,10 @@ class SessionLogger:
             str(snap.dyn_brake if snap.dyn_brake is not None else ""),
             str(snap.accel_ms2 if snap.accel_ms2 is not None else ""),
             str(snap.gradient_pct if snap.gradient_pct is not None else ""),
+            str(snap.amps if snap.amps is not None else ""),
+            _csv_bool(snap.doors_telem),
+            _csv_bool(snap.doors_dmi),
+            str(snap.mc_input if snap.mc_input is not None else ""),
             snap.vehicle,
         ]
         self._f.write(",".join(row) + "\n")
@@ -374,6 +389,41 @@ def _fmt_mph(mps: Optional[float]) -> str:
         return "?"
     mph = mps * 2.236936
     return f"{mph:6.1f} mph"
+
+
+def _fmt_tri_bool(val: Optional[bool]) -> str:
+    """Mismo criterio que ``V2/tsw6v2/trace.format_investigate`` (doors=X/Y)."""
+    if val is None:
+        return "—"
+    return "1" if val else "0"
+
+
+def _fmt_amps_a(val: float) -> str:
+    return f"{val:+.0f}" if abs(val) >= 10 else f"{val:+.1f}"
+
+
+def _probe_has_doors_fields(snap: ProbeSnapshot) -> bool:
+    return (
+        snap.doors_telem is not None
+        or snap.doors_dmi is not None
+        or snap.doors_open is not None
+    )
+
+
+def _probe_extra_fields_line(snap: ProbeSnapshot) -> Optional[str]:
+    """Amps / puertas / MC — solo si el probe los emite en GetData."""
+    parts: list[str] = []
+    if snap.amps is not None:
+        parts.append(f"amps={_fmt_amps_a(snap.amps)} A")
+    if _probe_has_doors_fields(snap):
+        parts.append(
+            f"doors={_fmt_tri_bool(snap.doors_telem)}/{_fmt_tri_bool(snap.doors_dmi)}"
+        )
+    if snap.mc_input is not None:
+        parts.append(f"mc_input={snap.mc_input:.3f}")
+    if not parts:
+        return None
+    return "  " + "   ".join(parts)
 
 
 def _clear_screen() -> None:
@@ -440,6 +490,9 @@ def render_snapshot(
         f"   (power={snap.power if snap.power is not None else '?'}"
         f"  train={snap.train_brake if snap.train_brake is not None else '?'})",
     ]
+    extra = _probe_extra_fields_line(snap)
+    if extra:
+        lines.append(_c(extra, Fore.MAGENTA))
     return "\n".join(lines)
 
 

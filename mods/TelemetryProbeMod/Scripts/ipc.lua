@@ -47,19 +47,7 @@ local function get_direct_actor_lever(name, controller)
 end
 
 local function find_control_on_parent(parent, names)
-    if not parent then return nil end
-    local di = util.try_child(parent, "DriverInput") or util.try_child(parent, "DriverInputComponent")
-    if di then
-        for _, child_name in ipairs(names) do
-            local ctrl = util.try_child(di, child_name)
-            if util.ctrl_is_valid(ctrl) then return ctrl end
-        end
-    end
-    for _, child_name in ipairs(names) do
-        local ctrl = util.try_child(parent, child_name)
-        if util.ctrl_is_valid(ctrl) then return ctrl end
-    end
-    return nil
+    return util.find_named_control_on_parent(parent, names)
 end
 
 local function find_control(name, controller)

@@ -12,11 +12,11 @@
 
 ## Tracción: ¿solo HTTP? ¿y el HUD?
 
-| Señal | Lua F5 / probe tick | HTTP `-HTTPAPI` | 323 |
-| --- | --- | --- | --- |
-| `HUD_GetTractiveEffort` | ✅ lee, **siempre 0** | mismo UFunction, **0** | **Catálogo** — aguja no cableada |
-| `Simulation/Axle_*/Axle.NetTractiveEffort` | ❌ `traction_probe` vacío | ✅ **651 N** (`210515Z`) | **Solo catálogo HTTP** |
-| `HUD_GetAmmeter` → `Amps` | ✅ F5 | mismo valor que Lua | **Catálogo** — siempre 0 en 323 |
+| Señal                                      | Lua F5 / probe tick       | HTTP `-HTTPAPI`          | 323                              |
+| ------------------------------------------ | ------------------------- | ------------------------ | -------------------------------- |
+| `HUD_GetTractiveEffort`                    | ✅ lee, **siempre 0**     | mismo UFunction, **0**   | **Catálogo** — aguja no cableada |
+| `Simulation/Axle_*/Axle.NetTractiveEffort` | ❌ `traction_probe` vacío | ✅ **651 N** (`210515Z`) | **Solo catálogo HTTP**           |
+| `HUD_GetAmmeter` → `Amps`                  | ✅ F5                     | mismo valor que Lua      | **Catálogo** — siempre 0 en 323  |
 
 ---
 
@@ -33,13 +33,13 @@
 
 Para cada fila: hacer la maniobra → **F5** → copiar `hud_batch.json` → `hud_batch_<nombre>.json`.
 
-| Archivo destino | Maniobra | Esperamos en JSON |
-| --- | --- | --- |
-| `hud_batch_reposo.json` | Parado, release, power 0 | `Amps` ≈ 0 |
-| `hud_batch_traccion_p4.json` | ~30 mph, **P3–P4** sostenido | `Amps` **> 0** |
-| `hud_batch_retencion.json` | Retención / regen (power neg) | `Amps` **< 0** |
-| `hud_batch_dyn_brake.json` | Solo freno eléctrico (`dyn_brake`, sin B aire) | `Amps` vs `dyn_brake` |
-| `hud_batch_freno_b2.json` | B2–B3 sin power | `Amps` ≈ 0, gauges suben |
+| Archivo destino              | Maniobra                                       | Esperamos en JSON        |
+| ---------------------------- | ---------------------------------------------- | ------------------------ |
+| `hud_batch_reposo.json`      | Parado, release, power 0                       | `Amps` ≈ 0               |
+| `hud_batch_traccion_p4.json` | ~30 mph, **P3–P4** sostenido                   | `Amps` **> 0**           |
+| `hud_batch_retencion.json`   | Retención / regen (power neg)                  | `Amps` **< 0**           |
+| `hud_batch_dyn_brake.json`   | Solo freno eléctrico (`dyn_brake`, sin B aire) | `Amps` vs `dyn_brake`    |
+| `hud_batch_freno_b2.json`    | B2–B3 sin power                                | `Amps` ≈ 0, gauges suben |
 
 Comandos PowerShell (misma sesión, tras cada F5):
 
@@ -60,11 +60,11 @@ Plantilla `notas_sesion.md`:
 
 Genera tabla en consola y opcionalmente `amps_report.md`.
 
-| Veredicto script | Significado | Acción |
-| --- | --- | --- |
-| `variable` | Algún `Amps` ≠ 0 | Cablear `amps` en GetData (D2) |
-| `always_zero` | Todas las capturas 0 | Catálogo — usar `dyn_brake` + cilindro |
-| `no_captures` | Sin `hud_batch*.json` | Repetir protocolo F5 |
+| Veredicto script | Significado           | Acción                                 |
+| ---------------- | --------------------- | -------------------------------------- |
+| `variable`       | Algún `Amps` ≠ 0      | Cablear `amps` en GetData (D2)         |
+| `always_zero`    | Todas las capturas 0  | Catálogo — usar `dyn_brake` + cilindro |
+| `no_captures`    | Sin `hud_batch*.json` | Repetir protocolo F5                   |
 
 **Criterio éxito:** en tracción P4 o retención, `Amps` cambia de signo respecto a reposo y
 correlaciona con `power` / `dyn_brake`.

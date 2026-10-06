@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path, read_probe_file
+from tsw6v2.bridge.getdata import (
+    ProbeSnapshot,
+    default_getdata_path,
+    probe_identity_ok,
+    probe_snapshot_usable,
+    read_probe_file,
+)
 from tsw6v2.bridge.ipc_bus import purge_lua_commands
 from tsw6v2.command import (
     BrakeCommand,
@@ -17,7 +23,6 @@ from tsw6v2.command import (
 )
 from tsw6v2.constants import (
     AGENT_ACK_TIMEOUT_S,
-    DRIVER_OVERRIDE_COOLDOWN_S,
     MC_INPUT_VALUE_EPS,
     MC_IPC_FRACTION_STEP,
     MS_TO_MPH,
@@ -37,6 +42,7 @@ from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     combined_notch_to_ipc_value,
     probe_mc_input_fraction,
+    mc_ipc_target_is_neutral_hold,
     profile_neutral_fraction,
     resolve_vehicle_package,
     uses_mc_analog_ipc,
@@ -46,8 +52,15 @@ from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 from tsw6v2.p1_layers import classify_layer
 
 DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
-# Tracción HUD MC: asumir takeover si P1 sostiene InputValue (OBSERVATION M3a 20261003).
+# Takeover MC solo con objetivo freno (< neutro): ``power`` HUD por encima de este umbral.
 _MC_DRIVER_POWER_TAKEOVER = 0.05
+
+
+def agent_snapshot_probe_ok(snap: Optional[AgentSnapshot]) -> bool:
+    """Telemetría coherente (evita capas P1 falsas en GUI/JSONL)."""
+    if snap is None:
+        return False
+    return probe_identity_ok(snap.seq, snap.vehicle)
 
 
 @dataclass
@@ -59,6 +72,7 @@ class AgentSnapshot:
     train_brake: Optional[float] = None
     dyn_brake: Optional[float] = None
     mc_input: Optional[float] = None
+    amps: Optional[float] = None
     brake_cyl_bar: Optional[float] = None
     accel_ms2: Optional[float] = None
     gradient_pct: Optional[float] = None
@@ -101,7 +115,7 @@ class AgentSnapshot:
     fb_a_obs_ms2: Optional[float] = None
     fb_shortfall: bool = False
     fb_escalated: bool = False
-    driver_override_s: float = 0.0
+    driver_override_s: float = 0.0  # legacy jsonl/GUI; cooldown manual retirado
     learn_kind: Optional[str] = None
     learn_accepted: Optional[bool] = None
     learn_reject_reason: Optional[str] = None
@@ -156,6 +170,36 @@ class AgentSnapshot:
                 target_notch=target_notch,
                 target_input_value=target_input_value,
                 ipc_sent=ipc_sent,
+                limit_mph=limit_mph,
+                limit_dist_m=limit_dist_m,
+                effective_limit_mph=effective_limit_mph,
+                p1_phase=p1_phase,
+                p1_cmd=p1_cmd,
+                p1_dist_start_m=p1_dist_start_m,
+                p1_apply_now=p1_apply_now,
+                p1_detail=p1_detail,
+                p1_reason=p1_reason,
+                p1_handle=p1_handle,
+                p1_layer=p1_layer,
+                p1_target_kind=p1_target_kind,
+                station_dist_m=station_dist_m,
+                station_name=station_name,
+                service_name=service_name,
+                schedule_source=schedule_source,
+                station_eta=station_eta,
+                station_fsm=station_fsm,
+                ipc_cmd_id=ipc_cmd_id,
+                brake_fill_s=brake_fill_s,
+                brake_fill_n=brake_fill_n,
+                decel_observe_n=decel_observe_n,
+                fb_a_pred_ms2=fb_a_pred_ms2,
+                fb_a_obs_ms2=fb_a_obs_ms2,
+                fb_shortfall=fb_shortfall,
+                fb_escalated=fb_escalated,
+                driver_override_s=driver_override_s,
+                learn_kind=learn_kind,
+                learn_accepted=learn_accepted,
+                learn_reject_reason=learn_reject_reason,
             )
         mph = snap.speed_ms * MS_TO_MPH if snap.speed_ms is not None else None
         dist_m = (
@@ -171,6 +215,7 @@ class AgentSnapshot:
             train_brake=snap.train_brake,
             dyn_brake=snap.dyn_brake,
             mc_input=snap.mc_input,
+            amps=snap.amps,
             brake_cyl_bar=snap.brake_cyl_bar,
             accel_ms2=snap.accel_ms2,
             gradient_pct=snap.gradient_pct,
@@ -242,7 +287,6 @@ class AgentLoop:
     neutral_notch: int = NEUTRAL_NOTCH
     ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S
     post_ipc_sleep_s: float = 0.02
-    driver_override_cooldown_s: float = DRIVER_OVERRIDE_COOLDOWN_S
     limit_brake_enabled: bool = False
     station_brake_enabled: bool = False
     signal_brake_enabled: bool = False
@@ -265,7 +309,6 @@ class AgentLoop:
     _station_planning: StationPlanning = field(init=False, repr=False)
     _station_gate: StationDwellGate = field(default_factory=StationDwellGate, init=False, repr=False)
     _last_lever: Optional[int] = field(default=None, init=False, repr=False)
-    _manual_override_until: float = field(default=0.0, init=False, repr=False)
     _platform_bleed: PlatformBleedEpisode = field(
         default_factory=PlatformBleedEpisode,
         init=False,
@@ -273,6 +316,7 @@ class AgentLoop:
     )
     _brake_air_vehicle: Optional[str] = field(default=None, init=False, repr=False)
     _vehicle_package: Optional[dict[str, Any]] = field(default=None, init=False, repr=False)
+    _last_probe_snap: Optional[ProbeSnapshot] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.learner is not None:
@@ -393,6 +437,14 @@ class AgentLoop:
     def read_probe(self) -> Optional[ProbeSnapshot]:
         return read_probe_file(self.getdata_path)
 
+    def _coalesce_probe(self, snap: Optional[ProbeSnapshot]) -> Optional[ProbeSnapshot]:
+        if probe_snapshot_usable(snap):
+            self._last_probe_snap = snap
+            return snap
+        if self._last_probe_snap is not None:
+            return self._last_probe_snap
+        return snap
+
     def _apply_brake_command(
         self,
         cmd: BrakeCommand,
@@ -417,27 +469,18 @@ class AgentLoop:
             else:
                 self.request_neutral()
         elif cmd.kind == "COAST_THROTTLE":
-            # Tracción → neutro antes de APPLY; no confundir con RELEASE (225330Z).
+            # Tracción → neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
+            pkg = self._vehicle_package
+            mc = pkg is not None and uses_mc_analog_ipc(pkg)
             if fraction is not None:
                 self.request_input_fraction(fraction)
-            elif lev > neutral:
+            elif mc or lev > neutral:
                 self.request_neutral()
         elif cmd.kind == "APPLY":
             if fraction is not None:
                 self.request_input_fraction(fraction)
             elif notch is not None:
                 self.request_notch(notch)
-
-    def driver_override_remaining_s(self) -> float:
-        return max(0.0, self._manual_override_until - time.monotonic())
-
-    def _manual_override_active(self) -> bool:
-        return self.driver_override_remaining_s() > 0.0
-
-    def _arm_manual_override(self) -> None:
-        self._manual_override_until = time.monotonic() + max(
-            0.5, float(self.driver_override_cooldown_s)
-        )
 
     def _mc_fraction_feedback(self, snap: ProbeSnapshot) -> Optional[float]:
         pkg = self._vehicle_package
@@ -464,31 +507,21 @@ class AgentLoop:
         if self._target_fraction is None:
             return False
         target = float(self._target_fraction)
-        pkg = self._vehicle_package
-        neutral = profile_neutral_fraction(pkg) if pkg else None
-        if (
-            pkg
-            and uses_mc_analog_ipc(pkg)
-            and neutral is not None
-            and abs(target - float(neutral)) <= MC_INPUT_VALUE_EPS
-            and snap.brake_cyl_bar is not None
-            and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
-        ):
-            return False
         current = self._mc_fraction_feedback(snap)
         if current is not None and abs(current - target) <= MC_INPUT_VALUE_EPS:
             return True
-        if pkg and uses_mc_analog_ipc(pkg):
-            if neutral is not None and abs(target - float(neutral)) <= MC_INPUT_VALUE_EPS:
-                if (
-                    snap.brake_cyl_bar is not None
-                    and float(snap.brake_cyl_bar) > PRESSURE_IDLE_MAX_BAR
-                ):
-                    return False
-                lev = probe_lever(snap)
-                if lev is not None and int(lev) >= int(self.neutral_notch):
-                    return True
-        return False
+        pkg = self._vehicle_package
+        if not (pkg and uses_mc_analog_ipc(pkg)):
+            return False
+        neutral = profile_neutral_fraction(pkg)
+        if neutral is None or abs(target - float(neutral)) > MC_INPUT_VALUE_EPS:
+            return False
+        # Neutro alcanzado en D2: soltar IPC aunque quede aire (110400Z: mandos bloqueados).
+        raw_mc = getattr(snap, "mc_input", None)
+        if raw_mc is not None:
+            return abs(float(raw_mc) - float(neutral)) <= MC_INPUT_VALUE_EPS
+        lev = probe_lever(snap)
+        return lev is not None and int(lev) >= int(self.neutral_notch)
 
     def _clear_fraction_target_if_reached(self, snap: Optional[ProbeSnapshot]) -> None:
         if snap is not None and self._fraction_ipc_target_reached(snap):
@@ -505,24 +538,24 @@ class AgentLoop:
         pkg = self._vehicle_package
         if not (pkg and uses_mc_analog_ipc(pkg)):
             return
+        target = float(self._target_fraction)
+        if mc_ipc_target_is_neutral_hold(pkg, target):
+            # ``power`` HUD puede seguir en 1 hasta que baje el eje MC (114756Z).
+            return
         if snap.power is not None and not snap.power_neg:
             if float(snap.power) > _MC_DRIVER_POWER_TAKEOVER:
                 self.clear_target()
-                self._arm_manual_override()
                 return
         neutral = profile_neutral_fraction(pkg)
-        if neutral is not None:
-            target = float(self._target_fraction)
-            if target < float(neutral) - MC_INPUT_VALUE_EPS:
-                prev = self._last_lever
-                if prev is not None:
-                    prev_i = int(prev)
-                    cur_i = int(lever)
-                    neu_i = int(self.neutral_notch)
-                    if cur_i > prev_i and prev_i < neu_i:
-                        self.clear_target()
-                        self._arm_manual_override()
-                        return
+        if neutral is not None and target < float(neutral) - MC_INPUT_VALUE_EPS:
+            prev = self._last_lever
+            if prev is not None:
+                prev_i = int(prev)
+                cur_i = int(lever)
+                neu_i = int(self.neutral_notch)
+                if cur_i > prev_i and prev_i < neu_i:
+                    self.clear_target()
+                    return
         # No usar ``lever < NEUTRAL``: en MC muesca UK 3..1 es freno esperado (215905Z).
 
     def _maybe_release_driver_control(
@@ -564,11 +597,10 @@ class AgentLoop:
         target = int(self._target_notch)
         if abs(lever - target) > abs(prev - target):
             self.clear_target()
-            self._arm_manual_override()
 
     def step(self) -> AgentSnapshot:
         self._tick += 1
-        snap = self.read_probe()
+        snap = self._coalesce_probe(self.read_probe())
         if snap is not None and snap.vehicle:
             self._note_vehicle(snap.vehicle)
             self._try_auto_load_profile(snap.vehicle)
@@ -624,7 +656,6 @@ class AgentLoop:
                     self.clear_target()
 
         station_p1_enabled = self.station_brake_enabled
-        manual_active = self._manual_override_active()
         if snap is not None and (
             self.limit_brake_enabled
             or self.station_brake_enabled
@@ -640,6 +671,7 @@ class AgentLoop:
                 planning = self._station_planning.update(
                     mph,
                     probe_seq=snap.seq,
+                    probe_vehicle=snap.vehicle,
                 )
                 station_dist_m = planning.station_distance_m
                 station_name = planning.station_name
@@ -669,6 +701,10 @@ class AgentLoop:
                     snap=snap,
                     vehicle_package=self._vehicle_package,
                 )
+            self._platform_bleed.observe_mc_bleed_feedback(
+                snap,
+                self._vehicle_package,
+            )
             decision = evaluate_p1_tick(
                 self._limit_state,
                 self._release_state,
@@ -680,6 +716,7 @@ class AgentLoop:
                 signal_brake_enabled=self.signal_brake_enabled,
                 station_fsm=station_fsm or None,
                 platform_bleed_episode=self._platform_bleed.active,
+                platform_bleed_b1_confirmed=self._platform_bleed.mc_b1_confirmed_for_release(),
             )
             limit_dist_m = decision.limit_dist_m
             limit_mph = decision.limit_mph
@@ -697,7 +734,7 @@ class AgentLoop:
             fb_a_obs_ms2 = decision.fb_a_obs_ms2
             fb_shortfall = decision.fb_shortfall
             fb_escalated = decision.fb_escalated
-            if not manual_active and dwell_cmd is not None:
+            if dwell_cmd is not None:
                 p1_cmd = dwell_cmd.kind
                 p1_phase = dwell_cmd.phase or ""
                 p1_reason = dwell_cmd.reason or ""
@@ -705,7 +742,8 @@ class AgentLoop:
                 p1_handle = dwell_cmd.target_notch
                 p1_apply_now = True
                 self._apply_brake_command(dwell_cmd, lever=lever, apply_actuator=True)
-            elif not manual_active and decision.command is not None:
+            elif decision.command is not None:
+                # ``decide()`` ya llamó ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
                 p1_cmd = decision.command.kind
                 self._apply_brake_command(
                     decision.command,
@@ -735,7 +773,7 @@ class AgentLoop:
         ipc_result: Optional[dict[str, Any]] = None
         ipc_sent = False
 
-        if not manual_active and snap is not None:
+        if snap is not None:
             self._clear_fraction_target_if_reached(snap)
             if self._target_fraction is not None:
                 ultimate = float(self._target_fraction)
@@ -756,7 +794,7 @@ class AgentLoop:
                     ipc_sent = True
                     if self.post_ipc_sleep_s > 0:
                         time.sleep(self.post_ipc_sleep_s)
-                    snap = self.read_probe()
+                    snap = self._coalesce_probe(self.read_probe())
             elif (
                 self._target_notch is not None
                 and lever is not None
@@ -773,7 +811,7 @@ class AgentLoop:
                 ipc_sent = True
                 if self.post_ipc_sleep_s > 0:
                     time.sleep(self.post_ipc_sleep_s)
-                snap = self.read_probe()
+                snap = self._coalesce_probe(self.read_probe())
 
         learn_ev = self._learner.pop_learn_event()
         return AgentSnapshot.from_probe(
@@ -809,7 +847,7 @@ class AgentLoop:
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
-            driver_override_s=self.driver_override_remaining_s(),
+            driver_override_s=0.0,
             learn_kind=learn_ev.kind if learn_ev else None,
             learn_accepted=learn_ev.accepted if learn_ev else None,
             learn_reject_reason=learn_ev.reason if learn_ev else None,

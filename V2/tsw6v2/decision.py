@@ -27,6 +27,7 @@ from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     PLATFORM_AT_STOP_M,
     departing_brake_needs_release,
+    departing_ipc_release_allowed,
     departure_limit_target_or_coast,
     platform_parked_bleed_release_needed,
     platform_parked_residual_bleed_needed,
@@ -337,6 +338,7 @@ def _attempt_platform_parked_bleed_release(
     station_fsm: Optional[str],
     station_dist_m: Optional[float],
     platform_bleed_episode: bool,
+    platform_bleed_b1_confirmed: bool,
     snap: ProbeSnapshot,
 ) -> Optional[LimitBrakeDecision]:
     """RELEASE a neutro tras B1 bleed — sin cartel (195804Z)."""
@@ -346,6 +348,7 @@ def _attempt_platform_parked_bleed_release(
         combined_lever=prep.combined_lever,
         station_fsm=station_fsm,
         platform_bleed_episode=platform_bleed_episode,
+        platform_bleed_b1_confirmed=platform_bleed_b1_confirmed,
         snap=snap,
         vehicle_package=ctx.vehicle_package,
     ):
@@ -374,6 +377,11 @@ def _attempt_departing_brake_release(
     ):
         return None
     if prep.ctx.speed_mph >= DEPARTING_CLEAR_MPH:
+        return None
+    if not departing_ipc_release_allowed(
+        station_dist_m,
+        vehicle_package=ctx.vehicle_package,
+    ):
         return None
     rel = release_brake_command(at_target=True)
     if rel is None:
@@ -575,8 +583,18 @@ def _station_emergency_suppressed(
     speed_mph: float,
     station_distance_m: float,
     throttle_notch: int,
+    station_fsm: Optional[str] = None,
 ) -> bool:
     """Salida en marcha: no emergencia andén a velocidad de arranque."""
+    if station_fsm == "DEPARTING":
+        from tsw6v2.station_plan import is_departure_creep_context
+
+        if is_departure_creep_context(
+            station_distance_m,
+            speed_mph,
+            station_fsm=station_fsm,
+        ):
+            return True
     if not should_suppress_station_braking_for_departure(
         speed_mph=speed_mph,
         station_distance_m=station_distance_m,
@@ -608,6 +626,7 @@ def _attempt_p1_emergency(
     snap: ProbeSnapshot,
     *,
     station_distance_m: Optional[float] = None,
+    station_fsm: Optional[str] = None,
 ) -> Optional[LimitBrakeDecision]:
     signal_dist = _signal_distance_m(snap)
     checks: list[tuple[EmergencyTargetKind, float]] = []
@@ -644,6 +663,7 @@ def _attempt_p1_emergency(
                 speed_mph=prep.ctx.speed_mph,
                 station_distance_m=dist,
                 throttle_notch=throttle,
+                station_fsm=station_fsm,
             )
         ):
             continue
@@ -790,6 +810,7 @@ def evaluate_p1_tick(
     signal_brake_enabled: bool = True,
     station_fsm: Optional[str] = None,
     platform_bleed_episode: bool = False,
+    platform_bleed_b1_confirmed: bool = False,
 ) -> LimitBrakeDecision:
     """Cartel + andén + señal → un ``BrakeCommand`` o sin mando."""
     if not limit_brake_enabled and not station_brake_enabled and not signal_brake_enabled:
@@ -811,6 +832,7 @@ def evaluate_p1_tick(
         prep,
         snap,
         station_distance_m=station_dist_geo,
+        station_fsm=station_fsm,
     )
     if emerg is not None:
         return emerg
@@ -938,6 +960,7 @@ def evaluate_p1_tick(
         station_fsm=station_fsm,
         station_dist_m=station_dist_geo,
         platform_bleed_episode=platform_bleed_episode,
+        platform_bleed_b1_confirmed=platform_bleed_b1_confirmed,
         snap=snap,
     )
     if platform_bleed_release is not None:

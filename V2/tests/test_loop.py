@@ -9,7 +9,7 @@ from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand
 from tsw6v2.constants import B1_NOTCH, MC_IPC_FRACTION_STEP, NEUTRAL_NOTCH, SERVICE_MAX_BRAKE
 from tsw6v2.learner import LearnerProfile
-from tsw6v2.loop import AgentLoop, AgentSnapshot
+from tsw6v2.loop import AgentLoop, AgentSnapshot, agent_snapshot_probe_ok
 from tsw6v2.planning_feed import PlanningSnapshot
 from tsw6v2.testdata import write_getdata_line
 
@@ -31,6 +31,18 @@ class TestAgentLoop:
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0)
         out = loop.step()
         assert not out.ipc_sent and out.lever_notch == 6
+
+    def test_coalesce_probe_when_getdata_empty(self, tmp_path: Path) -> None:
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(gd, seq=10, lever=4, vehicle="RVM_NYH_MNR_M3a-A_C")
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=False)
+        first = loop.step()
+        assert agent_snapshot_probe_ok(first)
+        gd.write_text("", encoding="utf-8")
+        second = loop.step()
+        assert second.seq == 10
+        assert second.vehicle == "RVM_NYH_MNR_M3a-A_C"
+        assert agent_snapshot_probe_ok(second)
 
     def test_step_one_ipc(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
@@ -140,15 +152,10 @@ class TestAgentLoop:
         assert loop.target_notch is None
         ipc.assert_not_called()
 
-    def test_manual_override_when_driver_brakes_from_neutral(self, tmp_path: Path) -> None:
+    def test_driver_takeover_clears_target_when_braking_from_neutral(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(gd, seq=1, lever=4)
-        loop = AgentLoop(
-            getdata_path=gd,
-            post_ipc_sleep_s=0.0,
-            driver_override_cooldown_s=5.0,
-            limit_brake_enabled=True,
-        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         loop.request_neutral()
         loop._last_lever = 4
         write_getdata_line(gd, seq=2, lever=3)
@@ -161,18 +168,11 @@ class TestAgentLoop:
         assert loop.target_notch is None
         assert not out.ipc_sent
         ipc.assert_not_called()
-        assert out.driver_override_s > 0.0
 
-    def test_manual_override_blocks_p1_ipc_while_active(self, tmp_path: Path) -> None:
+    def test_p1_ipc_after_takeover_when_decision_commands(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(gd, seq=1, lever=3)
-        loop = AgentLoop(
-            getdata_path=gd,
-            post_ipc_sleep_s=0.0,
-            driver_override_cooldown_s=10.0,
-            limit_brake_enabled=True,
-        )
-        loop._arm_manual_override()
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
             from tsw6v2.command import BrakeCommand
             from tsw6v2.decision import LimitBrakeDecision
@@ -183,9 +183,8 @@ class TestAgentLoop:
             )
             with patch("tsw6v2.loop.dispatch_step_toward_notch", return_value={"ok": True}) as ipc:
                 out = loop.step()
-        assert loop.target_notch is None
-        assert not out.ipc_sent
-        ipc.assert_not_called()
+        assert out.ipc_sent
+        ipc.assert_called_once()
 
     def test_clear_target_at_neutral_after_release(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
@@ -359,7 +358,6 @@ class TestAgentLoop:
         loop = AgentLoop(
             getdata_path=gd,
             post_ipc_sleep_s=0.0,
-            driver_override_cooldown_s=5.0,
             limit_brake_enabled=True,
         )
         loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
@@ -376,7 +374,6 @@ class TestAgentLoop:
         assert snap is not None
         loop._check_driver_takeover(1, snap)
         assert loop.target_input_value is None
-        assert loop.driver_override_remaining_s() > 0.0
 
     def test_dwell_stopped_skips_ipc_when_mc_brake_held_session_075637(
         self, tmp_path: Path
@@ -413,7 +410,49 @@ class TestAgentLoop:
         assert not out.ipc_sent
         ipc_frac.assert_not_called()
 
-    def test_mc_driver_power_clears_fraction_ipc(self, tmp_path: Path) -> None:
+    def test_mc_coast_neutral_keeps_ipc_with_power_hud_session_114756(
+        self, tmp_path: Path
+    ) -> None:
+        """COAST a neutro: no takeover por power=1 con mc aún en potencia."""
+        gd = tmp_path / "GetData.txt"
+        write_getdata_line(
+            gd,
+            seq=1,
+            lever=5,
+            train_brake=0.0,
+            power=1.0,
+            power_neg=0,
+            mc_input=0.85,
+            vehicle="RVM_NYH_MNR_M3a-B_C",
+        )
+        loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
+        loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
+        loop._apply_brake_command(
+            BrakeCommand(
+                kind="COAST_THROTTLE",
+                target_notch=NEUTRAL_NOTCH,
+                target_fraction=0.72,
+                reason="Soltar tracción antes de freno",
+            ),
+            lever=5,
+            apply_actuator=False,
+        )
+        snap = loop.read_probe()
+        assert snap is not None
+        loop._check_driver_takeover(5, snap)
+        assert loop.target_input_value == 0.72
+        with patch("tsw6v2.loop.evaluate_p1_tick") as eval_tick:
+            from tsw6v2.decision import LimitBrakeDecision
+
+            eval_tick.return_value = LimitBrakeDecision.idle(reason="no_plan")
+            with patch(
+                "tsw6v2.loop.dispatch_to_input_fraction",
+                return_value={"ok": True},
+            ) as ipc:
+                loop.step()
+        ipc.assert_called_once()
+
+    def test_mc_driver_power_clears_fraction_ipc_when_braking(self, tmp_path: Path) -> None:
         gd = tmp_path / "GetData.txt"
         write_getdata_line(
             gd,
@@ -426,12 +465,11 @@ class TestAgentLoop:
         )
         loop = AgentLoop(getdata_path=gd, post_ipc_sleep_s=0.0, limit_brake_enabled=True)
         loop._sync_brake_air_profile("RVM_NYH_MNR_M3a-B_C")
-        loop.request_input_fraction(0.72)
+        loop.request_input_fraction(0.45)
         snap = loop.read_probe()
         assert snap is not None
         loop._check_driver_takeover(4, snap)
         assert loop.target_input_value is None
-        assert loop.driver_override_remaining_s() > 0.0
 
     def test_auto_profile_skipped_when_explicit(self, tmp_path: Path) -> None:
         profiles = tmp_path / "profiles"

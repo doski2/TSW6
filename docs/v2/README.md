@@ -4,42 +4,44 @@ Plan maestro del autopilot TSW6 v2 (paquete tren, probe I/O, producto Python `V2
 
 ## Documentos canónicos
 
-| Documento | Rol | Audiencia |
-| --- | --- | --- |
-| [PLAN_V2.md](PLAN_V2.md) | **Qué / por qué / cuándo** — fases 0–6, orden, deltas, debates | Producto, arquitectura |
-| [CODIGO_V2.md](CODIGO_V2.md) | **Dónde va el código nuevo** — carpetas, convenciones, checklist PR | Quien implementa |
-| [MANTENIMIENTO.md](MANTENIMIENTO.md) | **Tests, depuración, cierre de paso** — comandos, síntomas, lab vs probe | Cada entrega / sesión |
-| [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md) | **Reglas P1 cartel + andén** — ventanas IPC/H1, prioridad, FSM gate, mapa módulos | Antes de tocar `limit_*` / `station_*` |
-| [PLAN_ACTUACION_MC.md](PLAN_ACTUACION_MC.md) | **P1 MC sin muescas UK** — fases 0–5, D2 `mc_input`, `ServiceBrakeIntent`, criterios M3a | Trenes `master_controller` / M3a |
-| [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) | **Protocolo campo** — checklist sesiones `limit` / `station`, sesiones ref. | Tras cambios P1 o antes de cerrar paso 3 |
-| [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) | **Laboratorio Lua** — mod `ApiExplorerMod` (HTTP ↔ UE) | Capturas in-game |
-| [VEHICLE_LAB.md](VEHICLE_LAB.md) | **GUI por tren** — exports F5–F7 + camino a `data/vehicles/` | Harlem / tren nuevo |
-| [LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md) | Protocolo F5 — HUD, frenar/acelerar, vs GetData | Lab cabina |
-| [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) | Protocolo amperímetro (L0.6f) | Lab EMU/diesel |
-| [PROBE_LUA.md](PROBE_LUA.md) | Auditoría probe modular v2 | Probe producción |
-| [BAT.md](BAT.md) | Mapa `.bat` raíz → scripts → Python/juego | Operación |
+| Documento                                              | Rol                                                                                      | Audiencia                                |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [PLAN_V2.md](PLAN_V2.md)                               | **Qué / por qué / cuándo** — fases 0–6, orden, deltas, debates                           | Producto, arquitectura                   |
+| [CODIGO_V2.md](CODIGO_V2.md)                           | **Dónde va el código nuevo** — carpetas, convenciones, checklist PR                      | Quien implementa                         |
+| [MANTENIMIENTO.md](MANTENIMIENTO.md)                   | **Tests, depuración, cierre de paso** — comandos, síntomas, lab vs probe                 | Cada entrega / sesión                    |
+| [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md)             | **Reglas P1 cartel + andén** — ventanas IPC/H1, prioridad, FSM gate, mapa módulos        | Antes de tocar `limit_*` / `station_*`   |
+| [PLAN_ACTUACION_MC.md](PLAN_ACTUACION_MC.md)           | **P1 MC sin muescas UK** — fases 0–5, D2 `mc_input`, `ServiceBrakeIntent`, criterios M3a | Trenes `master_controller` / M3a         |
+| [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) | **Protocolo campo** — checklist sesiones `limit` / `station`, sesiones ref.              | Tras cambios P1 o antes de cerrar paso 3 |
+| [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md)           | **Laboratorio Lua** — mod `ApiExplorerMod` (HTTP ↔ UE)                                   | Capturas in-game                         |
+| [VEHICLE_LAB.md](VEHICLE_LAB.md)                       | **GUI por tren** — exports F5–F7 + camino a `data/vehicles/`                             | Harlem / tren nuevo                      |
+| [LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)                 | Protocolo F5 — HUD, frenar/acelerar, vs GetData                                          | Lab cabina                               |
+| [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md)             | Protocolo amperímetro (L0.6f)                                                            | Lab EMU/diesel                           |
+| [PROBE_LUA.md](PROBE_LUA.md)                           | Auditoría probe modular v2                                                               | Probe producción                         |
+| [BAT.md](BAT.md)                                       | Mapa `.bat` raíz → scripts → Python/juego                                                | Operación                                |
 
 **Backlog de producto:** solo [PLAN_V2.md](PLAN_V2.md). `docs/v1/` = runtime actual (referencia).
 
 ## Por dónde empezar
 
-| Objetivo | Lee primero |
-| --- | --- |
-| Qué hacer y en qué orden | [PLAN_V2 § Orden](PLAN_V2.md#orden-de-implementación) |
-| Añadir código o abrir PR | [CODIGO_V2.md](CODIGO_V2.md) |
-| pytest, probe, IPC, sesión juego | [MANTENIMIENTO.md](MANTENIMIENTO.md) |
-| Validar P1 en Cross-City (cartel / andén) | [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) |
-| Captura lab Class 323 (cerrada) | [PLAN_API_EXPLORER § Cierre 323](PLAN_API_EXPLORER.md#cierre-class-323--siguiente-tren) |
-| Explorar tren nuevo (GUI lab) | `explorar_tren.bat` · [VEHICLE_LAB.md](VEHICLE_LAB.md) |
-| Contrato GetData / IPC | [CANAL_CONTROL.md](../CANAL_CONTROL.md) |
-| M3a / MC: dejar muescas UK en política | [PLAN_ACTUACION_MC.md](PLAN_ACTUACION_MC.md) |
+| Objetivo                                  | Lee primero                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| Qué hacer y en qué orden                  | [PLAN_V2 § Orden](PLAN_V2.md#orden-de-implementación)                                   |
+| Añadir código o abrir PR                  | [CODIGO_V2.md](CODIGO_V2.md)                                                            |
+| pytest, probe, IPC, sesión juego          | [MANTENIMIENTO.md](MANTENIMIENTO.md)                                                    |
+| Validar P1 en Cross-City (cartel / andén) | [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md)                                  |
+| Captura lab Class 323 (cerrada)           | [PLAN_API_EXPLORER § Cierre 323](PLAN_API_EXPLORER.md#cierre-class-323--siguiente-tren) |
+| Explorar tren nuevo (GUI lab)             | `explorar_tren.bat` · [VEHICLE_LAB.md](VEHICLE_LAB.md)                                  |
+| Contrato GetData / IPC                    | [CANAL_CONTROL.md](../CANAL_CONTROL.md)                                                 |
+| M3a / MC: dejar muescas UK en política    | [PLAN_ACTUACION_MC.md](PLAN_ACTUACION_MC.md)                                            |
 
 ## Sesión actual
 
 **Fuente única:** bloque **Sesión actual** / **Siguiente** en
-[PLAN_V2 § Orden de implementación](PLAN_V2.md#orden-de-implementación) (paso en curso, tests, stack P1, próximo hito).
+[PLAN_V2 § Orden de implementación](PLAN_V2.md#orden-de-implementación) (paso en curso, tests, stack
+P1, próximo hito).
 
-Checklist de campo paso **3**: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md). Señal paso **5**:
+Checklist de campo paso **3**: [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md). Señal paso
+**5**:
 evidencia en `logs/v2/` (`083405Z`, `152037Z`); `225433Z` = antes fix.
 Reglas de comportamiento P1: [REGLAS_FRENOS_P1.md](REGLAS_FRENOS_P1.md).
 
@@ -48,11 +50,11 @@ documentación](PLAN_V2.md#política-de-documentación).
 
 ## Relacionados (fuera de `v2/`)
 
-| Documento | Contenido |
-| --- | --- |
-| [CANAL_CONTROL.md](../CANAL_CONTROL.md) | Contrato IPC / GetData (D2) |
+| Documento                                                | Contenido                         |
+| -------------------------------------------------------- | --------------------------------- |
+| [CANAL_CONTROL.md](../CANAL_CONTROL.md)                  | Contrato IPC / GetData (D2)       |
 | [PENDIENTE_DYNAMICHUD.md](../v1/PENDIENTE_DYNAMICHUD.md) | Probe Lua — bitácora (no backlog) |
-| [FREIGHT_NA.md](../v1/FREIGHT_NA.md) | SD40 / fase 6 |
-| [assets/esqueleto_v2.svg](../assets/esqueleto_v2.svg) | Árbol v2 |
+| [FREIGHT_NA.md](../v1/FREIGHT_NA.md)                     | SD40 / fase 6                     |
+| [assets/esqueleto_v2.svg](../assets/esqueleto_v2.svg)    | Árbol v2                          |
 
 Índice general: [docs/README.md](../README.md).

@@ -12,6 +12,6 @@
     "learn_monitor.py",
     "tsw_monitor.py"
   ],
-  "extraPaths": [".", "V2"],
+  "extraPaths": [".", "V2", "scripts/tools"],
   "exclude": [".venv", "__pycache__", "*.pyc", "**/node_modules", "**/.*", "archive"]
 }

@@ -444,6 +444,31 @@ def test_station_event_rows_dedup_apply(tmp_path: Path) -> None:
     assert len(apply_rows) == 1
 
 
+def test_session_route_prefers_vehicle_package_over_hud_harlem(tmp_path: Path) -> None:
+    """M3a: HUD puede decir Harlem Line; informe usa ``session_route`` del paquete."""
+    p = tmp_path / "m3a.jsonl"
+    rows = [
+        {"type": "session", "mode": "station", "route": "cross-city"},
+        {
+            "type": "session_detect",
+            "detected_route": "Harlem Line",
+            "service_name": "5U05",
+            "schedule_source": "hud_db",
+        },
+        {
+            "type": "tick",
+            "tick": 1,
+            "t_ms": 0,
+            "spd_mph": 0.0,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    data = summarize(p)
+    assert "Grand Central Corridor" in session_route_label(data["session"])
+    assert "Harlem" not in session_route_label(data["session"])
+
+
 def test_session_detect_merges_into_session(tmp_path: Path) -> None:
     p = tmp_path / "detect.jsonl"
     rows = [

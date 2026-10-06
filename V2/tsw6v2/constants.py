@@ -7,6 +7,8 @@ B1_NOTCH = 3
 B1_MIN_TRAIN_BRAKE = 0.25
 # Tolerancia posición MC estimada vs objetivo IPC (no usar ``train_brake`` HUD como InputValue).
 MC_INPUT_VALUE_EPS = 0.015
+# Ticks consecutivos en banda B1 antes de ``platform_bleed_release`` (105359Z: 0.64/0.69).
+PLATFORM_BLEED_B1_CONFIRM_TICKS = 6
 # Paso máximo por tick hacia ``target_fraction`` (M3a analog; sesión 215905Z).
 MC_IPC_FRACTION_STEP = 0.05
 # IPC test: subida mínima manómetro tras un paso B1 (M3a MC; OBSERVATION 20261003).
@@ -17,9 +19,6 @@ IPC_STEP_PAUSE_S = 0.08
 AGENT_ACK_TIMEOUT_S = 0.12
 DEFAULT_LOOP_HZ = 20.0
 PROBE_SEQ_MS = 1000.0 / DEFAULT_LOOP_HZ  # ~50 ms por tick de probe
-# Tras tocar la palanca contra el IPC, P1 no manda hasta que pase este tiempo (s).
-DRIVER_OVERRIDE_COOLDOWN_S = 12.0
-
 # Física frenado (Class 323 — PLAN_V2 §2)
 MAX_DECEL_MS2 = 1.071
 SAFETY_MARGIN = 1.10  # era 1.40→1.20→1.10 (sesión 20260906T073552Z: APPLY 60→55 @484m)

@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from tsw6v2.constants import posted_zone_hold_ceiling_mph
 from tsw6v2.physics import is_downhill_gradient
+from tsw6v2.bridge.getdata import probe_identity_ok
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import LAYERS, layer_help, layer_label
 
@@ -320,7 +321,7 @@ def build_dashboard(
             handle=snap.p1_handle,
         ),
         headline=f"seq {snap.seq or '?'}  tick {snap.tick}  {loop_hz:.1f} Hz  modo {mode_label}",
-        connected=True,
+        connected=probe_identity_ok(snap.seq, snap.vehicle),
     )
 
 

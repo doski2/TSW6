@@ -8,6 +8,7 @@ from tsw6.telemetry.tsw_ue4ss_reader import (
     decode_probe_raw,
     parse_probe_line,
     power_to_combined_notch,
+    render_snapshot,
 )
 
 
@@ -34,6 +35,18 @@ class TestUe4ssReader(unittest.TestCase):
         self.assertEqual(power_to_combined_notch(-3), 1)
         self.assertEqual(power_to_combined_notch(2), 6)
 
+    def test_parse_amps(self) -> None:
+        data = parse_probe_line(
+            "seq=1 speed_ms=10 amps=-120.5 vehicle=RVM_NYH_MNR_M3a-A_C"
+        )
+        self.assertAlmostEqual(data["amps"], -120.5)
+        snap = ProbeSnapshot.from_dict(data)
+        amps = snap.amps
+        assert amps is not None
+        self.assertAlmostEqual(amps, -120.5)
+        text = render_snapshot(snap, 18.0, Path("GetData.txt"))
+        self.assertIn("amps=-120 A", text)
+
     def test_parse_doors_telem(self) -> None:
         data = parse_probe_line(
             "seq=2224 speed_ms=0 doors_open=1 doors_telem=1 vehicle=Class323"
@@ -42,6 +55,8 @@ class TestUe4ssReader(unittest.TestCase):
         self.assertTrue(data["doors_open"])
         snap = ProbeSnapshot.from_dict(data)
         self.assertTrue(snap.doors_telem)
+        text = render_snapshot(snap, 18.0, Path("GetData.txt"))
+        self.assertIn("doors=1/", text)
 
     def test_parse_handle_notch(self) -> None:
         data = parse_probe_line("seq=1 handle_notch=4 power=0 vehicle=Class323")
@@ -137,10 +152,13 @@ class TestUe4ssReader(unittest.TestCase):
                     "vehicle": "Class323",
                 }
             )
+            snap.amps = 120.0
+            snap.doors_telem = True
             logger.log_sample(snap, 19.5, "seq=10 speed_ms=10 power=0 vehicle=Class323")
             logger.close()
             text = log_path.read_text(encoding="utf-8")
-            self.assertIn("time_s,seq,hz", text)
+            self.assertIn("amps,doors_telem,doors_dmi,mc_input", text)
+            self.assertIn(",120.0,1,,", text)
             self.assertIn("Class323", text)
             self.assertIn("# muestras: 1", text)
             self.assertIn("# raw: seq=10", text)

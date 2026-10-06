@@ -2,15 +2,15 @@
 
 ## Requisitos
 
-| Actividad | TSW6 | UE4SS probe | `-HTTPAPI` |
-| --- | --- | --- | --- |
-| Calibrar (`aprender.bat`) | ✅ | ✅ recomendado | No |
-| Validar freno aire (`validar_freno.bat`) | ✅ | ✅ opcional | **Sí** (presión + effort) |
-| Laboratorio frenos GUI | `validar_freno.bat` opción 1 | Probe + HTTP | CSV `logs/brake_physics/` |
-| Monitor (`probe_ue4ss.bat`) | ✅ | ✅ | No |
-| Autopiloto (`iniciar_autopilot.bat`) | ✅ | ✅ recomendado | **Sí** (mandos HTTP fallback + **estaciones/horario HUD**) |
-| Horarios HUD (`preparar_db_hud.bat`) | ✅ | — | Recomendado (`PlayerInfo.geoLocation`) |
-| Monitor API (`tsw_monitor.py`) | ✅ | — | Sí |
+| Actividad                                | TSW6                         | UE4SS probe    | `-HTTPAPI`                                                 |
+| ---------------------------------------- | ---------------------------- | -------------- | ---------------------------------------------------------- |
+| Calibrar (`aprender.bat`)                | ✅                           | ✅ recomendado | No                                                         |
+| Validar freno aire (`validar_freno.bat`) | ✅                           | ✅ opcional    | **Sí** (presión + effort)                                  |
+| Laboratorio frenos GUI                   | `validar_freno.bat` opción 1 | Probe + HTTP   | CSV `logs/brake_physics/`                                  |
+| Monitor (`probe_ue4ss.bat`)              | ✅                           | ✅             | No                                                         |
+| Autopiloto (`iniciar_autopilot.bat`)     | ✅                           | ✅ recomendado | **Sí** (mandos HTTP fallback + **estaciones/horario HUD**) |
+| Horarios HUD (`preparar_db_hud.bat`)     | ✅                           | —              | Recomendado (`PlayerInfo.geoLocation`)                     |
+| Monitor API (`tsw_monitor.py`)           | ✅                           | —              | Sí                                                         |
 
 - **Python 3.9+** (3.11 recomendado; los `.bat` lo detectan).
 - Desarrollo/tests: `requirements-dev.txt` + `.venv` (ver [docs/README.md](../README.md)).
@@ -44,9 +44,9 @@ Telemetría rápida (~17 Hz) sin polling HTTP. Patrón Dastsc: archivo en
 
 ### En cabina
 
-| Tecla | Acción |
-| --- | --- |
-| **F7** | Activar / desactivar probe |
+| Tecla  | Acción                             |
+| ------ | ---------------------------------- |
+| **F7** | Activar / desactivar probe         |
 | **F8** | Volcar línea a log + `GetData.txt` |
 
 ### Comprobar desde Python
@@ -80,11 +80,11 @@ paradas programadas con horario HUD (`currentServiceName` + `geoLocation`).
 
 ### Puertas de pasajeros
 
-| Campo | Fuente | Uso |
-| --- | --- | --- |
-| `doors_telem` | Probe UE4SS o HTTPAPI `PassengerDoor_*` | Estado real (abierta/cerrada) |
-| `doors_dmi` | Mensajes DMI en `GetDriverAidData` | Fallback / cruce con RailBridge |
-| `doors_open` | Derivado en Python | GUI y FSM (prioriza `doors_telem`) |
+| Campo         | Fuente                                  | Uso                                |
+| ------------- | --------------------------------------- | ---------------------------------- |
+| `doors_telem` | Probe UE4SS o HTTPAPI `PassengerDoor_*` | Estado real (abierta/cerrada)      |
+| `doors_dmi`   | Mensajes DMI en `GetDriverAidData`      | Fallback / cruce con RailBridge    |
+| `doors_open`  | Derivado en Python                      | GUI y FSM (prioriza `doors_telem`) |
 
 **Probe** (`GetData.txt`): `doors_telem=1/0` lee `GetCurrentInputValue` en
 `PassengerDoor_FL/FR` (y variantes por carro). Tras actualizar el mod, ejecutar
@@ -127,17 +127,17 @@ Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refresc
 
 ## Lanzadores
 
-| `.bat` | Función |
-| --- | --- |
-| `install_ue4ss_probe.bat` | Copia mod UE4SS al juego |
-| `probe_ue4ss.bat` | Monitor telemetría probe |
-| `probe_ue4ss_log.bat` | Igual + guarda `logs/ue4ss_probe_*.txt` |
-| `aprender.bat` | Calibración guiada |
-| `iniciar_autopilot.bat` | Autopiloto con perfil calibrado (menú; opción 5 = monitor API) |
-| `iniciar_monitor.bat` | Monitor API HTTP (`-HTTPAPI`) |
-| `preparar_db_hud.bat` | BD semilla HUD + copia a TSW6 |
-| `abrir_hud_extraccion.bat` | Abre `hud.exe` para extraer DLCs |
-| `extraer_horario_hud.bat` | Setup completo extractor HUD (Rust) |
+| `.bat`                     | Función                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `install_ue4ss_probe.bat`  | Copia mod UE4SS al juego                                       |
+| `probe_ue4ss.bat`          | Monitor telemetría probe                                       |
+| `probe_ue4ss_log.bat`      | Igual + guarda `logs/ue4ss_probe_*.txt`                        |
+| `aprender.bat`             | Calibración guiada                                             |
+| `iniciar_autopilot.bat`    | Autopiloto con perfil calibrado (menú; opción 5 = monitor API) |
+| `iniciar_monitor.bat`      | Monitor API HTTP (`-HTTPAPI`)                                  |
+| `preparar_db_hud.bat`      | BD semilla HUD + copia a TSW6                                  |
+| `abrir_hud_extraccion.bat` | Abre `hud.exe` para extraer DLCs                               |
+| `extraer_horario_hud.bat`  | Setup completo extractor HUD (Rust)                            |
 
 ### Flujo recomendado (Class 323)
 
@@ -153,13 +153,13 @@ Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refresc
 
 Conduces manualmente; el monitor captura aceleración/frenado por muesca y banda de velocidad.
 
-| Opción | Modo |
-| --- | --- |
-| **1** | Continuar — pasajeros UK (handle 0–8, mín. 5 mph) |
-| **2** | Continuar — mercancías NA (4 mandos, mín. 2 mph) |
-| **3** | Reset — pasajeros |
-| **4** | Reset — mercancías |
-| **5** | Salir |
+| Opción | Modo                                              |
+| ------ | ------------------------------------------------- |
+| **1**  | Continuar — pasajeros UK (handle 0–8, mín. 5 mph) |
+| **2**  | Continuar — mercancías NA (4 mandos, mín. 2 mph)  |
+| **3**  | Reset — pasajeros                                 |
+| **4**  | Reset — mercancías                                |
+| **5**  | Salir                                             |
 
 Durante la sesión: **8 muestras** por celda; mantén un mando estable ~2 s; autoguardado cada 5 s.
 
@@ -175,13 +175,13 @@ Con UE4SS no hace falta `-HTTPAPI` para calibrar. El gradiente de vía sale en e
 Usa el perfil existente y **actualiza el JSON en vivo** (Auto-aprender activo por defecto).
 Usa `--no-learn` en CLI o desmarca el checkbox en GUI para congelar el perfil.
 
-| Opción | Modo |
-| --- | --- |
-| **1** | Sigue límite de vía |
-| **2** | Velocidad máxima personalizada |
-| **3** | Solo monitorizar (`--no-control`) |
-| **4** | Telemetría manual por teclado |
-| **5** | Monitor API |
+| Opción | Modo                              |
+| ------ | --------------------------------- |
+| **1**  | Sigue límite de vía               |
+| **2**  | Velocidad máxima personalizada    |
+| **3**  | Solo monitorizar (`--no-control`) |
+| **4**  | Telemetría manual por teclado     |
+| **5**  | Monitor API                       |
 
 En la GUI del autopiloto (pestaña **Aprendizaje**): **Auto-aprender** viene marcado por defecto;
 desmárcalo si solo quieres refinar al frenar. Calibración guiada completa (opcional):
@@ -212,11 +212,11 @@ desmárcalo si solo quieres refinar al frenar. Calibración guiada completa (opc
 
 ## Resumen
 
-| Herramienta | Pregunta |
-| --- | --- |
-| `probe_ue4ss` | ¿El probe lee bien a ~20 Hz? |
-| `aprender` | ¿Cuánto acelera/frena cada muesca? |
-| `preparar_db_hud` | ¿Tengo horarios comerciales en `tsw_hud.db`? |
+| Herramienta         | Pregunta                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `probe_ue4ss`       | ¿El probe lee bien a ~20 Hz?                                                         |
+| `aprender`          | ¿Cuánto acelera/frena cada muesca?                                                   |
+| `preparar_db_hud`   | ¿Tengo horarios comerciales en `tsw_hud.db`?                                         |
 | `iniciar_autopilot` | Conduce con ese conocimiento (IPC mandos; HTTP para paradas HUD; probe para puertas) |
 
 Más detalle técnico: [ARQUITECTURA.md](ARQUITECTURA.md) ·

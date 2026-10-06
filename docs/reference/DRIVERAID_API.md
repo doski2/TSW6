@@ -25,15 +25,15 @@ tren (masa, aire, esfuerzos): [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md)
 
 ### Mapa implementación TSW6 (2026-08-24)
 
-| Campo / nodo | Probe Lua (GetData) | HTTP (`tsw_telemetry_source`) | P1 autopilot |
-| --- | --- | --- | --- |
-| `speedLimit`, `gradient` | ✅ ~20 Hz | ✅ fallback / validación | ✅ |
-| `distanceToNextSpeedLimit`, `nextSpeedLimit` | ✅ 1 límite ~20 Hz (escalares) | Parser HTTP listo; probe no usa HTTP para límites | ✅ `limit_brake` (P1 al 1.er cartel) |
-| `nextSpeedLimits[]` (2.º cambio) | ❌ Lua: ítems `UScriptStruct`, `d=nil` | ✅ en JSON HTTP | ⬜ no cablear hasta leer floats |
-| `TrackData.markers` | ❌ | ✅ ~2 s | ✅ con `tsw_hud.db` |
-| `PlayerInfo` (servicio, geo) | ❌ | ✅ ~2 s | ✅ horario HUD |
-| `distanceToSignal`, aspecto | ❌ | 🟡 en API, no cableado | ❌ `evaluate_signal_brake` stub |
-| `trackHeights[]`, perfil | ❌ | ❌ | ❌ futuro |
+| Campo / nodo                                 | Probe Lua (GetData)                    | HTTP (`tsw_telemetry_source`)                     | P1 autopilot                         |
+| -------------------------------------------- | -------------------------------------- | ------------------------------------------------- | ------------------------------------ |
+| `speedLimit`, `gradient`                     | ✅ ~20 Hz                              | ✅ fallback / validación                          | ✅                                   |
+| `distanceToNextSpeedLimit`, `nextSpeedLimit` | ✅ 1 límite ~20 Hz (escalares)         | Parser HTTP listo; probe no usa HTTP para límites | ✅ `limit_brake` (P1 al 1.er cartel) |
+| `nextSpeedLimits[]` (2.º cambio)             | ❌ Lua: ítems `UScriptStruct`, `d=nil` | ✅ en JSON HTTP                                   | ⬜ no cablear hasta leer floats      |
+| `TrackData.markers`                          | ❌                                     | ✅ ~2 s                                           | ✅ con `tsw_hud.db`                  |
+| `PlayerInfo` (servicio, geo)                 | ❌                                     | ✅ ~2 s                                           | ✅ horario HUD                       |
+| `distanceToSignal`, aspecto                  | ❌                                     | 🟡 en API, no cableado                            | ❌ `evaluate_signal_brake` stub      |
+| `trackHeights[]`, perfil                     | ❌                                     | ❌                                                | ❌ futuro                            |
 
 **Estudiar ahora (tarjeta C1):** señales — validar en juego si `signalAspectClass` = `Stop` /
 `DANGER` y si conviene probe Lua o HTTP. **No bloquea** entender pasos 1–3 del flujo.
@@ -42,29 +42,29 @@ tren (masa, aire, esfuerzos): [CURRENTFORMATION_API.md](CURRENTFORMATION_API.md)
 
 ## Cómo leer este documento
 
-| Columna | Significado |
-| --- | --- |
-| **Estado** | Si lo usamos hoy en TSW6 |
-| **HTTP** | `GET http://127.0.0.1:31270/get/DriverAid.<nodo>` |
-| **Lua** | Equivalente vía `playerController:GetDriverAidData(driverAid)` cuando existe |
+| Columna    | Significado                                                                  |
+| ---------- | ---------------------------------------------------------------------------- |
+| **Estado** | Si lo usamos hoy en TSW6                                                     |
+| **HTTP**   | `GET http://127.0.0.1:31270/get/DriverAid.<nodo>`                            |
+| **Lua**    | Equivalente vía `playerController:GetDriverAidData(driverAid)` cuando existe |
 
 Estados habituales:
 
-| Estado | Significado |
-| --- | --- |
-| ✅ En uso | Confirmado en probe o Python |
-| 🟡 Disponible | En dump; no integrado aún |
-| ⚠️ Inestable | A veces vacío, sentinel o depende del escenario |
+| Estado           | Significado                                            |
+| ---------------- | ------------------------------------------------------ |
+| ✅ En uso        | Confirmado en probe o Python                           |
+| 🟡 Disponible    | En dump; no integrado aún                              |
+| ⚠️ Inestable    | A veces vacío, sentinel o depende del escenario        |
 | ❌ No autopiloto | Existe pero no aporta al frenado/calibración de mandos |
 
 **Unidades TSW (observadas):**
 
-| Magnitud | Unidad en API | Conversión útil |
-| --- | --- | --- |
-| Velocidad (`speedLimit`, etc.) | m/s | × 2.236936 → mph |
-| Distancias (`distanceTo*`) | cm | ÷ 100 → m |
-| Gradiente (`gradient`) | % | + subida, − bajada (convención `train_state`) |
-| Altura (`height` en TrackData) | unidades UE (≈ cm) | perfil de vía, no % pendiente |
+| Magnitud                       | Unidad en API      | Conversión útil                               |
+| ------------------------------ | ------------------ | --------------------------------------------- |
+| Velocidad (`speedLimit`, etc.) | m/s                | × 2.236936 → mph                              |
+| Distancias (`distanceTo*`)     | cm                 | ÷ 100 → m                                     |
+| Gradiente (`gradient`)         | %                  | + subida, − bajada (convención `train_state`) |
+| Altura (`height` en TrackData) | unidades UE (≈ cm) | perfil de vía, no % pendiente                 |
 
 **Sentinel `3.402823e+38`:** valor “sin límite” / no aplicable (`float` máximo). Ignorar en
 lógica de autopiloto.
@@ -88,20 +88,20 @@ Todos son **solo lectura** (`writable: false` en el dump).
 
 ### Velocidad y límites
 
-| Campo | Tipo | Estado | Qué es | Uso autopiloto / calibración |
-| --- | --- | --- | --- | --- |
-| `speedLimit` | `{ value: m/s }` | ✅ | Límite de velocidad **aplicable ahora** al tren | Comparar con `speed_limit_ms` del probe; decisor P1/P2 |
-| `speedLimitSeen` | bool | 🟡 | El juego considera que hay dato de límite válido | Filtro de confianza |
-| `trackMaxSpeed` | `{ value: m/s }` | 🟡 | Techo de la vía (sin timetable/tren) | Suele coincidir con `speedLimit` en tramo simple |
-| `formationMaxSpeed` | `{ value: m/s }` | ⚠️ | Límite del consist / vehículo | A veces sentinel; en otra sesión: 62.6 m/s (~140 mph) |
-| `serviceMaxSpeed` | `{ value: m/s }` | ⚠️ | Límite del horario/servicio | A menudo sentinel si no aplica |
-| `currentSpeedLimitSource` | string | 🟡 | Origen del límite activo | Ej. `TrackSpeedLimit`, `TemporarySpeedRestriction` |
-| `distanceToNextSpeedLimit` | number (cm) | ✅ | Distancia al **próximo** cambio de límite | Probe `dist_limit_cm` ~20 Hz; HTTP fallback |
-| `nextSpeedLimit` | `{ value: m/s }` | ✅ | Valor del próximo límite (primer cambio) | Probe `next_limit_ms`; P1 planning |
-| `nextSpeedLimitPosition` | `{ x,y,z }` | 🟡 | Posición mundo del primer cambio | Debug / mapa |
-| `nextSpeedLimits[]` | array | ⚠️ | Cola HTTP (muchos carteles, a menudo el mismo mph) | **Probe: no.** Ver [Investigar 2.º límite](#investigar-2º-límite-lim2) |
-| `nextSpeedLimits[].restrictionType` | string | 🟡 | Tipo de restricción | Ej. `TrackPropertySpeedLimit` |
-| `nextSpeedLimits[].value` | `{ value: m/s }` | 🟡 | Límite en ese punto | HTTP anidado `value.value` |
+| Campo                               | Tipo             | Estado | Qué es                                             | Uso autopiloto / calibración                                           |
+| ----------------------------------- | ---------------- | ------ | -------------------------------------------------- | ---------------------------------------------------------------------- |
+| `speedLimit`                        | `{ value: m/s }` | ✅     | Límite de velocidad **aplicable ahora** al tren    | Comparar con `speed_limit_ms` del probe; decisor P1/P2                 |
+| `speedLimitSeen`                    | bool             | 🟡     | El juego considera que hay dato de límite válido   | Filtro de confianza                                                    |
+| `trackMaxSpeed`                     | `{ value: m/s }` | 🟡     | Techo de la vía (sin timetable/tren)               | Suele coincidir con `speedLimit` en tramo simple                       |
+| `formationMaxSpeed`                 | `{ value: m/s }` | ⚠️    | Límite del consist / vehículo                      | A veces sentinel; en otra sesión: 62.6 m/s (~140 mph)                  |
+| `serviceMaxSpeed`                   | `{ value: m/s }` | ⚠️    | Límite del horario/servicio                        | A menudo sentinel si no aplica                                         |
+| `currentSpeedLimitSource`           | string           | 🟡     | Origen del límite activo                           | Ej. `TrackSpeedLimit`, `TemporarySpeedRestriction`                     |
+| `distanceToNextSpeedLimit`          | number (cm)      | ✅     | Distancia al **próximo** cambio de límite          | Probe `dist_limit_cm` ~20 Hz; HTTP fallback                            |
+| `nextSpeedLimit`                    | `{ value: m/s }` | ✅     | Valor del próximo límite (primer cambio)           | Probe `next_limit_ms`; P1 planning                                     |
+| `nextSpeedLimitPosition`            | `{ x,y,z }`      | 🟡     | Posición mundo del primer cambio                   | Debug / mapa                                                           |
+| `nextSpeedLimits[]`                 | array            | ⚠️    | Cola HTTP (muchos carteles, a menudo el mismo mph) | **Probe: no.** Ver [Investigar 2.º límite](#investigar-2º-límite-lim2) |
+| `nextSpeedLimits[].restrictionType` | string           | 🟡     | Tipo de restricción                                | Ej. `TrackPropertySpeedLimit`                                          |
+| `nextSpeedLimits[].value`           | `{ value: m/s }` | 🟡     | Límite en ese punto                                | HTTP anidado `value.value`                                             |
 
 **Ejemplo dump:** `speedLimit.value` = 20.12 m/s ≈ **45 mph** (coherente con Class 323 en
 Cross-City).
@@ -146,9 +146,9 @@ Parser Python `parse_driver_aid_planning` ya entiende la cola HTTP; el probe no 
 
 ### Gradiente y pendiente
 
-| Campo | Tipo | Estado | Qué es | Uso |
-| --- | --- | --- | --- | --- |
-| `gradient` | number (%) | ✅ | Pendiente de vía en el punto del tren | `gradient_pct` en probe y learner; distancia de frenado |
+| Campo      | Tipo       | Estado | Qué es                                | Uso                                                     |
+| ---------- | ---------- | ------ | ------------------------------------- | ------------------------------------------------------- |
+| `gradient` | number (%) | ✅     | Pendiente de vía en el punto del tren | `gradient_pct` en probe y learner; distancia de frenado |
 
 **Lua (probe):** `driverAid.gradient` tras `GetDriverAidData`.
 **Python:** `_parse_gradient_pct()` en `tsw_telemetry_source.py`; fallback HTTP si el probe no trae
@@ -158,30 +158,30 @@ el campo.
 
 ### Señales
 
-| Campo | Tipo | Estado | Qué es | Uso |
-| --- | --- | --- | --- | --- |
-| `signalSeen` | bool | 🟡 | Hay señal relevante en el query | — |
-| `distanceToSignal` | number (cm) | 🟡 | Distancia a la señal consultada | **Pendiente C1** — no en GetData ni `TrainState` |
-| `signalAspectClass` | string | 🟡 | Aspecto actual | Ej. `Stop`, `Clear` — cablear a `evaluate_signal_brake` |
-| `bSignalIsPermissive` | bool | 🟡 | Señal permisiva (puede pasar con precaución) | — |
-| `signalPropertyGuid` | string | 🟡 | ID interno de la señal | Debug / correlación editor |
-| `nextSignalPosition` | `{ x,y,z }` | 🟡 | Posición de la señal | — |
-| `nextSignalProperty` | `{ ribbonReference, propertyReference }` | ❌ | Referencias internas DTG | No usar en scripts |
-| `nextSignals[]` | array | 🟡 | Varias señales adelante | `value` (aspecto), `distanceToNextSignal`, posición |
+| Campo                 | Tipo                                     | Estado | Qué es                                       | Uso                                                     |
+| --------------------- | ---------------------------------------- | ------ | -------------------------------------------- | ------------------------------------------------------- |
+| `signalSeen`          | bool                                     | 🟡     | Hay señal relevante en el query              | —                                                       |
+| `distanceToSignal`    | number (cm)                              | 🟡     | Distancia a la señal consultada              | **Pendiente C1** — no en GetData ni `TrainState`        |
+| `signalAspectClass`   | string                                   | 🟡     | Aspecto actual                               | Ej. `Stop`, `Clear` — cablear a `evaluate_signal_brake` |
+| `bSignalIsPermissive` | bool                                     | 🟡     | Señal permisiva (puede pasar con precaución) | —                                                       |
+| `signalPropertyGuid`  | string                                   | 🟡     | ID interno de la señal                       | Debug / correlación editor                              |
+| `nextSignalPosition`  | `{ x,y,z }`                              | 🟡     | Posición de la señal                         | —                                                       |
+| `nextSignalProperty`  | `{ ribbonReference, propertyReference }` | ❌     | Referencias internas DTG                     | No usar en scripts                                      |
+| `nextSignals[]`       | array                                    | 🟡     | Varias señales adelante                      | `value` (aspecto), `distanceToNextSignal`, posición     |
 
 ### Consulta interna (`trackRestrictionQuery`)
 
 Bloque de **configuración del motor de búsqueda** hacia delante, no telemetría limpia para UI.
 
-| Campo | Qué es | Uso |
-| --- | --- | --- |
-| `searchDirection` | `Forwards` / `Backwards` | Dirección de búsqueda |
-| `maxSearchDistance` | Alcance (cm) | Ej. 10000 cm = 100 m en dump |
-| `maxReturnedSignals` / `maxReturnedSpeedLimits` | Cuántos resultados pide | 4 en dump |
-| `bWholeFormation` | Considerar todo el tren | bool |
-| `foundSignals` / `foundSpeedLimits` | Resultados (a veces vacíos en snapshot) | Diagnóstico |
-| `outCurrentTrackSpeedLimit` | Salida interna | A menudo sentinel |
-| `speedCurveFlags`, `signalFlags`, etc. | Flags Unreal | Ignorar salvo investigación |
+| Campo                                           | Qué es                                  | Uso                          |
+| ----------------------------------------------- | --------------------------------------- | ---------------------------- |
+| `searchDirection`                               | `Forwards` / `Backwards`                | Dirección de búsqueda        |
+| `maxSearchDistance`                             | Alcance (cm)                            | Ej. 10000 cm = 100 m en dump |
+| `maxReturnedSignals` / `maxReturnedSpeedLimits` | Cuántos resultados pide                 | 4 en dump                    |
+| `bWholeFormation`                               | Considerar todo el tren                 | bool                         |
+| `foundSignals` / `foundSpeedLimits`             | Resultados (a veces vacíos en snapshot) | Diagnóstico                  |
+| `outCurrentTrackSpeedLimit`                     | Salida interna                          | A menudo sentinel            |
+| `speedCurveFlags`, `signalFlags`, etc.          | Flags Unreal                            | Ignorar salvo investigación  |
 
 **Estado:** ❌ para autopiloto directo; útil solo para entender por qué `nextSpeedLimits` a veces
 viene vacío.
@@ -199,12 +199,12 @@ viene vacío.
 pendiente %. Cada muestra: `distanceToHeight` (cm adelante), `height`, `bTunnelFound` (túnel).
 `lastPlayerPosition` = el punto en la posición actual.
 
-| | `gradient` (`Data`) | `trackHeights` (`TrackData`) |
-| --- | --- | --- |
-| Mide | Pendiente **ahora** (%) | Forma del trazado **adelante** |
-| TSW6 | ✅ GetData → P1 | ❌ no leído |
-| UK pasajero | Suele bastar | No prioritario |
-| Freight NA | ✅ + learner | Solo si rampas largas fallan tras [masa](../v1/DASTSC_PARITY.md) |
+|             | `gradient` (`Data`)     | `trackHeights` (`TrackData`)                                     |
+| ----------- | ----------------------- | ---------------------------------------------------------------- |
+| Mide        | Pendiente **ahora** (%) | Forma del trazado **adelante**                                   |
+| TSW6        | ✅ GetData → P1         | ❌ no leído                                                      |
+| UK pasajero | Suele bastar            | No prioritario                                                   |
+| Freight NA  | ✅ + learner            | Solo si rampas largas fallan tras [masa](../v1/DASTSC_PARITY.md) |
 
 **Ejemplo:** `gradient +1 %` = subo ahora · `trackHeights` = a 800 m empieza una rampa larga.
 
@@ -213,16 +213,16 @@ autopilot no lo consulta.
 
 ### Estaciones y andenes
 
-| Campo | Tipo | Estado | Qué es | Uso |
-| --- | --- | --- | --- | --- |
-| `markers[]` | array | ✅ | Paradas **programadas** del servicio | `markerName` + distancia |
-| `markers[].markerType` | string | ✅ | Siempre `Platform` en UK (no «market») | Filtro de tipo |
-| `markers[].markerName` | string | ✅ | Ej. `Lichfield City, andén 2` | Próxima parada |
-| `markers[].stationName` | string | 🟡 | Nombre corto estación | — |
-| `markers[].distanceToStationCM` | number (cm) | 🟡 | Distancia al marcador | Fin de andén; **no** es el tablón `car_stop` |
-| `markers[].platformLength` | number (cm) | 🟡 | Longitud andén | Ventana FSM STOPPED |
-| `markers[].distanceToStation` | `{ x, y }` | 🟡 | Coordenadas internas | — |
-| `stations[]` | array | 🟡 | Geometría de andén (sin nombre) | **No** usar como parada |
+| Campo                           | Tipo        | Estado | Qué es                                 | Uso                                          |
+| ------------------------------- | ----------- | ------ | -------------------------------------- | -------------------------------------------- |
+| `markers[]`                     | array       | ✅     | Paradas **programadas** del servicio   | `markerName` + distancia                     |
+| `markers[].markerType`          | string      | ✅     | Siempre `Platform` en UK (no «market») | Filtro de tipo                               |
+| `markers[].markerName`          | string      | ✅     | Ej. `Lichfield City, andén 2`          | Próxima parada                               |
+| `markers[].stationName`         | string      | 🟡     | Nombre corto estación                  | —                                            |
+| `markers[].distanceToStationCM` | number (cm) | 🟡     | Distancia al marcador                  | Fin de andén; **no** es el tablón `car_stop` |
+| `markers[].platformLength`      | number (cm) | 🟡     | Longitud andén                         | Ventana FSM STOPPED                          |
+| `markers[].distanceToStation`   | `{ x, y }`  | 🟡     | Coordenadas internas                   | —                                            |
+| `stations[]`                    | array       | 🟡     | Geometría de andén (sin nombre)        | **No** usar como parada                      |
 
 **Integración HUD (2026-08-23):** `parse_track_data_stations` lee solo `markers[]` con
 `markerType=Platform`. El autopilot filtra con `tsw_hud.db` (`hud_timetable.py`); si TrackData
@@ -237,13 +237,13 @@ Ver [HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
 
 **HTTP:** `GET /get/DriverAid.PlayerInfo`
 
-| Campo | Tipo | Estado | Qué es | Uso |
-| --- | --- | --- | --- | --- |
-| `playerProfileName` | string | ❌ | Perfil guardado TSW | Logs |
-| `currentServiceName` | string | ✅ | Código servicio | Ej. `2R17` — match en `tsw_hud.db` |
-| `cameraMode` | string | ❌ | Ej. `FirstPerson_Driving` | — |
-| `currentTile` | `{ x, y }` | ❌ | Tile mundo | Debug |
-| `geoLocation` | `{ latitude, longitude }` | ✅ | WGS84 aproximado | Desambiguar horario HUD por posición |
+| Campo                | Tipo                      | Estado | Qué es                    | Uso                                  |
+| -------------------- | ------------------------- | ------ | ------------------------- | ------------------------------------ |
+| `playerProfileName`  | string                    | ❌     | Perfil guardado TSW       | Logs                                 |
+| `currentServiceName` | string                    | ✅     | Código servicio           | Ej. `2R17` — match en `tsw_hud.db`   |
+| `cameraMode`         | string                    | ❌     | Ej. `FirstPerson_Driving` | —                                    |
+| `currentTile`        | `{ x, y }`                | ❌     | Tile mundo                | Debug                                |
+| `geoLocation`        | `{ latitude, longitude }` | ✅     | WGS84 aproximado          | Desambiguar horario HUD por posición |
 
 **Estado:** `geoLocation` + `currentServiceName` necesarios para `schedule_source=hud_db`.
 
@@ -254,14 +254,14 @@ Ver [HUD_TIMETABLE.md](../v1/HUD_TIMETABLE.md).
 Para **calibrar frenos** (`aprender.bat`, matrices de muescas) necesitas el **vehículo**, no
 DriverAid:
 
-| Dato | Dónde (HTTPAPI) | Dónde (probe Lua) |
-| --- | --- | --- |
-| Handle combinado UK (0–8) | `HUD_GetPowerHandle` | `power`, `handle_notch` |
-| Freno tren | `HUD_GetTrainBrakeHandle` | `train_brake` |
-| Freno locomotora | `HUD_GetLocomotiveBrakeHandle` | `loco_brake` |
-| Freno dinámico | `HUD_GetElectricBrakeHandle` | `dyn_brake` |
-| Velocidad | `HUD_GetSpeed` | `speed_ms` |
-| Aceleración | `HUD_GetAcceleration` | `accel_ms2` |
+| Dato                      | Dónde (HTTPAPI)                | Dónde (probe Lua)       |
+| ------------------------- | ------------------------------ | ----------------------- |
+| Handle combinado UK (0–8) | `HUD_GetPowerHandle`           | `power`, `handle_notch` |
+| Freno tren                | `HUD_GetTrainBrakeHandle`      | `train_brake`           |
+| Freno locomotora          | `HUD_GetLocomotiveBrakeHandle` | `loco_brake`            |
+| Freno dinámico            | `HUD_GetElectricBrakeHandle`   | `dyn_brake`             |
+| Velocidad                 | `HUD_GetSpeed`                 | `speed_ms`              |
+| Aceleración               | `HUD_GetAcceleration`          | `accel_ms2`             |
 
 **Escritura** de mandos (autopiloto): preferido **IPC** `SendCommand.txt` (`tsw_ipc_bus`) · fallback
 `PATCH /set/DriverInput.*` (`tsw_command_bus`). Ver [DASTSC_PARITY.md](../v1/DASTSC_PARITY.md).
@@ -270,14 +270,14 @@ DriverAid:
 
 ## Mapa rápido: calibración de frenos vs DriverAid
 
-| Necesitas… | Fuente recomendada | DriverAid ayuda? |
-| --- | --- | --- |
-| Aceleración por muesca de freno | Probe `train_brake` / `handle_notch` + `accel_ms2` | No |
-| Banda de gradiente en learner | Probe `gradient_pct` (o `DriverAid.Data.gradient` fallback) | **Sí** |
-| Distancia de frenado | Velocidad + perfil + `gradient_pct` | **Sí** (gradiente) |
-| Saber cuándo bajar límite | `speed_limit_ms` + probe / `nextSpeedLimits` | Parcial |
-| Parar en andén (qué parada) | `tsw_hud.db` + `TrackData.markers` | ✅ con HUD DB |
-| Distancia al tablón | `car_stop_signs` en HUD DB | ✅ planning · 🔄 P1 (HUD, no OCR) |
+| Necesitas…                      | Fuente recomendada                                          | DriverAid ayuda?                  |
+| ------------------------------- | ----------------------------------------------------------- | --------------------------------- |
+| Aceleración por muesca de freno | Probe `train_brake` / `handle_notch` + `accel_ms2`          | No                                |
+| Banda de gradiente en learner   | Probe `gradient_pct` (o `DriverAid.Data.gradient` fallback) | **Sí**                            |
+| Distancia de frenado            | Velocidad + perfil + `gradient_pct`                         | **Sí** (gradiente)                |
+| Saber cuándo bajar límite       | `speed_limit_ms` + probe / `nextSpeedLimits`                | Parcial                           |
+| Parar en andén (qué parada)     | `tsw_hud.db` + `TrackData.markers`                          | ✅ con HUD DB                     |
+| Distancia al tablón             | `car_stop_signs` en HUD DB                                  | ✅ planning · 🔄 P1 (HUD, no OCR) |
 
 ---
 
@@ -299,32 +299,32 @@ DriverAid:
 
 ## Referencias en TSW6
 
-| Archivo | Relación |
-| --- | --- |
+| Archivo                                   | Relación                                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
 | `mods/TelemetryProbeMod/Scripts/main.lua` | `GetDriverAidData` → `speed_limit_ms`, `gradient_pct`, `dist_limit_cm` (1), `doors_dmi` |
-| `tsw_telemetry_source.py` | `_poll_driver_aid_planning`: Data + TrackData + PlayerInfo (HTTP ~2 s) |
-| `hud_timetable.py` | Lectura `tsw_hud.db`, `car_stop_signs` |
-| `driver_aid_parser.py` | `parse_track_data_stations`, filtros parada |
-| `tsw_ue4ss_reader.py` | `--api` compara probe vs HTTP |
-| `docs/v1/HUD_TIMETABLE.md` | Setup BD, validación in-game |
-| `docs/v1/ESTADO.md` | Tablero trabajo; estudio flujo pasos 1–3 |
-| `docs/PENDIENTE_DYNAMICHUD.md` | Roadmap probe / IPC |
-| `docs/TSW_HTTPAPI_INDEX.md` | Índice dumps HTTPAPI |
-| `docs/CURRENTFORMATION_API.md` | Física tren (masa, aire, esfuerzos) |
-| `docs/v1/ARQUITECTURA.md` | Lectura UE4SS vs HTTPAPI |
+| `tsw_telemetry_source.py`                 | `_poll_driver_aid_planning`: Data + TrackData + PlayerInfo (HTTP ~2 s)                  |
+| `hud_timetable.py`                        | Lectura `tsw_hud.db`, `car_stop_signs`                                                  |
+| `driver_aid_parser.py`                    | `parse_track_data_stations`, filtros parada                                             |
+| `tsw_ue4ss_reader.py`                     | `--api` compara probe vs HTTP                                                           |
+| `docs/v1/HUD_TIMETABLE.md`                | Setup BD, validación in-game                                                            |
+| `docs/v1/ESTADO.md`                       | Tablero trabajo; estudio flujo pasos 1–3                                                |
+| `docs/PENDIENTE_DYNAMICHUD.md`            | Roadmap probe / IPC                                                                     |
+| `docs/TSW_HTTPAPI_INDEX.md`               | Índice dumps HTTPAPI                                                                    |
+| `docs/CURRENTFORMATION_API.md`            | Física tren (masa, aire, esfuerzos)                                                     |
+| `docs/v1/ARQUITECTURA.md`                 | Lectura UE4SS vs HTTPAPI                                                                |
 
 ---
 
 ## Bitácora de validación
 
-| Fecha | Campo | Resultado |
-| --- | --- | --- |
-| 2026-08-18 | `gradient` HTTP + Lua | Class 323, correlación HUD OK |
-| 2026-08-18 | `speedLimit` | Coherente con límite HUD (~45 mph) |
-| 2026-08-18 | Dump completo | 3 endpoints, Cross-City / Lichfield |
-| 2026-08-23 | `PlayerInfo` + HUD DB | `2R17` Cross-City, paradas `car_stop_signs` en planning |
-| 2026-08-24 | `nextSpeedLimits` en probe | Intento 2 límites; revertido a 1 escalar (2026-08-28) |
-| 2026-08-28 | 1 límite probe | `023813` + UE4SS: `lim`/`next_lim` OK; TArray `d=nil`; `lim2` aparcado |
+| Fecha      | Campo                      | Resultado                                                              |
+| ---------- | -------------------------- | ---------------------------------------------------------------------- |
+| 2026-08-18 | `gradient` HTTP + Lua      | Class 323, correlación HUD OK                                          |
+| 2026-08-18 | `speedLimit`               | Coherente con límite HUD (~45 mph)                                     |
+| 2026-08-18 | Dump completo              | 3 endpoints, Cross-City / Lichfield                                    |
+| 2026-08-23 | `PlayerInfo` + HUD DB      | `2R17` Cross-City, paradas `car_stop_signs` en planning                |
+| 2026-08-24 | `nextSpeedLimits` en probe | Intento 2 límites; revertido a 1 escalar (2026-08-28)                  |
+| 2026-08-28 | 1 límite probe             | `023813` + UE4SS: `lim`/`next_lim` OK; TArray `d=nil`; `lim2` aparcado |
 
 *Pendiente doc:* validar mismos campos en **BNSF SD40-2**; sesión **señales** (C1) antes de marcar
 ✅.

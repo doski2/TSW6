@@ -14,13 +14,13 @@ En dump Class 323 la mayoría de campos escribibles devuelven `INVALID` — el t
 
 ## Endpoints
 
-| Campo | Writable | Estado | Notas |
-| --- | --- | --- | --- |
-| `Data` | no | ❌ | Snapshot botones (todos 0) |
-| `Enabled` | **sí** | ❌ | `false` en dump |
-| `Throttle` / `Reverser` | **sí** | ⚠️ | Genérico; no Class 323 |
-| `Auto Brake` / `Independent Brake` | **sí** | ⚠️ INVALID | Freight US |
-| Filas `Front Top/Bottom Row *` | **sí** | ⚠️ INVALID | Hardware virtual |
+| Campo                              | Writable | Estado      | Notas                      |
+| ---------------------------------- | -------- | ----------- | -------------------------- |
+| `Data`                             | no       | ❌          | Snapshot botones (todos 0) |
+| `Enabled`                          | **sí**   | ❌          | `false` en dump            |
+| `Throttle` / `Reverser`            | **sí**   | ⚠️         | Genérico; no Class 323     |
+| `Auto Brake` / `Independent Brake` | **sí**   | ⚠️ INVALID | Freight US                 |
+| Filas `Front Top/Bottom Row *`     | **sí**   | ⚠️ INVALID | Hardware virtual           |
 
 **Conclusión:** no usar en autopilot UK. Documentado solo para no confundir con `DriverInput`.
 

@@ -1,6 +1,7 @@
 {
   "schema": "tsw6-vehicle-package/1",
   "vehicle_id": "class_323",
+  "session_route": "Birmingham Cross-City",
   "match": {
     "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
   },

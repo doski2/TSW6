@@ -21,16 +21,16 @@ No sustituye el plan de producto; lo hace ejecutable.
 
 ## Cuándo usar este documento
 
-| Momento | Sección |
-| --- | --- |
-| Antes de abrir PR | [Checklist cierre](#checklist-cierre-de-paso) · [Tests](#tests) |
-| Tras cambiar `main.lua` | [Probe Lua](#probe-lua) |
-| Autopilot lento / mandos raros | [Depuración canal](#depuración-canal-ipc--getdata) |
-| Tras sesión in-game | [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) · [Sesión juego](#sesión-in-game) |
-| Antes de PR / diff inflado | [Depurar líneas y duplicados](#depurar-líneas-y-líneas-duplicadas) |
-| Dudas lab vs probe | [Lab vs producción](#lab-vs-producción) |
-| Idea mejora sin paso claro | [Sugerencias](#sugerencias-y-mejoras) |
-| Repaso periódico | [Trimestral](#repaso-trimestral) |
+| Momento                        | Sección                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Antes de abrir PR              | [Checklist cierre](#checklist-cierre-de-paso) · [Tests](#tests)                          |
+| Tras cambiar `main.lua`        | [Probe Lua](#probe-lua)                                                                  |
+| Autopilot lento / mandos raros | [Depuración canal](#depuración-canal-ipc--getdata)                                       |
+| Tras sesión in-game            | [VALIDACION_P1_SESIONES.md](VALIDACION_P1_SESIONES.md) · [Sesión juego](#sesión-in-game) |
+| Antes de PR / diff inflado     | [Depurar líneas y duplicados](#depurar-líneas-y-líneas-duplicadas)                       |
+| Dudas lab vs probe             | [Lab vs producción](#lab-vs-producción)                                                  |
+| Idea mejora sin paso claro     | [Sugerencias](#sugerencias-y-mejoras)                                                    |
+| Repaso periódico               | [Trimestral](#repaso-trimestral)                                                         |
 
 ---
 
@@ -60,30 +60,25 @@ de merge).
 ### Comandos habituales
 
 ```bat
-cd V2
-set PYTHONPATH=..;.
-python -m pytest tests/ -q
-python -m pytest tests/test_h1_downhill.py tests/test_limit_notch.py tests/test_command.py -q
-V2\run_p1_session.bat limit cross-city
 ```
 
 ### Matriz por área tocada
 
-| Si tocaste… | Ejecuta como mínimo |
-| --- | --- |
-| GetData / parser | `test_tsw_ue4ss_reader`, `test_telemetry_source`, `test_driver_aid_parser` |
-| Probe / snapshot | fixture en `tests/fixtures/` + tests anteriores |
-| IPC / mandos (contrato) | `test_control_channel`, `test_tsw_ipc_bus` |
-| **`V2/tsw6v2/`** | **`V2/tests/`** (criterio producto) |
-| Monitor CLI (v1, delega v2) | `tests/test_tsw_monitor_ipc` (solo parse args) |
-| P1 cartel V2 | `test_h1_downhill`, `test_limit_notch`, `test_command`, `test_decision`, `test_release`, `test_p1_station_tick` |
-| H1 / salida ascendente | `test_h1_downhill` (`zone_hold_suppressed`, `071613`, `15→40` subida) |
-| Caída grande 90→15 | `test_limit_notch` (`large_drop`, `horizon_commit` vía `test_command`) |
-| Autopilot GUI (cartel) | `tests/test_speed_decider` (`autopilot_limit` → V2) |
-| P1 estación/policy (archive v1) | `archive/braking_v1_autopilot/` — portar con paso 6–7 |
-| Paquete tren G-B | `test_control_layout`, `test_vehicles_json_from_lab`, `test_compare_lab_controls` |
-| Lab / correlator | `test_api_correlator`, `test_lab_serialize`, `test_summarize_hud_amps` |
-| Campo nuevo D2 | **mismo PR:** Lua + parser + `ProbeSnapshot` + fixture línea GetData |
+| Si tocaste…                     | Ejecuta como mínimo                                                                                             |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| GetData / parser                | `test_tsw_ue4ss_reader`, `test_telemetry_source`, `test_driver_aid_parser`                                      |
+| Probe / snapshot                | fixture en `tests/fixtures/` + tests anteriores                                                                 |
+| IPC / mandos (contrato)         | `test_control_channel`, `test_tsw_ipc_bus`                                                                      |
+| **`V2/tsw6v2/`**                | **`V2/tests/`** (criterio producto)                                                                             |
+| Monitor CLI (v1, delega v2)     | `tests/test_tsw_monitor_ipc` (solo parse args)                                                                  |
+| P1 cartel V2                    | `test_h1_downhill`, `test_limit_notch`, `test_command`, `test_decision`, `test_release`, `test_p1_station_tick` |
+| H1 / salida ascendente          | `test_h1_downhill` (`zone_hold_suppressed`, `071613`, `15→40` subida)                                           |
+| Caída grande 90→15              | `test_limit_notch` (`large_drop`, `horizon_commit` vía `test_command`)                                          |
+| Autopilot GUI (cartel)          | `tests/test_speed_decider` (`autopilot_limit` → V2)                                                             |
+| P1 estación/policy (archive v1) | `archive/braking_v1_autopilot/` — portar con paso 6–7                                                           |
+| Paquete tren G-B                | `test_control_layout`, `test_vehicles_json_from_lab`, `test_compare_lab_controls`                               |
+| Lab / correlator                | `test_api_correlator`, `test_lab_serialize`, `test_summarize_hud_amps`                                          |
+| Campo nuevo D2                  | **mismo PR:** Lua + parser + `ProbeSnapshot` + fixture línea GetData                                            |
 
 ### Fixtures GetData (D7)
 
@@ -100,23 +95,22 @@ IPC, jitter probe, holgura ETA (D9).
 
 ## Probe Lua
 
-| Acción | Comando / nota |
-| --- | --- |
-| Instalar mod | `install_ue4ss_probe.bat` |
-| Ver línea GetData | `probe_ue4ss.bat` |
-| Guardar log UE4SS | `probe_ue4ss_log.bat` → `logs/ue4ss_probe_*.txt` |
-| Tras editar `main.lua` | Subir `PROBE_BUILD` · reinstalar · comprobar `seq` sube ~20 Hz |
-| Rendimiento | `autopilot_perf.bat` · `lua_probe_perf.bat` — objetivo `loop_hz` ≥ 18 con GUI |
-| Inventario palancas | **ApiExplorerMod** F6 — no ampliar F9 en probe |
+| Acción                 | Comando / nota                                                                |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| Instalar mod           | `install_ue4ss_probe.bat`                                                     |
+| Probe + log campo      | `probe_ue4ss.bat` → consola + `logs/ue4ss_probe_*.txt` (CSV + `# raw:`)     |
+| Tras editar `main.lua` | Subir `PROBE_BUILD` · reinstalar · comprobar `seq` sube ~20 Hz                |
+| Rendimiento            | `autopilot_perf.bat` · `lua_probe_perf.bat` — objetivo `loop_hz` ≥ 18 con GUI |
+| Inventario palancas    | **ApiExplorerMod** F6 — no ampliar F9 en probe                                |
 
 ### Síntomas probe
 
-| Síntoma | Revisar |
-| --- | --- |
-| `seq` no sube | F7 probe OFF · hook UE4SS · `UE4SS.log` |
-| Campos `?` o ausentes | Nombre HUD/DriverAid en lab F5/F7 · CANAL_CONTROL |
-| Freeze al activar probe | DriverAid TArray — no ampliar lecturas sin medir |
-| Hz &lt; 15 | `autopilot_perf.bat`; reducir trabajo en tick Lua |
+| Síntoma                 | Revisar                                           |
+| ----------------------- | ------------------------------------------------- |
+| `seq` no sube           | F7 probe OFF · hook UE4SS · `UE4SS.log`           |
+| Campos `?` o ausentes   | Nombre HUD/DriverAid en lab F5/F7 · CANAL_CONTROL |
+| Freeze al activar probe | DriverAid TArray — no ampliar lecturas sin medir  |
+| Hz &lt; 15              | `autopilot_perf.bat`; reducir trabajo en tick Lua |
 
 ---
 
@@ -124,12 +118,12 @@ IPC, jitter probe, holgura ETA (D9).
 
 Ruta: `%TEMP%\TSW6Bridge\` (`GetData.txt`, `SendCommand.txt`, `SendCommandAck.txt`).
 
-| Síntoma | Revisar |
-| --- | --- |
-| Mando no aplica | `last_cmd_id` / `last_ack_ok` en GetData · cola IPC · nombre control G-B |
-| ACK fail | Palanca equivocada · `lever_notch` vs `handle_notch` · layout combined/freight |
-| Python no lee | Ruta bridge · antivirus · probe OFF |
-| Telemetría stale | `seq` congelado · comparar timestamp archivo |
+| Síntoma          | Revisar                                                                        |
+| ---------------- | ------------------------------------------------------------------------------ |
+| Mando no aplica  | `last_cmd_id` / `last_ack_ok` en GetData · cola IPC · nombre control G-B       |
+| ACK fail         | Palanca equivocada · `lever_notch` vs `handle_notch` · layout combined/freight |
+| Python no lee    | Ruta bridge · antivirus · probe OFF                                            |
+| Telemetría stale | `seq` congelado · comparar timestamp archivo                                   |
 
 Herramientas:
 
@@ -151,12 +145,12 @@ Plantilla mínima tras tocar probe o P1:
 
 Tarjetas de validación por tema (PLAN_V2):
 
-| Tarjeta | Qué probar |
-| --- | --- |
-| **P3** | Carteles P1 (`--limit-brake`) — ver [checklist P3](#checklist-p3--limit-brake-in-game) |
-| **C1** | Semáforo verde → ámbar → rojo; `signal_red` + distancia |
-| **C2** | Aproximación andén; `station_dist` / FSM (`p1_station_gate`) · [VALIDACION § andén](VALIDACION_P1_SESIONES.md#validación-p1-andén--modo-station--http-tarjeta-c2-parcial) |
-| **9b** | Nieve / slip; `is_slipping` en log sin cambio mando |
+| Tarjeta | Qué probar                                                                                                                                                                |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P3**  | Carteles P1 (`--limit-brake`) — ver [checklist P3](#checklist-p3--limit-brake-in-game)                                                                                    |
+| **C1**  | Semáforo verde → ámbar → rojo; `signal_red` + distancia                                                                                                                   |
+| **C2**  | Aproximación andén; `station_dist` / FSM (`p1_station_gate`) · [VALIDACION § andén](VALIDACION_P1_SESIONES.md#validación-p1-andén--modo-station--http-tarjeta-c2-parcial) |
+| **9b**  | Nieve / slip; `is_slipping` en log sin cambio mando                                                                                                                       |
 
 ### Checklist P3 — `--limit-brake` in-game
 
@@ -174,8 +168,6 @@ Alcance: solo **cartel** (`dist_limit_cm` / `next_limit_ms`); sin estación ni s
 #### Comandos
 
 ```bat
-V2\run_p1_session.bat limit cross-city
-python -m pytest V2/tests/test_h1_downhill.py V2/tests/test_limit_notch.py -q
 ```
 
 #### Perfil learner (`logs/profiles/`)
@@ -185,14 +177,14 @@ cuando GetData trae `vehicle=…`. El nombre del fichero es el slug del probe: m
 → `_`. Ejemplo Class 323: `vehicle=rvm_bcc_wrm_class323_dms_a_c` →
 `logs/profiles/rvm_bcc_wrm_class323_dms_a_c.json`.
 
-| Acción | Comportamiento |
-| --- | --- |
-| Archivo existe | Consola: `perfil <- …` · campo `profile` en metadatos JSONL |
-| Formato v1 (`ema` / `ema_bands`) | Sí — `LearnerProfile` predice por banda velocidad + gradiente |
-| Formato v2 (`decel_by_notch`) | Sí — lookup plano por muesca |
-| No existe | Fracciones UK B1/B2/B3 (`physics.py`); sin error |
-| `--profile PATH` | Esa ruta gana; **no** auto-carga |
-| Al cerrar sesión | Si hubo aprendizaje de aire (`brake_fill_n` nuevo), actualiza solo `brake_fill_*` en JSON v1 |
+| Acción                           | Comportamiento                                                                               |
+| -------------------------------- | -------------------------------------------------------------------------------------------- |
+| Archivo existe                   | Consola: `perfil <- …` · campo `profile` en metadatos JSONL                                  |
+| Formato v1 (`ema` / `ema_bands`) | Sí — `LearnerProfile` predice por banda velocidad + gradiente                                |
+| Formato v2 (`decel_by_notch`)    | Sí — lookup plano por muesca                                                                 |
+| No existe                        | Fracciones UK B1/B2/B3 (`physics.py`); sin error                                             |
+| `--profile PATH`                 | Esa ruta gana; **no** auto-carga                                                             |
+| Al cerrar sesión                 | Si hubo aprendizaje de aire (`brake_fill_n` nuevo), actualiza solo `brake_fill_*` en JSON v1 |
 
 `V2\run_p1_session.bat` no pasa `--profile`; usa auto-carga si el JSON está en `logs/profiles/`.
 Calibrar: `aprender.bat` / `learn_monitor.py` (v1) o copiar el JSON desde otra máquina.
@@ -206,25 +198,25 @@ GetData vivo: `%TEMP%\TSW6Bridge\GetData.txt` — comprobar que `seq` sube ~20 H
 
 Cada línea: `tick=… seq=… mph=… lever=… target=… ipc=… p1=<CMD>/<FASE>`.
 
-| Campo | Significado |
-| --- | --- |
-| `p1=APPLY/B1` (o B2/B3) | Plan P1 pide freno; `target` debe ir hacia muesca 3/2/1 |
-| `p1=RELEASE/NEU` | Objetivo alcanzado; `target=4` y `lever` → 4 en ticks siguientes |
-| `p1=COAST_THROTTLE/…` | Soltar tracción antes de frenar (palanca > 4) |
-| `ipc=True` | Un paso IPC enviado este tick (±1 muesca; normal variar 1–3 ticks hasta `lever==target`) |
-| Sin `p1=…` | Lejos del cartel o dentro de banda coast — **no** debe frenar “por nada” |
+| Campo                   | Significado                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------- |
+| `p1=APPLY/B1` (o B2/B3) | Plan P1 pide freno; `target` debe ir hacia muesca 3/2/1                                  |
+| `p1=RELEASE/NEU`        | Objetivo alcanzado; `target=4` y `lever` → 4 en ticks siguientes                         |
+| `p1=COAST_THROTTLE/…`   | Soltar tracción antes de frenar (palanca > 4)                                            |
+| `ipc=True`              | Un paso IPC enviado este tick (±1 muesca; normal variar 1–3 ticks hasta `lever==target`) |
+| Sin `p1=…`              | Lejos del cartel o dentro de banda coast — **no** debe frenar “por nada”                 |
 
 #### Escenarios (marcar PASS/FAIL)
 
-| # | Situación | Cómo provocarla | PASS si… |
-| --- | --- | --- | --- |
-| A | **Lejos del cartel** | 60 mph, cartel 55 a > 800 m | Sin `p1=APPLY` (o `apply` muy tarde); no B3 a kilómetros |
-| B | **Ventana APPLY** | Acercarse al 55 mph; distancia ~200–400 m | `p1=APPLY/B1` (o B2); `lever` baja a 3+; `train_brake` ≥ 0.25 en B1 |
-| C | **RELEASE en cartel** | Bajada: ~55–56 mph proyectado; llano/subida: en banda `objetivo+0.4` | `p1=RELEASE/NEU`; `target=4`; palanca → 4 |
-| D | **No RELEASE al arrancar** | Parado, freno puesto, cartel lejos | **No** `RELEASE` con spd ≈ 0 y cartel a cientos de m |
-| E | **HOLD_DH bajada** | Cartel 60, spd ~61.0, pendiente −1%, **misma zona** (60→60) | `p1=APPLY/B1` con `Mantener bajada @60.5`; RELEASE ~59.5 lejos del 55 |
-| F | **Tracción + cartel** | Palanca > 4 acercándose a cartel | Primero `COAST_THROTTLE` o neutro, luego `APPLY` |
-| G | **IPC estable** | Cualquier APPLY | ACK en log probe; sin errores `ipc_ok=False` repetidos |
+| #   | Situación                  | Cómo provocarla                                                      | PASS si…                                                              |
+| --- | -------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| A   | **Lejos del cartel**       | 60 mph, cartel 55 a > 800 m                                          | Sin `p1=APPLY` (o `apply` muy tarde); no B3 a kilómetros              |
+| B   | **Ventana APPLY**          | Acercarse al 55 mph; distancia ~200–400 m                            | `p1=APPLY/B1` (o B2); `lever` baja a 3+; `train_brake` ≥ 0.25 en B1   |
+| C   | **RELEASE en cartel**      | Bajada: ~55–56 mph proyectado; llano/subida: en banda `objetivo+0.4` | `p1=RELEASE/NEU`; `target=4`; palanca → 4                             |
+| D   | **No RELEASE al arrancar** | Parado, freno puesto, cartel lejos                                   | **No** `RELEASE` con spd ≈ 0 y cartel a cientos de m                  |
+| E   | **HOLD_DH bajada**         | Cartel 60, spd ~61.0, pendiente −1%, **misma zona** (60→60)          | `p1=APPLY/B1` con `Mantener bajada @60.5`; RELEASE ~59.5 lejos del 55 |
+| F   | **Tracción + cartel**      | Palanca > 4 acercándose a cartel                                     | Primero `COAST_THROTTLE` o neutro, luego `APPLY`                      |
+| G   | **IPC estable**            | Cualquier APPLY                                                      | ACK en log probe; sin errores `ipc_ok=False` repetidos                |
 
 **Nota:** en bajada, RELEASE puede tardar hasta `dist_limit_cm` < ~8 m (cartel “pasado”).
 
@@ -261,18 +253,18 @@ Mercancías (futuro): mantener margen alto y `a` menor en learner, no el mismo 1
 
 #### Si falla
 
-| Síntoma | Revisar primero |
-| --- | --- |
-| `p1` siempre vacío | GetData sin `dist_limit_cm` / `next_limit_ms`; probe Lua |
-| Frena muy pronto (B3 lejos) | JSONL: ¿`HOLD_DH` en 60→55? (no debe). `SAFETY_MARGIN` en `constants.py` |
+| Síntoma                               | Revisar primero                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `p1` siempre vacío                    | GetData sin `dist_limit_cm` / `next_limit_ms`; probe Lua                        |
+| Frena muy pronto (B3 lejos)           | JSONL: ¿`HOLD_DH` en 60→55? (no debe). `SAFETY_MARGIN` en `constants.py`        |
 | Frena muy tarde (spd > lim al cartel) | `SAFETY_MARGIN` en `V2/tsw6v2/constants.py` (hoy **1.10**; subir si hace falta) |
-| No suelta (lever < 4 siempre) | RELEASE bloqueado por bajada o spd > límite + 0.4; en `station` con
+| No suelta (lever < 4 siempre)         | RELEASE bloqueado por bajada o spd > límite + 0.4; en `station` con             |
 
 `pick=None` verificar que `evaluate_p1_tick` no salga antes de `_attempt_release` (fix `224046Z`) |
 
-| `ipc=False` con `target≠lever` | `test-ipc`; ACK timeout; juego en pausa |
-| Cartel “salta” / distancia fija | C.3a odometría — anotar `odo_m` y sesión para delta |
-| SPAD / rebasa señal roja | JSONL: ¿`p1tgt=SIGNAL` lejos? ¿solo emergencia @ &lt;60 m? ¿`signal_red` None
+| `ipc=False` con `target≠lever`  | `test-ipc`; ACK timeout; juego en pausa                                       |
+| Cartel “salta” / distancia fija | C.3a odometría — anotar `odo_m` y sesión para delta                           |
+| SPAD / rebasa señal roja        | JSONL: ¿`p1tgt=SIGNAL` lejos? ¿solo emergencia @ &lt;60 m? ¿`signal_red` None |
 
   a ~40 m? | Paso 5 + latch probe |
 
@@ -283,28 +275,28 @@ caso es reproducible sin juego.
 
 Cada tick → una línea JSON en `logs/v2/<timestamp>_<route>_limit.jsonl` (o ruta con `--log PATH`).
 
-| Campo tick | Uso al debatir |
-| --- | --- |
-| `lim_mph` / `lim_dist_m` | Cartel adelante |
-| `eff_mph` | Límite vigente (`speed_limit_ms`) |
-| `p1.dist_start_m` | ¿Frenamos pronto/tarde? |
-| `p1.apply_now` | ¿En ventana cinemática? |
-| `p1.reason` | `plan`, `release`, `apply_deferred`, `coast_latch`, … |
-| `p1.detail` | Texto del plan (contención bajada, latch, …) |
-| `brake_fill_s` | Tiempo de llenado aire aprendido (perfil activo) |
-| `ipc` | Mandos enviados y ACK |
+| Campo tick                     | Uso al debatir                                          |
+| ------------------------------ | ------------------------------------------------------- |
+| `lim_mph` / `lim_dist_m`       | Cartel adelante                                         |
+| `eff_mph`                      | Límite vigente (`speed_limit_ms`)                       |
+| `p1.dist_start_m`              | ¿Frenamos pronto/tarde?                                 |
+| `p1.apply_now`                 | ¿En ventana cinemática?                                 |
+| `p1.reason`                    | `plan`, `release`, `apply_deferred`, `coast_latch`, …   |
+| `p1.detail`                    | Texto del plan (contención bajada, latch, …)            |
+| `brake_fill_s`                 | Tiempo de llenado aire aprendido (perfil activo)        |
+| `ipc`                          | Mandos enviados y ACK                                   |
 | `signal_red` / `signal_dist_m` | Semáforo rojo (probe C1); replay HTML sección **Señal** |
 
 Valores de `p1.reason`:
 
-| Valor | Significado |
-| --- | --- |
-| `plan` | APPLY/COAST desde plan cartel |
-| `release` | Soltar a neutro |
-| `apply_deferred` | Plan existe pero fuera de ventana |
-| `coast_latch` | Anti-rebrake tras RELEASE |
-| `no_plan` | Velocidad bajo cartel / coast band |
-| `no_limit_sign` | GetData sin cartel |
+| Valor            | Significado                        |
+| ---------------- | ---------------------------------- |
+| `plan`           | APPLY/COAST desde plan cartel      |
+| `release`        | Soltar a neutro                    |
+| `apply_deferred` | Plan existe pero fuera de ventana  |
+| `coast_latch`    | Anti-rebrake tras RELEASE          |
+| `no_plan`        | Velocidad bajo cartel / coast band |
+| `no_limit_sign`  | GetData sin cartel                 |
 
 Pegar 5–10 líneas JSON del tramo conflictivo en el chat o en delta PLAN_V2.
 
@@ -318,14 +310,14 @@ Diagrama concepto (distancia → capa): [p1_limit_capas.html](p1_limit_capas.htm
 
 ### Debate por capas (no por APPLY/COAST)
 
-| Capa | Antes (código) | ¿Manda? |
-| --- | --- | --- |
-| **Vigilar** | `command_none`, apply_now=false | No |
-| **Esperar ventana** | `apply_deferred` | No |
-| **Quitar tracción** | `COAST_THROTTLE` | Sí → neutro |
-| **Frenar** | `APPLY` | Sí → B1–B3 |
-| **Soltar freno** | `RELEASE` | Sí → neutro |
-| **Revisar** [GAP] | apply_now sin cmd | Debate / posible bug |
+| Capa                | Antes (código)                  | ¿Manda?              |
+| ------------------- | ------------------------------- | -------------------- |
+| **Vigilar**         | `command_none`, apply_now=false | No                   |
+| **Esperar ventana** | `apply_deferred`                | No                   |
+| **Quitar tracción** | `COAST_THROTTLE`                | Sí → neutro          |
+| **Frenar**          | `APPLY`                         | Sí → B1–B3           |
+| **Soltar freno**    | `RELEASE`                       | Sí → neutro          |
+| **Revisar** [GAP]   | apply_now sin cmd               | Debate / posible bug |
 
 Consola `--investigate`: `capa=Vigilar [WATCH]` en lugar de solo `why=command_none`.
 
@@ -333,12 +325,12 @@ Consola `--investigate`: `capa=Vigilar [WATCH]` en lugar de solo `why=command_no
 
 ## Lab vs producción
 
-| | ApiExplorerMod | TelemetryProbeMod |
-| --- | --- | --- |
-| Frecuencia | Al pulsar tecla | ~20 Hz |
-| Salida | `data/lab_exports/exports/<UTC>/` | `%TEMP%\TSW6Bridge\GetData.txt` |
-| HTTP en sesión | Opcional (`-HTTPAPI`) | No |
-| Uso | Descubrir API, G-B, C1 enum | Producción autopilot |
+|                | ApiExplorerMod                    | TelemetryProbeMod               |
+| -------------- | --------------------------------- | ------------------------------- |
+| Frecuencia     | Al pulsar tecla                   | ~20 Hz                          |
+| Salida         | `data/lab_exports/exports/<UTC>/` | `%TEMP%\TSW6Bridge\GetData.txt` |
+| HTTP en sesión | Opcional (`-HTTPAPI`)             | No                              |
+| Uso            | Descubrir API, G-B, C1 enum       | Producción autopilot            |
 
 Flujo: lab propone → humano aprueba → probe adopta (D2). Ver
 [PLAN_API_EXPLORER § Explorar ≠ usar todo](PLAN_API_EXPLORER.md#explorar--usar-todo).
@@ -354,15 +346,15 @@ Herramientas lab post-sesión:
 
 Para no inflar el backlog ni duplicar PLAN_V2:
 
-| Tipo | Dónde dejarlo |
-| --- | --- |
-| Decisión producto / nuevo paso | Tabla **Deltas** o § debates en [PLAN_V2](PLAN_V2.md) |
-| Campo probe candidato | Sesión lab + fila en PLAN_API_EXPLORER mapa cableado |
-| Bug reproducible | Issue o nota en bitácora probe con `PROBE_BUILD` y escenario |
-| Refactor sin paso | **No hacer** — ver «No es mantenimiento v2» abajo |
+| Tipo                                 | Dónde dejarlo                                                      |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| Decisión producto / nuevo paso       | Tabla **Deltas** o § debates en [PLAN_V2](PLAN_V2.md)              |
+| Campo probe candidato                | Sesión lab + fila en PLAN_API_EXPLORER mapa cableado               |
+| Bug reproducible                     | Issue o nota en bitácora probe con `PROBE_BUILD` y escenario       |
+| Refactor sin paso                    | **No hacer** — ver «No es mantenimiento v2» abajo                  |
 | Líneas duplicadas / `print` olvidado | [Depurar líneas y duplicados](#depurar-líneas-y-líneas-duplicadas) |
-| Doc rota / enlace | PR pequeño o `scripts/tools/fix_markdownlint.py` |
-| Herramienta CLI nueva | `scripts/tools/` + test + una fila en este doc |
+| Doc rota / enlace                    | PR pequeño o `scripts/tools/fix_markdownlint.py`                   |
+| Herramienta CLI nueva                | `scripts/tools/` + test + una fila en este doc                     |
 
 **No es mantenimiento v2:** reabrir `archive/braking_v1_autopilot/coordinator.py` sin paso D1;
 refactors cosméticos sin test;
@@ -379,12 +371,12 @@ nueva; copiar desde v1 o pegar bloques suele dejar restos.
 
 Al **arreglar un bug** o **añadir una función**, solo las líneas imprescindibles:
 
-| Hacer | No hacer |
-| --- | --- |
-| Corregir la causa en el sitio mínimo | Reformatar el archivo entero |
-| Una función nueva si no cabe en la existente | Copiar bloques de v1 “por si acaso” |
-| Borrar código muerto que el cambio deja huérfano | Comentar bloques viejos en lugar de eliminarlos |
-| Test que demuestra el arreglo o el contrato | `print` / logs extra “para ver” que no se quitan |
+| Hacer                                            | No hacer                                         |
+| ------------------------------------------------ | ------------------------------------------------ |
+| Corregir la causa en el sitio mínimo             | Reformatar el archivo entero                     |
+| Una función nueva si no cabe en la existente     | Copiar bloques de v1 “por si acaso”              |
+| Borrar código muerto que el cambio deja huérfano | Comentar bloques viejos en lugar de eliminarlos  |
+| Test que demuestra el arreglo o el contrato      | `print` / logs extra “para ver” que no se quitan |
 
 Regla práctica: si el diff no explica el arreglo en &lt; 30 s de lectura, probablemente sobra.
 
@@ -396,19 +388,19 @@ Frenada por cartel — diseño V2 desde cero: [REGLAS_FRENOS_P1.md](REGLAS_FRENO
 Archive: `station_plan` + `objectives` (estación/señal); coordinator/policy **eliminados**
 2026-09-10.
 
-| Módulo V2 | Responsabilidad |
-| --- | --- |
-| `planning.py` | GetData; `zone_hold_suppressed_for_ascending_exit`; `large_zone_to_next_drop` |
-| `limits.py` | Fachada: `evaluate_limit_brake` (HOLD_DH + BRAKE_LIMIT) |
-| `limit_state.py` | Latch, `decel` por muesca, margen reacción + `fill_s` |
-| `limit_notch.py` | Escalón B1→B2→B3, muesca mínima suficiente |
-| `limit_horizon.py` | Horizonte cinemático al cartel siguiente |
-| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon` + `zone_hold_suppressed`) |
-| `physics.py` | Ventana IPC; `speed_limit_horizon_commit` (plan lejos → mando) |
-| `command.py` | COAST / APPLY / RELEASE |
-| `constants.py` | Umbrales cartel (plan / HOLD_DH / RELEASE / ascending exit) |
-| `decision.py` | Tick → `BrakeCommand`; overlay HOLD_DH |
-| `autopilot_limit.py` | Puente `speed_decider` → `evaluate_limit_tick` |
+| Módulo V2              | Responsabilidad                                                               |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `planning.py`          | GetData; `zone_hold_suppressed_for_ascending_exit`; `large_zone_to_next_drop` |
+| `limits.py`            | Fachada: `evaluate_limit_brake` (HOLD_DH + BRAKE_LIMIT)                       |
+| `limit_state.py`       | Latch, `decel` por muesca, margen reacción + `fill_s`                         |
+| `limit_notch.py`       | Escalón B1→B2→B3, muesca mínima suficiente                                    |
+| `limit_horizon.py`     | Horizonte cinemático al cartel siguiente                                      |
+| `limit_containment.py` | HOLD_DH + zone_contain (usa `limit_horizon` + `zone_hold_suppressed`)         |
+| `physics.py`           | Ventana IPC; `speed_limit_horizon_commit` (plan lejos → mando)                |
+| `command.py`           | COAST / APPLY / RELEASE                                                       |
+| `constants.py`         | Umbrales cartel (plan / HOLD_DH / RELEASE / ascending exit)                   |
+| `decision.py`          | Tick → `BrakeCommand`; overlay HOLD_DH                                        |
+| `autopilot_limit.py`   | Puente `speed_decider` → `evaluate_limit_tick`                                |
 
 Cambiar comportamiento cartel → **solo** `V2/tsw6v2/` + `V2/tests/`. Señal: `signal_plan`,
 
@@ -417,11 +409,11 @@ hasta pasos 6–7 / C1.
 
 ### Líneas de depuración
 
-| Quitar / revisar | Mantener |
-| --- | --- |
-| `print()`, `pdb`, `breakpoint()` | `logging` con nivel (`info`/`warning`/`error`) |
+| Quitar / revisar                          | Mantener                                                        |
+| ----------------------------------------- | --------------------------------------------------------------- |
+| `print()`, `pdb`, `breakpoint()`          | `logging` con nivel (`info`/`warning`/`error`)                  |
 | Comentarios `# DEBUG`, `# TODO` sin issue | Comentarios que explican regla no obvia (IPC, G-B, tolerancias) |
-| Logs verbosos en cada tick del bucle | Diagnóstico explícito (`diagnostic.py`, `test-ipc`, perf bat) |
+| Logs verbosos en cada tick del bucle      | Diagnóstico explícito (`diagnostic.py`, `test-ipc`, perf bat)   |
 
 ```bat
 ```
@@ -431,12 +423,12 @@ dejar `print` en `loop.py` / `ipc.py`.
 
 ### Líneas duplicadas
 
-| Tipo | Señal | Acción |
-| --- | --- | --- |
-| **Consecutivas** | Misma línea dos veces seguidas (import, asignación, comentario de sección) | Borrar la copia; un solo bloque |
-| **Lógica** | Misma condición o mapeo en dos módulos (`power_to_notch`, `_MS_TO_MPH`, parser GetData) | Una función en `V2/tsw6v2/` (p. ej. `bridge/getdata.py`) |
-| **Docs** | Mismo párrafo en `PLAN_V2` y otro `.md` | Fuente única en PLAN; enlace desde el resto |
-| **Archivos** | Dos rutas con el mismo rol (código cartel fuera de `V2/tsw6v2/`) | Solo `V2/tsw6v2/` — archive v1 = referencia |
+| Tipo             | Señal                                                                                   | Acción                                                   |
+| ---------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **Consecutivas** | Misma línea dos veces seguidas (import, asignación, comentario de sección)              | Borrar la copia; un solo bloque                          |
+| **Lógica**       | Misma condición o mapeo en dos módulos (`power_to_notch`, `_MS_TO_MPH`, parser GetData) | Una función en `V2/tsw6v2/` (p. ej. `bridge/getdata.py`) |
+| **Docs**         | Mismo párrafo en `PLAN_V2` y otro `.md`                                                 | Fuente única en PLAN; enlace desde el resto              |
+| **Archivos**     | Dos rutas con el mismo rol (código cartel fuera de `V2/tsw6v2/`)                        | Solo `V2/tsw6v2/` — archive v1 = referencia              |
 
 **Líneas consecutivas iguales** — PowerShell (carpeta o archivo):
 
@@ -457,15 +449,15 @@ dejar `print` en `loop.py` / `ipc.py`.
 ```bat
 ```
 
-| Doc | Actualizar cuando… |
-| --- | --- |
-| [CANAL_CONTROL](../CANAL_CONTROL.md) | Clave GetData o IPC |
-| [PLAN_V2](PLAN_V2.md) | Cierre paso, delta, debate |
-| [CODIGO_V2](CODIGO_V2.md) | Nueva carpeta o convención |
-| [MANTENIMIENTO](MANTENIMIENTO.md) | Nuevo comando recurrente |
-| [REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md) | Cambio contrato P1, ventanas IPC/H1, mapa módulos |
-| [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) | Nueva sesión ref. Cross-City o checklist campo |
-| [esqueleto_v2.svg](../assets/esqueleto_v2.svg) | Cambio arquitectura agent/probe |
+| Doc                                                 | Actualizar cuando…                                |
+| --------------------------------------------------- | ------------------------------------------------- |
+| [CANAL_CONTROL](../CANAL_CONTROL.md)                | Clave GetData o IPC                               |
+| [PLAN_V2](PLAN_V2.md)                               | Cierre paso, delta, debate                        |
+| [CODIGO_V2](CODIGO_V2.md)                           | Nueva carpeta o convención                        |
+| [MANTENIMIENTO](MANTENIMIENTO.md)                   | Nuevo comando recurrente                          |
+| [REGLAS_FRENOS_P1](REGLAS_FRENOS_P1.md)             | Cambio contrato P1, ventanas IPC/H1, mapa módulos |
+| [VALIDACION_P1_SESIONES](VALIDACION_P1_SESIONES.md) | Nueva sesión ref. Cross-City o checklist campo    |
+| [esqueleto_v2.svg](../assets/esqueleto_v2.svg)      | Cambio arquitectura agent/probe                   |
 
 Política v1/v2: [PLAN_V2 § Política de documentación](PLAN_V2.md#política-de-documentación).
 

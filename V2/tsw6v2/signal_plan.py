@@ -66,20 +66,6 @@ def signal_behind_station(
     return station_dist_m < signal_dist_m
 
 
-def exit_signal_close_behind_platform(
-    *,
-    signal_dist_m: Optional[float],
-    station_dist_m: Optional[float],
-) -> bool:
-    """Rojo de salida tras marker del andén pero dentro del horizonte (~91 m, 213920Z)."""
-    if signal_dist_m is None or signal_dist_m <= 0:
-        return False
-    return signal_behind_station(
-        signal_dist_m=signal_dist_m,
-        station_dist_m=station_dist_m,
-    ) and signal_dist_m <= SIGNAL_BRAKE_HORIZON_M
-
-
 def signal_deferred_to_station_at_platform(
     *,
     signal_dist_m: Optional[float],
@@ -89,17 +75,14 @@ def signal_deferred_to_station_at_platform(
     """
     Geometría donde la parada es el andén, no el poste (150617Z, 164240Z).
 
-    - Rojo **lejos** detrás del marker (``stn < sig``, 150617Z).
+    - Rojo detrás del marker (``stn < sig``, lejos o en horizonte ~91 m: 150617Z, 200940Z).
     - Rojo **pegado** al marker con marker delante del poste (cluster 164240Z).
     """
     if signal_behind_station(
         signal_dist_m=signal_dist_m,
         station_dist_m=station_dist_m,
     ):
-        return not exit_signal_close_behind_platform(
-            signal_dist_m=signal_dist_m,
-            station_dist_m=station_dist_m,
-        )
+        return True
     return exit_signal_clustered_with_platform_stop(
         signal_dist_m,
         station_dist_m,
@@ -119,10 +102,7 @@ def signal_in_play(
         signal_dist_m=signal_dist_m,
         station_dist_m=station_dist_m,
     ):
-        return exit_signal_close_behind_platform(
-            signal_dist_m=signal_dist_m,
-            station_dist_m=station_dist_m,
-        )
+        return False
     return True
 
 

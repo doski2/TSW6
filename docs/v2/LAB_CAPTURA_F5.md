@@ -8,11 +8,11 @@
 
 ## Cómo funciona
 
-| | F5 explorer | Probe (`TelemetryProbeMod`) |
-| --- | --- | --- |
-| **Cuándo** | Solo al pulsar F5 | ~20 Hz automático con F7 ON |
-| **Dónde** | `data/lab_exports/exports/` | `%TEMP%\TSW6Bridge\GetData.txt` |
-| **Para qué** | Saber qué expone Lua/HTTP; comparar situaciones | Autopilot, calibración, P1 |
+|              | F5 explorer                                     | Probe (`TelemetryProbeMod`)     |
+| ------------ | ----------------------------------------------- | ------------------------------- |
+| **Cuándo**   | Solo al pulsar F5                               | ~20 Hz automático con F7 ON     |
+| **Dónde**    | `data/lab_exports/exports/`                     | `%TEMP%\TSW6Bridge\GetData.txt` |
+| **Para qué** | Saber qué expone Lua/HTTP; comparar situaciones | Autopilot, calibración, P1      |
 
 **F5 no sustituye al probe en marcha.** Para ver “qué hace mientras freno/acelero” en tiempo real,
 usa el probe (`probe_ue4ss.bat`) o pulsa **F5 en momentos concretos** (ver protocolo abajo).
@@ -26,24 +26,24 @@ copia el JSON con otro nombre (p. ej. `hud_batch_frenando.json`).
 
 Validado in-game Class 323 — sesión `20260830T140413Z` (~21 m/s, power 2).
 
-| Función Lua | Campos típicos en JSON | ¿Probe GetData? | Significado (323) |
-| --- | --- | --- | --- |
-| `HUD_GetSpeed` | `Speed (ms)` | ✅ `speed_ms` | Velocidad m/s (×2.24 → mph) |
-| `HUD_GetAcceleration` | `Acceleration (ms2)` | ✅ `accel_ms2` | Aceleración longitudinal |
-| `HUD_GetPowerHandle` | `power` (+ a veces `is_negative`) | ✅ `power`, `power_neg` | Muesca tracción UK (−4…+4; negativo = retención) |
-| `HUD_GetTrainBrakeHandle` | `HandlePosition`, `IsActive` | ✅ `train_brake` | Freno tren (0–1; ~0.33 = B1) |
-| `HUD_GetElectricBrakeHandle` | `HandlePosition`, `IsActive` | ✅ `dyn_brake` | Freno eléctrico / regen |
-| `HUD_GetLocomotiveBrakeHandle` | `HandlePosition`, `IsActive` | ✅ `loco_brake` | Inactivo en 323 |
-| `HUD_GetDirection` | `Direction`, `IsActive` | ❌ | Marcha adelante/atrás |
-| `HUD_GetBrakeGauge_1` | `RedNeedle (Pa)`, `WhiteNeedle (Pa)` | ❌ | Manómetro cabina 1 |
-| `HUD_GetBrakeGauge_2` | idem | ❌ | Manómetro cabina 2 |
-| `HUD_GetMaxPermittedSpeed` | `max_speed`, `is_active` | ✅ `max_speed_ms` | Techo ATS (a menudo inactivo) |
-| `HUD_GetIsSlipping` | `IsSlipping` | ❌ (candidato C1 física) | Patinaje |
-| `HUD_GetIsTractionLocked` | `IsTractionLocked` | ❌ | Bloqueo tracción |
-| `HUD_GetTractiveEffort` | esfuerzo N | ❌ **siempre 0** (L0.6d) | HUD no cableado; ver Simulation HTTP |
-| `HUD_GetSpeedControlTarget` | `Speed (ms)`, `IsActive` | ❌ | Cruise (no 323) |
-| `HUD_GetAmmeter` | `Amps` | ❌ **catálogo 323** (L0.6f cerrado) | Siempre 0 en 323; repetir en otro tren |
-| `HUD_GetEngineRPM` | `Needle1/2 RPM` | ❌ | Diesel (0 en EMU) |
+| Función Lua                    | Campos típicos en JSON               | ¿Probe GetData?                     | Significado (323)                                |
+| ------------------------------ | ------------------------------------ | ----------------------------------- | ------------------------------------------------ |
+| `HUD_GetSpeed`                 | `Speed (ms)`                         | ✅ `speed_ms`                       | Velocidad m/s (×2.24 → mph)                      |
+| `HUD_GetAcceleration`          | `Acceleration (ms2)`                 | ✅ `accel_ms2`                      | Aceleración longitudinal                         |
+| `HUD_GetPowerHandle`           | `power` (+ a veces `is_negative`)    | ✅ `power`, `power_neg`             | Muesca tracción UK (−4…+4; negativo = retención) |
+| `HUD_GetTrainBrakeHandle`      | `HandlePosition`, `IsActive`         | ✅ `train_brake`                    | Freno tren (0–1; ~0.33 = B1)                     |
+| `HUD_GetElectricBrakeHandle`   | `HandlePosition`, `IsActive`         | ✅ `dyn_brake`                      | Freno eléctrico / regen                          |
+| `HUD_GetLocomotiveBrakeHandle` | `HandlePosition`, `IsActive`         | ✅ `loco_brake`                     | Inactivo en 323                                  |
+| `HUD_GetDirection`             | `Direction`, `IsActive`              | ❌                                  | Marcha adelante/atrás                            |
+| `HUD_GetBrakeGauge_1`          | `RedNeedle (Pa)`, `WhiteNeedle (Pa)` | ❌                                  | Manómetro cabina 1                               |
+| `HUD_GetBrakeGauge_2`          | idem                                 | ❌                                  | Manómetro cabina 2                               |
+| `HUD_GetMaxPermittedSpeed`     | `max_speed`, `is_active`             | ✅ `max_speed_ms`                   | Techo ATS (a menudo inactivo)                    |
+| `HUD_GetIsSlipping`            | `IsSlipping`                         | ❌ (candidato C1 física)            | Patinaje                                         |
+| `HUD_GetIsTractionLocked`      | `IsTractionLocked`                   | ❌                                  | Bloqueo tracción                                 |
+| `HUD_GetTractiveEffort`        | esfuerzo N                           | ❌ **siempre 0** (L0.6d)            | HUD no cableado; ver Simulation HTTP             |
+| `HUD_GetSpeedControlTarget`    | `Speed (ms)`, `IsActive`             | ❌                                  | Cruise (no 323)                                  |
+| `HUD_GetAmmeter`               | `Amps`                               | ❌ **catálogo 323** (L0.6f cerrado) | Siempre 0 en 323; repetir en otro tren           |
+| `HUD_GetEngineRPM`             | `Needle1/2 RPM`                      | ❌                                  | Diesel (0 en EMU)                                |
 
 **HTTP:** cada clave en `http_guess` es la ruta `CurrentFormation/0/Function.<nombre>`.
 
@@ -51,15 +51,15 @@ Validado in-game Class 323 — sesión `20260830T140413Z` (~21 m/s, power 2).
 
 ## Qué **no** trae F5 (hace falta otro modo)
 
-| Dato | Modo / fuente | ¿Necesario para 323 hoy? |
-| --- | --- | --- |
-| Límite velocidad, gradiente, cartel | Probe `GetData` o **F7** `driver_aid` (pendiente) | ✅ probe ya lo tiene |
-| Odómetro `odo_m` | Probe o **Shift+F5** `formation` | ✅ probe |
-| Presión cilindro `brake_cyl_bar` | Probe (`Simulation`) o formation | 🟡 learner |
-| Puertas, `vehicle` string | Probe GetData | ✅ probe |
-| Masa, adhesión, Simulation completa | HTTP o formation | ❌ congelado §2 PLAN |
-| Nombres lever (`PowerBrakeHandle`) | **F6** `controls` | ✅ ya conocido en 323 |
-| Señal roja, distancia andén | **F7** `driver_aid` (L0.4) | ⬜ C1/C2 |
+| Dato                                | Modo / fuente                                     | ¿Necesario para 323 hoy? |
+| ----------------------------------- | ------------------------------------------------- | ------------------------ |
+| Límite velocidad, gradiente, cartel | Probe `GetData` o **F7** `driver_aid` (pendiente) | ✅ probe ya lo tiene     |
+| Odómetro `odo_m`                    | Probe o **Shift+F5** `formation`                  | ✅ probe                 |
+| Presión cilindro `brake_cyl_bar`    | Probe (`Simulation`) o formation                  | 🟡 learner               |
+| Puertas, `vehicle` string           | Probe GetData                                     | ✅ probe                 |
+| Masa, adhesión, Simulation completa | HTTP o formation                                  | ❌ congelado §2 PLAN     |
+| Nombres lever (`PowerBrakeHandle`)  | **F6** `controls`                                 | ✅ ya conocido en 323    |
+| Señal roja, distancia andén         | **F7** `driver_aid` (L0.4)                        | ⬜ C1/C2                 |
 
 #### Conclusión 323
 
@@ -77,18 +77,18 @@ Objetivo: ver cómo cambian los valores **sin** log continuo.
 2. Para cada fila, haz la maniobra y pulsa **F5** inmediatamente después.
 3. Copia `hud_batch.json` con nombre descriptivo (o anota en `notas_sesion.md`).
 
-| # | Situación | Qué mirar en JSON |
-| --- | --- | --- |
-| 1 | Parado, freno suelto, power 0 | `Speed`≈0, `train_brake`≈0 |
-| 2 | Parado, B1 | `train_brake`≈0.33 |
-| 3 | Parado, B2 / B3 | `train_brake` 0.67 / 1.0; gauges suben |
-| 4 | Acelerando (power +) | `Speed` sube, `Acceleration` > 0 |
-| 5 | Crucero ~40 mph | `Speed` estable, `power` según muesca |
-| 6 | Frenando (B1–B3) | `Acceleration` < 0, gauges, `train_brake` |
-| 7 | Tracción P3–P4 (~30 mph) | `Amps` > 0 · `power` · comparar con reposo |
-| 8 | Retención / regen (power neg) | `Amps` < 0 · `power_neg` · `dyn_brake` |
-| 9 | Solo freno eléctrico (`dyn_brake` sin B aire) | `Amps` vs `dyn_brake` · `Acceleration` |
-| 10 | Freno aire B2 sin power | `Amps` ≈ 0 · gauges suben |
+| #   | Situación                                     | Qué mirar en JSON                          |
+| --- | --------------------------------------------- | ------------------------------------------ |
+| 1   | Parado, freno suelto, power 0                 | `Speed`≈0, `train_brake`≈0                 |
+| 2   | Parado, B1                                    | `train_brake`≈0.33                         |
+| 3   | Parado, B2 / B3                               | `train_brake` 0.67 / 1.0; gauges suben     |
+| 4   | Acelerando (power +)                          | `Speed` sube, `Acceleration` > 0           |
+| 5   | Crucero ~40 mph                               | `Speed` estable, `power` según muesca      |
+| 6   | Frenando (B1–B3)                              | `Acceleration` < 0, gauges, `train_brake`  |
+| 7   | Tracción P3–P4 (~30 mph)                      | `Amps` > 0 · `power` · comparar con reposo |
+| 8   | Retención / regen (power neg)                 | `Amps` < 0 · `power_neg` · `dyn_brake`     |
+| 9   | Solo freno eléctrico (`dyn_brake` sin B aire) | `Amps` vs `dyn_brake` · `Acceleration`     |
+| 10  | Freno aire B2 sin power                       | `Amps` ≈ 0 · gauges suben                  |
 
 Ver **L0.6f** — guía completa: [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) + `summarize_hud_amps.py`.
 
@@ -104,20 +104,20 @@ cada ~50 ms. El explorer no hará eso (diseño: no competir con probe).
 
 ## ¿Tenemos “toda” la información de F5?
 
-| Pregunta | Respuesta |
-| --- | --- |
+| Pregunta                         | Respuesta                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | ¿Sabemos qué es cada `HUD_Get*`? | **Sí** para los que usa el probe — ver [CURRENTFORMATION_API.md](../reference/CURRENTFORMATION_API.md) |
-| ¿F5 = GetData? | **Casi** en cabina; GetData añade DriverAid, odo, doors, lever_notch |
-| ¿F5 = HTTP CurrentFormation? | **Solo** el subárbol `Function.HUD_Get*` (~16 nodos de ~25k) |
-| ¿Hace falta más en F5 para 323? | **No** para validar el mod; sí **varias capturas** si quieres estudiar frenos |
-| ¿Errores en JSON `errors[]`? | 4 funciones con firma UE distinta en build `d`; corregido en `e` — re-F5 tras reinicio |
+| ¿F5 = GetData?                   | **Casi** en cabina; GetData añade DriverAid, odo, doors, lever_notch                                   |
+| ¿F5 = HTTP CurrentFormation?     | **Solo** el subárbol `Function.HUD_Get*` (~16 nodos de ~25k)                                           |
+| ¿Hace falta más en F5 para 323?  | **No** para validar el mod; sí **varias capturas** si quieres estudiar frenos                          |
+| ¿Errores en JSON `errors[]`?     | 4 funciones con firma UE distinta en build `d`; corregido en `e` — re-F5 tras reinicio                 |
 
 ---
 
 ## Validación in-game (bitácora)
 
-| Fecha | Sesión | Notas |
-| --- | --- | --- |
+| Fecha      | Sesión             | Notas                                                          |
+| ---------- | ------------------ | -------------------------------------------------------------- |
 | 2026-08-30 | `20260830T140413Z` | F5 OK — 323 en marcha ~21 m/s; 12/16 HUD OK; build `20260830d` |
 
 ---

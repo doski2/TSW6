@@ -249,6 +249,32 @@ local function suggest_ipc_aliases(levers)
     return aliases
 end
 
+local function read_door_scalar(comp)
+    if not util.obj_valid(comp) then return nil end
+    local ok, v = pcall(function() return comp.CurrentInputValue end)
+    if ok and type(v) == "number" then return v end
+    ok, v = pcall(function() return comp:GetCurrentInputValue() end)
+    if ok and type(v) == "number" then return v end
+    return nil
+end
+
+local function collect_door_probes(actor)
+    local doors = {}
+    for _, name in ipairs(config.DOOR_PROBE_NAMES) do
+        local comp = try_child(actor, name)
+        if comp then
+            local v = read_door_scalar(comp)
+            doors[#doors + 1] = {
+                name = name,
+                scope = "actor",
+                read_value = v,
+                open_hint = (v ~= nil and v > 0.01),
+            }
+        end
+    end
+    return doors
+end
+
 local function http_guess_for_lever(snap)
     local guesses = {}
     if snap.read_value ~= nil then
@@ -268,6 +294,7 @@ function M.capture(actor, controller)
         layout_hint = "unknown",
         lua = {
             levers = {},
+            doors = {},
             driver_input = {},
             simulation = {},
         },
@@ -316,6 +343,7 @@ function M.capture(actor, controller)
     end
 
     payload.lua.levers = levers
+    payload.lua.doors = collect_door_probes(actor)
     payload.layout_hint = infer_layout_hint(levers)
     payload.ipc_aliases = suggest_ipc_aliases(levers)
 
@@ -329,8 +357,9 @@ function M.capture(actor, controller)
         payload.errors[#payload.errors + 1] = "no levers found on drivable actor"
     end
 
-    print(string.format("[ApiExplorer] controls scan done levers=%d hint=%s\n",
-        #levers, payload.layout_hint))
+    print(string.format(
+        "[ApiExplorer] controls scan done levers=%d doors=%d hint=%s\n",
+        #levers, #payload.lua.doors, payload.layout_hint))
     return payload
 end
 

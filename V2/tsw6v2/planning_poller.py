@@ -23,6 +23,7 @@ from tsw6v2.planning_feed import (
     resolve_station_tick_dt,
     write_planning_snapshot,
 )
+from tsw6v2.vehicle_package import station_planning_trusted
 
 _log = logging.getLogger("tsw6v2.planning_poller")
 
@@ -87,6 +88,7 @@ class StationPlanning:
         self._last_tick_t = 0.0
         self._last_speed_mph = 0.0
         self._last_probe_seq: Optional[int] = None
+        self._last_probe_vehicle: Optional[str] = None
         self._startup_invalidate_pending = True
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
         self._served_bases: set[str] = set()
@@ -195,6 +197,76 @@ class StationPlanning:
             meta.hud_timetable_id,
         )
 
+    def _note_probe_vehicle(self, probe_vehicle: Optional[str]) -> None:
+        text = (probe_vehicle or "").strip()
+        if not text or text == "?":
+            return
+        prev = self._last_probe_vehicle
+        self._last_probe_vehicle = text
+        if prev is not None and prev != text:
+            _log.info("planning: reset tras cambio vehicle %s -> %s", prev, text)
+            self.invalidate()
+
+    @staticmethod
+    def _cleared_foreign_stop_snapshot(
+        snap: PlanningSnapshot,
+        probe_vehicle: Optional[str],
+        *,
+        hud_route_name: Optional[str] = None,
+    ) -> Optional[PlanningSnapshot]:
+        """
+        Snap sin parada si HUD y tren son de regiones distintas.
+
+        ``hud_route_name`` opcional (p. ej. metadatos HTTP en caché principal
+        mientras ``Planning.txt`` no trae ruta).
+        """
+        if not probe_vehicle:
+            return None
+        hud = (hud_route_name if hud_route_name is not None else snap.hud_route_name)
+        if station_planning_trusted(probe_vehicle, hud):
+            return None
+        if snap.station_distance_m is None and not snap.station_name:
+            return None
+        _log.info(
+            "planning: parada ignorada %s @ %s m (HUD %s, vehicle %s)",
+            snap.station_name or "?",
+            snap.station_distance_m,
+            (hud or "?"),
+            probe_vehicle,
+        )
+        return PlanningSnapshot(
+            station_distance_m=None,
+            station_name=None,
+            service_name=snap.service_name,
+            hud_route_name=snap.hud_route_name or hud_route_name,
+            schedule_source=snap.schedule_source,
+            hud_timetable_id=snap.hud_timetable_id,
+        )
+
+    def _suppress_untrusted_station_cache(self, probe_vehicle: Optional[str]) -> None:
+        with self._cache_lock:
+            cleared = self._cleared_foreign_stop_snapshot(
+                self._snap, probe_vehicle
+            )
+            if cleared is None:
+                return
+            self._snap.station_distance_m = None
+            self._snap.station_name = None
+
+    def _strip_untrusted_station_fields(
+        self,
+        snap: PlanningSnapshot,
+        probe_vehicle: Optional[str],
+    ) -> PlanningSnapshot:
+        hud = snap.hud_route_name
+        if not hud and not self._http_ok:
+            with self._cache_lock:
+                hud = self._snap.hud_route_name
+        cleared = self._cleared_foreign_stop_snapshot(
+            snap, probe_vehicle, hud_route_name=hud
+        )
+        return cleared if cleared is not None else snap
+
     def _note_probe_seq(self, probe_seq: Optional[int]) -> None:
         if probe_seq is None:
             return
@@ -245,10 +317,14 @@ class StationPlanning:
         speed_mph: float,
         *,
         probe_seq: Optional[int] = None,
+        probe_vehicle: Optional[str] = None,
     ) -> PlanningSnapshot:
+        self._note_probe_vehicle(probe_vehicle)
+        self._suppress_untrusted_station_cache(probe_vehicle)
         if not self._http_ok:
             self._note_probe_seq(probe_seq)
-            return self._file_feed.update(speed_mph, probe_seq=probe_seq)
+            snap = self._file_feed.update(speed_mph, probe_seq=probe_seq)
+            return self._strip_untrusted_station_fields(snap, probe_vehicle)
 
         now = time.monotonic()
         if self._last_tick_t <= 0:
@@ -264,7 +340,8 @@ class StationPlanning:
         self._note_probe_seq(probe_seq)
         with self._cache_lock:
             advance_station_distance_tick(self._snap, speed_mph, dt)
-        return self._snap
+            snap = self._snap
+        return self._strip_untrusted_station_fields(snap, probe_vehicle)
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -283,6 +360,11 @@ class StationPlanning:
         if not skip_identity_check:
             self._note_schedule_identity(result)
         self._apply_poll_metadata(result)
+        vehicle = self._last_probe_vehicle
+        with self._cache_lock:
+            hud = self._snap.hud_route_name
+        if vehicle and not station_planning_trusted(vehicle, hud):
+            return
         nxt = result.get("next_stop")
         if not isinstance(nxt, dict):
             return

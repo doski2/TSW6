@@ -18,6 +18,24 @@ def _ipc_target_trace(snap: AgentSnapshot) -> str:
     return format_ipc_target_display(snap) or "—"
 
 
+def _fmt_tri_bool(val: Optional[bool]) -> str:
+    if val is None:
+        return "—"
+    return "1" if val else "0"
+
+
+def _fmt_amps_a(val: float) -> str:
+    return f"{val:+.0f}" if abs(val) >= 10 else f"{val:+.1f}"
+
+
+def _has_doors_trace_fields(snap: AgentSnapshot) -> bool:
+    return (
+        snap.doors_telem is not None
+        or snap.doors_dmi is not None
+        or snap.doors_open is not None
+    )
+
+
 def advance_probe_active_ms(
     active_ms: float,
     last_seq: int | None,
@@ -130,6 +148,7 @@ class JsonlTrace:
             "target_frac": _round_opt(snap.target_input_value, 4),
             "train_brake": _round_opt(snap.train_brake, 3),
             "mc_input": _round_opt(snap.mc_input, 4),
+            "amps": _round_opt(snap.amps, 1),
             "brake_cyl_bar": _round_opt(snap.brake_cyl_bar, 2),
             "brake_fill_s": _round_opt(snap.brake_fill_s, 2),
             "brake_fill_n": snap.brake_fill_n,
@@ -239,10 +258,12 @@ def format_investigate(snap: AgentSnapshot) -> str:
             else "?"
         )
         parts.append(f"sig=ROJO@{sig_d}m")
-    if snap.doors_telem is not None or snap.doors_dmi is not None or snap.doors_open is not None:
-        telem = "1" if snap.doors_telem else ("0" if snap.doors_telem is False else "—")
-        dmi = "1" if snap.doors_dmi else ("0" if snap.doors_dmi is False else "—")
-        parts.append(f"doors={telem}/{dmi}")
+    if _has_doors_trace_fields(snap):
+        parts.append(
+            f"doors={_fmt_tri_bool(snap.doors_telem)}/{_fmt_tri_bool(snap.doors_dmi)}"
+        )
+    if snap.amps is not None:
+        parts.append(f"amps={_fmt_amps_a(snap.amps)}A")
     if snap.p1_target_kind:
         parts.append(f"p1tgt={snap.p1_target_kind}")
     if capa:

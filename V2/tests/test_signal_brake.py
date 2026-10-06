@@ -15,7 +15,6 @@ from tsw6v2.p1_policy import (
 )
 from tsw6v2.station_brake import evaluate_station_brake
 from tsw6v2.signal_plan import (
-    exit_signal_close_behind_platform,
     signal_behind_station,
     signal_deferred_to_station_at_platform,
     signal_in_play,
@@ -97,8 +96,7 @@ def test_signal_behind_station_when_station_closer_session_150617():
     """Rojo tras andén: stn 120 m, sig 280 m — no planificar parada al semáforo."""
     assert signal_behind_station(signal_dist_m=280.0, station_dist_m=120.0)
     assert not signal_in_play(signal_dist_m=280.0, station_dist_m=120.0)
-    assert exit_signal_close_behind_platform(signal_dist_m=25.6, station_dist_m=21.7)
-    assert signal_in_play(signal_dist_m=25.6, station_dist_m=21.7)
+    assert not signal_in_play(signal_dist_m=25.6, station_dist_m=21.7)
 
 
 def test_signal_deferred_to_station_at_platform_session_164240():
@@ -114,10 +112,11 @@ def test_signal_deferred_to_station_at_platform_session_164240():
         signal_dist_m=620.0,
         station_dist_m=1141.0,
     )
-    assert not signal_deferred_to_station_at_platform(
+    assert signal_deferred_to_station_at_platform(
         signal_dist_m=25.6,
         station_dist_m=21.7,
     )
+    assert not signal_in_play(signal_dist_m=25.6, station_dist_m=21.7)
 
 
 def test_p1_tick_station_not_signal_when_red_after_platform_session_150617():
@@ -848,8 +847,8 @@ def test_station_beats_exit_signal_cluster_session_164240() -> None:
     assert picked.target_kind == "STATION"
 
 
-def test_signal_beats_station_exit_red_close_behind_marker_session_213920() -> None:
-    """Rojo de salida ~4 m tras marker dentro de 91 m: SIGNAL gana (213920Z tick 32081)."""
+def test_station_beats_exit_red_close_behind_marker_final_approach_session_213920() -> None:
+    """Rojo ~4 m tras marker en aproximación final: parada en andén (200940Z / Four Oaks)."""
     signal = BrakeTargetResult(
         target_kind="SIGNAL",
         distance_m=25.3,
@@ -870,7 +869,7 @@ def test_signal_beats_station_exit_red_close_behind_marker_session_213920() -> N
         apply_now=True,
         detail="station",
     )
-    assert should_prefer_signal_over_station(signal, station, signal_dist_m=25.3)
+    assert not should_prefer_signal_over_station(signal, station, signal_dist_m=25.3)
     picked = pick_p1_brake_target(
         speed_mph=9.91,
         limit_target=None,
@@ -884,7 +883,48 @@ def test_signal_beats_station_exit_red_close_behind_marker_session_213920() -> N
         gradient_pct=-0.7,
     )
     assert picked is not None
-    assert picked.target_kind == "SIGNAL"
+    assert picked.target_kind == "STATION"
+
+
+def test_station_beats_exit_signal_four_oaks_geometry_session_200940() -> None:
+    """Four Oaks final: stn ~87 m, rojo salida ~91 m detrás del marker → STATION."""
+    signal = BrakeTargetResult(
+        target_kind="SIGNAL",
+        distance_m=90.1,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=0.0,
+        apply_now=True,
+        detail="signal",
+    )
+    station = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=87.1,
+        target_speed_mph=0.0,
+        handle_notch=2,
+        phase="B2",
+        dist_start=15.0,
+        apply_now=True,
+        detail="station",
+    )
+    assert not should_prefer_signal_over_station(
+        signal, station, signal_dist_m=90.1
+    )
+    picked = pick_p1_brake_target(
+        speed_mph=5.4,
+        limit_target=None,
+        station_target=station,
+        signal_target=signal,
+        signal_dist_m=90.1,
+        limit_mph=55.0,
+        limit_dist_m=90.0,
+        station_dist_m=87.1,
+        effective_limit=55.0,
+        gradient_pct=1.0,
+    )
+    assert picked is not None
+    assert picked.target_kind == "STATION"
 
 
 def test_p1_tick_station_not_signal_exit_cluster_session_164240() -> None:

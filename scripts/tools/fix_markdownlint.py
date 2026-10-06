@@ -25,6 +25,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
+from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,7 +63,8 @@ MD060_VISUAL_WIDE = re.compile(r"[\u2600-\u27BF\U0001F300-\U0001FAFF]")
 # MD060 compact: whitespace immediately left of `|` must be exactly one space
 # (mensaje: "Table pipe has extra space to the left for style compact").
 MD060_EXTRA_SPACE_LEFT = re.compile(r" {2,}\|")
-MD060_DEFAULTS = {"style": "any", "aligned_delimiter": False}
+# Fix hacia tuberías alineadas (spec MD060 style `aligned`); lint `any` sigue en .markdownlint.json.
+MD060_DEFAULTS = {"style": "aligned", "aligned_delimiter": False}
 MD004_DEFAULTS = {"style": "consistent"}
 MD004_SUBLIST_SYMBOLS = ("*", "+", "-")
 
@@ -217,7 +219,7 @@ def pipe_columns(line: str) -> list[int]:
     return cols
 
 
-def count_aligned_violations(lines: list[str]) -> int:
+def count_aligned_violations(lines: Sequence[str]) -> int:
     if len(lines) < 2:
         return 0
     header_cols = set(pipe_columns(lines[0]))
@@ -242,12 +244,12 @@ def is_compact_cell(part: str) -> bool:
     return part == compact_cell_content(part.strip())
 
 
-def count_compact_extra_space_left(lines: list[str]) -> int:
+def count_compact_extra_space_left(lines: Sequence[str]) -> int:
     """Cuenta `|` con más de un espacio a la izquierda (mismo aviso que markdownlint)."""
     return sum(len(MD060_EXTRA_SPACE_LEFT.findall(line)) for line in lines)
 
 
-def count_compact_violations(lines: list[str], aligned_delimiter: bool) -> int:
+def count_compact_violations(lines: Sequence[str], aligned_delimiter: bool) -> int:
     violations = 0
     if aligned_delimiter and len(lines) >= 2:
         violations += count_aligned_violations(lines[:2])
@@ -262,7 +264,7 @@ def count_compact_violations(lines: list[str], aligned_delimiter: bool) -> int:
     return violations
 
 
-def count_tight_violations(lines: list[str], aligned_delimiter: bool) -> int:
+def count_tight_violations(lines: Sequence[str], aligned_delimiter: bool) -> int:
     violations = 0
     if aligned_delimiter and len(lines) >= 2:
         violations += count_aligned_violations(lines[:2])
@@ -278,7 +280,7 @@ def count_tight_violations(lines: list[str], aligned_delimiter: bool) -> int:
 
 
 def md060_style_scores(
-    lines: list[str], aligned_delimiter: bool
+    lines: Sequence[str], aligned_delimiter: bool
 ) -> dict[str, int]:
     return {
         "aligned": count_aligned_violations(lines),
@@ -288,22 +290,24 @@ def md060_style_scores(
 
 
 def pick_md060_style(
-    lines: list[str], config: dict[str, str | bool]
+    lines: Sequence[str], config: dict[str, str | bool]
 ) -> str:
+    """
+    Estilo de salida al reparar tablas.
+
+    Con style=any, MD060 elige el estilo con menos violaciones; en empate o al
+    fijar tablas usamos `aligned` (tuberías en columna — doc MD060).
+    """
     style = str(config.get("style", "any"))
     aligned_delimiter = bool(config.get("aligned_delimiter", False))
     if style != "any":
         return style
-    # Padding tipo `| Pieza         |` no es aligned válido: markdownlint
-    # reporta compacto. No elegir aligned, que rellenaría aún más.
-    if count_compact_extra_space_left(lines) and count_aligned_violations(lines) > 0:
-        return "compact"
-    scores = md060_style_scores(lines, aligned_delimiter)
-    return min(scores, key=lambda k: scores[k])
+    # Reparación: salida style `aligned` (MD060 — tuberías en columna).
+    return "aligned"
 
 
 def table_needs_md060_fix(
-    lines: list[str], config: dict[str, str | bool]
+    lines: Sequence[str], config: dict[str, str | bool]
 ) -> bool:
     """True si la tabla no cumple ningún estilo MD060 (style=any) o el configurado."""
     configured_style = str(config.get("style", "any"))
@@ -311,8 +315,6 @@ def table_needs_md060_fix(
     if configured_style != "any":
         scores = md060_style_scores(lines, aligned_delimiter)
         return scores[configured_style] > 0
-    if count_compact_extra_space_left(lines) and count_aligned_violations(lines) > 0:
-        return True
     return min(md060_style_scores(lines, aligned_delimiter).values()) > 0
 
 

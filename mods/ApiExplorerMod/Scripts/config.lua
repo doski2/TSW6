@@ -1,7 +1,7 @@
 -- ApiExplorerMod — rutas, schema, mapeo HTTP
 local M = {}
 
-M.BUILD = "20261003b"
+M.BUILD = "20261006a"
 M.SCHEMA = "tsw6-lab-export/1"
 M.HTTP_PREFIX = "CurrentFormation/0/Function."
 
@@ -12,6 +12,26 @@ M.KEY_DEBOUNCE_S = 0.35
 M.USE_FINDALL_CONTROLS = false
 
 -- Nombres típicos de mandos (G-B / DRIVERINPUT_API). Orden: combined UK primero.
+-- Mantener en sync con TelemetryProbeMod config.lua DOOR_CHILD_NAMES.
+M.DOOR_PROBE_NAMES = {
+    "PassengerDoor_FL",
+    "PassengerDoor_FR",
+    "PassengerDoor_RL",
+    "PassengerDoor_RR",
+    "PassengerDoorLeft",
+    "PassengerDoorRight",
+    "PassengerDoor_L",
+    "PassengerDoor_R",
+    "PassengerDoor_1",
+    "PassengerDoor_2",
+    "PassengerDoor_3",
+    "PassengerDoor_4",
+    "PassengerDoor_5",
+    "PassengerDoor_6",
+    "PassengerDoor_7",
+    "PassengerDoor_8",
+}
+
 M.CONTROL_PROBE_NAMES = {
     "PowerBrakeHandle",
     "MasterController",

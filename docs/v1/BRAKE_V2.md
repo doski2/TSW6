@@ -8,27 +8,27 @@ Todo el código de frenado está en **`tsw6/braking/v2/`** (sin `archive/braking
 
 ## Módulos
 
-| Archivo | Rol |
-| --- | --- |
-| `v2/coordinator.py` | Un tick P1: RELEASE, emergencias, prioridad, latch unificado |
-| `v2/policy.py` | Dónde: cluster 350 m, parada unificada, qué objetivo gana |
-| `v2/objectives.py` | Cómo: andén (`station_plan`), señal stub, emergencia |
-| `v2/station_plan.py` | Perfil parada HUD: B1–B3 a 0, ETA |
-| `v2/limit_brake.py` | Cartel de velocidad (perfil + física latched) |
-| `v2/command.py` | `BrakeTargetResult`, APPLY / RELEASE, anti-rebrake |
-| `v2/plan.py` | Tipos `BrakePlan`, `BrakePlanStep` |
-| `v2/physics.py` | Cinemática (distancias, márgenes, ventana de aplicación) |
+| Archivo              | Rol                                                          |
+| -------------------- | ------------------------------------------------------------ |
+| `v2/coordinator.py`  | Un tick P1: RELEASE, emergencias, prioridad, latch unificado |
+| `v2/policy.py`       | Dónde: cluster 350 m, parada unificada, qué objetivo gana    |
+| `v2/objectives.py`   | Cómo: andén (`station_plan`), señal stub, emergencia         |
+| `v2/station_plan.py` | Perfil parada HUD: B1–B3 a 0, ETA                            |
+| `v2/limit_brake.py`  | Cartel de velocidad (perfil + física latched)                |
+| `v2/command.py`      | `BrakeTargetResult`, APPLY / RELEASE, anti-rebrake           |
+| `v2/plan.py`         | Tipos `BrakePlan`, `BrakePlanStep`                           |
+| `v2/physics.py`      | Cinemática (distancias, márgenes, ventana de aplicación)     |
 
 ### Ventana de aplicación (2026-08-26)
 
 Los metros de acción del plan **ya no son constantes**. Todo pasa por `physics.py`:
 
-| Función | Uso |
-| --- | --- |
-| `apply_zone_margin_m(speed_ms, apply_at)` | Zona base: `max(25, speed×2.5, apply_at×0.12)`, cap **150 m** |
-| `brake_command_apply_zone_m(...)` | Misma fórmula con `speed_mph` + `apply_at` coherente (`distance − dist_start`) |
-| `is_in_brake_action_window(...)` | Ventana simétrica **±zona** — prioridad estación, andén, bloqueo RELEASE |
-| `should_emit_brake_command(...)` | Emitir APPLY: ±zona **o** tarde dentro del envelope (`distance ≤ apply_at`) |
+| Función                                   | Uso                                                                            |
+| ----------------------------------------- | ------------------------------------------------------------------------------ |
+| `apply_zone_margin_m(speed_ms, apply_at)` | Zona base: `max(25, speed×2.5, apply_at×0.12)`, cap **150 m**                  |
+| `brake_command_apply_zone_m(...)`         | Misma fórmula con `speed_mph` + `apply_at` coherente (`distance − dist_start`) |
+| `is_in_brake_action_window(...)`          | Ventana simétrica **±zona** — prioridad estación, andén, bloqueo RELEASE       |
+| `should_emit_brake_command(...)`          | Emitir APPLY: ±zona **o** tarde dentro del envelope (`distance ≤ apply_at`)    |
 
 **Ejemplo Class 323 @ 60 mph** (`apply_at ≈ 400 m`): zona ≈ **67 m** (antes 60 m fijo).
 
@@ -46,20 +46,20 @@ G acelera; no hay banda extra que adelante el RELEASE.
 
 **Dos reglas (no confundir):**
 
-| Regla | Función | Cuándo |
-| --- | --- | --- |
-| ¿Plan en ventana de acción? | `is_in_brake_action_window` | Prioridad, estación gana, `release_blocked:station` |
+| Regla                           | Función                     | Cuándo                                                  |
+| ------------------------------- | --------------------------- | ------------------------------------------------------- |
+| ¿Plan en ventana de acción?     | `is_in_brake_action_window` | Prioridad, estación gana, `release_blocked:station`     |
 | ¿Mandar APPLY / COAST_THROTTLE? | `should_emit_brake_command` | Emisión IPC; incluye tarde si aún `distance ≤ apply_at` |
 
 #### Migración: umbrales fijos → física
 
-| Antes (hardcoded) | Ahora | Módulo |
-| --- | --- | --- |
-| Zona APPLY **60 m** | `apply_zone_margin_m` / `brake_command_apply_zone_m` | `physics.py`, `command.py` |
-| Histeresis cartel **80 m / 30 m** | ±`apply_zone_m` del plan activo | `limit_brake.py` |
-| Contención bajada **150 m** al cartel | `distance ≤ apply_zone_margin_m(speed, distance)` | `limit_brake.py` |
-| B3 tarde si `dist_start < −30` | `dist_start < −late_zone_m` (`brake_command_apply_zone_m`) | `command.py` |
-| RELEASE sin mirar estación | `release_blocked:station` si estación en ventana | `coordinator.py` |
+| Antes (hardcoded)                     | Ahora                                                      | Módulo                     |
+| ------------------------------------- | ---------------------------------------------------------- | -------------------------- |
+| Zona APPLY **60 m**                   | `apply_zone_margin_m` / `brake_command_apply_zone_m`       | `physics.py`, `command.py` |
+| Histeresis cartel **80 m / 30 m**     | ±`apply_zone_m` del plan activo                            | `limit_brake.py`           |
+| Contención bajada **150 m** al cartel | `distance ≤ apply_zone_margin_m(speed, distance)`          | `limit_brake.py`           |
+| B3 tarde si `dist_start < −30`        | `dist_start < −late_zone_m` (`brake_command_apply_zone_m`) | `command.py`               |
+| RELEASE sin mirar estación            | `release_blocked:station` si estación en ventana           | `coordinator.py`           |
 
 Constantes que **siguen** siendo fijas (no cinemática): `TARGET_CLUSTER_GAP_M = 350`,
 `STATION_COAST_CUTOFF_M = 100`, emergencia andén por distancia absoluta en `objectives.py`.
@@ -81,19 +81,19 @@ y vuelves a 7 archivos con `if` sueltos.
 **Paso 1 — una pregunta, una función** (como ahora). Quien necesite el sí/no la
 **importa**. Coordinator y FSM no reimplementan.
 
-| Pregunta | Función | Dónde vive hoy |
-| --- | --- | --- |
-| ¿El cartel más lejos es un recorte (Four Oaks 55)? | `next_sign_is_reduction_beyond_station` | `policy.py` |
-| ¿Esperar ese recorte y no STATION a 0? | `station_waits_for_approach_limit` | `policy.py` |
-| ¿Sujetar / no soltar cartel en bajada? | `should_hold_limit_brake_downhill` | `command.py` — **también** el único RELEASE |
+| Pregunta                                           | Función                                 | Dónde vive hoy                              |
+| -------------------------------------------------- | --------------------------------------- | ------------------------------------------- |
+| ¿El cartel más lejos es un recorte (Four Oaks 55)? | `next_sign_is_reduction_beyond_station` | `policy.py`                                 |
+| ¿Esperar ese recorte y no STATION a 0?             | `station_waits_for_approach_limit`      | `policy.py`                                 |
+| ¿Sujetar / no soltar cartel en bajada?             | `should_hold_limit_brake_downhill`      | `command.py` — **también** el único RELEASE |
 
 **Paso 2 — por dominio, 1 a 1** (cuando el paso 1 no tenga `if` paralelo):
 
-| Fase | Qué queda “perfecto” | Dastsc equivalente | Fuera de esta fase |
-| --- | --- | --- | --- |
-| **A · Límites** | APPLY/RELEASE/coast/bajada en **un** sitio; tests Cross-City 60→55→45→35 | `planBrakeForLimit` + `resolveReleaseAction` | No tocar horizonte andén ni cluster |
-| **B · Estación** | Un horizonte de emisión (servicio, no B1 a 800 m); STATION sin cartel | `planBrakeForStation` + `stationPlanHorizonM` | Cluster apagado o STATION filtrada |
-| **C · Límite + andén** | Cluster: STATION fuera del pool si cartel **antes** y gap ≤ 350 m; **más** waits si recorte **después** | `shouldMerge` + `selectUrgent` | Señales (cuando haya dist HUD) |
+| Fase                   | Qué queda “perfecto”                                                                                    | Dastsc equivalente                            | Fuera de esta fase                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------- |
+| **A · Límites**        | APPLY/RELEASE/coast/bajada en **un** sitio; tests Cross-City 60→55→45→35                                | `planBrakeForLimit` + `resolveReleaseAction`  | No tocar horizonte andén ni cluster |
+| **B · Estación**       | Un horizonte de emisión (servicio, no B1 a 800 m); STATION sin cartel                                   | `planBrakeForStation` + `stationPlanHorizonM` | Cluster apagado o STATION filtrada  |
+| **C · Límite + andén** | Cluster: STATION fuera del pool si cartel **antes** y gap ≤ 350 m; **más** waits si recorte **después** | `shouldMerge` + `selectUrgent`                | Señales (cuando haya dist HUD)      |
 
 Motores sin cambiar de rol: `physics.py`, `limit_brake.py`, `station_plan.py`,
 `command.py`, `coordinator.py` (ordena: planes → reglas → mando).
@@ -127,12 +127,12 @@ Si el HUD pone el andén más cerca que un **cartel de reducción**
 `uni=Y`, ni STATION a 0, ni **emergencia de andén**. Primero 60→55. Un cartel **más alto**
 después del andén (35 vigente, 60 @ 70 m tras Sutton) **no** espera: es parada, no HUD invertido.
 
-| Qué | Quién | No hacer |
-| --- | --- | --- |
-| **Cuándo** APPLY cartel | SPEED_LIMIT si `spd > límite + 0.9` | B1 de andén a 800 m |
-| **Coast / RELEASE** | Cartel hecho (`spd ≤ límite + 0.4`) | Dejar B1 pegado hasta el andén |
-| **Cuándo APPLY andén** | STATION cuando entra horizonte de servicio | Usar apply_at de B1 (~1,1 km) |
-| Sustituir cartel por estación | dist al cartel **≤ 8 m** | `dist_start` de B1 estación negativo desde lejos |
+| Qué                           | Quién                                      | No hacer                                         |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------------ |
+| **Cuándo** APPLY cartel       | SPEED_LIMIT si `spd > límite + 0.9`        | B1 de andén a 800 m                              |
+| **Coast / RELEASE**           | Cartel hecho (`spd ≤ límite + 0.4`)        | Dejar B1 pegado hasta el andén                   |
+| **Cuándo APPLY andén**        | STATION cuando entra horizonte de servicio | Usar apply_at de B1 (~1,1 km)                    |
+| Sustituir cartel por estación | dist al cartel **≤ 8 m**                   | `dist_start` de B1 estación negativo desde lejos |
 
 Logs: `p1cmd=RELEASE` tras el 55; `p1tgt=STATION` cerca del andén; `uni=Y`.
 
@@ -153,14 +153,14 @@ Constantes: `TARGET_CLUSTER_GAP_M = 350`, `STATION_STOPPED_MPH = 1.5`,
 
 ## Acciones del decider (`control_actions.py`)
 
-| Acción | Significado | Ejecución |
-| --- | --- | --- |
-| `HOLD` | No tocar mando | — |
-| `COAST` | Soltar tracción | Teclado / IPC |
-| `BRAKE` | Un paso de freno servicio | Teclado fallback |
-| `BRAKE_FAST` | Freno servicio máximo (hasta B3), ciclos cortos | DMI, watchdog |
-| `EMERGENCY` | Muesca 0 ATP (P1-CRITICO ≤25 m) | `BrakeCommand` + IPC |
-| `RELEASE` | Neutro tras objetivo | `BrakeCommand` |
+| Acción       | Significado                                     | Ejecución            |
+| ------------ | ----------------------------------------------- | -------------------- |
+| `HOLD`       | No tocar mando                                  | —                    |
+| `COAST`      | Soltar tracción                                 | Teclado / IPC        |
+| `BRAKE`      | Un paso de freno servicio                       | Teclado fallback     |
+| `BRAKE_FAST` | Freno servicio máximo (hasta B3), ciclos cortos | DMI, watchdog        |
+| `EMERGENCY`  | Muesca 0 ATP (P1-CRITICO ≤25 m)                 | `BrakeCommand` + IPC |
+| `RELEASE`    | Neutro tras objetivo                            | `BrakeCommand`       |
 
 P1 activo: la muesca va en `BrakeCommand`; `action` suele ser `HOLD`.
 
@@ -182,13 +182,13 @@ Propiedades usadas por GUI: `last_brake_command`, `last_debug` (`p1_debug`).
 
 **Roadmap:** [v2/PLAN_V2.md](../v2/PLAN_V2.md). Estado técnico actual:
 
-| Tema | Estado |
-| --- | --- |
-| Señal DANGER → `evaluate_signal_brake` | Stub; cablear v2 pasos 4–5 |
-| Distancia tablón fina en P1 | HTTP + odo; OCR no en FSM |
-| `station_eta` en coordinator | ✅ `TrainState.next_stop_arrival` |
-| Tests P1 | `test_brake_v2`, `test_brake_coordinator`, `test_speed_decider` |
-| Reglas por tipo (límite / estación / cluster) | [Cómo tocar reglas](#cómo-tocar-reglas-sin-borrar-v2) |
+| Tema                                          | Estado                                                          |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| Señal DANGER → `evaluate_signal_brake`        | Stub; cablear v2 pasos 4–5                                      |
+| Distancia tablón fina en P1                   | HTTP + odo; OCR no en FSM                                       |
+| `station_eta` en coordinator                  | ✅ `TrainState.next_stop_arrival`                               |
+| Tests P1                                      | `test_brake_v2`, `test_brake_coordinator`, `test_speed_decider` |
+| Reglas por tipo (límite / estación / cluster) | [Cómo tocar reglas](#cómo-tocar-reglas-sin-borrar-v2)           |
 
 ---
 

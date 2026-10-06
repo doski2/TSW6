@@ -409,19 +409,15 @@ def throttle_notch_from_probe(
     """
     if snap is None:
         return 0
-    from tsw6v2.bridge.getdata import power_to_combined_notch
     from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
 
     pkg = vehicle_package_from_snap(snap, vehicle_package)
     if pkg and uses_mc_analog_ipc(pkg):
-        if snap.power is None:
-            return 0
-        if snap.power_neg or float(snap.power) <= 0.0:
-            return 0
-        combined = power_to_combined_notch(snap.power, snap.power_neg)
-        if combined is None or combined <= NEUTRAL_NOTCH:
-            return 0
-        return throttle_notch_from_lever(combined)
+        from tsw6v2.vehicle_package import mc_has_traction_above_neutral
+
+        if mc_has_traction_above_neutral(snap, pkg):
+            return 1
+        return 0
     lever = snap.combined_handle_notch()
     if lever is None:
         return 0
@@ -622,6 +618,11 @@ class BrakeReleaseState:
         return speed_mph <= next_limit_mph + COAST_REBRAKE_MARGIN_MPH
 
 
+def _below_limit_auto_release_band(speed_mph: float, reference_mph: float) -> bool:
+    """Muy por debajo del objetivo/techo: no RELEASE automático (cartel o huérfano)."""
+    return speed_mph < float(reference_mph) - LIMIT_RELEASE_MIN_SPEED_BAND_MPH
+
+
 def resolve_orphan_limit_brake_release(
     *,
     speed_mph: float,
@@ -637,6 +638,8 @@ def resolve_orphan_limit_brake_release(
 
     Sesión ``095417Z``: B2 tras 15→30 con ``no_plan`` y spd ~15 mph; el RELEASE
     al cartel 50 no aplica (``LIMIT_RELEASE_MIN_SPEED_BAND``).
+
+    Sin cartel adelante: misma banda que ``resolve_release_command`` (210508Z origen).
     """
     if not is_brake_applied(handle_notch):
         return None
@@ -645,6 +648,9 @@ def resolve_orphan_limit_brake_release(
     ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
     if speed_mph > ceiling:
         return None
+    if next_limit_mph is None and distance_next_m is None:
+        if _below_limit_auto_release_band(speed_mph, ceiling):
+            return None
     if next_limit_mph is not None and distance_next_m is not None:
         if within_next_brake_horizon(
             speed_mph=speed_mph,
@@ -740,9 +746,7 @@ def resolve_release_command(
         decel_includes_gradient=decel_includes_gradient,
     ):
         return None
-    # Parado con freno del jugador al iniciar escenario: spd=0 y cartel lejos no es
-    # «objetivo alcanzado» — solo soltar si vamos cerca de la velocidad del cartel.
-    if speed_mph < target - LIMIT_RELEASE_MIN_SPEED_BAND_MPH:
+    if _below_limit_auto_release_band(speed_mph, target):
         return None
 
     cmd = release_brake_command(at_target=True)

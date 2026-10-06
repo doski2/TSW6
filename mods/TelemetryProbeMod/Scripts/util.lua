@@ -108,6 +108,51 @@ function M.ctrl_is_valid(ctrl)
     return ok and valid == true
 end
 
+--- Busca palanca por nombre: ``DriverInput`` primero, luego hijos directos (IPC + GetData MC).
+function M.find_named_control_on_parent(parent, names)
+    if not parent or type(names) ~= "table" then
+        return nil
+    end
+    local di = M.try_child(parent, "DriverInput") or M.try_child(parent, "DriverInputComponent")
+    if di then
+        for _, child_name in ipairs(names) do
+            local ctrl = M.try_child(di, child_name)
+            if M.ctrl_is_valid(ctrl) then
+                return ctrl
+            end
+        end
+    end
+    for _, child_name in ipairs(names) do
+        local ctrl = M.try_child(parent, child_name)
+        if M.ctrl_is_valid(ctrl) then
+            return ctrl
+        end
+    end
+    return nil
+end
+
+local MC_AXIS_PROPS = { "CurrentInputValue", "TargetInputValue", "InputValue" }
+
+function M.read_mc_axis_fraction(ctrl, props)
+    if not M.ctrl_is_valid(ctrl) then
+        return nil
+    end
+    local keys = props or MC_AXIS_PROPS
+    for _, prop in ipairs(keys) do
+        local ok, raw = pcall(function() return ctrl[prop] end)
+        if ok then
+            if type(raw) == "number" and raw == raw and raw >= 0.0 and raw <= 1.0 then
+                return raw
+            end
+            local n = M.pick_float(raw)
+            if type(n) == "number" and n == n and n >= 0.0 and n <= 1.0 then
+                return n
+            end
+        end
+    end
+    return nil
+end
+
 function M.cmd_value_to_notch(cmd_val)
     if type(cmd_val) ~= "number" then return nil end
     return math.max(0, math.min(8, math.floor(cmd_val * 8.0 + 0.5)))

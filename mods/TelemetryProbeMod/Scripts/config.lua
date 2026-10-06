@@ -1,7 +1,7 @@
 -- TelemetryProbeMod v2 — constantes (solo I/O GetData + IPC).
 local M = {}
 
-M.PROBE_BUILD = "20261004c"
+M.PROBE_BUILD = "20261006a"
 M.PROBE_AUTO_START = true
 
 M.HOOK_PATH =
@@ -13,6 +13,7 @@ M.COMMANDS_ARMED_TTL_S = 0.25
 
 M.SAFE_LEVER_WRITE = true
 -- IrregularLever MC (M3a/M7a): IPC 0..1 → SetCurrentInputValue (no peldaños 323).
+-- Subconjunto de CONTROL_ALIASES.PowerBrakeHandle usado en lectura mc_input (GetData).
 M.MC_ANALOG_LEVER_NAMES = { "MasterController" }
 -- Solo leer mc_input en GetData para estas familias (evita tocar lever en 323 / menú).
 M.MC_VEHICLE_MARKERS = { "RVM_NYH", "M7", "M8", "M9" }
@@ -51,6 +52,26 @@ M.BRAKE_GAUGE_METHODS = { "HUD_GetBrakeGauge_1", "HUD_GetBrakeGauge_2" }
 
 -- Fallback otros rolling stock — Simulation suele estar bloqueado en 323 UE4SS.
 M.BRAKE_CYL_NAMES = { "BrakeCylinder_2_1", "BrakeCylinder_Direct_P", "BrakeCylinder_1_1" }
+
+-- Puertas: mantener en sync con ApiExplorerMod config.lua DOOR_PROBE_NAMES.
+M.DOOR_CHILD_NAMES = {
+    "PassengerDoor_FL",
+    "PassengerDoor_FR",
+    "PassengerDoor_RL",
+    "PassengerDoor_RR",
+    "PassengerDoorLeft",
+    "PassengerDoorRight",
+    "PassengerDoor_L",
+    "PassengerDoor_R",
+    "PassengerDoor_1",
+    "PassengerDoor_2",
+    "PassengerDoor_3",
+    "PassengerDoor_4",
+    "PassengerDoor_5",
+    "PassengerDoor_6",
+    "PassengerDoor_7",
+    "PassengerDoor_8",
+}
 M.BRAKE_CYL_PRESSURE_FIELDS = {
     "Pressure_BAR", "Pressure", "PressurePSI", "Pressure_PSI_G",
 }

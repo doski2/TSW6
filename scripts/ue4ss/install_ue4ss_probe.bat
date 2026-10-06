@@ -79,7 +79,7 @@ echo    Probe AUTO-START al cargar escenario ^(F7 apaga^)
 echo    F8  volcar linea al log + GetData.txt
 echo    Inventario palancas / reflect: ApiExplorerMod F6/F7 ^(no F9^)
 echo.
-echo  Python: probe_ue4ss.bat  o  probe_ue4ss_log.bat
+echo  Python: probe_ue4ss.bat  (siempre guarda logs\ue4ss_probe_*.txt)
 echo  IPC: %%TEMP%%\TSW6Bridge\GetData.txt
 echo.
 pause

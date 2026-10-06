@@ -28,15 +28,15 @@ Paridad de corte Dastsc:
 
 Solo **una** sale. El resto del tick no manda palanca.
 
-| # | Condición | Salida | Código |
-| --- | --- | --- | --- |
-| **0** | Watchdog / DMI / FSM estación (fuera de P1) | `BRAKE_FAST` / `HOLD` / `COAST` | `speed_decider.py` |
-| **1** | Freno puesto, cartel hecho (`spd ≤ límite + 0,4`) y andén **fuera** de horizonte de servicio (`should_defer_station_brake`) | `RELEASE` notch 4 | `coordinator._attempt_release` |
-| **2** | Andén o señal roja a distancia crítica | `EMERGENCY` / B3 | `objectives.check_p1_emergency` |
-| **3** | Tracción (`notch > 4`) y perfil de cartel o `dist_start ≤ 800 m` | `COAST_THROTTLE` notch 4 | `command_from_target` |
-| **4** | `spd > límite + 0,9` | `APPLY` SPEED_LIMIT B1–B3 | `limit_brake` + comando |
-| **5** | Andén ≤ horizonte v→0 (+25 m) | `APPLY` STATION | `objectives.evaluate_station_brake` (si no diferido) |
-| **6** | Nada de lo anterior | `HOLD` / `sin_plan_activo` | coordinador |
+| #     | Condición                                                                                                                   | Salida                          | Código                                               |
+| ----- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------- |
+| **0** | Watchdog / DMI / FSM estación (fuera de P1)                                                                                 | `BRAKE_FAST` / `HOLD` / `COAST` | `speed_decider.py`                                   |
+| **1** | Freno puesto, cartel hecho (`spd ≤ límite + 0,4`) y andén **fuera** de horizonte de servicio (`should_defer_station_brake`) | `RELEASE` notch 4               | `coordinator._attempt_release`                       |
+| **2** | Andén o señal roja a distancia crítica                                                                                      | `EMERGENCY` / B3                | `objectives.check_p1_emergency`                      |
+| **3** | Tracción (`notch > 4`) y perfil de cartel o `dist_start ≤ 800 m`                                                            | `COAST_THROTTLE` notch 4        | `command_from_target`                                |
+| **4** | `spd > límite + 0,9`                                                                                                        | `APPLY` SPEED_LIMIT B1–B3       | `limit_brake` + comando                              |
+| **5** | Andén ≤ horizonte v→0 (+25 m)                                                                                               | `APPLY` STATION                 | `objectives.evaluate_station_brake` (si no diferido) |
+| **6** | Nada de lo anterior                                                                                                         | `HOLD` / `sin_plan_activo`      | coordinador                                          |
 
 Constantes (`command.py` / `policy.py`):
 
@@ -77,32 +77,32 @@ GitHub/Cursor también pintan Mermaid:
 
 Diagramas de arquitectura (telemetría → GUI), no de prioridad P1:
 
-| Tipo | Archivo |
-| --- | --- |
-| Módulos | [assets/esqueleto_arquitectura.svg](../assets/esqueleto_arquitectura.svg) |
+| Tipo       | Archivo                                                                             |
+| ---------- | ----------------------------------------------------------------------------------- |
+| Módulos    | [assets/esqueleto_arquitectura.svg](../assets/esqueleto_arquitectura.svg)           |
 | Pasos 1→14 | [assets/esqueleto_flujo_cronologico.svg](../assets/esqueleto_flujo_cronologico.svg) |
-| Capas | [assets/esqueleto_flujo_capas.svg](../assets/esqueleto_flujo_capas.svg) |
+| Capas      | [assets/esqueleto_flujo_capas.svg](../assets/esqueleto_flujo_capas.svg)             |
 
 ---
 
 ## Secuencia por ciclo (~20 Hz)
 
-| Paso | Bloque | Módulo | Qué hace |
-| --- | --- | --- | --- |
-| **1** | LECTURA | `main.lua` | HUD + DriverAid → `GetData.txt` |
-| **2** | LECTURA | `tsw_ue4ss_reader.py` | `ProbeSnapshot` |
-| **3** | LECTURA | `tsw_telemetry_source.py` | Merge probe + HTTP + HUD DB |
-| **4** | CICLO | `autopilot_core.tick()` | Bucle |
-| **5** | CICLO | `build_train_state()` | `TrainState` |
-| **6** | DECISIÓN | `speed_decider.decide()` | FSM → DMI → **P1** o `HOLD` |
-| **7** | P1 | `evaluate()` | RELEASE si toca (escala #1) |
-| **8** | P1 | `objectives.check_p1_emergency` | Crítico andén/señal (#2) |
-| **9** | P1 | `limit_brake` / `objectives` | Candidatos |
-| **10** | P1 | `policy.select_urgent_target` | Un objetivo |
-| **11** | P1 | `command_from_target` | COAST / RELEASE / APPLY (#3–5) |
-| **12** | EJECUCIÓN | `handle_controller.execute()` | Notch absoluto |
-| **13** | EJECUCIÓN | `tsw_ipc_bus` | `SendCommand.txt` |
-| **14** | JUEGO | `main.lua` | `PowerBrakeHandle` + ack |
+| Paso   | Bloque    | Módulo                          | Qué hace                        |
+| ------ | --------- | ------------------------------- | ------------------------------- |
+| **1**  | LECTURA   | `main.lua`                      | HUD + DriverAid → `GetData.txt` |
+| **2**  | LECTURA   | `tsw_ue4ss_reader.py`           | `ProbeSnapshot`                 |
+| **3**  | LECTURA   | `tsw_telemetry_source.py`       | Merge probe + HTTP + HUD DB     |
+| **4**  | CICLO     | `autopilot_core.tick()`         | Bucle                           |
+| **5**  | CICLO     | `build_train_state()`           | `TrainState`                    |
+| **6**  | DECISIÓN  | `speed_decider.decide()`        | FSM → DMI → **P1** o `HOLD`     |
+| **7**  | P1        | `evaluate()`                    | RELEASE si toca (escala #1)     |
+| **8**  | P1        | `objectives.check_p1_emergency` | Crítico andén/señal (#2)        |
+| **9**  | P1        | `limit_brake` / `objectives`    | Candidatos                      |
+| **10** | P1        | `policy.select_urgent_target`   | Un objetivo                     |
+| **11** | P1        | `command_from_target`           | COAST / RELEASE / APPLY (#3–5)  |
+| **12** | EJECUCIÓN | `handle_controller.execute()`   | Notch absoluto                  |
+| **13** | EJECUCIÓN | `tsw_ipc_bus`                   | `SendCommand.txt`               |
+| **14** | JUEGO     | `main.lua`                      | `PowerBrakeHandle` + ack        |
 
 Pasos 1–3: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-1-2-3-lectura).
 4–6: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-4-5-6-ciclo--decisión).
@@ -111,13 +111,13 @@ Pasos 1–3: [ESTADO.md](ESTADO.md#árbol-cronológico--pasos-1-2-3-lectura).
 
 ## Capas por encima de P1 (no mezclar)
 
-| Capa | Cuándo | Salida |
-| --- | --- | --- |
-| **FSM** | APPROACHING / STOPPED / DEPARTING | `HOLD` / `COAST` / techo `effective_limit` |
-| **Marcador DMI** | `brake_marker_m` | `BRAKE` / `BRAKE_FAST` advisory |
-| **P1** | Cartel / estación / señal | `BrakeCommand` IPC |
-| **Sin plan P1** | Lejos | `HOLD` |
-| **Watchdog** | +5 mph ≥ 3 s | `BRAKE_FAST` teclado |
+| Capa             | Cuándo                            | Salida                                     |
+| ---------------- | --------------------------------- | ------------------------------------------ |
+| **FSM**          | APPROACHING / STOPPED / DEPARTING | `HOLD` / `COAST` / techo `effective_limit` |
+| **Marcador DMI** | `brake_marker_m`                  | `BRAKE` / `BRAKE_FAST` advisory            |
+| **P1**           | Cartel / estación / señal         | `BrakeCommand` IPC                         |
+| **Sin plan P1**  | Lejos                             | `HOLD`                                     |
+| **Watchdog**     | +5 mph ≥ 3 s                      | `BRAKE_FAST` teclado                       |
 
 Sin P2 (2026-08-25). [ESTADO.md](ESTADO.md#sin-p2-2026-08-25).
 
@@ -127,16 +127,16 @@ Sin P2 (2026-08-25). [ESTADO.md](ESTADO.md#sin-p2-2026-08-25).
 
 `logs/autopilot_*.log`:
 
-| Campo | Significado |
-| --- | --- |
-| `p1cmd=RELEASE` / `APPLY` / `COAST` | Escalón que ganó |
-| `p1tgt=SPEED_LIMIT/B1` | Objetivo y fase |
-| `p1ds=` | `dist_start` m (negativo = tarde) |
-| `uni=Y` | Cluster cartel+andén |
-| `gap=` | estación − cartel (m) |
-| `release_blocked:station` | Andén ya en horizonte; no soltar |
-| `release_blocked:unified_stop` | Parada unificada y sin holgura |
-| `sin_plan_activo` | Escala #6 |
+| Campo                               | Significado                       |
+| ----------------------------------- | --------------------------------- |
+| `p1cmd=RELEASE` / `APPLY` / `COAST` | Escalón que ganó                  |
+| `p1tgt=SPEED_LIMIT/B1`              | Objetivo y fase                   |
+| `p1ds=`                             | `dist_start` m (negativo = tarde) |
+| `uni=Y`                             | Cluster cartel+andén              |
+| `gap=`                              | estación − cartel (m)             |
+| `release_blocked:station`           | Andén ya en horizonte; no soltar  |
+| `release_blocked:unified_stop`      | Parada unificada y sin holgura    |
+| `sin_plan_activo`                   | Escala #6                         |
 
 Ejemplo coherente Four Oaks (55 + andén ~250 m detrás):
 
@@ -151,14 +151,14 @@ Si ves B1 desde 650 m hasta parado: el escalón 1 no ganó (andén ya “dentro�
 
 ## Archivos clave
 
-| Archivo | Rol |
-| --- | --- |
-| `tsw6/braking/v2/coordinator.py` | Orquestación; escala 1–6 |
-| `tsw6/braking/v2/command.py` | `command_from_target` (único APPLY/RELEASE/COAST) |
-| `tsw6/braking/v2/policy.py` | Cluster, defer horizonte, qué candidato gana |
-| `tsw6/braking/v2/station_plan.py` | Perfil andén HUD (no IPC) |
-| `tsw6/governor/governor_station.py` | FSM: Lua/DMI abrir/cerrar |
-| `tsw6/autopilot/handle_controller.py` | Ejecuta notch |
-| `tsw6/telemetry/tsw_ipc_bus.py` | IPC |
-| `docs/assets/flujo_frenos_p1.dot` | Grafo Graphviz |
-| [BRAKE_V2.md](BRAKE_V2.md) | Física, ventana APPLY, módulos |
+| Archivo                               | Rol                                               |
+| ------------------------------------- | ------------------------------------------------- |
+| `tsw6/braking/v2/coordinator.py`      | Orquestación; escala 1–6                          |
+| `tsw6/braking/v2/command.py`          | `command_from_target` (único APPLY/RELEASE/COAST) |
+| `tsw6/braking/v2/policy.py`           | Cluster, defer horizonte, qué candidato gana      |
+| `tsw6/braking/v2/station_plan.py`     | Perfil andén HUD (no IPC)                         |
+| `tsw6/governor/governor_station.py`   | FSM: Lua/DMI abrir/cerrar                         |
+| `tsw6/autopilot/handle_controller.py` | Ejecuta notch                                     |
+| `tsw6/telemetry/tsw_ipc_bus.py`       | IPC                                               |
+| `docs/assets/flujo_frenos_p1.dot`     | Grafo Graphviz                                    |
+| [BRAKE_V2.md](BRAKE_V2.md)            | Física, ventana APPLY, módulos                    |

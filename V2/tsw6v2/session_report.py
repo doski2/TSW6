@@ -13,6 +13,7 @@ from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.p1_layers import LAYERS, classify_from_p1, layer_label
 from tsw6v2.p1_station_gate import doors_effective
 from tsw6v2.physics import apply_zone_margin_m
+from tsw6v2.vehicle_package import resolve_session_route_name
 
 
 def enrich_ticks_active_time(ticks: list[dict[str, Any]]) -> None:
@@ -59,10 +60,25 @@ def load_ticks(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]
     return session, ticks
 
 
+def _dominant_vehicle_from_ticks(ticks: list[dict[str, Any]]) -> Optional[str]:
+    counts: Counter[str] = Counter()
+    for t in ticks:
+        v = t.get("vehicle")
+        if v:
+            counts[str(v)] += 1
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
 def summarize(path: Path) -> dict[str, Any]:
     session, ticks = load_ticks(path)
     if not ticks:
         return {"session": session, "error": "sin ticks"}
+
+    vehicle = _dominant_vehicle_from_ticks(ticks)
+    if session is not None and vehicle:
+        session = {**session, "vehicle": vehicle}
 
     reasons: Counter[str] = Counter()
     cmds: Counter[str] = Counter()
@@ -1075,14 +1091,19 @@ def _session_warning_html(summary: dict[str, Any]) -> str:
 
 
 def session_route_label(sess: dict[str, Any] | None) -> str:
-    """Ruta para informes: detectada por juego, si no la etiqueta CLI."""
+    """Ruta para informes (ver ``resolve_session_route_name``)."""
     if not sess:
         return "?"
-    detected = sess.get("detected_route")
-    if detected:
+    vehicle = str(sess.get("vehicle") or "")
+    label = resolve_session_route_name(
+        vehicle=vehicle,
+        detected_route=sess.get("detected_route"),
+        cli_route=sess.get("route"),
+    )
+    if label != "?":
         svc = sess.get("service_name")
-        return f"{detected}" + (f" ({svc})" if svc else "")
-    return str(sess.get("route") or "?")
+        return f"{label}" + (f" ({svc})" if svc else "")
+    return label
 
 
 def session_route_display(sess: dict[str, Any] | None) -> str:

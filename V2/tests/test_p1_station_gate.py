@@ -10,7 +10,10 @@ from tsw6v2.p1_station_gate import (
     StationDwellGate,
     doors_effective,
     blocks_inherited_release_in_station_final_approach,
+    departing_ipc_release_allowed,
+    platform_dwell_suppresses_platform_bleed,
     platform_mc_dwell_residual_bleed_needed,
+    platform_parked_residual_bleed_needed,
     should_skip_p1_release,
     station_departure_active,
     station_departure_suppresses_limit_brake,
@@ -24,6 +27,43 @@ def test_gate_stopped_at_platform_suppresses():
     gate.update(speed_mph=0.5, station_dist_m=20.0, doors_telem=True)
     assert gate.state == "STOPPED"
     assert gate.suppress_station_brake()
+
+
+def test_gate_stopped_midroute_dwell_without_door_telem_session_212610():
+    """212610Z: parada Cross-City ~28 m sin telem puertas → FSM STOPPED."""
+    gate = StationDwellGate()
+    gate.update(speed_mph=0.5, station_dist_m=28.0, doors_telem=False)
+    assert gate.state == "STOPPED"
+    assert gate.suppress_station_brake()
+
+
+def test_departing_release_blocked_on_platform_cone():
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    assert not departing_ipc_release_allowed(28.0)
+    assert departing_ipc_release_allowed(0.8)
+    assert departing_ipc_release_allowed(120.0)
+    m3a = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert not departing_ipc_release_allowed(60.0, vehicle_package=m3a)
+    assert departing_ipc_release_allowed(81.0, vehicle_package=m3a)
+
+
+def test_platform_bleed_suppressed_when_doors_open_stopped():
+    snap = ProbeSnapshot.from_dict(
+        {"seq": 1, "doors_telem": True, "brake_cyl_bar": 9.6}
+    )
+    assert platform_dwell_suppresses_platform_bleed(
+        station_fsm="STOPPED",
+        snap=snap,
+    )
+    assert not platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=28.0,
+        combined_lever=0,
+        brake_cyl_bar=9.6,
+        station_fsm="STOPPED",
+        snap=snap,
+    )
 
 
 def test_gate_far_approach_without_doors_allows_station_plan():
@@ -532,13 +572,156 @@ def test_mc_dwell_bleed_release_blocked_until_b1_session_083123() -> None:
         station_dist_m=39.3,
         combined_lever=0,
         platform_bleed_episode=True,
+        platform_bleed_b1_confirmed=True,
         snap=snap_b1,
         vehicle_package=pkg,
     )
 
 
+def test_mc_bleed_release_not_on_mc_input_67_session_095249() -> None:
+    """095249Z: 0.67 entre B1 y neutro no debe disparar platform_bleed_release."""
+    from tsw6v2.p1_station_gate import platform_parked_bleed_release_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "mc_input": 0.67,
+            "brake_cyl_bar": 10.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=29.0,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_mc_bleed_no_reapply_while_neutral_ipc_session_095249() -> None:
+    """Tras RELEASE: en neutro IPC no repetir APPLY B1 (ventilar)."""
+    from tsw6v2.p1_station_gate import platform_parked_residual_bleed_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "mc_input": 0.72,
+            "brake_cyl_bar": 10.6,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=29.0,
+        combined_lever=0,
+        brake_cyl_bar=10.6,
+        platform_bleed_episode=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_mc_bleed_055_is_not_b1_latched_session_110400() -> None:
+    """110400Z: mc_input 0.55 (entre B2 y B1) no es latch B1 ni RELEASE."""
+    from tsw6v2.p1_station_gate import platform_parked_bleed_release_needed
+    from tsw6v2.vehicle_package import (
+        mc_platform_bleed_b1_latched,
+        resolve_vehicle_package,
+    )
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "mc_input": 0.55,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not mc_platform_bleed_b1_latched(snap, pkg)
+    assert not platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=32.0,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        platform_bleed_b1_confirmed=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_mc_bleed_no_reapply_in_gray_zone_session_105359() -> None:
+    """105359Z: 0.69 sobre B1 no debe re-APPLY (evita ping-pong con 0.64)."""
+    from tsw6v2.p1_station_gate import platform_parked_residual_bleed_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "mc_input": 0.69,
+            "brake_cyl_bar": 9.45,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=29.0,
+        combined_lever=0,
+        brake_cyl_bar=9.45,
+        platform_bleed_episode=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_mc_bleed_release_requires_b1_confirm_ticks() -> None:
+    from tsw6v2.p1_station_gate import (
+        PlatformBleedEpisode,
+        platform_parked_bleed_release_needed,
+    )
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    ep = PlatformBleedEpisode()
+    ep.active = True
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "mc_input": 0.64,
+            "vehicle": "RVM_NYH_MNR_M3a-B_C",
+        }
+    )
+    assert not platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=29.0,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        platform_bleed_b1_confirmed=False,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+    for _ in range(6):
+        ep.observe_mc_bleed_feedback(snap, pkg)
+    assert ep.mc_b1_confirmed_for_release()
+    assert platform_parked_bleed_release_needed(
+        speed_mph=0.0,
+        station_dist_m=29.0,
+        combined_lever=0,
+        platform_bleed_episode=True,
+        platform_bleed_b1_confirmed=True,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
 def test_mc_approach_stopped_bleed_session_084500() -> None:
-    """Parado 340 m con aire: bleed MC (no ruta mid-route UK)."""
+    """Parado 340 m: sin bleed (fuera dwell); sí en ~50 m (084500Z acotado 201242Z)."""
     from tsw6v2.p1_station_gate import platform_parked_residual_bleed_needed
     from tsw6v2.vehicle_package import resolve_vehicle_package
 
@@ -552,11 +735,40 @@ def test_mc_approach_stopped_bleed_session_084500() -> None:
             "vehicle": "RVM_NYH_MNR_M3a-B_C",
         }
     )
-    assert platform_parked_residual_bleed_needed(
+    assert not platform_parked_residual_bleed_needed(
         speed_mph=0.0,
         station_dist_m=340.9,
         combined_lever=0,
         brake_cyl_bar=9.62,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+    assert platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=50.0,
+        combined_lever=0,
+        brake_cyl_bar=9.62,
+        snap=snap,
+        vehicle_package=pkg,
+    )
+
+
+def test_gate_stopped_white_plains_far_marker_session_201242() -> None:
+    """201242Z: parado ~231 m al marker → STOPPED (dwell B1), no bleed lejos."""
+    from tsw6v2.p1_station_gate import platform_parked_residual_bleed_needed
+    from tsw6v2.vehicle_package import resolve_vehicle_package
+
+    gate = StationDwellGate()
+    gate.update(speed_mph=0.0, station_dist_m=231.5, doors_telem=False)
+    assert gate.state == "STOPPED"
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    snap = ProbeSnapshot.from_dict({"seq": 1, "brake_cyl_bar": 9.6, "vehicle": "RVM_NYH_MNR_M3a-B_C"})
+    assert not platform_parked_residual_bleed_needed(
+        speed_mph=0.0,
+        station_dist_m=231.5,
+        combined_lever=0,
+        brake_cyl_bar=9.6,
+        station_fsm="STOPPED",
         snap=snap,
         vehicle_package=pkg,
     )

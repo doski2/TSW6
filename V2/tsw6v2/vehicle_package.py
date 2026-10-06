@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -24,6 +24,9 @@ from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG, SERVICE_PHASE_BY_HANDL
 
 _PACKAGE_SCHEMA = "tsw6-vehicle-package/1"
 
+# Etiquetas CLI/GUI por defecto (se sustituyen al detectar ``vehicle=`` en probe).
+GENERIC_CLI_ROUTE_LABELS = frozenset({"", "cross-city", "gui", "session"})
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -33,7 +36,125 @@ def default_vehicles_dir() -> Path:
     return repo_root() / "data" / "vehicles"
 
 
+def vehicle_route_fleet(probe_vehicle: str) -> Optional[str]:
+    """``uk`` | ``ny`` según prefijo GetData ``vehicle=`` (informe / HUD)."""
+    u = (probe_vehicle or "").upper()
+    if not u or u == "?":
+        return None
+    if "NYH" in u or "_MNR_" in u:
+        return "ny"
+    if "BCC" in u or "CLASS323" in u:
+        return "uk"
+    return None
+
+
+def hud_route_fleet(route_name: str) -> Optional[str]:
+    """Región aproximada del nombre de ruta HUD."""
+    r = (route_name or "").lower()
+    if not r:
+        return None
+    if "birmingham" in r or "cross-city" in r or "cross city" in r:
+        return "uk"
+    if (
+        "harlem" in r
+        or "hudson" in r
+        or "new haven" in r
+        or "grand central" in r
+        or "mnr" in r
+    ):
+        return "ny"
+    return None
+
+
+def hud_route_matches_vehicle(detected_route: str, probe_vehicle: str) -> bool:
+    """False si el HUD apunta a otra región que el tren (caché / match erróneo)."""
+    vf = vehicle_route_fleet(probe_vehicle)
+    df = hud_route_fleet(detected_route)
+    if vf is None or df is None:
+        return True
+    return vf == df
+
+
+def station_planning_trusted(
+    probe_vehicle: str,
+    hud_route_name: Optional[str],
+) -> bool:
+    """
+    ¿Usar ``station_distance_m`` / bleed / FSM andén para este tren?
+
+    Misma región UK/NY que ``resolve_session_route_name`` (``hud_route_matches_vehicle``).
+    Sin ruta HUD conocida no se puede contrastar — se confía (``Planning.txt`` solo).
+    """
+    vehicle = (probe_vehicle or "").strip()
+    if not vehicle or vehicle == "?":
+        return True
+    route = (hud_route_name or "").strip()
+    if not route:
+        return True
+    return hud_route_matches_vehicle(route, vehicle)
+
+
+@dataclass(frozen=True)
+class SessionRouteMeta:
+    """Metadatos de escenario en ``data/vehicles/*.json`` (informe + CLI)."""
+
+    display: Optional[str]
+    cli_slug: Optional[str]
+
+
+def session_route_meta_for_probe(probe_vehicle: str) -> SessionRouteMeta:
+    pkg = resolve_vehicle_package(probe_vehicle)
+    if not pkg:
+        return SessionRouteMeta(None, None)
+    display = str(pkg.get("session_route") or "").strip() or None
+    slug = str(pkg.get("session_route_cli") or "").strip() or None
+    if not slug and uses_mc_analog_ipc(pkg):
+        vid = str(pkg.get("vehicle_id") or "").strip()
+        slug = vid.replace("_", "-") if vid else None
+    return SessionRouteMeta(display, slug)
+
+
+def session_route_hint_for_probe(probe_vehicle: str) -> Optional[str]:
+    """Etiqueta legible para informes JSONL/HTML."""
+    return session_route_meta_for_probe(probe_vehicle).display
+
+
+def session_route_cli_slug_for_probe(probe_vehicle: str) -> Optional[str]:
+    """Slug ``--route`` / campo ``route`` en metadatos de sesión."""
+    return session_route_meta_for_probe(probe_vehicle).cli_slug
+
+
+def is_generic_cli_route_label(route: str) -> bool:
+    return (route or "").strip().lower() in GENERIC_CLI_ROUTE_LABELS
+
+
+def resolve_session_route_name(
+    *,
+    vehicle: str,
+    detected_route: Optional[str] = None,
+    cli_route: Optional[str] = None,
+) -> str:
+    """
+    Nombre de escenario para informe (sin servicio ni sufijo ``[cli=]``).
+
+    Prioridad: ``session_route`` del paquete → HUD si cuadra con el tren → etiqueta CLI.
+    """
+    meta = session_route_meta_for_probe(vehicle) if vehicle else SessionRouteMeta(None, None)
+    detected = detected_route
+    if detected and vehicle and not hud_route_matches_vehicle(str(detected), vehicle):
+        detected = None
+    label = meta.display or detected
+    if label:
+        return label
+    return str(cli_route or "?")
+
+
 def vehicle_class_matches(probe_vehicle: str, package_class: str) -> bool:
+    """
+    Igualdad exacta, ``klass in probe`` (sufijo UE) o ``probe.startswith(klass)``.
+
+    Prefijo corto en JSON (p. ej. ``RVM_NYH_MNR_M3a``) cubre coches A/B sin duplicar paquetes.
+    """
     probe = (probe_vehicle or "").strip()
     klass = (package_class or "").strip()
     if not probe or not klass:
@@ -41,6 +162,18 @@ def vehicle_class_matches(probe_vehicle: str, package_class: str) -> bool:
     if probe == klass:
         return True
     return klass in probe or probe.startswith(klass)
+
+
+def station_platform_tail_m(package: Optional[dict[str, Any]]) -> float:
+    """Metros de cola tras el marker para salida andén (0 = UK corto / sin dato)."""
+    if not package:
+        return 0.0
+    station = package.get("station")
+    if isinstance(station, dict):
+        raw = station.get("platform_tail_m")
+        if raw is not None:
+            return float(raw)
+    return 0.0
 
 
 def uses_mc_analog_ipc(package: Optional[dict[str, Any]]) -> bool:
@@ -155,6 +288,36 @@ def profile_neutral_fraction(
 ) -> Optional[float]:
     """Neutro MC del paquete (feedback IPC / ``brake_applied_from_probe``)."""
     return profile_brake_fraction(package, "neutral")
+
+
+def mc_ipc_target_is_neutral_hold(
+    package: Optional[dict[str, Any]],
+    target_fraction: float,
+) -> bool:
+    """COAST/RELEASE a neutro: objetivo IPC en o por encima del neutro del paquete."""
+    neu = profile_neutral_fraction(package)
+    if neu is None:
+        return False
+    return float(target_fraction) >= float(neu) - MC_INPUT_VALUE_EPS
+
+
+def mc_has_traction_above_neutral(snap: Any, package: Optional[dict[str, Any]]) -> bool:
+    """Tracción MC para emitir COAST (HUD ``power`` o ``mc_input`` > neutro)."""
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return False
+    from tsw6v2.bridge.getdata import power_to_combined_notch
+
+    power = getattr(snap, "power", None)
+    power_neg = bool(getattr(snap, "power_neg", False))
+    if power is not None and not power_neg and float(power) > 0.0:
+        combined = power_to_combined_notch(power, power_neg)
+        if combined is not None and combined > NEUTRAL_NOTCH:
+            return True
+    neu = profile_neutral_fraction(package)
+    mc = getattr(snap, "mc_input", None)
+    if neu is not None and mc is not None:
+        return float(mc) > float(neu) + MC_INPUT_VALUE_EPS
+    return False
 
 
 def _legacy_mc_fraction_from_uk_map(
@@ -306,7 +469,6 @@ def mc_platform_bleed_b1_latched(
         return False
     neutral = profile_brake_fraction(package, "neutral")
     b1 = profile_brake_fraction(package, "B1")
-    b2 = profile_brake_fraction(package, "B2")
     if neutral is None or b1 is None:
         return False
     frac = _mc_feedback_fraction(snap, package)
@@ -317,10 +479,43 @@ def mc_platform_bleed_b1_latched(
     b1f = float(b1)
     if f >= n - MC_INPUT_VALUE_EPS:
         return False
-    if b2 is not None:
-        b2f = float(b2)
-        return b2f < f <= b1f + 0.08
-    return abs(f - b1f) <= 0.08
+    tol = float(MC_INPUT_VALUE_EPS)
+    # 110400Z: 0.55 entre B2 y B1 no es peldaño B1 (0.64); evitar wedge B2..B1+ε.
+    return abs(f - b1f) <= tol
+
+
+def mc_platform_bleed_suppress_reapply(
+    snap: Any,
+    package: Optional[dict[str, Any]],
+) -> bool:
+    """
+    No repetir APPLY B1 en neutro o por encima del peldaño (ventilar / asentar).
+
+    105359Z: ``mc_input`` 0.69 tras RELEASE no debe volver a B1 al instante.
+    """
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return False
+    if mc_platform_bleed_neutral_ipc(snap, package):
+        return True
+    b1 = profile_brake_fraction(package, "B1")
+    if b1 is None:
+        return False
+    frac = _mc_feedback_fraction(snap, package)
+    if frac is None:
+        return False
+    return float(frac) > float(b1) + MC_INPUT_VALUE_EPS
+
+
+def mc_platform_bleed_should_reapply_b1(
+    snap: Any,
+    package: Optional[dict[str, Any]],
+) -> bool:
+    """Episodio MC activo: ¿mandar otro APPLY B1 hacia el peldaño?"""
+    if snap is None or not package or not uses_mc_analog_ipc(package):
+        return False
+    return not mc_platform_bleed_suppress_reapply(
+        snap, package
+    ) and not mc_platform_bleed_b1_latched(snap, package)
 
 
 def _wire_fraction_from_brake_input(
@@ -386,10 +581,10 @@ def apply_vehicle_brake_actuator(
         return cmd
     if not package or not uses_mc_analog_ipc(package):
         return cmd
-    if cmd.kind not in ("APPLY", "RELEASE"):
+    if cmd.kind not in ("APPLY", "RELEASE", "COAST_THROTTLE"):
         return cmd
     notch = cmd.target_notch
-    if cmd.kind == "RELEASE":
+    if cmd.kind in ("RELEASE", "COAST_THROTTLE"):
         n = int(notch) if notch is not None else NEUTRAL_NOTCH
         frac = mc_fraction_for_plan_handle(
             package, phase="NEU", handle_notch=n

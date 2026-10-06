@@ -8,6 +8,43 @@ from tsw6v2.planning_feed import format_planning_line
 from tsw6v2.planning_poller import StationPlanning
 
 
+def test_station_planning_file_feed_uses_http_hud_for_trust(tmp_path):
+    """Planning.txt sin ruta: contrastar con HUD en caché HTTP (211320Z)."""
+    path = tmp_path / "Planning.txt"
+    path.write_text(
+        format_planning_line(station_distance_m=76.5, station_name="Four_Oaks") + "\n",
+        encoding="utf-8",
+    )
+    src = StationPlanning(path=path, http_enabled=False)
+    src._startup_invalidate_pending = False
+    src._last_probe_seq = 5
+    src._snap.hud_route_name = "Birmingham Cross-City"
+    snap = src.update(
+        0.0,
+        probe_seq=10,
+        probe_vehicle="RVM_NYH_MNR_M3a-A_C",
+    )
+    assert snap.station_distance_m is None
+    assert snap.station_name is None
+
+
+def test_station_planning_ignores_stop_when_hud_route_mismatches_vehicle():
+    """211320Z: M3a con caché Cross-City (Four Oaks) no debe alimentar P1."""
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    src._source = "http"
+    src._startup_invalidate_pending = False
+    src._last_probe_seq = 100
+    src._last_probe_vehicle = "RVM_NYH_MNR_M3a-A_C"
+    src._snap.station_distance_m = 76.5
+    src._snap.station_name = "Four_Oaks,_andén_2"
+    src._snap.hud_route_name = "Birmingham Cross-City"
+    snap = src.update(0.0, probe_seq=101, probe_vehicle="RVM_NYH_MNR_M3a-A_C")
+    assert snap.station_distance_m is None
+    assert snap.station_name is None
+    assert src._snap.station_distance_m is None
+
+
 def test_station_planning_reads_file(tmp_path):
     path = tmp_path / "Planning.txt"
     path.write_text(

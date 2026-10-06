@@ -5,6 +5,7 @@ import _path  # noqa: F401
 from tsw6v2.command import (
     BrakeReleaseState,
     is_brake_applied,
+    resolve_orphan_limit_brake_release,
     resolve_release_command,
     should_hold_limit_brake_downhill,
 )
@@ -76,6 +77,20 @@ def test_no_release_parked_at_scenario_start():
         next_limit_mph=45.0,
         distance_next_m=271.0,
         gradient_pct=0.2,
+    )
+    assert cmd is None
+
+
+def test_no_orphan_release_parked_without_next_sign():
+    """M3a en origen: límite HUD 10 mph, sin cartel — no RELEASE huérfano (210508Z)."""
+    cmd = resolve_orphan_limit_brake_release(
+        speed_mph=0.0,
+        handle_notch=0,
+        effective_limit=10.0,
+        next_limit_mph=None,
+        distance_next_m=None,
+        gradient_pct=0.0,
+        limit_target=None,
     )
     assert cmd is None
 

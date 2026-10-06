@@ -75,7 +75,8 @@ def render_markdown_report(session_dir: Path, rows: list[dict], verdict: str) ->
     lines.append("")
     if verdict == "variable":
         lines.append(
-            "**Siguiente paso:** cablear `amps` en TelemetryProbeMod (D2) y correlar con `dyn_brake`."
+            "**Siguiente paso:** validar `amps=` en GetData (probe ≥ `20261006a`) y correlar con "
+            "`dyn_brake` en JSONL."
         )
     elif verdict == "always_zero":
         lines.append(

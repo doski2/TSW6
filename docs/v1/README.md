@@ -8,19 +8,19 @@ Cómo funciona el autopilot **hoy** (`autopilot_core`, probe Class 323). **P1 ca
 **Política de docs (no duplicar v1→v2):** [PLAN_V2 § Política de
 documentación](../v2/PLAN_V2.md#política-de-documentación).
 
-| Documento | Contenido |
-| --- | --- |
-| [GUIA.md](GUIA.md) | Uso diario — `.bat`, calibración, autopilot |
-| [ARQUITECTURA.md](ARQUITECTURA.md) | Módulos, UE4SS, stack lectura/escritura |
-| [ESTADO.md](ESTADO.md) | Tablero visual — árbol cronológico 1–14 |
-| [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md) | Probe Lua — reglas, log, bitácora |
-| [BRAKE_V2.md](BRAKE_V2.md) | **Histórico** — pre-2026-09; ver [REGLAS_FRENOS_P1](../v2/REGLAS_FRENOS_P1.md) |
-| [FLUJO_FRENOS.md](FLUJO_FRENOS.md) | **Histórico** — coordinator v1 (eliminado) |
-| [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md) | Learner, distancias, fill-time |
-| [HUD_TIMETABLE.md](HUD_TIMETABLE.md) | `tsw_hud.db`, paradas UK |
-| [FREIGHT_NA.md](FREIGHT_NA.md) | SD40-2 — layout split (fase 6 v2) |
-| [DASTSC_PARITY.md](DASTSC_PARITY.md) | Paridad histórica con Dastsc |
-| [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | TSW6 ↔ Nexus V4 (estudio) |
+| Documento                                                  | Contenido                                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [GUIA.md](GUIA.md)                                         | Uso diario — `.bat`, calibración, autopilot                                    |
+| [ARQUITECTURA.md](ARQUITECTURA.md)                         | Módulos, UE4SS, stack lectura/escritura                                        |
+| [ESTADO.md](ESTADO.md)                                     | Tablero visual — árbol cronológico 1–14                                        |
+| [PENDIENTE_DYNAMICHUD.md](PENDIENTE_DYNAMICHUD.md)         | Probe Lua — reglas, log, bitácora                                              |
+| [BRAKE_V2.md](BRAKE_V2.md)                                 | **Histórico** — pre-2026-09; ver [REGLAS_FRENOS_P1](../v2/REGLAS_FRENOS_P1.md) |
+| [FLUJO_FRENOS.md](FLUJO_FRENOS.md)                         | **Histórico** — coordinator v1 (eliminado)                                     |
+| [FISICA_Y_APRENDIZAJE.md](FISICA_Y_APRENDIZAJE.md)         | Learner, distancias, fill-time                                                 |
+| [HUD_TIMETABLE.md](HUD_TIMETABLE.md)                       | `tsw_hud.db`, paradas UK                                                       |
+| [FREIGHT_NA.md](FREIGHT_NA.md)                             | SD40-2 — layout split (fase 6 v2)                                              |
+| [DASTSC_PARITY.md](DASTSC_PARITY.md)                       | Paridad histórica con Dastsc                                                   |
+| [COMPARATIVA_DASTSC_FLUJO.md](COMPARATIVA_DASTSC_FLUJO.md) | TSW6 ↔ Nexus V4 (estudio)                                                      |
 
 **Compartido:** [CANAL_CONTROL.md](../CANAL_CONTROL.md) (contrato IPC) · [reference/](../reference/)
 (HTTP API).
