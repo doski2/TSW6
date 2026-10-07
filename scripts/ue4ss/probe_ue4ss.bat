@@ -36,7 +36,7 @@ echo.
 echo  TSW6 probe monitor + log
 echo  Repo:    %CD%
 echo  GetData: %BRIDGE%
-echo  Log:     logs\ue4ss_probe_YYYYMMDD_HHMMSS.txt  (al cerrar con Ctrl+C)
+echo  Log:     logs\probe\YYYYMMDD_HHMMSS\ue4ss_probe_*.txt  (Ctrl+C)
 echo.
 
 if not exist "%TEMP%\TSW6Bridge" (

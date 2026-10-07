@@ -147,7 +147,7 @@ en Lua; el probe adopta solo lo aprobado (D2).
 
 **Log al circular:** el explorer **no** hace log continuo (~20 Hz = probe). Para ver si un campo
 cambia al frenar/acelerar: varias capturas F5/F7 con nombre distinto (ver
-[LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)) o `probe_ue4ss_log.bat`. Campos que varíen y aporten → clave
+[LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)) o `probe_ue4ss.bat`. Campos que varíen y aporten → clave
 nueva en `GetData`.
 
 ---
@@ -254,7 +254,7 @@ Para **323** una pasada F5–F7 ya cubre cabina HUD + mandos + DriverAid escalar
 | ----------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------- |
 | **UE4SS.log**                             | `[ApiExplorer]` al cargar, cada captura, errores (`skip`, `ERROR writing`) | ✅ implementado                                |
 | **`data/lab_exports/exports/<session>/`** | `session.json`, `<mode>.json`                                              | ✅ (puntero en `Documents\TSW6\lab_root.txt`)  |
-| **`logs/api_explorer_*.txt`** (repo)      | Volcado opcional de UE4SS.log filtrado por `[ApiExplorer]`                 | ⬜ L0.8 — script `probe_ue4ss_log.bat` análogo |
+| **`logs/api_explorer_*.txt`** (repo)      | Volcado opcional de UE4SS.log filtrado por `[ApiExplorer]`                 | ⬜ L0.8 — patrón como `probe_ue4ss.bat`        |
 | **Python correlator**                     | `correlation_report.md` en la misma carpeta de sesión                      | ✅ L0.5                                        |
 
 **No** hay log continuo ~20 Hz (eso es del probe en `GetData.txt`). El explorer solo escribe al
@@ -573,7 +573,7 @@ GetData (`mc_input`, no muesca UK fiable).
 | `brake_cyl_bar`                      | ✅             | Campo GetData                                      | Reposo **~8–11 bar** (MC); no usar umbrales 323 (~1.6 bar) en learner |
 | `lever_notch` / `train_brake` HUD UK | 🟡             | Siempre presente                                   | **No** fuente de verdad MC — catálogo / display                       |
 | Planning estaciones                  | ✅             | `schedule_source` `hud_db` · nombres White Plains… | Sesión **201242Z**                                                    |
-| `doors_telem`                        | ❌             | **201242Z:** solo `false` en todo el jsonl         | Repetir lab: hijos `PassengerDoor_*` en F6 / Lua                      |
+| `doors_telem`                        | ✅             | Probe **`001325`**: 0↔1 andén; no requiere F6 M3a  | GetData ~20 Hz — [plan amps/puertas](PLAN_AMPS_PUERTAS_20261006.md)   |
 | `doors_dmi`                          | 🟡             | DriverAid                                          | Fallback si telem física falla                                        |
 | Señales C1 (`signal_red`)            | **UNKNOWN**    | Sin barrido L0.4b MNR                              | No asumir enum UK 0/1/2 del 323                                       |
 | G-B `m3a_mnr.json`                   | 🟡             | Lab `20261003T180232Z` + merge manual              | Falta volcar RailBridge / controles extra — abajo                     |
@@ -626,10 +626,10 @@ misma sesión `vehicle_class` que usarás en P1.
 | L0.5            | `api_correlator.py`       | ⬜                  | Tras sesión con `-HTTPAPI`                                                                                                                                                                   |
 | L0.6 / Shift+F5 | `formation` + HTTP        | 🟡                  | RailBridge 20261003 usado en script; cerrar con correlator en vivo                                                                                                                           |
 | **L0.6g**       | Aire / manómetros         | ⬜ **prioridad MC** | Adaptar § [L0.6g](#l06g--protocolo-freight-aire-y-manómetros-sd40-2): F5 en **reposo, B1, B2, B3, neutro, tracción**; mapear `HUD_GetBrakeGauge_*` ↔ HTTP `BrakeCylinder_*` (~10 bar reposo) |
-| L0.6f           | Amperímetro               | ⬜                  | `summarize_hud_amps.py` — EMU MNR puede ≠ 0                                                                                                                                                  |
+| L0.6f           | Amperímetro               | ✅ probe            | `amp.bat` / logs `001325`/`233912` — F5 `summarize_hud_amps.py` opcional                                                                                                                     |
 | L0.7            | `m3a_mnr.json`            | 🟡                  | Regenerar merge; commitear solo datos estables (sin rutas PC absolutas si molestan)                                                                                                          |
 | L0.8            | `compare_lab_vs_probe.py` | ⬜                  | Tras `run_p1_session` + misma cabina                                                                                                                                                         |
-| **D2 puertas**  | `doors_telem`             | ❌ campo            | F6: ¿`PassengerDoor_*` en M3a? Si no, documentar nombre UE real                                                                                                                              |
+| **D2 puertas**  | `doors_telem`             | ✅ probe            | F6 solo si tren nuevo sin telem; M3a cerrado en probe                                                                                                                                          |
 | **D2 MC**       | `mc_input`                | ✅                  | Mantener en [CANAL_CONTROL](../CANAL_CONTROL.md); no sustituir por `lever_notch`                                                                                                             |
 
 ### Sesiones conocidas (no sustituyen sesión referencia M3a)
@@ -1149,6 +1149,7 @@ Matriz borrador: no actuar parado; no actuar fuera de APPLY; en zona freno + sli
 | 2026-10-03 | Lab Harlem M3A — `controls.json` · merge RailBridge → `build_m3a_profile_from_exports.py`     |
 | 2026-10-04 | Campo: `mc_input` probe **20261004d**; paquete `brake_input` / `brake_air` MC                 |
 | 2026-10-05 | § **M3a MNR (GCT)** — checklist L0, comparativa 323, puertas/señales UNKNOWN, L0.6g MC        |
+| 2026-10-08 | M3a D2: **`doors_telem`** + **`amps`** cerrados en probe (`PLAN_AMPS_PUERTAS` fase 6)           |
 
 ---
 

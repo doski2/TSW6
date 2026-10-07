@@ -1,8 +1,13 @@
 # Laboratorio L0.6f — amperímetro (`HUD_GetAmmeter`)
 
-**Mod:** `ApiExplorerMod` build **`20260901a`**+ · **Tecla:** **F5** (no Shift+F5)
+**Mod:** `ApiExplorerMod` build **`20261006a`**+ · **Tecla:** **F5** (no Shift+F5)
 **Plan:** [PLAN_API_EXPLORER.md](PLAN_API_EXPLORER.md) § L0.6f · HUD general:
-[LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)
+[LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md) · **M3a campo (fase 2):**
+[PLAN_AMPS_PUERTAS_20261006.md](PLAN_AMPS_PUERTAS_20261006.md) § Fase 2
+
+**M3a MNR (plan amps 2026-10):** mínimo `hud_batch_00_reposo.json` + `hud_batch_01_traccion.json` →
+
+`summarizar_amps_lab.bat <SESSION_ID>`. Cruzar con probe `logs/ue4ss_probe_*.txt` (±~500 A en tracción/freno).
 
 > **Class 323 (cerrado):** `Amps` siempre **0** — incluso ~49 mph P2 (`20260901T211818Z`). Catálogo;
 > no cablear en probe. **Al cambiar de tren, repetir todo este protocolo** — otro vehículo puede
@@ -56,9 +61,10 @@ Plantilla `notas_sesion.md`:
 ## Analizar resultados
 
 ```bat
+summarizar_amps_lab.bat <SESSION_ID>
 ```
 
-Genera tabla en consola y opcionalmente `amps_report.md`.
+Genera tabla en consola y `amps_report.md` en `data/lab_exports/exports/<SESSION_ID>/`.
 
 | Veredicto script | Significado           | Acción                                 |
 | ---------------- | --------------------- | -------------------------------------- |

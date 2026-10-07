@@ -6,9 +6,17 @@ set "PYTHONPATH=%CD%"
 set "PYTHONIOENCODING=utf-8"
 
 set "PY="
-for %%c in (python3 python py) do (
-    if not defined PY (
-        %%c --version >nul 2>&1 && set "PY=%%c"
+if exist "%CD%\.venv\Scripts\python.exe" set "PY=%CD%\.venv\Scripts\python.exe"
+if not defined PY (
+    for %%c in (py python python3) do (
+        if not defined PY (
+            %%c -3 --version >nul 2>&1 && set "PY=%%c -3"
+        )
+    )
+)
+if not defined PY (
+    for %%c in (python) do (
+        if not defined PY %%c --version >nul 2>&1 && set "PY=%%c"
     )
 )
 if not defined PY (

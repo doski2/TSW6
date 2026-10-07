@@ -97,7 +97,7 @@ Plantilla de notas (misma carpeta `exports/<session>/`):
 ```markdown
 ```
 
-**Log continuo** (opcional): probe ON + `probe_ue4ss.bat` o `probe_ue4ss_log.bat` → línea GetData
+**Log continuo:** probe ON + `probe_ue4ss.bat` → `logs/ue4ss_probe_*.txt` (CSV + `# raw:` GetData)
 cada ~50 ms. El explorer no hará eso (diseño: no competir con probe).
 
 ---

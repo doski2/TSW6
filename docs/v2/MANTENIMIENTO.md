@@ -98,7 +98,7 @@ IPC, jitter probe, holgura ETA (D9).
 | Acción                 | Comando / nota                                                                |
 | ---------------------- | ----------------------------------------------------------------------------- |
 | Instalar mod           | `install_ue4ss_probe.bat`                                                     |
-| Probe + log campo      | `probe_ue4ss.bat` → consola + `logs/ue4ss_probe_*.txt` (CSV + `# raw:`)     |
+| Probe + log campo      | `probe_ue4ss.bat` → `logs/probe/<stamp>/ue4ss_probe_*.txt` — [PROBE_LOGS.md](PROBE_LOGS.md) |
 | Tras editar `main.lua` | Subir `PROBE_BUILD` · reinstalar · comprobar `seq` sube ~20 Hz                |
 | Rendimiento            | `autopilot_perf.bat` · `lua_probe_perf.bat` — objetivo `loop_hz` ≥ 18 con GUI |
 | Inventario palancas    | **ApiExplorerMod** F6 — no ampliar F9 en probe                                |

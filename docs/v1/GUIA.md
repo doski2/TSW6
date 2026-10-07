@@ -130,8 +130,7 @@ Scripts auxiliares: `extraer_horario_hud.bat`, `instalar_rust_hud.bat`, `refresc
 | `.bat`                     | Función                                                        |
 | -------------------------- | -------------------------------------------------------------- |
 | `install_ue4ss_probe.bat`  | Copia mod UE4SS al juego                                       |
-| `probe_ue4ss.bat`          | Monitor telemetría probe                                       |
-| `probe_ue4ss_log.bat`      | Igual + guarda `logs/ue4ss_probe_*.txt`                        |
+| `probe_ue4ss.bat`          | Monitor probe + log `logs/ue4ss_probe_*.txt`                     |
 | `aprender.bat`             | Calibración guiada                                             |
 | `iniciar_autopilot.bat`    | Autopiloto con perfil calibrado (menú; opción 5 = monitor API) |
 | `iniciar_monitor.bat`      | Monitor API HTTP (`-HTTPAPI`)                                  |

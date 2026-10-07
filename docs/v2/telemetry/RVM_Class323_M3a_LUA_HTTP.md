@@ -22,14 +22,14 @@ Sesiones de referencia en repo:
 
 ## Amperios y puertas — qué teníamos de verdad (revisión 2026-10-06)
 
-Resumen honesto: **no teníais amperios en producción**; **puertas están en el código del probe pero
-no como dato fiable** en lab ni en los JSONL M3a del repo.
+Resumen (2026-10-08): **amps y `doors_telem` validados en probe M3a** (`logs/ue4ss_probe_20261007_*.txt`).
+JSONL P1 antiguos (p. ej. `201242Z`) pueden no reflejar build `20261006a` — usar probe log como FACT campo.
 
 |                             | **Amperios**                                                     | **Puertas**                                                                                                              |
 | --------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | **GetData probe (~20 Hz)**  | **`amps=`** desde probe build **`20261006a`** (`HUD_GetAmmeter`) | **`doors_telem` / `doors_dmi`**; lista ampliada `PassengerDoor_FL`… + `_1`…`_8`; si ningún hijo existe → no emitir telem |
 | **ApiExplorer lab (F5–F7)** | F5 `hud_batch` (igual que antes)                                 | **F6** `controls.json` → bloque `lua.doors[]` (build **`20261006a`**)                                                    |
-| **JSONL P1 en repo**        | Tras probe `20261006a` incluye `amps`                            | **FACT 2026-10-06:** GetData `doors_telem=1` con puertas abiertas (M3a); JSONL `station` pendiente de pegar `session_id` |
+| **JSONL P1 en repo**        | Tras probe `20261006a` incluye `amps`                            | **FACT 2026-10-07:** `logs/ue4ss_probe_20261007_001325.txt` — puertas 0↔1, amps ±~480 A (M3a B_C)                      |
 | **Herramientas aparte**     | `summarize_hud_amps.py`, L0.6f (solo **lab** `hud_batch`)        | Tests unitarios con `doors_telem=1` en línea GetData ficticia; FSM legacy asume el contrato                              |
 
 **INFERENCE (puertas):** probe y explorer comparten la misma lista (`DOOR_CHILD_NAMES` /
@@ -124,7 +124,7 @@ Variantes **A_C** / **B_C**: mismos mandos MC en lab; sesión ref. **A_C** `2105
 | **`mc_input`**                                                         | `MasterController.CurrentInputValue` | **Sí** en familias NYH/M3a                                                                 |
 | `train_brake` / handles HUD                                            | `HUD_GetTrainBrakeHandle` etc.       | MC; no sustituye `mc_input`                                                                |
 | `doors_telem`, `doors_dmi`                                             | Mismo código probe que 323           | **FACT 2026-10-06:** `doors_telem=1` en GetData (abiertas); cerradas: revalidar 0/ausente  |
-| **`amps`**                                                             | GetData                              | **FACT 2026-10-06:** `amps=` presente en GetData (valores reposo/tracción: anotar en plan) |
+| **`amps`**                                                             | GetData                              | **FACT:** `001325`/`233912` — reposo ~0 A; tracción/freno ±cientos A (`amp.bat`)            |
 | **`lua.doors` en F6**                                                  | Tras re-F6 con explorer `20261006a`  | Igual                                                                                      |
 
 ### Lab ApiExplorer (JSON)
@@ -157,7 +157,7 @@ Variantes **A_C** / **B_C**: mismos mandos MC en lab; sesión ref. **A_C** `2105
 | Mandos lab F6           | ~7 componentes (`PowerBrakeHandle`…)         | 3 (MC + reverser + llave)                                         |
 | `mc_input` GetData      | No                                           | Sí                                                                |
 | Amps GetData / JSONL    | **Sí** (`amps=`, probe `20261006a`)          | **Sí**                                                            |
-| Puertas probe / JSONL   | Código sí; sin `doors_telem=true` en `logs/` | GetData `doors_telem=1` abierto (2026-10-06); JSONL por confirmar |
+| Puertas probe / JSONL   | Código sí; campo 323 pendiente si se prueba | **FACT:** `001325` transiciones 0↔1; probe única fuente M3a        |
 | `HUD_GetAmmeter` lab F5 | Catálogo (0 A)                               | Vivo en tracción                                                  |
 | Cilindro producción     | HUD gauge₁                                   | Igual diseño; MR ~10 bar en gauge blanco (lab)                    |
 | Simulation presión tick | No (HUD)                                     | No (HUD); HTTP lab para Direct_P                                  |

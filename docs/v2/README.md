@@ -18,6 +18,8 @@ Plan maestro del autopilot TSW6 v2 (paquete tren, probe I/O, producto Python `V2
 | [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md)             | Protocolo amperímetro (L0.6f)                                                            | Lab EMU/diesel                           |
 | [PROBE_LUA.md](PROBE_LUA.md)                           | Auditoría probe modular v2                                                               | Probe producción                         |
 | [BAT.md](BAT.md)                                       | Mapa `.bat` raíz → scripts → Python/juego                                                | Operación                                |
+| [CAMPO_SCRIPTS.md](CAMPO_SCRIPTS.md)                   | **Plan amps/puertas** — `probe_ue4ss.bat` + `amp.bat` (Explorer opcional)                | Campo M3a                                |
+| [PROBE_LOGS.md](PROBE_LOGS.md)                         | Layout `logs/probe/<sesión>/` vs `logs/v2/` JSONL P1                                     | Tras `probe_ue4ss.bat`                   |
 
 **Backlog de producto:** solo [PLAN_V2.md](PLAN_V2.md). `docs/v1/` = runtime actual (referencia).
 

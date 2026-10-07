@@ -8,6 +8,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent
 DATA_DIR = PROJECT_ROOT / "data"
 LOGS_DIR = PROJECT_ROOT / "logs"
+PROBE_LOGS_DIR = LOGS_DIR / "probe"
 HUD_DB_FILENAME = "tsw_hud.db"
 
 # BD completa tras extracción en hud.exe (todos los DLCs del juego).

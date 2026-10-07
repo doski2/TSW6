@@ -280,13 +280,14 @@ def read_probe_file(path: Path) -> Optional[ProbeSnapshot]:
     return ProbeSnapshot.from_dict(parsed)
 
 
-from tsw6.paths import LOGS_DIR
+from tsw6.paths import LOGS_DIR, PROBE_LOGS_DIR
 
 
 def default_log_path() -> Path:
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return LOGS_DIR / f"ue4ss_probe_{stamp}.txt"
+    session_dir = PROBE_LOGS_DIR / stamp
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir / f"ue4ss_probe_{stamp}.txt"
 
 
 def _csv_bool(val: Optional[bool]) -> str:
