@@ -1,6 +1,6 @@
 # Plan ApiExplorerMod — laboratorio Lua (HTTP ↔ UE)
 
-**Fecha:** 2026-08-30 (actualizado 2026-10-05)
+**Fecha:** 2026-08-30 (actualizado 2026-10-08)
 
 ## Estado
 
@@ -19,7 +19,7 @@ tracción [`210515Z`](../../data/lab_exports/exports/20260901T210515Z/) · amper
 [DRIVERAID_API.md](../reference/DRIVERAID_API.md) ·
 [DRIVERINPUT_API.md](../reference/DRIVERINPUT_API.md)
 **Dumps HTTP (RailBridge):** `Desktop\investigacion tsw 6\apis\` — válidos; mismos nombres que
-Lua/HTTPAPI
+Lua/HTTPAPI · M3a también en `Desktop\investigacion tsw 6\trenes\m3a mta\`
 
 ### Índice
 
@@ -39,7 +39,7 @@ Lua/HTTPAPI
 
 - [L0.6
 
-  física](#l06--qué-captura-formation-shiftf5) (6d/6e/6f)
+  física](#l06--qué-captura-formation-shiftf5) (6d/6e/6f/6h confort accel)
 
 - [Cableado → probe](#mapa-cableado--lab--archivo-destino-documentación-sin-cablear-aún) ·
 
@@ -531,16 +531,18 @@ del 323.
 **Siguiente tren (cuando toque):** **no asumir** resultados del 323. Una sesión nueva
 `exports/<timestamp>/` con barrido F5–F7 (+ Shift) y pruebas **por vehículo**:
 
-| Prueba                | Modo                     | Doc                                        | 323                 | Otro tren                 |
-| --------------------- | ------------------------ | ------------------------------------------ | ------------------- | ------------------------- |
-| HUD 16×               | F5                       | [LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)     | ✅                  | Repetir                   |
-| Amperímetro / regen   | F5 ×5                    | [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) | **Amps siempre 0**  | Puede ≠ 0 (EMU/diesel)    |
-| Esfuerzo tractivo HUD | F5                       | L0.6d                                      | **siempre 0**       | Comprobar                 |
-| Simulation tracción   | Shift+F5 + `--formation` | L0.6d                                      | HTTP sí, Lua no     | Repetir                   |
-| RPM motor             | F5                       | L0.6e                                      | 0 (EMU)             | Diesel: esperar ≠ 0       |
-| Layout mandos         | F6                       | L0.3                                       | `combined`          | split freight, etc.       |
-| Señales / C1          | F7                       | L0.4b                                      | enum UK             | Por país/vehículo         |
-| **Aire y manómetros** | F5 × N + Shift+F5        | **L0.6g**                                  | cilindro vía gauge₁ | **Repetir** — ver § L0.6g |
+| Prueba                              | Modo                                  | Doc                                        | 323                 | Otro tren                                |
+| ----------------------------------- | ------------------------------------- | ------------------------------------------ | ------------------- | ---------------------------------------- |
+| HUD 16×                             | F5                                    | [LAB_CAPTURA_F5.md](LAB_CAPTURA_F5.md)     | ✅                  | Repetir                                  |
+| Amperímetro / regen                 | F5 ×5                                 | [LAB_CAPTURA_AMPS.md](LAB_CAPTURA_AMPS.md) | **Amps siempre 0**  | Puede ≠ 0 (EMU/diesel)                   |
+| Esfuerzo tractivo HUD               | F5                                    | L0.6d                                      | **siempre 0**       | Comprobar                                |
+| Simulation tracción                 | Shift+F5 + `--formation`              | L0.6d                                      | HTTP sí, Lua no     | Repetir                                  |
+| RPM motor                           | F5                                    | L0.6e                                      | 0 (EMU)             | Diesel: esperar ≠ 0                      |
+| Layout mandos                       | F6                                    | L0.3                                       | `combined`          | split freight, etc.                      |
+| Señales / C1                        | F7                                    | L0.4b                                      | enum UK             | Por país/vehículo                        |
+| **Aire y manómetros**               | F5 × N + Shift+F5                     | **L0.6g**                                  | cilindro vía gauge₁ | **Repetir** — ver § L0.6g                |
+| **Confort accel/decel (blueprint)** | Export HTTP DrivableActor / Formation | **L0.6h**                                  | no barrido 323      | **Repetir** — `MaxComfortable*` por tren |
+| **Tracción Simulation**            | F5 + Shift+F5 (MC en potencia)        | **L0.6d**                                  | HTTP +651 N; Lua ∅  | **Repetir** — `simulation_traction`      |
 
 `vehicle_class` en `session.json` + `notas_sesion.md`. Analizar amperímetro:
 `summarize_hud_amps.py <session>`. Freight / diesel: priorizar F6 (layout split), F5 (RPM, brakes),
@@ -566,18 +568,19 @@ GetData (`mc_input`, no muesca UK fiable).
 
 ### Resumen ejecutivo M3a (2026-10-05)
 
-| Señal / tema                         | ¿Probe ~20 Hz? | Evidencia                                          | Notas                                                                 |
-| ------------------------------------ | -------------- | -------------------------------------------------- | --------------------------------------------------------------------- |
-| `mc_input` (D2)                      | ✅             | JSONL 095249Z+ · probe **20261004d**               | `config.MC_VEHICLE_MARKERS` (`RVM_NYH`, …)                            |
-| IPC `MasterController` fracción      | ✅             | `target_frac` 0.64… en jsonl                       | Alias `PowerBrakeHandle` → MC en paquete                              |
-| `brake_cyl_bar`                      | ✅             | Campo GetData                                      | Reposo **~8–11 bar** (MC); no usar umbrales 323 (~1.6 bar) en learner |
-| `lever_notch` / `train_brake` HUD UK | 🟡             | Siempre presente                                   | **No** fuente de verdad MC — catálogo / display                       |
-| Planning estaciones                  | ✅             | `schedule_source` `hud_db` · nombres White Plains… | Sesión **201242Z**                                                    |
-| `doors_telem`                        | ✅             | Probe **`001325`**: 0↔1 andén; no requiere F6 M3a  | GetData ~20 Hz — [plan amps/puertas](PLAN_AMPS_PUERTAS_20261006.md)   |
-| `doors_dmi`                          | 🟡             | DriverAid                                          | Fallback si telem física falla                                        |
-| Señales C1 (`signal_red`)            | **UNKNOWN**    | Sin barrido L0.4b MNR                              | No asumir enum UK 0/1/2 del 323                                       |
-| G-B `m3a_mnr.json`                   | 🟡             | Lab `20261003T180232Z` + merge manual              | Falta volcar RailBridge / controles extra — abajo                     |
-| Learner `decel_by_*`                 | ❌             | `decel_observe_n=0` en campo                       | Gate muestra UK — fase 4 [PLAN_ACTUACION_MC](PLAN_ACTUACION_MC.md)    |
+| Señal / tema                                  | ¿Probe ~20 Hz? | Evidencia                                          | Notas                                                                           |
+| --------------------------------------------- | -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `mc_input` (D2)                               | ✅             | JSONL 095249Z+ · probe **20261004d**               | `config.MC_VEHICLE_MARKERS` (`RVM_NYH`, …)                                      |
+| IPC `MasterController` fracción               | ✅             | `target_frac` 0.64… en jsonl                       | Alias `PowerBrakeHandle` → MC en paquete                                        |
+| `brake_cyl_bar`                               | ✅             | Campo GetData                                      | Reposo **~8–11 bar** (MC); no usar umbrales 323 (~1.6 bar) en learner           |
+| `lever_notch` / `train_brake` HUD UK          | 🟡             | Siempre presente                                   | **No** fuente de verdad MC — catálogo / display                                 |
+| Planning estaciones                           | ✅             | `schedule_source` `hud_db` · nombres White Plains… | Sesión **201242Z**                                                              |
+| `doors_telem`                                 | ✅             | Probe **`001325`**: 0↔1 andén; no requiere F6 M3a  | GetData ~20 Hz — [plan amps/puertas](PLAN_AMPS_PUERTAS_20261006.md)             |
+| `doors_dmi`                                   | 🟡             | DriverAid                                          | Fallback si telem física falla                                                  |
+| Señales C1 (`signal_red`)                     | **UNKNOWN**    | Sin barrido L0.4b MNR                              | No asumir enum UK 0/1/2 del 323                                                 |
+| G-B `m3a_mnr.json`                            | 🟡             | Lab `20261003T180232Z` + merge manual              | Falta volcar RailBridge / controles extra — abajo                               |
+| Learner `decel_by_*`                          | ❌             | `decel_observe_n=0` en campo                       | Gate muestra UK — fase 4 [PLAN_ACTUACION_MC](PLAN_ACTUACION_MC.md)              |
+| `MaxComfortableAcceleration` / `Deceleration` | 🟡 catálogo    | Dump HTTP `20261003` — **0,447** m/s² (8 coches)   | **No P1 freno** — ver [L0.6h](#l06h--confort-aceleracióndeceleración-blueprint) |
 
 **Regla:** lo validado en **323 no se hereda** en M3a salvo que F5/F7 en cabina M3a lo confirme.
 
@@ -629,7 +632,7 @@ misma sesión `vehicle_class` que usarás en P1.
 | L0.6f           | Amperímetro               | ✅ probe            | `amp.bat` / logs `001325`/`233912` — F5 `summarize_hud_amps.py` opcional                                                                                                                     |
 | L0.7            | `m3a_mnr.json`            | 🟡                  | Regenerar merge; commitear solo datos estables (sin rutas PC absolutas si molestan)                                                                                                          |
 | L0.8            | `compare_lab_vs_probe.py` | ⬜                  | Tras `run_p1_session` + misma cabina                                                                                                                                                         |
-| **D2 puertas**  | `doors_telem`             | ✅ probe            | F6 solo si tren nuevo sin telem; M3a cerrado en probe                                                                                                                                          |
+| **D2 puertas**  | `doors_telem`             | ✅ probe            | F6 solo si tren nuevo sin telem; M3a cerrado en probe                                                                                                                                        |
 | **D2 MC**       | `mc_input`                | ✅                  | Mantener en [CANAL_CONTROL](../CANAL_CONTROL.md); no sustituir por `lever_notch`                                                                                                             |
 
 ### Sesiones conocidas (no sustituyen sesión referencia M3a)
@@ -714,7 +717,7 @@ Escribe `formation_http.json` + `formation_report.md` (L0.6) y `correlation_repo
 **Nota L0.5 live:** si el correlator corre minutos después de F5, HUD/DriverAid pueden divergir por
 desfase temporal; `correlation_report.md` de `213100Z` muestra ~50 % HUD exact por ese motivo.
 
-### L0.6d — esfuerzo tractivo (no HUD) — **cerrado HTTP / Lua bloqueado**
+### L0.6d — esfuerzo tractivo (no HUD) — **HTTP validado · Lua 323 bloqueado · M3a retest**
 
 `HUD_GetTractiveEffort` existe en F5 pero devuelve **0 siempre** en Class 323 — **no es un fallo del
 mod**:
@@ -724,14 +727,18 @@ es la API del instrumento de cabina; la 323 no alimenta esa aguja. El esfuerzo r
 
 (solo HTTP).
 
-| Canal                                               | 323                                 | Sesión ref.        |
-| --------------------------------------------------- | ----------------------------------- | ------------------ |
-| `HUD_GetTractiveEffort` (F5 Lua + HTTP)             | **Siempre 0**                       | todas              |
-| `Simulation/Axle_1_1/Axle.NetTractiveEffort` (HTTP) | **+651 N** con potencia             | `20260901T210515Z` |
-| mismo (HTTP)                                        | **-19.5 N** patinaje                | `20260831T214213Z` |
-| `lua.traction_probe` (Shift+F5)                     | `index_ok` pero `fields_by_via: {}` | `210515Z`          |
+| Canal                                               | 323                                 | Sesión ref.                                                                                      |
+| --------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `HUD_GetTractiveEffort` (F5 Lua + HTTP)             | **Siempre 0**                       | todas                                                                                            |
+| `Simulation/Axle_1_1/Axle.NetTractiveEffort` (HTTP) | **+651 N** con potencia             | `20260901T210515Z`                                                                               |
+| mismo (HTTP)                                        | **-19.5 N** patinaje                | `20260831T214213Z`                                                                               |
+| `lua.traction_probe` (Shift+F5)                     | `index_ok` pero `fields_by_via: {}` | `210515Z`                                                                                        |
+| M3a HTTP `Axle_1_1/Axle.NetTractiveEffort`          | **≈ −26 N** (dump estático)         | `20261003T152838Z`                                                                               |
+| F5 `lua.simulation_traction` (retest)               | **pendiente** in-game               | ver [M3A § L0.6d](M3A_MTA_HTTP_VS_LUA.md#esfuerzo-tractivo--l06d-http-sí-hud-no-lua-a-revalidar) |
 
-**Conclusión probe:** esfuerzo tractivo = **solo catálogo HTTP**. **No cablear** en GetData.
+###### Conclusión probe (323):** esfuerzo tractivo = **catálogo HTTP** hasta que F5/Shift+F5 en **M3a
+
+(o re-323) rellenen `simulation_traction` / `traction_probe`. **No cablear** en GetData sin D2.
 Frenado/tracción en tick 323: `dyn_brake` + `train_brake` + `brake_cyl_bar` + `accel_ms2` (sin
 `amps`
 ni HUD TractiveEffort — ver L0.6f).
@@ -1014,6 +1021,47 @@ probe).
 Hipótesis: en mercancías con muchos vagones la suma por eje **sí** podría cuadrar; en EMU 323 el
 probe solo ve el drivable. **Experimento futuro** — no bloquea P1 pasajeros.
 
+### L0.6h — Confort aceleración/deceleración (blueprint)
+
+**Alcance:** catálogo HTTP / investigación al **abrir un tren nuevo**. **No** entra en probe GetData
+ni en el coordinador P1 de freno: el aprendizaje de **decel por muesca** y el frenado cartel van
+bien en 323/M3a. El hueco de producto a futuro es más **tracción / aceleración suave** (MC,
+salidas),
+no frenos.
+
+**Origen DTG (doc modding):** `RailVehiclePhysicsComponent` expone techo de aceleración y
+deceleración “cómodos” (m/s²) — pasajeros / carga / stats de escenario; no sustituye
+`HUD_GetAcceleration` → `accel_ms2` del probe.
+
+| Captura                 | Dónde buscar en export HTTP                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| Coche conducible        | `CurrentDrivableActor/RailVehiclePhysicsComponent0.Property.MaxComfortableAcceleration` |
+| Idem decel              | `…/Property.MaxComfortableDeceleration`                                                 |
+| Cada coche en formación | `CurrentFormation/N/RailVehiclePhysicsComponent0.Property.MaxComfortable*`              |
+
+**Protocolo (nuevo `vehicle_class`):**
+
+1. Volcar **CurrentDrivableActor** (+ opcional **CurrentFormation**) con RailBridge / HTTPAPI en
+
+   cabina.
+
+2. Anotar ambos valores (¿simétricos? ¿iguales en todos los coches?).
+3. Contrastar con `accel_ms2` en JSONL al acelerar fuerte y al frenar B3 — **UNKNOWN** si el juego
+
+   limita el input a ese techo o solo puntúa escenarios.
+
+4. No cablear a `physics.py` / `mass_factor` ni a decel aprendida sin evidencia in-game.
+
+**FACT M3a MTA** (dumps escritorio `trenes\m3a mta\`, 2026-10-03): accel y decel **0,44704** m/s²
+en drivable y en coches `CurrentFormation/0`…`7` — ≈ **1 mph/s** (`MPH_TO_MS` en
+`tsw6v2/constants.py`). Detalle y rutas:
+[M3A_MTA_HTTP_VS_LUA.md §
+confort](M3A_MTA_HTTP_VS_LUA.md#confort-de-aceleración--deceleración-investigación-no-p1-freno).
+
+**323:** no anotado en lab L0 cerrado; repetir export HTTP en Cross-City si se quiere comparar EMU
+UK
+vs M3a US.
+
 #### Catálogo RailBridge — `tsw-api-export-Simulation-20260830T003506Z.json`
 
 Dump HTTP del subárbol **`CurrentDrivableActor/Simulation`** (un solo coche, no formación completa).
@@ -1149,7 +1197,7 @@ Matriz borrador: no actuar parado; no actuar fuera de APPLY; en zona freno + sli
 | 2026-10-03 | Lab Harlem M3A — `controls.json` · merge RailBridge → `build_m3a_profile_from_exports.py`     |
 | 2026-10-04 | Campo: `mc_input` probe **20261004d**; paquete `brake_input` / `brake_air` MC                 |
 | 2026-10-05 | § **M3a MNR (GCT)** — checklist L0, comparativa 323, puertas/señales UNKNOWN, L0.6g MC        |
-| 2026-10-08 | M3a D2: **`doors_telem`** + **`amps`** cerrados en probe (`PLAN_AMPS_PUERTAS` fase 6)           |
+| 2026-10-08 | M3a D2: **`doors_telem`** + **`amps`** cerrados en probe (`PLAN_AMPS_PUERTAS` fase 6)         |
 
 ---
 

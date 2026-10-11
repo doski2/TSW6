@@ -36,7 +36,7 @@ from tsw6v2.session_log import (
 )
 from tsw6v2.vehicle_package import (
     is_generic_cli_route_label,
-    session_route_cli_slug_for_probe,
+    adapt_session_route_cli,
 )
 
 _UI_MS = 50
@@ -485,12 +485,12 @@ class AgentGuiApp:
         vehicle = self._snap_vehicle(snap)
         if not vehicle or vehicle == "?":
             return
-        slug = session_route_cli_slug_for_probe(vehicle)
+        adapted = adapt_session_route_cli(self._session_route, vehicle)
         self._session_route_adapted = True
-        if not slug or slug == self._session_route:
+        if adapted == self._session_route:
             return
-        self._session_route = slug
-        self._push_event(f"log ruta CLI → {slug} ({vehicle})")
+        self._session_route = adapted
+        self._push_event(f"log ruta CLI → {adapted} ({vehicle})")
 
     def _session_logging_ready(self, snap: AgentSnapshot) -> bool:
         if self._session is not None:

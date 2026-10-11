@@ -59,6 +59,62 @@ local function read_tractive_effort(actor)
     return read_hud_out2(actor, "HUD_GetTractiveEffort")
 end
 
+-- L0.6d retest: HTTP expone Simulation/Axle_*/*/NetTractiveEffort; HUD suele 0 (323/M3a).
+local SIM_TRACTION_AXLES = { "Axle_1_1", "Axle_1_2", "Axle_2_1", "Axle_2_2" }
+local SIM_TRACTION_SUBNODES = { "Axle", "Wheel", "VirtualWheel" }
+local SIM_TRACTION_FIELDS = { "NetTractiveEffort", "LocalTractiveEffort", "NetTorque_NM" }
+
+local function read_simulation_traction_probe(actor)
+    local out = {}
+    local ok, err = pcall(function()
+        local sim = actor.Simulation
+        if sim == nil then
+            out.error = "no Simulation"
+            return
+        end
+        for _, axle_name in ipairs(SIM_TRACTION_AXLES) do
+            local row = { index_ok = false, fields_by_via = {} }
+            local axle_node
+            local idx_ok, idx_err = pcall(function() axle_node = sim[axle_name] end)
+            if not idx_ok then
+                row.index_error = tostring(idx_err)
+            elseif axle_node ~= nil then
+                row.index_ok = true
+                row.child_type = type(axle_node)
+                row.child_valid = util.obj_valid(axle_node)
+                for _, field in ipairs(SIM_TRACTION_FIELDS) do
+                    local n = util.read_number_prop(axle_node, field)
+                    if n ~= nil then
+                        row.fields_by_via.direct = row.fields_by_via.direct or {}
+                        row.fields_by_via.direct[field] = n
+                    end
+                end
+                for _, sub in ipairs(SIM_TRACTION_SUBNODES) do
+                    local subnode
+                    pcall(function() subnode = axle_node[sub] end)
+                    if subnode ~= nil then
+                        local bucket = {}
+                        for _, field in ipairs(SIM_TRACTION_FIELDS) do
+                            local n = util.read_number_prop(subnode, field)
+                            if n ~= nil then
+                                bucket[field] = n
+                            end
+                        end
+                        if next(bucket) ~= nil then
+                            row.fields_by_via[sub] = bucket
+                        end
+                    end
+                end
+            end
+            out[axle_name] = row
+        end
+    end)
+    if not ok then
+        out.error = tostring(err)
+    end
+    return out
+end
+
 local function read_gauge(actor, method)
     return read_hud_out2(actor, method)
 end
@@ -124,6 +180,8 @@ function M.capture(actor)
             end
         end
     end
+
+    payload.lua.simulation_traction = read_simulation_traction_probe(actor)
 
     return payload
 end

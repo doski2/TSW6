@@ -102,12 +102,15 @@ M.FORMATION_MISC_NODES = {
 -- L0.6d — esfuerzo tractivo (HUD_GetTractiveEffort = 0 en 323; candidatos Simulation).
 M.FORMATION_AXLE_NODES = {
     "Axle_1_1",
+    "Axle_1_2",
     "Axle_2_1",
+    "Axle_2_2",
 }
 
 M.FORMATION_TRACTION_SUBNODES = {
     "Axle",
     "Wheel",
+    "VirtualWheel",
 }
 
 M.FORMATION_TRACTION_FIELDS = {

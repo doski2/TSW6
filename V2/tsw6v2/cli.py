@@ -12,7 +12,7 @@ from tsw6v2.constants import DEFAULT_LOOP_HZ
 from tsw6v2.diagnostic import run_ipc_brake_test
 from tsw6v2.gui import run_gui
 from tsw6v2.learner import LearnerProfile
-from tsw6v2.loop import AgentLoop
+from tsw6v2.loop import AgentLoop, AgentSnapshot
 from tsw6v2.p1_mode import (
     GUI_P1_MODES,
     P1_MODES,
@@ -63,9 +63,39 @@ def run_console(
     t0 = time.monotonic()
     use_investigate = investigate or p1_mode != "console"
 
+    from tsw6v2.vehicle_package import adapt_session_route_cli, is_generic_cli_route_label
+
     recorder: Optional[SessionRecorder] = None
+    session_route = route
+    session_route_user_set = not is_generic_cli_route_label(route)
+    session_route_adapted = False
+    session_log_deadline: Optional[float] = None
     if log_path is not None:
         print(f"log -> {log_path.resolve()}")
+
+    def _session_vehicle(snap: AgentSnapshot) -> str:
+        return str(getattr(snap, "vehicle", "") or "").strip()
+
+    def _maybe_adapt_session_route(snap: AgentSnapshot) -> None:
+        nonlocal session_route, session_route_adapted
+        if session_route_adapted or session_route_user_set:
+            return
+        vehicle = _session_vehicle(snap)
+        if not vehicle or vehicle == "?":
+            return
+        session_route_adapted = True
+        adapted = adapt_session_route_cli(session_route, vehicle)
+        if adapted != session_route:
+            session_route = adapted
+            print(f"AVISO: ruta sesión → {session_route} ({vehicle})", file=sys.stderr)
+
+    def _session_logging_ready(snap: AgentSnapshot) -> bool:
+        vehicle = _session_vehicle(snap)
+        if vehicle and vehicle != "?":
+            return True
+        if session_log_deadline is None:
+            return False
+        return time.monotonic() >= session_log_deadline
 
     print(f"TSW6 V2 agent - modo={p1_mode} - Ctrl+C para salir")
     try:
@@ -78,15 +108,19 @@ def run_console(
                 print(f"perfil <- {Path(profile_note).resolve()}")
                 auto_profile_announced = True
             if log_path is not None:
-                if recorder is None:
+                if session_log_deadline is None:
+                    session_log_deadline = time.monotonic() + 3.0
+                _maybe_adapt_session_route(snap)
+                if recorder is None and _session_logging_ready(snap):
                     recorder = make_session_recorder(
                         log_path,
                         loop,
                         trace_mode=session_trace_mode(p1_mode),
-                        route=route,
+                        route=session_route,
                         profile_path=profile_path,
                     )
-                recorder.record(snap)
+                if recorder is not None:
+                    recorder.record(snap)
             if use_investigate:
                 print(format_investigate(snap))
             else:

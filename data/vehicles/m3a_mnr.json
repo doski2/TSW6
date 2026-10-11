@@ -1,8 +1,10 @@
 {
   "schema": "tsw6-vehicle-package/1",
   "vehicle_id": "m3a_mnr",
+  "session_route": "Grand Central Corridor (MNR)",
+  "session_route_cli": "gct-mnr",
   "match": {
-    "vehicle_class": "RVM_NYH_MNR_M3a-A_C"
+    "vehicle_class": "RVM_NYH_MNR_M3a"
   },
   "layout": "combined",
   "controls": {

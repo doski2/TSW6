@@ -13,7 +13,11 @@ from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.p1_layers import LAYERS, classify_from_p1, layer_label
 from tsw6v2.p1_station_gate import doors_effective
 from tsw6v2.physics import apply_zone_margin_m
-from tsw6v2.vehicle_package import resolve_session_route_name
+from tsw6v2.vehicle_package import (
+    is_generic_cli_route_label,
+    resolve_session_route_name,
+    session_route_cli_slug_for_probe,
+)
 
 
 def enrich_ticks_active_time(ticks: list[dict[str, Any]]) -> None:
@@ -1112,9 +1116,13 @@ def session_route_display(sess: dict[str, Any] | None) -> str:
     if not sess:
         return route
     cli = sess.get("route")
-    if cli and route != cli:
-        return f"{route} [cli={cli}]"
-    return route
+    if not cli or route == cli or is_generic_cli_route_label(str(cli)):
+        return route
+    vehicle = str(sess.get("vehicle") or "")
+    canonical = session_route_cli_slug_for_probe(vehicle) if vehicle else None
+    if canonical and str(cli) == canonical:
+        return route
+    return f"{route} [cli={cli}]"
 
 
 def _meta_line(summary: dict[str, Any]) -> str:
@@ -1291,6 +1299,8 @@ def write_html_replay(path: Path, out: Path) -> None:
     if not ticks:
         raise ValueError("sin ticks")
     summary = summarize(path)
+    session = summary.get("session") or session
+    replay_route = str(summary.get("route_display") or session_route_display(session) or path.name)
     has_station = _session_has_station(ticks)
     has_signal = _session_has_signal(ticks)
     series = _downsample_series(ticks)
@@ -1354,7 +1364,7 @@ puertas telem: <b>{doors_telem}</b> · DMI: <b>{doors_dmi}</b> · abiertas: <b>{
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
-<title>P1 replay — {session_route_display(session) if session else path.name}</title>
+<title>P1 replay — {replay_route}</title>
 <style>
   body {{ font: 14px/1.4 system-ui, sans-serif; margin: 1rem 1.5rem; background: #0f1115; color: #e6e8ec; }}
   h1 {{ font-size: 1.1rem; font-weight: 600; }}

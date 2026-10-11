@@ -308,9 +308,9 @@ DriverAid:
 | `tsw_ue4ss_reader.py`                     | `--api` compara probe vs HTTP                                                           |
 | `docs/v1/HUD_TIMETABLE.md`                | Setup BD, validación in-game                                                            |
 | `docs/v1/ESTADO.md`                       | Tablero trabajo; estudio flujo pasos 1–3                                                |
-| `docs/PENDIENTE_DYNAMICHUD.md`            | Roadmap probe / IPC                                                                     |
-| `docs/TSW_HTTPAPI_INDEX.md`               | Índice dumps HTTPAPI                                                                    |
-| `docs/CURRENTFORMATION_API.md`            | Física tren (masa, aire, esfuerzos)                                                     |
+| `docs/v1/PENDIENTE_DYNAMICHUD.md`         | Roadmap probe / IPC                                                                     |
+| `docs/reference/TSW_HTTPAPI_INDEX.md`     | Índice dumps HTTPAPI                                                                    |
+| `docs/reference/CURRENTFORMATION_API.md`  | Física tren (masa, aire, esfuerzos)                                                     |
 | `docs/v1/ARQUITECTURA.md`                 | Lectura UE4SS vs HTTPAPI                                                                |
 
 ---

@@ -12,7 +12,7 @@ Python 3.9+ (3.11 recomendado), en cabina.
 ```bat
 ```
 
-Horarios comerciales (opcional): [docs/HUD_TIMETABLE.md](docs/v1/HUD_TIMETABLE.md) →
+Horarios comerciales (opcional): [docs/v1/HUD_TIMETABLE.md](docs/v1/HUD_TIMETABLE.md) →
 `preparar_db_hud.bat`.
 
 ## Estructura del proyecto

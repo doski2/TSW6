@@ -124,6 +124,14 @@ def session_route_cli_slug_for_probe(probe_vehicle: str) -> Optional[str]:
     return session_route_meta_for_probe(probe_vehicle).cli_slug
 
 
+def adapt_session_route_cli(route: str, probe_vehicle: str) -> str:
+    """Sustituye etiquetas genéricas (``cross-city``, ``gui``) por el slug del paquete."""
+    if not is_generic_cli_route_label(route):
+        return route
+    slug = session_route_cli_slug_for_probe(probe_vehicle)
+    return slug or route
+
+
 def is_generic_cli_route_label(route: str) -> bool:
     return (route or "").strip().lower() in GENERIC_CLI_ROUTE_LABELS
 
@@ -146,7 +154,10 @@ def resolve_session_route_name(
     label = meta.display or detected
     if label:
         return label
-    return str(cli_route or "?")
+    cli = str(cli_route or "").strip()
+    if cli and is_generic_cli_route_label(cli):
+        return "?"
+    return cli or "?"
 
 
 def vehicle_class_matches(probe_vehicle: str, package_class: str) -> bool:

@@ -151,5 +151,5 @@
   <text x="60" y="1004" font-size="10" fill="#444">Arriba-abajo = flujo principal. Tres columnas = quien decide / ejecuta / escribe al juego.</text>
   <text x="60" y="1022" font-size="10" fill="#c53030">Caja roja = frenado P1 v2 (ruta de mandos de freno).</text>
   <text x="60" y="1040" font-size="10" fill="#2b6cb0">Linea punteada = respuesta IPC al mod Lua.</text>
-  <text x="500" y="1040" font-size="10" fill="#666">TSW6 - docs/FLUJO_FRENOS.md</text>
+  <text x="500" y="1040" font-size="10" fill="#666">TSW6 - docs/v1/FLUJO_FRENOS.md</text>
 </svg>

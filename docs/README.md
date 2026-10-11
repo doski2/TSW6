@@ -23,9 +23,6 @@ listas de tareas.
 **Política v1 ↔ v2:** [PLAN_V2 § Política de documentación](v2/PLAN_V2.md#política-de-documentación)
 — no migrar `v1/` en bloque; ampliar `v2/` y `reference/` de forma incremental.
 
-**Enlaces antiguos:** si abres `docs/GUIA.md`, `docs/ESTADO.md`, etc. en la raíz, verás un stub
-«Movido» que apunta a `v1/` o `reference/`.
-
 ---
 
 ## v1 — runtime actual

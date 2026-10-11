@@ -5,8 +5,9 @@
 **Histórico** (fases A–C, sesiones test-ipc 2026-08, crashes, debate rendimiento):
 [archive/docs/CANAL_CONTROL_HISTORICO.md](../archive/docs/CANAL_CONTROL_HISTORICO.md).
 
-**Última revisión:** 2026-09-01 — F-B masa **off** (3 vs 6 coches no cuadra HTTP); 9b-a adherencia
-documentado; sin cablear.
+**Última revisión:** 2026-10-08 — manómetros HUD + `mr_bar` en probe (`20261006a`); F-B masa
+**off**;
+9b-a adherencia documentado; sin cablear P1.
 
 ---
 
@@ -47,50 +48,62 @@ y devuelve ACK.
 
 ## Contrato GetData v2 {#contrato-getdata-v2}
 
-Formato: **una línea** `clave=valor` separada por espacios. Parser:
-`parse_probe_line()` en `tsw_ue4ss_reader.py`. Valor `?` = desconocido (salvo `vehicle=?`).
+Formato: **una línea** `clave=valor` separada por espacios. Parser canónico:
+`parse_probe_line()` en `V2/tsw6v2/bridge/getdata.py` (shim legacy: `tsw_ue4ss_reader.py`). Valor
+`?` = desconocido (salvo `vehicle=?`).
 
 **Debate D2:** este documento es la **fuente canónica** de claves. Añadir un campo = actualizar
 **las cuatro** piezas en el mismo PR (regla atómica — [PLAN_V2 §
 D2](v2/PLAN_V2.md#d2--schema-getdata)):
 
 1. Tabla abajo (este doc)
-2. `build_line()` / `extract_*` en `main.lua` (si el probe lo emite)
-3. `ProbeSnapshot` + `parse_probe_line` en Python
+2. `collect_sample` / `build_line()` en `mods/TelemetryProbeMod/Scripts/telemetry.lua`
+3. `ProbeSnapshot` + `parse_probe_line` en `V2/tsw6v2/bridge/getdata.py`
 4. Fixture pytest en `tests/` (D7)
 
 ### Campos en producción (probe escribe hoy)
 
-| Clave             | Tipo   | Origen Lua                                                                                | Uso Python                                                        |
-| ----------------- | ------ | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `seq`             | int    | contador tick                                                                             | stale / freeze                                                    |
-| `speed_ms`        | float  | HUD                                                                                       | P1, física                                                        |
-| `power`           | float  | HUD                                                                                       | tracción                                                          |
-| `power_neg`       | 0/1    | HUD                                                                                       | tracción                                                          |
-| `handle_notch`    | int    | HUD Power derivado                                                                        | legacy; preferir `lever_notch`                                    |
-| `lever_notch`     | int    | palanca real                                                                              | control, ACK match                                                |
-| `last_cmd_id`     | int    | último IPC aplicado                                                                       | correlación cola                                                  |
-| `last_ack_ok`     | 0/1    | resultado último mando                                                                    | diagnóstico                                                       |
-| `train_brake`     | float  | cabina                                                                                    | freight / display                                                 |
-| `loco_brake`      | float  | cabina                                                                                    | freight                                                           |
-| `dyn_brake`       | float  | cabina                                                                                    | freight                                                           |
-| `accel_ms2`       | float  | física                                                                                    | display                                                           |
-| `brake_cyl_bar`   | float  | Simulation (323: `?`); candidato HUD gauge §2                                             | learner (fase D); ver [PLAN_V2 §2](v2/PLAN_V2.md)                 |
-| `max_speed_ms`    | float  | HUD                                                                                       | display                                                           |
-| `speed_limit_ms`  | float  | DriverAid escalar                                                                         | límite **vigente**                                                |
-| `gradient_pct`    | float  | DriverAid                                                                                 | `physics.py`                                                      |
-| `vehicle`         | string | clase UE                                                                                  | paquete G-B                                                       |
-| `dist_limit_cm`   | float  | 1.º cartel adelante                                                                       | P1 `limit_brake`                                                  |
-| `next_limit_ms`   | float  | mph del 1.º cartel                                                                        | P1 `limit_brake`                                                  |
-| `odo_m`           | float  | odómetro                                                                                  | C.3a, estaciones                                                  |
-| `doors_telem`     | 0/1    | telemetría                                                                                | FSM (opcional)                                                    |
-| `doors_dmi`       | 0/1    | DMI                                                                                       | FSM puertas                                                       |
-| `signal_red`      | 0/1    | `extract_signal_red` — enum 2 o Stop/DANGER/RED; fallback `nextSignals[0]`                | P1 emergencia hoy; plan gradual paso 5                            |
-| `signal_dist_cm`  | float  | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1**                                       | Con `signal_red=1`                                                |
-| `is_slipping`     | 0/1    | `HUD_GetIsSlipping`                                                                       | Log 9b-a; handler 9b-b pendiente                                  |
-| `traction_locked` | 0/1    | `HUD_GetIsTractionLocked`                                                                 | Opcional con slip                                                 |
-| `mc_input`        | float  | `MasterController.CurrentInputValue` (0..1; props UE, sin `GetCurrentInputValue` en tick) | Feedback IPC MC; ver [PLAN_ACTUACION_MC](v2/PLAN_ACTUACION_MC.md) |
-| `amps`            | float  | `HUD_GetAmmeter` → `Amps`                                                                 | Log / estudio L0.6f; no regla P1 (probe build ≥ `20261006a`)      |
+Claves **obligatorias en cada línea** (núcleo fijo en `build_line`). El resto se añade solo si la
+lectura Lua devuelve valor (p. ej. sin `mc_input` en Class 323; sin `signal_*` si no hay rojo).
+
+| Clave                 | Tipo   | Origen Lua                                                                         | Uso Python                                                                |
+| --------------------- | ------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `seq`                 | int    | contador tick                                                                      | stale / freeze                                                            |
+| `speed_ms`            | float  | HUD                                                                                | P1, física                                                                |
+| `power`               | float  | HUD                                                                                | tracción                                                                  |
+| `power_neg`           | 0/1    | HUD                                                                                | tracción                                                                  |
+| `handle_notch`        | int    | HUD Power derivado                                                                 | legacy; preferir `lever_notch`                                            |
+| `lever_notch`         | int    | palanca HUD / power                                                                | control, ACK match                                                        |
+| `last_cmd_id`         | int    | último IPC aplicado                                                                | correlación cola                                                          |
+| `last_ack_ok`         | 0/1    | resultado último mando                                                             | diagnóstico                                                               |
+| `train_brake`         | float  | cabina                                                                             | freight / display                                                         |
+| `loco_brake`          | float  | cabina                                                                             | freight                                                                   |
+| `dyn_brake`           | float  | cabina                                                                             | freight                                                                   |
+| `accel_ms2`           | float  | física                                                                             | display                                                                   |
+| `brake_cyl_bar`       | float  | `HUD_GetBrakeGauge_1/2` (Pa→bar); fallback `Simulation.BrakeCylinder_*`            | learner L4; ver [PLAN_V2 §2](v2/PLAN_V2.md)                               |
+| `brake_g1_red_bar`    | float  | `HUD_GetBrakeGauge_1` RedNeedle                                                    | log / estudio aire (tendencia)                                            |
+| `brake_g1_white_bar`  | float  | `HUD_GetBrakeGauge_1` WhiteNeedle                                                  | idem                                                                      |
+| `brake_g2_red_bar`    | float  | `HUD_GetBrakeGauge_2` RedNeedle                                                    | idem                                                                      |
+| `brake_g2_white_bar`  | float  | `HUD_GetBrakeGauge_2` WhiteNeedle                                                  | idem                                                                      |
+| `mr_bar`              | float  | `Simulation` → `MR (AirPipe)` (`Pressure_BAR`…)                                    | reservorio principal (M3a lab)                                            |
+| `max_speed_ms`        | float  | HUD                                                                                | display                                                                   |
+| `speed_limit_ms`      | float  | DriverAid escalar                                                                  | límite **vigente**                                                        |
+| `gradient_pct`        | float  | DriverAid                                                                          | `physics.py`                                                              |
+| `vehicle`             | string | clase UE                                                                           | paquete G-B                                                               |
+| `dist_limit_cm`       | float  | 1.º cartel adelante (`GetDriverAidData`)                                           | P1 `limit_brake`                                                          |
+| `next_limit_ms`       | float  | mph del 1.º cartel                                                                 | P1 `limit_brake`                                                          |
+| `odo_m`               | float  | `Simulation.Axle_1_1.TotalDistanceTravelled_M`                                     | C.3a, estaciones                                                          |
+| `doors_telem`         | 0/1    | hijos `PassengerDoor_*` (`CurrentInputValue` > 0.01)                               | FSM puertas                                                               |
+| `doors_dmi`           | 0/1    | `DriverAid` (`bDoorsOpen` / `DoorsOpen`)                                           | FSM puertas                                                               |
+| `signal_red`          | 0/1    | `extract_signal_red` — enum 2 o Stop/DANGER/RED; fallback `nextSignals[0]`         | P1 emergencia hoy; plan gradual paso 5                                    |
+| `signal_dist_cm`      | float  | `distanceToSignal` (cm); si rojo y dist ≤ 0 → **1**                                | Con `signal_red=1`                                                        |
+| `is_slipping`         | 0/1    | `HUD_GetIsSlipping`                                                                | Log 9b-a; handler 9b-b pendiente                                          |
+| `traction_locked`     | 0/1    | `HUD_GetIsTractionLocked`                                                          | Opcional con slip                                                         |
+| `mc_input`            | float  | `MasterController` eje 0..1 (`config.MC_VEHICLE_MARKERS`: M3a/M7/M8/M9…)           | Feedback IPC MC; ver [PLAN_ACTUACION_MC](v2/PLAN_ACTUACION_MC.md)         |
+| `amps`                | float  | `HUD_GetAmmeter` → `Amps` (siempre en tick si HUD responde)                        | Log L0.6f; **323 = 0**; M3a ≠ 0 en tracción (`PROBE_BUILD` ≥ `20261006a`) |
+
+**Parser sin emitir Lua (reservado D2):** `dist_limit2_cm`, `next_limit2_ms` — ver checklist lim2.
+**Legacy:** clave `doors_open` la acepta el parser; el probe emite `doors_telem`.
 
 ### Planning Python (no va en GetData)
 
@@ -157,8 +170,8 @@ Checklist **Fase 0** ([PLAN_V2](v2/PLAN_V2.md#fase-0--contrato-io)):
 ```text
 ```
 
-**Estado D2:** contrato **documentado**; C1 y 9b-a en probe ✅; pendiente auditoría Lua hot path y
-campos futuros (lim2).
+**Estado D2:** contrato **documentado**; C1, 9b-a y manómetros aire (`brake_g*`, `mr_bar`) en probe
+✅; pendiente auditoría Lua hot path y campos futuros (lim2).
 
 ---
 

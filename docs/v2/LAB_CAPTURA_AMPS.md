@@ -7,7 +7,8 @@
 
 **M3a MNR (plan amps 2026-10):** mínimo `hud_batch_00_reposo.json` + `hud_batch_01_traccion.json` →
 
-`summarizar_amps_lab.bat <SESSION_ID>`. Cruzar con probe `logs/ue4ss_probe_*.txt` (±~500 A en tracción/freno).
+`summarizar_amps_lab.bat <SESSION_ID>`. Cruzar con probe `logs/ue4ss_probe_*.txt` (±~500 A en
+tracción/freno).
 
 > **Class 323 (cerrado):** `Amps` siempre **0** — incluso ~49 mph P2 (`20260901T211818Z`). Catálogo;
 > no cablear en probe. **Al cambiar de tren, repetir todo este protocolo** — otro vehículo puede
@@ -61,7 +62,6 @@ Plantilla `notas_sesion.md`:
 ## Analizar resultados
 
 ```bat
-summarizar_amps_lab.bat <SESSION_ID>
 ```
 
 Genera tabla en consola y `amps_report.md` en `data/lab_exports/exports/<SESSION_ID>/`.

@@ -43,8 +43,8 @@ una
 línea «Futuro: PLAN_V2 §…» basta. (3) Código producto v2 → **`V2/tsw6v2/`**
 ([CODIGO_V2](CODIGO_V2.md));
 en
-`v2/` cuando exista código, no copia de `v1/`. (4) Stubs en raíz `docs/*.md` («Movido a v1/») no se
-editan — el canónico es `v1/` o `reference/`. Índice: [docs/README.md](../README.md).
+`v2/` cuando exista código, no copia de `v1/`. (4) Referencia histórica en `v1/` o `reference/` —
+sin duplicados «Movido» en la raíz de `docs/`. Índice: [docs/README.md](../README.md).
 
 ---
 
