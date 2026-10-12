@@ -242,6 +242,17 @@ def _moderate_or_stronger(steps: list[BrakePlanStep]) -> list[BrakePlanStep]:
     return [s for s in steps if notch_strength(s.handle_notch) >= 2]
 
 
+def weakest_fitting_service_step(
+    steps: list[BrakePlanStep],
+    remaining_m: float,
+) -> Optional[BrakePlanStep]:
+    """Escalón más suave cuya distancia de frenado cabe en lo que queda."""
+    fitting = [s for s in steps if s.distance_m <= remaining_m]
+    if not fitting:
+        return None
+    return prefer_weakest_step(fitting)
+
+
 def select_station_active_step(
     steps: list[BrakePlanStep],
     speed_ms: float,
@@ -297,9 +308,10 @@ def select_station_active_step(
     terminal_zone = distance_to_target_m < 50
 
     if terminal_zone:
-        pool = _moderate_or_stronger([*due, *in_zone, *upcoming])
-        if pool:
-            return prefer_strongest_step(pool)
+        # 130713Z: a ~10 mph y 40 m el más fuerte (B3) paraba a ~33 m del marker.
+        fit = weakest_fitting_service_step(steps, distance_to_target_m)
+        if fit is not None:
+            return fit
         return prefer_strongest_step(steps)
 
     if final_approach or late_for_schedule:
@@ -769,19 +781,15 @@ def plan_brake_for_station(
     ):
         return None
 
-    final_stop = plan_station_final_stop(
-        speed_mph=speed_mph,
-        station_distance_m=station_distance_m,
-        throttle_notch=throttle_notch,
-        cfg=cfg,
-    )
-    if final_stop is not None:
-        return final_stop
-
     if station_distance_m <= 0:
-        return None
+        return plan_station_final_stop(
+            speed_mph=speed_mph,
+            station_distance_m=station_distance_m,
+            throttle_notch=throttle_notch,
+            cfg=cfg,
+        )
 
-    return plan_station_service_brake(
+    service = plan_station_service_brake(
         speed_mph=speed_mph,
         station_distance_m=station_distance_m,
         gradient_pct=gradient_pct,
@@ -793,5 +801,20 @@ def plan_brake_for_station(
         schedule_slack_enabled=schedule_slack_enabled,
         brake_fill_s=brake_fill_s,
     )
+    if (
+        service is not None
+        and weakest_fitting_service_step(service.steps, station_distance_m) is not None
+    ):
+        return service
+
+    final_stop = plan_station_final_stop(
+        speed_mph=speed_mph,
+        station_distance_m=station_distance_m,
+        throttle_notch=throttle_notch,
+        cfg=cfg,
+    )
+    if final_stop is not None:
+        return final_stop
+    return service
 
 

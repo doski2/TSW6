@@ -98,6 +98,20 @@ def test_gate_brake_approach_not_roll_through_session_213920():
     )
 
 
+def test_gate_approach_from_far_keeps_station_plan_session_113003():
+    """113003Z: neutro ~11 mph dentro de 55 m tras bajar desde >150 m — sí plan STATION."""
+    gate = StationDwellGate()
+    gate.update(speed_mph=11.0, station_dist_m=200.0, doors_telem=False, throttle_notch=4)
+    gate.update(speed_mph=10.8, station_dist_m=160.0, doors_telem=False, throttle_notch=4)
+    gate.update(speed_mph=10.8, station_dist_m=54.8, doors_telem=False, throttle_notch=4)
+    assert gate._approach_from_far
+    assert not gate.suppress_station_brake(
+        station_dist_m=54.8,
+        throttle_notch=4,
+        speed_mph=10.8,
+    )
+
+
 def test_gate_approach_after_signal_not_roll_through_session_155851():
     """155851Z Longbridge: neutro ~13 mph en stn<55 m tras señal — sí plan STATION."""
     gate = StationDwellGate()

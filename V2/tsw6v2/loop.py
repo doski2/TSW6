@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,6 +42,8 @@ from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     combined_notch_to_ipc_value,
     probe_mc_input_fraction,
+    mc_grade_hold_fraction,
+    mc_station_still_ahead,
     mc_ipc_target_is_neutral_hold,
     profile_neutral_fraction,
     resolve_vehicle_package,
@@ -111,6 +113,7 @@ class AgentSnapshot:
     brake_fill_s: Optional[float] = None
     brake_fill_n: Optional[int] = None
     decel_observe_n: Optional[int] = None
+    regen_n: Optional[int] = None
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
     fb_shortfall: bool = False
@@ -155,6 +158,7 @@ class AgentSnapshot:
         brake_fill_s: Optional[float] = None,
         brake_fill_n: Optional[int] = None,
         decel_observe_n: Optional[int] = None,
+        regen_n: Optional[int] = None,
         fb_a_pred_ms2: Optional[float] = None,
         fb_a_obs_ms2: Optional[float] = None,
         fb_shortfall: bool = False,
@@ -192,6 +196,7 @@ class AgentSnapshot:
                 brake_fill_s=brake_fill_s,
                 brake_fill_n=brake_fill_n,
                 decel_observe_n=decel_observe_n,
+                regen_n=regen_n,
                 fb_a_pred_ms2=fb_a_pred_ms2,
                 fb_a_obs_ms2=fb_a_obs_ms2,
                 fb_shortfall=fb_shortfall,
@@ -252,6 +257,7 @@ class AgentSnapshot:
             brake_fill_s=brake_fill_s,
             brake_fill_n=brake_fill_n,
             decel_observe_n=decel_observe_n,
+            regen_n=regen_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,
@@ -601,6 +607,8 @@ class AgentLoop:
     def step(self) -> AgentSnapshot:
         self._tick += 1
         snap = self._coalesce_probe(self.read_probe())
+        if snap is not None:
+            self._learner.note_amps(snap.amps)
         if snap is not None and snap.vehicle:
             self._note_vehicle(snap.vehicle)
             self._try_auto_load_profile(snap.vehicle)
@@ -744,7 +752,51 @@ class AgentLoop:
                 self._apply_brake_command(dwell_cmd, lever=lever, apply_actuator=True)
             elif decision.command is not None:
                 # ``decide()`` ya llamó ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
+                cmd = decision.command
+                if cmd.kind == "RELEASE" and snap is not None and snap.speed_ms is not None:
+                    hold = mc_grade_hold_fraction(
+                        self._vehicle_package,
+                        speed_mph=float(snap.speed_ms) * MS_TO_MPH,
+                        gradient_pct=float(snap.gradient_pct or 0.0),
+                        station_dist_m=station_dist_m,
+                    )
+                    if hold is not None:
+                        cmd = replace(
+                            cmd,
+                            kind="APPLY",
+                            target_notch=None,
+                            target_fraction=hold,
+                            phase=f"{hold:.3f}",
+                            reason=(
+                                "Andén: mantener parada"
+                                if mc_station_still_ahead(station_dist_m)
+                                else "Pendiente: mantener freno"
+                            ),
+                        )
+                        decision.command = cmd
+                        decision.reason = "grade_hold"
+                        decision.phase = cmd.phase or ""
+                        decision.detail = cmd.reason
+                        decision.handle_notch = None
+                        p1_reason = decision.reason
+                        p1_phase = decision.phase
+                        p1_detail = decision.detail
+                        p1_handle = None
+                        p1_apply_now = True
                 p1_cmd = decision.command.kind
+                held = decision.command
+                if (
+                    held.kind == "APPLY"
+                    and held.target_fraction is not None
+                    and snap is not None
+                    and snap.speed_ms is not None
+                ):
+                    self._learner.observe_mc_brake(
+                        fraction=float(held.target_fraction),
+                        speed_mph=float(snap.speed_ms) * MS_TO_MPH,
+                        gradient_pct=float(snap.gradient_pct or 0.0),
+                        accel_ms2=snap.accel_ms2,
+                    )
                 self._apply_brake_command(
                     decision.command,
                     lever=lever,
@@ -843,6 +895,7 @@ class AgentLoop:
             brake_fill_s=self._learner.brake_fill_s,
             brake_fill_n=self._learner.brake_fill_n,
             decel_observe_n=self._learner.decel_observe_n,
+            regen_n=self._learner.regen_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
             fb_shortfall=fb_shortfall,

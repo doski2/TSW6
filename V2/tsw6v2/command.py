@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
+    SIGNAL_PRE_COAST_MAX_M,
     STATION_COAST_CUTOFF_M,
     brake_command_apply_zone_m,
     is_downhill_gradient,
@@ -175,14 +176,14 @@ def command_from_target(
         brake_committed=brake_committed,
     )
     traction = _traction_active(throttle_notch, current_notch)
+    coast_h = speed_limit_pre_coast_horizon_m(
+        speed_mph=speed_mph,
+        distance_to_target_m=distance_m,
+        apply_at_remaining_m=apply_at_remaining_m,
+        dist_start=dist_start,
+    )
 
     if target_kind == "SPEED_LIMIT":
-        coast_h = speed_limit_pre_coast_horizon_m(
-            speed_mph=speed_mph,
-            distance_to_target_m=distance_m,
-            apply_at_remaining_m=apply_at_remaining_m,
-            dist_start=dist_start,
-        )
         # Subida + coast trim: soltar tracción lejos del cartel (sesión 201456Z).
         early_coast = (
             traction
@@ -206,7 +207,9 @@ def command_from_target(
         if not in_window and not early_plan_apply:
             return None
     else:
-        if traction and dist_start <= 800.0:
+        # Andén: horizonte cinemático (111535Z). Señal: tope fijo (225433Z).
+        coast_gate_m = coast_h if target_kind == "STATION" else SIGNAL_PRE_COAST_MAX_M
+        if traction and dist_start <= coast_gate_m:
             if not (
                 target_kind == "STATION"
                 and in_window

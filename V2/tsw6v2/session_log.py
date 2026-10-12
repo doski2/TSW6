@@ -217,7 +217,11 @@ def save_learner_if_dirty(loop: AgentLoop, profile_path: Optional[Path]) -> Opti
     """Persiste perfil si hubo aprendizaje; devuelve línea para consola."""
     save_path = profile_path or loop.profile_save_path
     active = loop.active_learner
-    if save_path is None or not (active.brake_fill_n > 0 or active.decel_observe_n > 0):
+    if save_path is None or not (
+        active.brake_fill_n > 0
+        or active.decel_observe_n > 0
+        or active.mc_decel_n > 0
+    ):
         return None
     try:
         active.save_json(save_path)
@@ -228,4 +232,6 @@ def save_learner_if_dirty(loop: AgentLoop, profile_path: Optional[Path]) -> Opti
         parts.append(f"fill={active.brake_fill_s:.2f}s")
     if active.decel_observe_n > 0:
         parts.append(f"decel_n={active.decel_observe_n}")
+    if active.mc_decel_n > 0:
+        parts.append(f"mc_decel_n={active.mc_decel_n}")
     return f"perfil -> {save_path.resolve()} ({', '.join(parts)})"

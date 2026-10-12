@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
@@ -20,6 +20,7 @@ from tsw6v2.command import (
 )
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
+    mc_stop_brake_fraction,
     uses_mc_analog_ipc,
     vehicle_package_from_snap,
 )
@@ -739,6 +740,42 @@ def _attempt_release(
     )
 
 
+def _mc_station_stop_fraction(
+    cmd: Optional[BrakeCommand],
+    target: BrakeTargetResult,
+    ctx: _TickCtx,
+    limit_state: LimitBrakeState,
+) -> Optional[BrakeCommand]:
+    """Andén MC: fracción en una posición real, sin aflojar hasta salir del APPLY."""
+    if cmd is None or cmd.kind != "APPLY" or target.target_kind != "STATION":
+        limit_state.mc_station_hold = None
+        return cmd
+    if "puertas" in (cmd.reason or ""):
+        limit_state.mc_station_hold = None
+        return cmd
+    if not uses_mc_analog_ipc(ctx.vehicle_package):
+        return cmd
+    frac = mc_stop_brake_fraction(
+        ctx.vehicle_package,
+        speed_mph=ctx.speed_mph,
+        distance_m=target.distance_m,
+        gradient_pct=ctx.grad,
+    )
+    if frac is None:
+        return cmd
+    held = limit_state.mc_station_hold
+    if held is not None and held < frac:
+        frac = held
+    else:
+        limit_state.mc_station_hold = frac
+    return replace(
+        cmd,
+        target_fraction=frac,
+        target_notch=None,
+        phase=f"{frac:.3f}",
+    )
+
+
 def _finalize_target_decision(
     ctx: _TickCtx,
     target: BrakeTargetResult,
@@ -776,6 +813,7 @@ def _finalize_target_decision(
             else False
         ),
     )
+    cmd = _mc_station_stop_fraction(cmd, target, ctx, limit_state)
 
     if cmd is None:
         return ctx.idle("command_none", target=target)
@@ -788,6 +826,13 @@ def _finalize_target_decision(
         return ctx.idle(reason, target=target, detail=detail)
 
     decision = ctx.from_target(cmd, target, _plan_reason(cmd, target))
+    if (
+        cmd.target_notch is None
+        and cmd.target_fraction is not None
+        and target.target_kind == "STATION"
+    ):
+        decision.phase = cmd.phase or ""
+        decision.handle_notch = None
     decision.target_kind = target.target_kind
     decision.station_dist_m = (
         target.distance_m if target.target_kind == "STATION" else None

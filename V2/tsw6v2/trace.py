@@ -180,6 +180,8 @@ class JsonlTrace:
         }
         if active_t_ms is not None:
             row["active_t_ms"] = round(active_t_ms, 1)
+        if snap.regen_n:
+            row["regen_n"] = snap.regen_n
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
         if snap.learn_kind is not None:

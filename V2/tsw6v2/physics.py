@@ -48,6 +48,9 @@ APPLY_NOW_MARGIN_MIN_M = 25.0
 APPLY_ZONE_SPEED_S = 2.0  # ~2 s de marcha en ventana APPLY
 TARGET_CLUSTER_GAP_M = 350.0
 STATION_COAST_CUTOFF_M = 100.0
+# Señal: coast con tracción mientras dist_start ≤ este tope (225433Z).
+# Andén no lo usa: va por speed_limit_pre_coast_horizon_m (111535Z).
+SIGNAL_PRE_COAST_MAX_M = 800.0
 DEFAULT_BRAKE_FILL_S = 2.5
 DEFAULT_REACTION_S = 1.5
 PRESSURE_IDLE_MAX_BAR = 1.5
@@ -299,6 +302,22 @@ def kinematic_horizon_m(
     react = brake_reaction_margin_m(speed_ms, reaction_base_s=reaction_base_s)
     apply_at = bd + react
     return apply_at + apply_zone_margin_m(speed_ms, apply_at)
+
+
+def service_strength_for_stop(
+    speed_mph: float,
+    distance_m: float,
+    gradient_pct: float = 0.0,
+    base_decel: float = DEFAULT_MAX_BRAKE_DECEL,
+) -> float:
+    """Intensidad 0..1 para parar en ``distance_m`` (1 = decel máxima de servicio)."""
+    if distance_m <= 1.0 or speed_mph <= 0.5 or base_decel <= 0:
+        return 1.0
+    speed_ms = speed_mph * MPH_TO_MS
+    needed = (speed_ms * speed_ms) / (2.0 * distance_m) - gravity_acceleration_ms2(
+        gradient_pct
+    )
+    return max(0.08, min(1.0, needed / base_decel))
 
 
 def decel_for_notch(

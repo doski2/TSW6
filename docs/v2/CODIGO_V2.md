@@ -74,11 +74,12 @@ Andén / prioridad: `station_plan` · `station_brake` · `p1_policy` · `limit_s
 
 **Distancia andén (una fuente de verdad):**
 
-| Símbolo                           | Módulo          | Uso                                                                                                                                                         |
-| --------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `station_within_dwell_zone`       | `station_plan`  | ≤ `dwell_max_distance_m` (80 m): no defer horizonte (`p1_policy`), `allow_watch` en dwell (`decision`).                                                     |
-| `station_distance_for_brake_plan` | `station_brake` | Entrada única a `evaluate_station_brake` y cheque STATION en emergencia (`decision`): telemetría ≤0 con marcha → `STATION_OVERSHOOT_PLAN_DISTANCE_M` (1 m). |
-| `STATION_COAST_CUTOFF_M`          | `physics`       | STATION en ventana: no `COAST_THROTTLE` si dist ≤ 100 m (`command`).                                                                                        |
+| Símbolo                           | Módulo          | Uso                                                                                                                                                                       |
+| --------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `station_within_dwell_zone`       | `station_plan`  | ≤ `dwell_max_distance_m` (80 m): no defer horizonte (`p1_policy`), `allow_watch` en dwell (`decision`).                                                                   |
+| `station_distance_for_brake_plan` | `station_brake` | Entrada única a `evaluate_station_brake` y cheque STATION en emergencia (`decision`): telemetría ≤0 con marcha → `STATION_OVERSHOOT_PLAN_DISTANCE_M` (1 m).               |
+| `STATION_COAST_CUTOFF_M`          | `physics`       | STATION en ventana: no `COAST_THROTTLE` si dist ≤ 100 m (`command`). Fuera de ventana, el coast de andén usa `speed_limit_pre_coast_horizon_m`.                           |
+| `SIGNAL_PRE_COAST_MAX_M`          | `physics`       | Señal: `COAST_THROTTLE` con tracción si `dist_start` ≤ 800 m. El andén no usa este tope.                                                                                  |
 
 **IPC MC (M3a):** wire = `mc_service_brake_fraction` (interp. `neutral`↔`B3` en `brake_input`);
 bucle `loop._mc_ramp_ipc_fraction` + `MC_IPC_FRACTION_STEP`; feedback/release

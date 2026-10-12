@@ -322,6 +322,39 @@ con gap ≤ `TARGET_CLUSTER_GAP_M` (350 m).
 | `should_allow_station_watch_when_deferred` | Misma geometría + `should_defer_station_brake`                      | `evaluate_station_brake(allow_watch=True)` → STATION WATCH |
 | `_resolve_deferred_station_pick`           | Rama unificada andén diferido                                       | LIMIT APPLY/WATCH o STATION WATCH; no duplicar ramas       |
 
+#### Escalón de andén (sesión `130713Z`)
+
+Dentro de 50 m el plan elige el escalón de servicio más suave cuya distancia de
+frenado cabe en lo que queda (`weakest_fitting_service_step`). B3 solo si los
+anteriores ya no llegan. La parada inmediata (`plan_station_final_stop`) no
+sustituye ese plan mientras haya un escalón que cubra.
+
+En layout MC (M3a) el APPLY de andén no manda peldaño: `target_notch` queda vacío,
+la fase del tick y `target_fraction` son la posición del combinado
+(`mc_stop_brake_fraction`, una sola vez, eje capturado neutro→0, no la clave B3).
+`snap_mc_brake_fraction` la deja en un tramo que el
+lab sostiene (analógico 0,27–0,63 o el clic 0,64). El hueco hasta el neutro 0,72
+no se manda (134236Z, 135821Z: el tick pedía 0,684 y la palanca volvía a 0,72).
+`mc_station_hold` no afloja esa posición mientras el APPLY de andén sigue activo.
+En pendiente (|grad| ≥ 0,3 %) y por debajo de 3 mph, un RELEASE a neutro pasa a
+mantener el primer clic de freno (`mc_grade_hold_fraction`, 153830Z): este
+combinado no se sostiene solo al abrir puertas. Con la parada todavía delante
+(0–150 m) tampoco se suelta, aunque la pendiente sea menor (215707Z, −0,15 % a 91 m).
+Más lejos, el RELEASE de un cartel (35 mph justo antes del andén, 230116Z) no cambia
+el objetivo a parada. Dentro de esos 150 m se manda la fracción para parar en lo
+que queda. El Class 323 sigue
+en muescas. El freno de puertas no usa
+esta fracción.
+
+#### Coast de andén (sesión `111535Z`)
+
+`COAST_THROTTLE` de STATION solo si hay tracción y `dist_start` cabe en
+`speed_limit_pre_coast_horizon_m` (el mismo horizonte que el cartel: ~8 s de marcha,
+3× zona APPLY, suelo 80 m). A 7,5 mph y ~420 m del marker el punto de frenado sigue
+a cientos de metros: no se corta la potencia. Dentro de la ventana y a ≤
+`STATION_COAST_CUTOFF_M` (100 m) el coast cede el sitio al APPLY. La señal roja
+conserva `SIGNAL_PRE_COAST_MAX_M` (800 m, `225433Z`).
+
 #### Cartel justo **después** del andén (sesión `213010Z`)
 
 Geometría: andén @ 700 m, cartel 50 @ 727 m (zona vigente 60). El cartel **no** es objetivo de
@@ -448,6 +481,11 @@ Modo `station`: suprime **todo** P1 andén (plan + emergencia) en `STOPPED` / `D
 - `stn = None` y `spd > 8 mph` (planning perdido en marcha).
 
 **No** sale solo por velocidad dentro del andén (`12 mph` @ `stn=10 m` sigue `STOPPED`).
+
+**Rollo en vivo** (neutro 10–11,2 mph, `stn ≤ 55 m`, sin puertas) no suprime el plan si la
+distancia bajó desde más de 150 m (`_approach_from_far`, sesión `113003Z`). El enclavamiento
+se suelta al parar o si `stn` sube más de 15 m. Tracción ya dentro del andén, sin esa
+llegada, sigue siendo passthrough.
 
 ##### Salida andén — mapa de responsabilidades (2026-09-14)
 
@@ -741,6 +779,9 @@ RELEASE / COAST_PWR**.
 
 | Fecha      | Qué                                                                                                                                                                                                                                                                         |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-11 | Sesión `130713Z`: andén <50 m usa el escalón que cabe (`weakest_fitting_service_step`); B3 solo si B1/B2 no llegan                                                                                                                                                          |
+| 2026-10-11 | Sesión `113003Z`: aproximación desde >150 m enclava `_approach_from_far`; el rollo en vivo no apaga STATION dentro de 55 m                                                                                                                                                  |
+| 2026-10-11 | Sesión `111535Z`: STATION `COAST_THROTTLE` usa `speed_limit_pre_coast_horizon_m` (no 800 m fijos). Señal sigue en 800 m                                                                                                                                                     |
 | 2026-10-03 | Salida ascendente H1: `zone_hold_suppressed_for_ascending_exit` — fuente única contención (doc tabla ventanas/puertas)                                                                                                                                                      |
 | 2026-10-03 | Sesión `071613Z`: zona **40** @42 mph + next **70** — `should_skip` ya no anula HOLD (solo `posted ≤35`); ticks 44093/44384                                                                                                                                                 |
 | 2026-10-03 | Sesión `071613Z`: salida 15→40 en subida sin HOLD — `try_current_zone_contain` alineado con `posted < 30` (no duplicar regla 45→60 en zonas 10/15)                                                                                                                          |

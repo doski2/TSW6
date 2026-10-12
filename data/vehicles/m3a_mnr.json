@@ -7,6 +7,15 @@
     "vehicle_class": "RVM_NYH_MNR_M3a"
   },
   "layout": "combined",
+  "brake_input": {
+    "neutral": 0.72,
+    "B1": 0.64,
+    "B2": 0.45,
+    "B3": 0.27
+  },
+  "station": {
+    "platform_tail_m": 85.0
+  },
   "controls": {
     "MasterController": {
       "ue_name": "MasterController",

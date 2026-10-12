@@ -14,6 +14,8 @@ from tsw6v2.vehicle_package import (
     clear_package_cache,
     combined_notch_to_ipc_value,
     enrich_brake_command_actuator,
+    mc_service_brake_fraction,
+    mc_stop_brake_fraction,
     profile_brake_fraction,
     resolve_vehicle_package,
     session_route_cli_slug_for_probe,
@@ -146,8 +148,10 @@ def test_mc_service_brake_fraction_interpolates_session_215905() -> None:
     mid = mc_service_brake_fraction(pkg, handle_notch=2, phase="B2")
     full = mc_service_brake_fraction(pkg, handle_notch=1, phase="B3")
     assert b1 is not None and mid is not None and full is not None
-    assert neu > b1 > mid > full == b3
-    assert abs(b1 - (neu - (neu - b3) / 3.0)) < 0.02
+    assert neu > b1 > mid > full
+    assert abs(full) < 1e-6
+    assert abs(b1 - (neu - neu / 3.0)) < 0.02
+    del b3
 
 
 def test_mc_ipc_neutral_hold_and_traction_helpers_m3a() -> None:
@@ -361,3 +365,85 @@ def test_brake_applied_from_probe_mc_input_value() -> None:
         lever_notch=NEUTRAL_NOTCH,
     )
     assert brake_applied_from_probe(snap_cyl, NEUTRAL_NOTCH, pkg)
+
+
+def test_mc_station_stop_fraction_below_full_brake_session_130713() -> None:
+    """10 mph @ 40 m: fracción entre neutro y B3, no el peldaño fuerte."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    stop = mc_stop_brake_fraction(pkg, speed_mph=10.0, distance_m=40.0)
+    full = mc_service_brake_fraction(pkg, handle_notch=1, phase="B3")
+    neu = profile_brake_fraction(pkg, "neutral")
+    assert stop is not None and full is not None and neu is not None
+    assert full < stop < neu
+
+
+def test_mc_grade_hold_keeps_first_detent_session_153830() -> None:
+    """Casi parado en pendiente: no soltar a neutro; clic 0,64."""
+    from tsw6v2.vehicle_package import mc_grade_hold_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    assert mc_grade_hold_fraction(pkg, speed_mph=1.66, gradient_pct=0.32) == 0.64
+    assert mc_grade_hold_fraction(pkg, speed_mph=1.66, gradient_pct=0.0) is None
+    assert mc_grade_hold_fraction(pkg, speed_mph=8.0, gradient_pct=0.32) is None
+    # 215707Z: 1,3 mph a 91 m, pendiente −0,15 % — no soltar.
+    arrival = mc_grade_hold_fraction(
+        pkg, speed_mph=1.3, gradient_pct=-0.15, station_dist_m=91.8
+    )
+    assert arrival is not None and arrival <= 0.64
+    # 35 mph pasado, estación aún a 440 m: no convertir el RELEASE en parada.
+    assert mc_grade_hold_fraction(
+        pkg, speed_mph=35.5, gradient_pct=0.0, station_dist_m=440.0
+    ) is None
+    parked = mc_grade_hold_fraction(
+        pkg, speed_mph=0.0, gradient_pct=-0.5, station_dist_m=6.8
+    )
+    assert parked == 0.64
+
+
+def test_mc_stop_fraction_snaps_out_of_neutral_gap_session_134236() -> None:
+    """0,684 está entre el neutro 0,72 y el clic 0,64: el mando se queda en 0,64."""
+    from tsw6v2.vehicle_package import snap_mc_brake_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    assert snap_mc_brake_fraction(pkg, 0.684) == 0.64
+    assert abs(snap_mc_brake_fraction(pkg, 0.607) - 0.607) < 1e-6
+
+
+def test_mc_station_apply_uses_fraction_not_b_notch() -> None:
+    """Andén M3a: el mando es la fracción, sin muesca B1/B2/B3."""
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.limits import LimitBrakeState
+
+    clear_package_cache()
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 10.0 * 0.44704,
+            "lever_notch": 4,
+            "mc_input": 0.72,
+            "gradient_pct": 0.0,
+            "vehicle": "RVM_NYH_MNR_M3a-A_C",
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=40.0,
+        limit_brake_enabled=False,
+        signal_brake_enabled=False,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+    assert decision.command.target_notch is None
+    assert decision.command.target_fraction is not None
+    assert decision.handle_notch is None
+    assert decision.phase == f"{decision.command.target_fraction:.3f}"
+    assert "B1" not in decision.phase

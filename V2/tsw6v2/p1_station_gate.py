@@ -67,6 +67,8 @@ MARKER_PASSED_MIN_MPH = 1.0
 # Próximo andén: dist planning bajando desde lejos (20261003Z White Plains vía 2).
 APPROACH_PREV_MIN_M = 150.0
 APPROACH_DIST_DROP_M = 5.0
+# Subida de stn que anula el enclavamiento de aproximación (no un tick de ruido).
+APPROACH_LATCH_CLEAR_RISE_M = 15.0
 def _block_departing_enter_on_final_approach(
     *,
     station_dist_m: Optional[float],
@@ -697,6 +699,9 @@ class StationDwellGate:
 
     Passthrough sin puertas: ``_pass_through`` tras DEPARTING, o en vivo
     (tracción o neutro ≥``PLATFORM_ROLL_THROUGH_MIN_MPH`` en stn≤55 m; no B1–B3).
+
+    Aproximación desde >150 m queda enclavada (``_approach_from_far``): el rollo
+    en vivo no apaga el plan STATION dentro de 55 m (113003Z).
     """
 
     def __init__(self) -> None:
@@ -705,6 +710,8 @@ class StationDwellGate:
         self._doors_ever_opened = False
         self._departing_at = 0.0
         self._pass_through = False
+        self._approach_from_far = False
+        self._depart_anchor_m: Optional[float] = None
         self._last_station_dist_m: Optional[float] = None
 
     def _is_approaching_next_stop(
@@ -722,6 +729,32 @@ class StationDwellGate:
         if prev < APPROACH_PREV_MIN_M:
             return False
         return cur < prev - APPROACH_DIST_DROP_M
+
+    def _note_approach(
+        self,
+        station_dist_m: Optional[float],
+        speed_mph: float,
+    ) -> bool:
+        """Enclava la llegada desde lejos. Devuelve el flanco de este tick.
+
+        El enclavamiento cubre el rollo en vivo dentro de 55 m. ``DEPARTING``
+        sigue usando solo el flanco (211032Z): un creep ya en salida no hereda
+        la llegada anterior.
+        """
+        approaching = self._is_approaching_next_stop(station_dist_m, speed_mph)
+        if approaching:
+            self._approach_from_far = True
+        if speed_mph <= STATION_STOPPED_MPH:
+            self._approach_from_far = False
+            return approaching
+        prev = self._last_station_dist_m
+        if (
+            station_dist_m is not None
+            and prev is not None
+            and float(station_dist_m) > float(prev) + APPROACH_LATCH_CLEAR_RISE_M
+        ):
+            self._approach_from_far = False
+        return approaching
 
     def _departing_suppresses_station_brake(
         self,
@@ -762,7 +795,8 @@ class StationDwellGate:
                 return True
             self._pass_through = False
         if (
-            not self._doors_ever_opened
+            not self._approach_from_far
+            and not self._doors_ever_opened
             and station_dist_m is not None
             and station_dist_m <= PLATFORM_AT_STOP_M
             and _live_roll_through_without_doors(
@@ -776,6 +810,7 @@ class StationDwellGate:
     def _reset_idle(self) -> None:
         self.state = None
         self._doors_opened = False
+        self._depart_anchor_m = None
         self._departing_at = 0.0
 
     def _clear_station_episode(self, station_dist_m: Optional[float]) -> None:
@@ -824,6 +859,7 @@ class StationDwellGate:
         throttle_notch: int = 4,
     ) -> None:
         """``throttle_notch`` = muesca combinada UK (4 neutro, >4 tracción); ver ``loop``."""
+        approaching = self._note_approach(station_dist_m, speed_mph)
         open_now = doors_effective(
             doors_open=doors_open,
             doors_telem=doors_telem,
@@ -832,12 +868,25 @@ class StationDwellGate:
         if open_now:
             self._doors_ever_opened = True
 
-        approaching = self._is_approaching_next_stop(station_dist_m, speed_mph)
         if station_dist_m is not None:
             self._last_station_dist_m = float(station_dist_m)
 
         if self.state == "DEPARTING":
-            if approaching:
+            if self._depart_anchor_m is None and station_dist_m is not None:
+                self._depart_anchor_m = float(station_dist_m)
+            next_stop = (
+                station_dist_m is not None
+                and self._depart_anchor_m is not None
+                and float(station_dist_m)
+                > self._depart_anchor_m + APPROACH_LATCH_CLEAR_RISE_M
+            )
+            # Cola del andén (223716Z: 207 m bajando) no es la siguiente parada.
+            far_approach = (
+                approaching
+                and station_dist_m is not None
+                and float(station_dist_m) > 800.0
+            )
+            if next_stop or far_approach:
                 self._reset_idle()
                 self._clear_station_episode(station_dist_m)
             else:

@@ -12,7 +12,10 @@ import time
 from tsw6v2.brake_air import BrakeAirTracker, brake_decel_sample_ready
 from tsw6v2.brake_air_profile import BrakeAirProfile
 from tsw6v2.learn_quality import DecelObserveWindow, LearnEvent, decel_outlier_rejected
-from tsw6v2.learner_v1 import MIN_SAMPLES, V1LearnerData, speed_band_index
+from tsw6v2.learner_v1 import EMA_ALPHA, MIN_SAMPLES, V1LearnerData, speed_band_index
+
+# Retención en el amperímetro (OBSERVATION de laboratorio: amps negativos).
+REGEN_AMPS_BELOW_A = -1.0
 
 
 class LearnerProfile:
@@ -31,12 +34,37 @@ class LearnerProfile:
         self._v1 = v1
         self._v1_snapshot = v1_snapshot
         self._decel_observe_n = 0
+        self._regen_n = 0
+        self._last_amps: Optional[float] = None
+        self._mc_decel_n = 0
+        self._by_mc: dict[int, float] = {}
         self._decel_window = DecelObserveWindow()
+        self._mc_window = DecelObserveWindow()
         self._learn_event: LearnEvent | None = None
 
     @property
     def decel_observe_n(self) -> int:
         return self._decel_observe_n
+
+    @property
+    def regen_n(self) -> int:
+        return self._regen_n
+
+    @property
+    def mc_decel_n(self) -> int:
+        return self._mc_decel_n
+
+    def note_amps(self, amps: Optional[float]) -> None:
+        """Última lectura de amperios. Retención: ``amps`` < −1 A."""
+        self._last_amps = None if amps is None else float(amps)
+        if self._electric_brake_now():
+            self._regen_n += 1
+
+    def _electric_brake_now(self) -> bool:
+        return (
+            self._last_amps is not None
+            and self._last_amps < REGEN_AMPS_BELOW_A
+        )
 
     def pop_learn_event(self) -> LearnEvent | None:
         ev = self._learn_event
@@ -64,8 +92,14 @@ class LearnerProfile:
         brake_cyl_bar: float | None = None,
         now: float | None = None,
     ) -> bool:
-        """Registra ``accel_ms2`` tras ventana estable + filtros de calidad."""
+        """Registra ``accel_ms2`` tras ventana estable + filtros de calidad.
+
+        Con retención en amperios la muestra no entra en la media de aire.
+        """
         if accel_ms2 is None:
+            return False
+        if self._electric_brake_now():
+            self._set_learn_event("decel", False, "electric")
             return False
         if not brake_decel_sample_ready(
             handle=handle,
@@ -106,6 +140,43 @@ class LearnerProfile:
         if not ok:
             return False
         self._decel_observe_n += 1
+        return True
+
+    def observe_mc_brake(
+        self,
+        *,
+        fraction: float,
+        speed_mph: float,
+        gradient_pct: float,
+        accel_ms2: Optional[float],
+        now: float | None = None,
+    ) -> bool:
+        """Decel en la posición del combinado. No usa muesca UK ni cilindro 323."""
+        if accel_ms2 is None:
+            return False
+        key = int(round(float(fraction) * 100.0))
+        t = time.monotonic() if now is None else now
+        ready = self._mc_window.feed(
+            t=t,
+            handle=key,
+            speed_mph=speed_mph,
+            grad_pct=gradient_pct,
+            accel_ms2=float(accel_ms2),
+        )
+        if ready is None:
+            reason = self._mc_window.last_reason
+            if not reason.startswith(("accumulating", "stable ")):
+                self._set_learn_event("mc", False, reason)
+            return False
+        _handle, measured_norm, _avg_speed, _avg_grad = ready
+        measured = abs(float(measured_norm))
+        prior = self._by_mc.get(key)
+        if prior is None:
+            self._by_mc[key] = measured
+        else:
+            self._by_mc[key] = EMA_ALPHA * measured + (1.0 - EMA_ALPHA) * prior
+        self._mc_decel_n += 1
+        self._set_learn_event("mc", True, "mc")
         return True
 
     @property
@@ -186,7 +257,10 @@ class LearnerProfile:
         air.load_dict(data)
         v1 = V1LearnerData.from_dict(data)
         snapshot = copy.deepcopy(data) if v1 is not None else None
-        return cls(by_notch, air=air, v1=v1, v1_snapshot=snapshot)
+        profile = cls(by_notch, air=air, v1=v1, v1_snapshot=snapshot)
+        mc_raw = data.get("decel_by_mc") or {}
+        profile._by_mc = {int(k): float(v) for k, v in mc_raw.items()}
+        return profile
 
     @classmethod
     def from_json(cls, path: Path) -> LearnerProfile:
@@ -205,12 +279,15 @@ class LearnerProfile:
             data.update(self._v1.to_dict())
             if self._by_notch:
                 data["decel_by_notch"] = {str(k): v for k, v in self._by_notch.items()}
+            if self._by_mc:
+                data["decel_by_mc"] = {str(k): v for k, v in self._by_mc.items()}
             data.update(self._air.to_dict())
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             self._v1_snapshot = data
             return
         data: dict[str, Any] = {
             "decel_by_notch": {str(k): v for k, v in self._by_notch.items()},
+            "decel_by_mc": {str(k): v for k, v in self._by_mc.items()},
             **self._air.to_dict(),
         }
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")

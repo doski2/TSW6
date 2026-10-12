@@ -11,6 +11,50 @@ from learn_helpers import feed_stable_decel
 from tsw6v2.learner import LearnerProfile
 
 
+def test_electric_amps_do_not_enter_air_decel() -> None:
+    p = LearnerProfile()
+    p.note_amps(-80.0)
+    assert p.observe_brake_decel(
+        handle=3,
+        speed_mph=30.0,
+        gradient_pct=0.0,
+        accel_ms2=-0.4,
+        lever=3,
+        brake_cyl_bar=2.0,
+    ) is False
+    ev = p.pop_learn_event()
+    assert ev is not None and ev.reason == "electric"
+    assert p.decel_observe_n == 0
+    assert p.regen_n == 1
+
+
+def test_mc_position_learns_without_uk_notch() -> None:
+    p = LearnerProfile()
+    ok = False
+    for i in range(8):
+        ok = p.observe_mc_brake(
+            fraction=0.49,
+            speed_mph=30.0 - i * 0.4,
+            gradient_pct=-0.4,
+            accel_ms2=-0.35,
+            now=100.0 + i * 0.4,
+        ) or ok
+    assert p.mc_decel_n == 1
+    assert ok is True
+    ev = p.pop_learn_event()
+    assert ev is not None and ev.accepted and ev.kind == "mc"
+
+
+def test_note_amps_counts_regen_only() -> None:
+    p = LearnerProfile()
+    before = p.predict_decel(3, 40.0, 0.0)
+    p.note_amps(300.0)
+    p.note_amps(-120.0)
+    p.note_amps(None)
+    assert p.regen_n == 1
+    assert p.predict_decel(3, 40.0, 0.0) == before
+
+
 def test_learner_empty() -> None:
     p = LearnerProfile()
     assert p.predict_decel(3, 50.0, 0.0) is None

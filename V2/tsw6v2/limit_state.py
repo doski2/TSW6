@@ -48,10 +48,12 @@ class LimitBrakeState:
     committed_handle: Optional[int] = None
     committed_phase: Optional[str] = None
     weak_decel_ticks: int = 0
+    mc_station_hold: Optional[float] = None
 
     def reset(self) -> None:
         self.latch = None
         self.last_limit_mph = None
+        self.mc_station_hold = None
         self.clear_commitment()
 
     def clear_commitment(self) -> None:
@@ -71,6 +73,7 @@ class LimitBrakeState:
         self.committed_handle = other.committed_handle
         self.committed_phase = other.committed_phase
         self.weak_decel_ticks = other.weak_decel_ticks
+        self.mc_station_hold = other.mc_station_hold
 
 
 def limit_changed(

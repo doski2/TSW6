@@ -19,7 +19,12 @@ from tsw6v2.bridge.commands import (
     combined_notch_to_value,
     master_controller_input_value,
 )
-from tsw6v2.constants import B1_NOTCH, MC_INPUT_VALUE_EPS, NEUTRAL_NOTCH
+from tsw6v2.constants import (
+    B1_NOTCH,
+    LIMIT_UPHILL_GRADIENT_PCT,
+    MC_INPUT_VALUE_EPS,
+    NEUTRAL_NOTCH,
+)
 from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG, SERVICE_PHASE_BY_HANDLE
 
 _PACKAGE_SCHEMA = "tsw6-vehicle-package/1"
@@ -378,23 +383,181 @@ def mc_service_brake_strength(handle_notch: int, phase: str) -> float:
     return _MC_HANDLE_STRENGTH.get(h, 1.0)
 
 
+def _mc_notch_spans(package: dict[str, Any]) -> list[tuple[float, float]]:
+    """Todos los tramos capturados del Master Controller."""
+    controls = package.get("controls")
+    block = controls.get("MasterController") if isinstance(controls, dict) else None
+    notches = block.get("notches") if isinstance(block, dict) else None
+    spans: list[tuple[float, float]] = []
+    if not isinstance(notches, list):
+        return spans
+    for notch in notches:
+        if not isinstance(notch, dict):
+            continue
+        try:
+            lo = float(notch["MinimumInputValue"])
+            hi = float(notch["MaximumInputValue"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        lo, hi = (round(lo, 4), round(hi, 4))
+        if lo > hi:
+            lo, hi = hi, lo
+        spans.append((lo, hi))
+    return spans
+
+
+def mc_lever_brake_ends(
+    package: Optional[dict[str, Any]],
+) -> tuple[Optional[float], Optional[float]]:
+    """Extremos del freno en el combinado: neutro y tope bajo (0), no la clave B3."""
+    if not package or not uses_mc_analog_ipc(package):
+        return None, None
+    neu = profile_brake_fraction(package, "neutral")
+    spans = _mc_notch_spans(package)
+    if spans:
+        full = min(lo for lo, _hi in spans)
+        return neu, full
+    return neu, profile_brake_fraction(package, "B3")
+
+
+def mc_fraction_for_strength(
+    package: Optional[dict[str, Any]],
+    strength: float,
+) -> Optional[float]:
+    """Posición 0..1 del combinado: 0 = neutro, 1 = tope de freno capturado."""
+    neu, full = mc_lever_brake_ends(package)
+    if neu is None or full is None:
+        return None
+    if strength <= 0.0:
+        return neu
+    return master_controller_input_value(neu - strength * (neu - full))
+
+
+def _mc_brake_notch_spans(
+    package: dict[str, Any],
+    neutral: float,
+) -> list[tuple[float, float]]:
+    """Tramos de freno del lab (valor < neutro). Un clic es min == max."""
+    return [
+        (lo, hi)
+        for lo, hi in _mc_notch_spans(package)
+        if hi < neutral - 1e-4
+    ]
+
+
+def snap_mc_brake_fraction(
+    package: Optional[dict[str, Any]],
+    requested: float,
+) -> float:
+    """Posición que el combinado puede sostener, nunca más suave que ``requested``.
+
+    El hueco entre el clic de B1 y el neutro (134236Z, 0,684) no existe: se queda
+    en el clic. Dentro del tramo analógico del lab se conserva el valor.
+    """
+    if not package:
+        return requested
+    neu = profile_brake_fraction(package, "neutral")
+    if neu is None or requested >= neu - 1e-4:
+        return requested
+    spans = _mc_brake_notch_spans(package, neu)
+    if not spans:
+        return requested
+    for lo, hi in spans:
+        if lo - 1e-4 <= requested <= hi + 1e-4:
+            return requested
+    holdable = [hi for lo, hi in spans if hi <= requested + 1e-4]
+    if not holdable:
+        return min(lo for lo, _hi in spans)
+    return max(holdable)
+
+
+MC_GRADE_HOLD_MAX_MPH = 3.0
+# Llegada corta: no soltar a neutro. 400 m tragaba el RELEASE del 35 mph
+# previo a la estación y paraba en la cola (230116Z, 440 m → 120 m).
+MC_ARRIVAL_HOLD_MAX_M = 150.0
+
+
+def mc_station_still_ahead(station_dist_m: Optional[float]) -> bool:
+    """La parada sigue entre 0 y ``MC_ARRIVAL_HOLD_MAX_M``."""
+    return (
+        station_dist_m is not None
+        and 0.0 < float(station_dist_m) <= MC_ARRIVAL_HOLD_MAX_M
+    )
+
+
+def mc_grade_hold_fraction(
+    package: Optional[dict[str, Any]],
+    *,
+    speed_mph: float,
+    gradient_pct: float,
+    station_dist_m: Optional[float] = None,
+) -> Optional[float]:
+    """No soltar a neutro en MC: pendiente casi parado, o andén todavía delante.
+
+    El 323 se sostiene al abrir puertas. Este combinado no.
+    """
+    if not package or not uses_mc_analog_ipc(package):
+        return None
+
+    def _light_hold() -> Optional[float]:
+        neu = profile_brake_fraction(package, "neutral")
+        if neu is None:
+            return None
+        return snap_mc_brake_fraction(package, neu - 0.02)
+
+    if speed_mph <= 0.4:
+        if not mc_station_still_ahead(station_dist_m):
+            return None
+        return _light_hold()
+    near_stop = mc_station_still_ahead(station_dist_m)
+    on_grade = (
+        abs(gradient_pct) >= LIMIT_UPHILL_GRADIENT_PCT
+        and speed_mph <= MC_GRADE_HOLD_MAX_MPH
+    )
+    if not near_stop and not on_grade:
+        return None
+    if near_stop and station_dist_m is not None:
+        stopping = mc_stop_brake_fraction(
+            package,
+            speed_mph=speed_mph,
+            distance_m=float(station_dist_m),
+            gradient_pct=gradient_pct,
+        )
+        if stopping is not None:
+            return stopping
+    return _light_hold()
+
+
+def mc_stop_brake_fraction(
+    package: Optional[dict[str, Any]],
+    *,
+    speed_mph: float,
+    distance_m: float,
+    gradient_pct: float = 0.0,
+) -> Optional[float]:
+    """Fracción MC para parar en ``distance_m``. No usa peldaños B1/B2/B3."""
+    from tsw6v2.physics import service_strength_for_stop
+
+    raw = mc_fraction_for_strength(
+        package,
+        service_strength_for_stop(speed_mph, distance_m, gradient_pct),
+    )
+    if raw is None:
+        return None
+    return snap_mc_brake_fraction(package, raw)
+
+
 def mc_service_brake_fraction(
     package: Optional[dict[str, Any]],
     *,
     handle_notch: int,
     phase: str = "",
 ) -> Optional[float]:
-    """Interpola en eje MC entre ``neutral`` y ``B3`` según intensidad de servicio."""
-    if not package or not uses_mc_analog_ipc(package):
-        return None
-    neu = profile_brake_fraction(package, "neutral")
-    full = profile_brake_fraction(package, "B3")
-    if neu is None or full is None:
-        return None
-    strength = mc_service_brake_strength(handle_notch, phase)
-    if strength <= 0.0:
-        return neu
-    return master_controller_input_value(neu - strength * (neu - full))
+    """Interpola en el eje capturado del combinado (neutro → 0), no en la clave B3."""
+    return mc_fraction_for_strength(
+        package,
+        mc_service_brake_strength(handle_notch, phase),
+    )
 
 
 def _read_snap_mc_input_d2(snap: Any) -> Optional[float]:

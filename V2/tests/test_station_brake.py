@@ -657,3 +657,52 @@ def test_pick_station_watch_below_15mph_deferred_session_164240() -> None:
 def test_exit_signal_clustered_with_platform_stop_session_164240() -> None:
     assert exit_signal_clustered_with_platform_stop(133.0, 137.0)
     assert not exit_signal_clustered_with_platform_stop(620.0, 1141.0)
+
+
+def test_station_low_speed_keeps_weakest_fitting_notch_session_130713() -> None:
+    """10 mph @ 40 m: B1 todavía cubre; B3 paraba a ~33 m del marker (130713Z)."""
+    plan = plan_brake_for_station(speed_mph=10.0, station_distance_m=40.0)
+    assert plan is not None and plan.active_step is not None
+    assert plan.active_step.notch == "B1"
+    closer = plan_brake_for_station(speed_mph=10.0, station_distance_m=20.0)
+    assert closer is not None and closer.active_step is not None
+    assert closer.active_step.notch == "B2"
+
+
+def test_station_keeps_traction_far_from_brake_point_session_111535() -> None:
+    """7.5 mph @ 419 m: el punto de frenado sigue lejos; no COAST (111535Z)."""
+    target = evaluate_station_brake(
+        speed_mph=7.5,
+        station_distance_m=419.0,
+        throttle_notch=1,
+        allow_watch=True,
+    )
+    assert target is not None
+    assert target.dist_start > 80.0
+    cmd = target.to_brake_command(
+        throttle_notch=1,
+        current_notch=5,
+        speed_mph=7.5,
+    )
+    assert cmd is None
+
+
+def test_station_coasts_inside_pre_coast_horizon() -> None:
+    """Tracción cuando dist_start ya cabe en el horizonte cinemático."""
+    target = BrakeTargetResult(
+        target_kind="STATION",
+        distance_m=120.0,
+        target_speed_mph=0.0,
+        handle_notch=3,
+        phase="B1",
+        dist_start=40.0,
+        apply_now=False,
+        detail="Estación dist=120m",
+    )
+    cmd = target.to_brake_command(
+        throttle_notch=1,
+        current_notch=5,
+        speed_mph=30.0,
+    )
+    assert cmd is not None
+    assert cmd.kind == "COAST_THROTTLE"
