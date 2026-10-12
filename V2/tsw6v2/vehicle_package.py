@@ -471,6 +471,60 @@ def snap_mc_brake_fraction(
     return max(holdable)
 
 
+def mc_first_click_fraction(package: Optional[dict[str, Any]]) -> Optional[float]:
+    """Freno más suave que se sostiene: el clic (0,64 en M3a), no el neutro."""
+    neu = profile_brake_fraction(package, "neutral")
+    if neu is None:
+        return None
+    spans = _mc_brake_notch_spans(package, neu) if package else []
+    if not spans:
+        return None
+    return max(hi for _lo, hi in spans)
+
+
+# OBSERVATION 011059Z: 0,64 @ ~14 mph bajó ~0,36 m/s² en pista. Respaldo si no hay aprendido.
+MC_CLICK_DECEL_FALLBACK_MS2 = 0.36
+MC_CLICK_WAIT_MARGIN_M = 5.0
+MC_CLICK_ZONE_FRAC = 0.04
+
+
+def mc_click_wait(
+    package: Optional[dict[str, Any]],
+    *,
+    speed_mph: float,
+    distance_m: float,
+    gradient_pct: float = 0.0,
+    click_decel_ms2: Optional[float] = None,
+) -> bool:
+    """Frenada suave cerca del clic: rodar en neutro hasta que el clic toque.
+
+    Zona de 0,60 a neutro: el clic 0,64 y el análogo 0,60–0,63 frenan casi igual
+    (011059Z: 0,62 y 0,64 bajaron ~0,36 m/s²). Por debajo de 3 mph no espera (grade hold).
+    """
+    if not package or not uses_mc_analog_ipc(package) or speed_mph <= MC_GRADE_HOLD_MAX_MPH:
+        return False
+    if distance_m <= 0.0:
+        return False
+    from tsw6v2.physics import MPH_TO_MS, service_strength_for_stop
+
+    neu = profile_brake_fraction(package, "neutral")
+    click = mc_first_click_fraction(package)
+    raw = mc_fraction_for_strength(
+        package,
+        service_strength_for_stop(speed_mph, distance_m, gradient_pct),
+    )
+    if neu is None or click is None or raw is None:
+        return False
+    if not (click - MC_CLICK_ZONE_FRAC + 1e-4 < raw < neu - 1e-4):
+        return False
+    decel = MC_CLICK_DECEL_FALLBACK_MS2
+    if click_decel_ms2 is not None and click_decel_ms2 > 0:
+        decel = float(click_decel_ms2)
+    speed_ms = speed_mph * MPH_TO_MS
+    stop_at_click_m = speed_ms * speed_ms / (2.0 * decel)
+    return distance_m > stop_at_click_m + MC_CLICK_WAIT_MARGIN_M
+
+
 MC_GRADE_HOLD_MAX_MPH = 3.0
 # Llegada corta: no soltar a neutro. 400 m tragaba el RELEASE del 35 mph
 # previo a la estación y paraba en la cola (230116Z, 440 m → 120 m).
@@ -491,10 +545,14 @@ def mc_grade_hold_fraction(
     speed_mph: float,
     gradient_pct: float,
     station_dist_m: Optional[float] = None,
+    doors_open: bool = False,
+    click_decel_ms2: Optional[float] = None,
+    stop_running: bool = False,
 ) -> Optional[float]:
     """No soltar a neutro en MC: pendiente casi parado, o andén todavía delante.
 
     El 323 se sostiene al abrir puertas. Este combinado no.
+    Puertas abiertas: el marker puede saltar (011059Z, 98 m → 234 m) y no es salida.
     """
     if not package or not uses_mc_analog_ipc(package):
         return None
@@ -505,6 +563,8 @@ def mc_grade_hold_fraction(
             return None
         return snap_mc_brake_fraction(package, neu - 0.02)
 
+    if doors_open:
+        return _light_hold()
     if speed_mph <= 0.4:
         if not mc_station_still_ahead(station_dist_m):
             return None
@@ -517,6 +577,15 @@ def mc_grade_hold_fraction(
     if not near_stop and not on_grade:
         return None
     if near_stop and station_dist_m is not None:
+        # Con la parada ya en curso no volver a rodar a neutro (histéresis, 090737Z).
+        if not stop_running and mc_click_wait(
+            package,
+            speed_mph=speed_mph,
+            distance_m=float(station_dist_m),
+            gradient_pct=gradient_pct,
+            click_decel_ms2=click_decel_ms2,
+        ):
+            return None
         stopping = mc_stop_brake_fraction(
             package,
             speed_mph=speed_mph,

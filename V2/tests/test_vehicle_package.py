@@ -402,6 +402,13 @@ def test_mc_grade_hold_keeps_first_detent_session_153830() -> None:
         pkg, speed_mph=0.0, gradient_pct=-0.5, station_dist_m=6.8
     )
     assert parked == 0.64
+    # 011059Z: puertas abiertas y el marker salta a 234 m. No soltar.
+    assert mc_grade_hold_fraction(
+        pkg, speed_mph=0.0, gradient_pct=0.0, station_dist_m=234.0
+    ) is None
+    assert mc_grade_hold_fraction(
+        pkg, speed_mph=0.0, gradient_pct=0.0, station_dist_m=234.0, doors_open=True
+    ) == 0.64
 
 
 def test_mc_stop_fraction_snaps_out_of_neutral_gap_session_134236() -> None:
@@ -447,3 +454,134 @@ def test_mc_station_apply_uses_fraction_not_b_notch() -> None:
     assert decision.handle_notch is None
     assert decision.phase == f"{decision.command.target_fraction:.3f}"
     assert "B1" not in decision.phase
+
+
+def test_crawl_ahead_of_marker_does_not_slam_lever_session_001232() -> None:
+    """0,3 mph con el marker a 101 m: fracción cerca del clic, no el tope 0,00."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    crawl = mc_stop_brake_fraction(pkg, speed_mph=0.3, distance_m=101.0)
+    assert crawl is not None and crawl >= 0.60
+
+
+def test_station_fraction_eases_when_slower_session_001232() -> None:
+    """27 mph @ 197 m pide más freno que 8 mph @ 160 m (no se congela)."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    fast = mc_stop_brake_fraction(pkg, speed_mph=27.4, distance_m=197.0)
+    slow = mc_stop_brake_fraction(pkg, speed_mph=8.0, distance_m=160.0)
+    assert fast is not None and slow is not None
+    assert slow > fast
+
+
+def test_click_wait_coasts_until_click_stops_at_marker_session_011059() -> None:
+    """14 mph @ 140 m: el clic 0,64 pararía a ~90 m. Rodar; frenar a ~55 m."""
+    from tsw6v2.vehicle_package import mc_click_wait, mc_first_click_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    assert mc_first_click_fraction(pkg) == 0.64
+    assert mc_click_wait(pkg, speed_mph=14.0, distance_m=140.0)
+    assert not mc_click_wait(pkg, speed_mph=14.0, distance_m=55.0)
+    # Con la decel aprendida del clic (0,27) la espera es más larga, no más corta.
+    assert mc_click_wait(pkg, speed_mph=14.0, distance_m=140.0, click_decel_ms2=0.27)
+    # 10 mph @ 40 m pide un análogo (no hueco): no espera.
+    assert not mc_click_wait(pkg, speed_mph=10.0, distance_m=40.0)
+
+
+def test_click_wait_does_not_restart_once_stop_running_session_011059() -> None:
+    """Clic ya aplicado (ancla): 14 mph @ 140 m no vuelve a rodar en neutro."""
+    from tsw6v2.bridge.getdata import ProbeSnapshot
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.limits import LimitBrakeState
+
+    clear_package_cache()
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 3,
+            "speed_ms": 14.0 * 0.44704,
+            "lever_notch": 4,
+            "mc_input": 0.64,
+            "gradient_pct": 0.0,
+            "vehicle": "RVM_NYH_MNR_M3a-A_C",
+        }
+    )
+    state = LimitBrakeState()
+    state.station_stop_m = 140.0
+    d = evaluate_p1_tick(
+        state,
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=138.0,
+        limit_brake_enabled=False,
+        signal_brake_enabled=False,
+    )
+    assert d.command is not None
+    assert d.command.kind == "APPLY"
+
+
+def test_grade_hold_releases_while_click_waits_session_011059() -> None:
+    from tsw6v2.vehicle_package import mc_grade_hold_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    assert mc_grade_hold_fraction(pkg, speed_mph=14.0, gradient_pct=0.0, station_dist_m=140.0) is None
+    near = mc_grade_hold_fraction(pkg, speed_mph=14.0, gradient_pct=0.0, station_dist_m=55.0)
+    assert near is not None and near < 0.64  # ya toca frenar: fracción de parada, no rodar
+
+
+def test_grade_hold_does_not_release_when_stop_running_session_090737() -> None:
+    """Con la parada en curso a ~65 m no vuelve a rodar a neutro (ping-pong 3754–3757)."""
+    from tsw6v2.vehicle_package import mc_grade_hold_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    running = mc_grade_hold_fraction(
+        pkg,
+        speed_mph=9.0,
+        gradient_pct=0.0,
+        station_dist_m=65.0,
+        stop_running=True,
+    )
+    assert running is not None
+
+
+def test_station_stop_keeps_easing_after_plan_drops_session_005614() -> None:
+    """Tras empezar la parada, a 182 m no suelta a neutro ni se queda sin mando."""
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.limits import LimitBrakeState
+
+    clear_package_cache()
+    state = LimitBrakeState()
+    state.station_stop_m = 228.0
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 2,
+            "speed_ms": 25.5 * 0.44704,
+            "lever_notch": 4,
+            "mc_input": 0.497,
+            "gradient_pct": 0.0,
+            "vehicle": "RVM_NYH_MNR_M3a-A_C",
+            "speed_limit_ms": 65.0 * 0.44704,
+            "dist_limit_cm": 72170.0,
+        }
+    )
+    decision = evaluate_p1_tick(
+        state,
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=182.5,
+        signal_brake_enabled=False,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "APPLY"
+    assert decision.command.target_fraction is not None
+    assert decision.command.target_fraction > 0.45
+    assert decision.reason != "release"

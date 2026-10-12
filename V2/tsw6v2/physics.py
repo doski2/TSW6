@@ -277,6 +277,27 @@ def braking_distance_mph(
     )
 
 
+# El plan UK asume una muesca fuerte y deja el APPLY a ~20 m (001232Z: 40 mph, cartel 35).
+MILD_LIMIT_DECEL_MS2 = 0.40
+
+
+def coast_misses_speed_limit(
+    speed_mph: float,
+    target_mph: float,
+    distance_m: float,
+) -> bool:
+    """Coast ya no llega al techo: hace falta freno antes de la ventana optimista."""
+    if speed_mph <= target_mph + 1.5 or distance_m <= 0.0:
+        return False
+    need = braking_distance_mph(
+        speed_mph,
+        target_mph,
+        decel_ms2=MILD_LIMIT_DECEL_MS2,
+        apply_margin=False,
+    )
+    return distance_m <= need
+
+
 def kinematic_horizon_m(
     speed_mph: float,
     target_speed_mph: float,
@@ -311,7 +332,7 @@ def service_strength_for_stop(
     base_decel: float = DEFAULT_MAX_BRAKE_DECEL,
 ) -> float:
     """Intensidad 0..1 para parar en ``distance_m`` (1 = decel máxima de servicio)."""
-    if distance_m <= 1.0 or speed_mph <= 0.5 or base_decel <= 0:
+    if distance_m <= 1.0 or base_decel <= 0:
         return 1.0
     speed_ms = speed_mph * MPH_TO_MS
     needed = (speed_ms * speed_ms) / (2.0 * distance_m) - gravity_acceleration_ms2(

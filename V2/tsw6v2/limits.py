@@ -38,6 +38,7 @@ from tsw6v2.physics import (
     DEFAULT_MAX_BRAKE_DECEL,
     MPH_TO_MS,
     apply_zone_margin_m,
+    coast_misses_speed_limit,
 )
 from tsw6v2.command import BrakeReleaseState
 from tsw6v2.target import LIMIT_COAST_BAND_MPH, BrakeTargetResult
@@ -255,6 +256,13 @@ def _evaluate_next_limit_brake(
         lever=lever,
         brake_cyl_bar=brake_cyl_bar,
     )
+    if (
+        not apply_now
+        and not defer_commit
+        and coast_misses_speed_limit(speed_mph, latch.limit_mph, distance_m)
+    ):
+        # 003319Z: command pedía APPLY y decision lo tiraba (apply_deferred) hasta 20 m.
+        apply_now = True
     posted = latch.posted_limit_mph
     return BrakeTargetResult(
         target_kind="SPEED_LIMIT",

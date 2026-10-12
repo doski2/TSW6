@@ -21,6 +21,7 @@ from tsw6v2.command import (
     throttle_notch_from_lever,
 )
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
+from tsw6v2.vehicle_package import MC_ARRIVAL_HOLD_MAX_M
 from tsw6v2.limit_containment import try_downhill_coast_watch
 from tsw6v2.limit_state import LimitBrakeState
 from tsw6v2.station_plan import (
@@ -684,6 +685,13 @@ def _left_platform(
     if station_dist_m is None:
         return speed_mph > DOORS_OPEN_MAX_SPEED_MPH
     if station_dist_m > PLATFORM_AT_STOP_M:
+        # Parado a 55–150 m del marker (parada corta, 014422Z): sigue en llegada, no salida.
+        # Solo parado (≤ STATION_STOPPED_MPH); un pase a 8 mph no cuenta como parada.
+        if (
+            speed_mph <= STATION_STOPPED_MPH
+            and station_dist_m <= MC_ARRIVAL_HOLD_MAX_M
+        ):
+            return False
         return True
     # Planning: stn≈0 al pasar el marker con el tren en marcha.
     if station_dist_m <= 1.0 and speed_mph >= MARKER_PASSED_MIN_MPH:

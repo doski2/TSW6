@@ -28,7 +28,7 @@ from tsw6v2.constants import (
     MS_TO_MPH,
     NEUTRAL_NOTCH,
 )
-from tsw6v2.decision import evaluate_p1_tick
+from tsw6v2.decision import _station_stop_continues, evaluate_p1_tick
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     PlatformBleedEpisode,
@@ -42,6 +42,7 @@ from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     combined_notch_to_ipc_value,
     probe_mc_input_fraction,
+    mc_first_click_fraction,
     mc_grade_hold_fraction,
     mc_station_still_ahead,
     mc_ipc_target_is_neutral_hold,
@@ -52,6 +53,7 @@ from tsw6v2.vehicle_package import (
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 from tsw6v2.p1_layers import classify_layer
+from tsw6v2.p1_station_gate import DOORS_OPEN_MAX_SPEED_MPH, doors_effective
 
 DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
 # Takeover MC solo con objetivo freno (< neutro): ``power`` HUD por encima de este umbral.
@@ -754,11 +756,30 @@ class AgentLoop:
                 # ``decide()`` ya llamó ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
                 cmd = decision.command
                 if cmd.kind == "RELEASE" and snap is not None and snap.speed_ms is not None:
+                    speed_mph = float(snap.speed_ms) * MS_TO_MPH
+                    doors_open = (
+                        doors_effective(
+                            doors_open=snap.doors_open,
+                            doors_telem=snap.doors_telem,
+                            doors_dmi=snap.doors_dmi,
+                        )
+                        is True
+                        and speed_mph <= DOORS_OPEN_MAX_SPEED_MPH
+                    )
+                    # Histéresis: parada ya en curso (anchor) no vuelve a rodar a neutro.
+                    stop_running = _station_stop_continues(
+                        self._limit_state, station_dist_m, speed_mph
+                    )
                     hold = mc_grade_hold_fraction(
                         self._vehicle_package,
-                        speed_mph=float(snap.speed_ms) * MS_TO_MPH,
+                        speed_mph=speed_mph,
                         gradient_pct=float(snap.gradient_pct or 0.0),
                         station_dist_m=station_dist_m,
+                        doors_open=doors_open,
+                        click_decel_ms2=self._learner.mc_decel_for(
+                            mc_first_click_fraction(self._vehicle_package)
+                        ),
+                        stop_running=stop_running,
                     )
                     if hold is not None:
                         cmd = replace(
@@ -769,7 +790,7 @@ class AgentLoop:
                             phase=f"{hold:.3f}",
                             reason=(
                                 "Andén: mantener parada"
-                                if mc_station_still_ahead(station_dist_m)
+                                if doors_open or mc_station_still_ahead(station_dist_m)
                                 else "Pendiente: mantener freno"
                             ),
                         )

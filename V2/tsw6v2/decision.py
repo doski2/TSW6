@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
@@ -20,6 +20,8 @@ from tsw6v2.command import (
 )
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
+    mc_click_wait,
+    mc_first_click_fraction,
     mc_stop_brake_fraction,
     uses_mc_analog_ipc,
     vehicle_package_from_snap,
@@ -126,6 +128,7 @@ class _TickCtx:
     lever: int
     cyl: Optional[float]
     vehicle_package: Optional[dict[str, Any]] = None
+    click_decel_ms2: Optional[float] = None
 
     def decide(
         self,
@@ -535,6 +538,11 @@ def _prepare_tick(
         lever=lever,
         cyl=snap.brake_cyl_bar,
         vehicle_package=vehicle_pkg,
+        click_decel_ms2=(
+            learner.mc_decel_for(mc_first_click_fraction(vehicle_pkg))
+            if learner is not None and vehicle_pkg is not None
+            else None
+        ),
     )
     if learner is not None:
         learner.observe_air(lever, ctx.cyl)
@@ -740,40 +748,105 @@ def _attempt_release(
     )
 
 
+def _station_stop_continues(
+    limit_state: LimitBrakeState,
+    station_dist_m: Optional[float],
+    speed_mph: float,
+) -> bool:
+    """Parada MC ya empezada: no soltar a neutro ni dejar la palanca clavada (005614Z)."""
+    anchor = limit_state.station_stop_m
+    if anchor is None or station_dist_m is None:
+        return False
+    if station_dist_m > anchor + 20.0:
+        return False
+    return speed_mph > 1.0
+
+
+def _mc_station_fraction_command(
+    ctx: _TickCtx,
+    distance_m: float,
+) -> Optional[BrakeCommand]:
+    frac = mc_stop_brake_fraction(
+        ctx.vehicle_package,
+        speed_mph=ctx.speed_mph,
+        distance_m=distance_m,
+        gradient_pct=ctx.grad,
+    )
+    if frac is None:
+        return None
+    return BrakeCommand(
+        kind="APPLY",
+        target_fraction=frac,
+        target_notch=None,
+        phase=f"{frac:.3f}",
+        reason=f"Estación dist={distance_m:.0f}m",
+        distance_m=distance_m,
+    )
+
+
+def _continue_station_stop(
+    ctx: _TickCtx,
+    limit_state: LimitBrakeState,
+    target: Optional[BrakeTargetResult],
+    station_dist_m: Optional[float] = None,
+) -> Optional[LimitBrakeDecision]:
+    dist = station_dist_m
+    if dist is None and target is not None and target.target_kind == "STATION":
+        dist = target.distance_m
+    if dist is None or not _station_stop_continues(limit_state, dist, ctx.speed_mph):
+        return None
+    if not uses_mc_analog_ipc(ctx.vehicle_package):
+        return None
+    cmd = _mc_station_fraction_command(ctx, dist)
+    if cmd is None:
+        return None
+    return ctx.decide(
+        cmd,
+        "plan",
+        phase=cmd.phase or "",
+        detail=cmd.reason,
+        apply_now=True,
+        target_kind="STATION",
+        station_dist_m=dist,
+    )
+
+
 def _mc_station_stop_fraction(
     cmd: Optional[BrakeCommand],
     target: BrakeTargetResult,
     ctx: _TickCtx,
     limit_state: LimitBrakeState,
 ) -> Optional[BrakeCommand]:
-    """Andén MC: fracción en una posición real, sin aflojar hasta salir del APPLY."""
+    """Andén MC: fracción nueva cada tick. El snap evita el hueco 0,64–0,72."""
     if cmd is None or cmd.kind != "APPLY" or target.target_kind != "STATION":
-        limit_state.mc_station_hold = None
         return cmd
     if "puertas" in (cmd.reason or ""):
-        limit_state.mc_station_hold = None
         return cmd
     if not uses_mc_analog_ipc(ctx.vehicle_package):
         return cmd
-    frac = mc_stop_brake_fraction(
+    # Histéresis: con la parada ya en curso (clic aplicado) no volver a rodar (oscilación).
+    if not _station_stop_continues(
+        limit_state, target.distance_m, ctx.speed_mph
+    ) and mc_click_wait(
         ctx.vehicle_package,
         speed_mph=ctx.speed_mph,
         distance_m=target.distance_m,
         gradient_pct=ctx.grad,
-    )
-    if frac is None:
+        click_decel_ms2=ctx.click_decel_ms2,
+    ):
+        # Rodar en neutro: el clic 0,64 frenaría de más a esta distancia (011059Z).
+        return BrakeCommand(
+            kind="RELEASE",
+            target_notch=NEUTRAL_NOTCH,
+            phase="NEU",
+            reason="Andén: rodar hasta el clic",
+            distance_m=target.distance_m,
+        )
+    frac_cmd = _mc_station_fraction_command(ctx, target.distance_m)
+    if frac_cmd is None:
         return cmd
-    held = limit_state.mc_station_hold
-    if held is not None and held < frac:
-        frac = held
-    else:
-        limit_state.mc_station_hold = frac
-    return replace(
-        cmd,
-        target_fraction=frac,
-        target_notch=None,
-        phase=f"{frac:.3f}",
-    )
+    limit_state.station_stop_m = target.distance_m
+    return frac_cmd
 
 
 def _finalize_target_decision(
@@ -815,9 +888,12 @@ def _finalize_target_decision(
     )
     cmd = _mc_station_stop_fraction(cmd, target, ctx, limit_state)
 
-    if cmd is None:
-        return ctx.idle("command_none", target=target)
-    if cmd.kind == "APPLY" and not target.apply_now:
+    if cmd is None or (cmd.kind == "APPLY" and not target.apply_now):
+        continued = _continue_station_stop(ctx, limit_state, target)
+        if continued is not None:
+            return continued
+        if cmd is None:
+            return ctx.idle("command_none", target=target)
         return ctx.idle("apply_deferred", target=target)
 
     air_block = _air_apply_block(learner, cmd, ctx.cyl, lever)
@@ -978,7 +1054,15 @@ def evaluate_p1_tick(
         accel_ms2=snap.accel_ms2,
     )
 
+    if (
+        limit_state.station_stop_m is not None
+        and not _station_stop_continues(limit_state, station_dist_geo, ctx.speed_mph)
+    ):
+        limit_state.station_stop_m = None
+
     def _limit_release_ok(pick: Optional[BrakeTargetResult]) -> bool:
+        if _station_stop_continues(limit_state, station_dist_geo, ctx.speed_mph):
+            return False
         return limit_release_allowed(
             station_dist_geo,
             pick,
@@ -1054,6 +1138,11 @@ def evaluate_p1_tick(
             and signal_target is None
         ):
             return ctx.idle("no_limit_sign")
+        continued = _continue_station_stop(
+            ctx, limit_state, station_target, station_dist_geo
+        )
+        if continued is not None:
+            return continued
         return ctx.idle("no_plan", target=target)
 
     decision = _finalize_target_decision(

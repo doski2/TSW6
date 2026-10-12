@@ -335,11 +335,26 @@ la fase del tick y `target_fraction` son la posición del combinado
 `snap_mc_brake_fraction` la deja en un tramo que el
 lab sostiene (analógico 0,27–0,63 o el clic 0,64). El hueco hasta el neutro 0,72
 no se manda (134236Z, 135821Z: el tick pedía 0,684 y la palanca volvía a 0,72).
-`mc_station_hold` no afloja esa posición mientras el APPLY de andén sigue activo.
+Cada tick recalcula la fracción; no se conserva la más fuerte
+(001232Z: 0,48 desde 197 m paraba en la cola, a 101 m).
+Si la parada MC ya empezó, un tick sin plan no suelta a neutro ni deja la palanca
+clavada (005614Z: soltaba a 329 m porque el siguiente cartel era 65, y desde 182 m
+no había mando: paraba a ~95 m del marker). Sigue la fracción, más suave si ya
+baja la velocidad. Si la distancia al andén sube, la parada se da por terminada.
+Casi parado y con metros por delante la fórmula ya cae al suelo 0,08, así que no pide el tope.
+El cartel, si ya vas por encima del techo y un freno suave (0,4 m/s²) ya no cabe,
+marca `apply_now` en el plan (003319Z: si no, la decisión lo dejaba en `apply_deferred`
+hasta 20 m). El objetivo de parada sigue siendo el andén.
 En pendiente (|grad| ≥ 0,3 %) y por debajo de 3 mph, un RELEASE a neutro pasa a
 mantener el primer clic de freno (`mc_grade_hold_fraction`, 153830Z): este
 combinado no se sostiene solo al abrir puertas. Con la parada todavía delante
 (0–150 m) tampoco se suelta, aunque la pendiente sea menor (215707Z, −0,15 % a 91 m).
+Frenada suave cerca del clic (fracción entre 0,60 y el neutro, a más de 3 mph): el
+combinado rueda en neutro hasta que `distancia > v²/(2a_clic) + 5 m`, con `a_clic` el
+aprendido en `decel_by_mc` del clic, o 0,36 m/s² si no hay dato (011059Z). Así no se
+para antes del marker. Con la fracción ya en el tramo analógico (<0,60) no espera.
+Con las puertas abiertas y el tren casi parado se mantiene el clic aunque el marker
+salte (011059Z: 98 m → 234 m y soltó a neutro con las puertas abiertas).
 Más lejos, el RELEASE de un cartel (35 mph justo antes del andén, 230116Z) no cambia
 el objetivo a parada. Dentro de esos 150 m se manda la fracción para parar en lo
 que queda. El Class 323 sigue
@@ -488,6 +503,8 @@ se suelta al parar o si `stn` sube más de 15 m. Tracción ya dentro del andén,
 llegada, sigue siendo passthrough.
 
 ##### Salida andén — mapa de responsabilidades (2026-09-14)
+
+**Llegada con tracción (sesión `080746Z`):** con tracción a más de 2,2 mph y en la zona de llegada (≤ 150 m de andén, `TURNAROUND_DEPARTURE_MAX_DIST_M`, rama de viraje) el tren no está saliendo; el plan de andén debe frenar. La rama de viraje solo suprime el crawl de salida (> 0,45 mph y ≤ 2,2 mph).
 
 Fuente única **«¿estamos en salida?»**: `station_departure_active()` (`p1_station_gate.py`):
 
@@ -788,6 +805,7 @@ RELEASE / COAST_PWR**.
 | 2026-09-30 | Sesión `214447Z`: B1 `apply_now` en horizonte 90→15 pero `command_none` — `command_from_target` ahora emite COAST/APPLY con `early_plan_apply`                                                                                                                              |
 | 2026-09-29 | Sesión `191919Z`: 90→15 @ ~90 mph — plan anticipado B1 (horizonte extendido caída grande); señal/andén no sustituyen cartel cuando el 15 va primero                                                                                                                         |
 | 2026-09-22 | Sesiones `200405Z`/`202017Z`: rojo @ ~90 m @ 22 mph saltaba a B3 — horizonte 120 m + `_signal_horizon_apply_plan` (B1 hasta ventana B3); `_air_apply_block` no bloquea si palanca == target                                                                                 |
+| 2026-10-12 | Sesión `080746Z` (cola en bajada): llegada a 23 mph con tracción a 61 m no es salida; `should_suppress_station_braking_for_departure` rama de viraje solo para crawl ≤ 2,2 mph (`station_plan.py`); test `test_approach_under_traction_at_23mph_plans_brake_session_080746` |
 | 2026-09-21 | Sesión `195804Z`: ping-pong B1/neutro — `PlatformBleedEpisode` + `platform_bleed_release` dedicado; cartel bloqueado en episodio                                                                                                                                            |
 | 2026-09-21 | Sesión `193606Z`: andén mid-route neutro + cilindros cargados → `platform_parked_residual_bleed_needed` / APPLY B1; skip RELEASE solo si aire bajo; sin RELEASE fantasma con tracción                                                                                       |
 | 2026-09-21 | Sesión `191546Z`: salida primer servicio mid-route (~1.5 km al next stop): helpers `is_service_platform_*` en `station_plan`; `should_suppress_station_braking_for_departure` incluye mid-route; FSM DEPARTING creep tras marker; limpiar target IPC tras RELEASE en neutro |

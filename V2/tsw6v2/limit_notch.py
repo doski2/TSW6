@@ -33,6 +33,7 @@ from tsw6v2.limit_state import LimitBrakeLatch, LimitBrakeState
 
 _ONE_STRONGER = {3: 2, 2: 1, 1: 1}
 _ONE_WEAKER = {1: 2, 2: 3, 3: 3}
+MIN_UPHILL_COAST_TRIM_GRADE_PCT = 1.0
 
 
 def phase_for_handle(handle: int) -> str:
@@ -59,8 +60,8 @@ def _limit_coast_trim_active(
     ¿Coast + gravedad bastan antes del cartel?
 
     - Bajada: solo exceso ≤2 mph (gravedad acelera; conservador).
-    - Subida: sin tope fijo; ``coast_trim_covers_overspeed`` decide
-      (sesión 20260911T201211Z: 57 mph @ +1 %% y 250 m al 50).
+    - Subida: solo desde ``MIN_UPHILL_COAST_TRIM_GRADE_PCT``; después,
+      ``coast_trim_covers_overspeed`` decide (caso validado: +1%).
     """
     overspeed = speed_mph - limit_mph
     if overspeed <= 0:
@@ -68,6 +69,11 @@ def _limit_coast_trim_active(
     if is_downhill_gradient(gradient_pct):
         if overspeed > LIMIT_DOWNHILL_COAST_TRIM_MPH:
             return False
+    elif gradient_pct < MIN_UPHILL_COAST_TRIM_GRADE_PCT:
+        # +0.32% no sostuvo coast en 003319Z: ~40 mph durante 300 m.
+        # Solo diferir en subida con pendiente fuerte, cubierta por los casos
+        # validados de coast trim (+1%, sesiones 201211Z/203100Z).
+        return False
     return coast_trim_covers_overspeed(
         speed_mph=speed_mph,
         target_mph=limit_mph,

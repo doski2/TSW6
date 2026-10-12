@@ -706,3 +706,21 @@ def test_station_coasts_inside_pre_coast_horizon() -> None:
     )
     assert cmd is not None
     assert cmd.kind == "COAST_THROTTLE"
+
+
+def test_approach_under_traction_at_23mph_plans_brake_session_080746():
+    # 080746Z: llegando a 23 mph en bajada con tracción a 61 m; no es salida.
+    assert should_suppress_station_braking_for_departure(
+        speed_mph=23.19,
+        station_distance_m=60.8,
+        throttle_notch=4,
+    ) is False
+    plan = plan_brake_for_station(
+        speed_mph=23.19,
+        station_distance_m=60.8,
+        gradient_pct=-0.5,
+        throttle_notch=4,
+    )
+    assert plan is not None
+    assert plan.active_step is not None
+    assert plan.active_step.notch == "B3"

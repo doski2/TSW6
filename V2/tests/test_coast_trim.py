@@ -207,6 +207,40 @@ def test_no_early_coast_descending_60_to_35_far_session_221258() -> None:
     assert cmd is None
 
 
+def test_coast_applies_before_optimistic_35_window_session_003319() -> None:
+    """39 mph a 86 m del 35: el plan marca apply_now. A 323 m no. Sin tracción, APPLY."""
+    from tsw6v2.command import command_from_target
+    from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
+
+    near = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=39.6,
+        limit_mph=35.0,
+        distance_m=86.0,
+    )
+    assert near is not None and near.apply_now
+    far = evaluate_limit_brake(
+        LimitBrakeState(),
+        speed_mph=40.6,
+        limit_mph=35.0,
+        distance_m=323.0,
+    )
+    assert far is not None and not far.apply_now
+    cmd = command_from_target(
+        target_kind="SPEED_LIMIT",
+        distance_m=86.0,
+        target_speed_mph=34.0,
+        handle_notch=near.handle_notch,
+        phase=near.phase,
+        dist_start=near.dist_start,
+        apply_now=True,
+        throttle_notch=0,
+        current_notch=0,
+        speed_mph=39.6,
+    )
+    assert cmd is not None and cmd.kind == "APPLY"
+
+
 def test_uphill_early_coast_when_brake_deferred_session_201456() -> None:
     """45→60 @ +0.93 %%, coast trim diferido: COAST_PWR antes del cartel."""
     from tsw6v2.command import command_from_target

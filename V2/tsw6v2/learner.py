@@ -54,6 +54,12 @@ class LearnerProfile:
     def mc_decel_n(self) -> int:
         return self._mc_decel_n
 
+    def mc_decel_for(self, fraction: Optional[float]) -> Optional[float]:
+        """Decel aprendida (m/s²) para una posición MC; ``None`` si no hay dato."""
+        if fraction is None:
+            return None
+        return self._by_mc.get(int(round(float(fraction) * 100)))
+
     def note_amps(self, amps: Optional[float]) -> None:
         """Última lectura de amperios. Retención: ``amps`` < −1 A."""
         self._last_amps = None if amps is None else float(amps)

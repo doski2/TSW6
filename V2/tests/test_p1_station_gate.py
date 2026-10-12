@@ -282,6 +282,17 @@ def test_gate_departing_allows_station_brake_on_mid_route_approach() -> None:
     )
 
 
+def test_parked_short_of_platform_is_not_departing_session_014422() -> None:
+    """Parado a 100 m del marker (sin puertas): sigue STOPPED, no DEPARTING."""
+    gate = StationDwellGate()
+    gate.state = "STOPPED"
+    gate.update(speed_mph=0.4, station_dist_m=100.0, doors_telem=False)
+    assert gate.state == "STOPPED"
+    # Pasando el marker a marcha sí es salida.
+    gate.update(speed_mph=12.0, station_dist_m=100.0, doors_telem=False)
+    assert gate.state == "DEPARTING"
+
+
 def test_departing_clears_when_next_stop_distance_drops_session_20261003() -> None:
     """Segunda parada: DEPARTING a ~21 mph no debe bloquear P1 en dwell."""
     gate = StationDwellGate()

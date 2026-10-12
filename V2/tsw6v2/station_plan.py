@@ -585,8 +585,9 @@ def should_suppress_station_braking_for_departure(
         and station_distance_m <= TURNAROUND_DEPARTURE_MAX_DIST_M
         and traveled <= TURNAROUND_DEPARTURE_MAX_TRAVELED_M
         and throttle
-        and speed_ms > final_stop_ms
+        and final_stop_ms < speed_ms <= hold_ms
     ):
+        # Solo crawl de salida; a más velocidad es llegada (080746Z, 23 mph a 61 m).
         return True
 
     return False
