@@ -552,6 +552,30 @@ def test_grade_hold_does_not_release_when_stop_running_session_090737() -> None:
     assert running is not None
 
 
+def test_grade_hold_does_not_hold_parked_far_from_station_session_104834() -> None:
+    """Parado en pendiente con el marcador saltado a ~360 m: no retener el freno."""
+    from tsw6v2.vehicle_package import mc_grade_hold_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    far = mc_grade_hold_fraction(
+        pkg,
+        speed_mph=0.9,
+        gradient_pct=-0.5,
+        station_dist_m=359.6,
+    )
+    assert far is None
+    # Aproximación en pendiente, andén cerca y aún delante: sí retiene.
+    approach = mc_grade_hold_fraction(
+        pkg,
+        speed_mph=2.0,
+        gradient_pct=-0.5,
+        station_dist_m=120.0,
+    )
+    assert approach is not None
+
+
 def test_station_stop_keeps_easing_after_plan_drops_session_005614() -> None:
     """Tras empezar la parada, a 182 m no suelta a neutro ni se queda sin mando."""
     from tsw6v2.command import BrakeReleaseState

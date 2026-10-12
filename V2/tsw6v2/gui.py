@@ -263,6 +263,7 @@ class AgentGuiApp:
         self.loop.post_ipc_sleep_s = 0.0
         self._p1_mode = self._normalize_mode(p1_mode)
         self._running = True
+        self._agent_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self._last: Optional[AgentSnapshot] = None
         self._last_dash: Optional[GuiDashboard] = None
@@ -294,7 +295,10 @@ class AgentGuiApp:
         self._build_ui()
         self._apply_mode(self._p1_mode)
 
-        threading.Thread(target=self._agent_loop, name="tsw6v2-agent", daemon=True).start()
+        self._agent_thread = threading.Thread(
+            target=self._agent_loop, name="tsw6v2-agent", daemon=True
+        )
+        self._agent_thread.start()
         self._schedule_ui()
 
     @staticmethod
@@ -683,6 +687,9 @@ class AgentGuiApp:
 
     def _on_close(self) -> None:
         self._running = False
+        # Esperar al hilo antes de cerrar el JSONL: evita ``write`` en fichero cerrado.
+        if self._agent_thread is not None:
+            self._agent_thread.join(timeout=5.0)
         self.loop.shutdown()
         with self._lock:
             last = self._last

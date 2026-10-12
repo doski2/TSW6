@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from tsw6v2.driver_aid_stations import (
-    filter_stations_by_service,
+from tsw6v2.track_stations import (
+    filter_stations_by_stop_names,
     parse_track_data_stations,
     select_next_scheduled_stop,
 )
@@ -40,17 +38,9 @@ def test_parse_track_data_stations_sorted():
     assert stations[-1]["name"] == "Four Oaks"
 
 
-def test_filter_by_timetable(tmp_path: Path):
-    timetable = {"2R17": ["Four Oaks", "Sutton Coldfield"]}
-    path = tmp_path / "timetable.json"
-    import json
-
-    path.write_text(json.dumps(timetable), encoding="utf-8")
+def test_filter_by_hud_stop_names():
     stations = parse_track_data_stations(_sample_track())
-    from tsw6v2.driver_aid_stations import load_service_timetable
-
-    loaded = load_service_timetable(path)
-    filtered = filter_stations_by_service(stations, loaded, "2R17")
+    filtered = filter_stations_by_stop_names(stations, ["Four Oaks", "Sutton Coldfield"])
     names = {s["name"] for s in filtered}
     assert "Wrong Way Stop" not in names
     assert "Four Oaks" in names

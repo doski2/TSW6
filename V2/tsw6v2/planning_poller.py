@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.http_api import find_api_key, probe_http_api
 from tsw6v2.driver_aid_stations import poll_station_planning, station_base_name
+from tsw6v2.hud_db import default_hud_db_path
 from tsw6v2.planning_feed import (
     PLANNING_JUMP_REJECT_M,
     PLANNING_NEXT_STOP_MIN_SPEED_MPH,
@@ -353,7 +354,10 @@ class StationPlanning:
         with self._cache_lock:
             exclude_bases = set(self._served_bases)
         try:
-            result = poll_station_planning(exclude_bases=exclude_bases)
+            result = poll_station_planning(
+                exclude_bases=exclude_bases,
+                hud_db_path=default_hud_db_path(),
+            )
         except Exception as exc:
             _log.debug("poll_station_planning: %s", exc)
             return

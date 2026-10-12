@@ -41,37 +41,27 @@ def test_service_name_variants_includes_u_o_alias():
 def test_apply_station_schedule_hud_db():
     stations = parse_track_data_stations(_track())
     hud_match = {
-        "timetable_id": 127605,
+        "service_name": "5U02",
         "stop_names": ["Four Oaks"],
-        "entries": [],
-        "route_name": "Birmingham Cross-City",
+        "stops": [],
     }
     with patch("tsw6v2.hud_schedule.resolve_hud_service_stops", return_value=hud_match):
-        with patch("tsw6v2.hud_schedule._hud_store") as mock_store:
-            mock_store.return_value = MagicMock(
-                merge_schedule_stations=lambda *a, **k: [
-                    {"name": "Four Oaks", "distance_m": 2500.0, "scheduled": True}
-                ]
-            )
-            filtered, src, match = apply_station_schedule(
-                stations, "5U02 Birmingham New Street to Four Oaks", lat=52.48, lng=-1.90
-            )
+        filtered, src, match = apply_station_schedule(
+            stations, "5U02 Birmingham New Street to Four Oaks", lat=52.48, lng=-1.90
+        )
     assert src == "hud_db"
     assert match is hud_match
     assert len(filtered) == 1
     assert filtered[0]["name"] == "Four Oaks"
 
 
-def test_apply_station_schedule_falls_back_to_timetable_json():
+def test_apply_station_schedule_without_hud_is_track_only():
     stations = parse_track_data_stations(_track())
-    timetable = {"2R17": ["Four Oaks", "Sutton Coldfield"]}
     with patch("tsw6v2.hud_schedule.resolve_hud_service_stops", return_value=None):
-        filtered, src, _ = apply_station_schedule(
-            stations, "2R17", timetable=timetable
-        )
-    assert src == "timetable_json"
-    names = {s["name"] for s in filtered}
-    assert "Wrong Way Stop" not in names
+        filtered, src, match = apply_station_schedule(stations, "2R17")
+    assert src == "track_only"
+    assert match is None
+    assert len(filtered) == len(stations)
 
 
 def test_pick_next_excludes_served_bases_session_215036():

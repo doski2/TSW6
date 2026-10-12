@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from tsw6v2.constants import (
     STATION_APPROACH_PRIORITY_M,
     STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+    STATION_STOPPED_MPH,
 )
 from tsw6v2.command import (
     is_brake_applied,
@@ -39,8 +40,10 @@ from tsw6v2.target import BrakeTargetResult
 if TYPE_CHECKING:
     from tsw6v2.command import BrakeCommand
 
-STATION_STOPPED_MPH = 1.5
 DEPARTING_CLEAR_MPH = ORIGIN_DEPARTURE_MAX_SPEED_MPH
+# Salida lejos del andén a marcha: no es creep de andén ni reabre DEPARTING.
+DEPARTING_FAR_MIN_M = 800.0
+DEPARTING_FAR_MIN_MPH = 18.0
 
 
 def blocks_inherited_release_in_station_final_approach(
@@ -187,6 +190,12 @@ def station_departure_active(
             speed_mph,
             station_fsm=station_fsm,
         )
+    if (
+        station_dist_m is not None
+        and float(station_dist_m) > DEPARTING_FAR_MIN_M
+        and speed_mph >= DEPARTING_FAR_MIN_MPH
+    ):
+        return False
     throttle = throttle_notch_from_lever(combined_lever)
     return is_service_platform_departure(
         speed_mph=speed_mph,
@@ -890,9 +899,9 @@ class StationDwellGate:
             )
             # Cola del andén (223716Z: 207 m bajando) no es la siguiente parada.
             far_approach = (
-                approaching
-                and station_dist_m is not None
-                and float(station_dist_m) > 800.0
+                station_dist_m is not None
+                and float(station_dist_m) > DEPARTING_FAR_MIN_M
+                and speed_mph >= DEPARTING_FAR_MIN_MPH
             )
             if next_stop or far_approach:
                 self._reset_idle()

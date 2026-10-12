@@ -353,6 +353,10 @@ Frenada suave cerca del clic (fracción entre 0,60 y el neutro, a más de 3 mph)
 combinado rueda en neutro hasta que `distancia > v²/(2a_clic) + 5 m`, con `a_clic` el
 aprendido en `decel_by_mc` del clic, o 0,36 m/s² si no hay dato (011059Z). Así no se
 para antes del marker. Con la fracción ya en el tramo analógico (<0,60) no espera.
+Histéresis (090737Z): con la parada ya en curso (`_station_stop_continues`, ancla
+`station_stop_m`) no se vuelve a rodar a neutro. La espera de clic se evalúa igual en
+`decision` y en `loop` (`mc_grade_hold_fraction(stop_running=…)`); si no, el RELEASE y
+el APPLY alternaban cada tick a ~65 m.
 Con las puertas abiertas y el tren casi parado se mantiene el clic aunque el marker
 salte (011059Z: 98 m → 234 m y soltó a neutro con las puertas abiertas).
 Más lejos, el RELEASE de un cartel (35 mph justo antes del andén, 230116Z) no cambia
@@ -806,6 +810,7 @@ RELEASE / COAST_PWR**.
 | 2026-09-29 | Sesión `191919Z`: 90→15 @ ~90 mph — plan anticipado B1 (horizonte extendido caída grande); señal/andén no sustituyen cartel cuando el 15 va primero                                                                                                                         |
 | 2026-09-22 | Sesiones `200405Z`/`202017Z`: rojo @ ~90 m @ 22 mph saltaba a B3 — horizonte 120 m + `_signal_horizon_apply_plan` (B1 hasta ventana B3); `_air_apply_block` no bloquea si palanca == target                                                                                 |
 | 2026-10-12 | Sesión `080746Z` (cola en bajada): llegada a 23 mph con tracción a 61 m no es salida; `should_suppress_station_braking_for_departure` rama de viraje solo para crawl ≤ 2,2 mph (`station_plan.py`); test `test_approach_under_traction_at_23mph_plans_brake_session_080746` |
+| 2026-10-12 | Sesión `090737Z` (ping-pong RELEASE/APPLY a ~65 m): histéresis de espera de clic con parada en curso (`mc_grade_hold_fraction(stop_running=…)`, `loop.py`); test `test_grade_hold_does_not_release_when_stop_running_session_090737` |
 | 2026-09-21 | Sesión `195804Z`: ping-pong B1/neutro — `PlatformBleedEpisode` + `platform_bleed_release` dedicado; cartel bloqueado en episodio                                                                                                                                            |
 | 2026-09-21 | Sesión `193606Z`: andén mid-route neutro + cilindros cargados → `platform_parked_residual_bleed_needed` / APPLY B1; skip RELEASE solo si aire bajo; sin RELEASE fantasma con tracción                                                                                       |
 | 2026-09-21 | Sesión `191546Z`: salida primer servicio mid-route (~1.5 km al next stop): helpers `is_service_platform_*` en `station_plan`; `should_suppress_station_braking_for_departure` incluye mid-route; FSM DEPARTING creep tras marker; limpiar target IPC tras RELEASE en neutro |

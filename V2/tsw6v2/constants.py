@@ -80,6 +80,8 @@ BRAKE_PLAN_LARGE_DROP_MPH = 18.0
 STATION_APPROACH_PRIORITY_M = 600.0
 # Aproximación final: no RELEASE cartel ni salto HTTP espurio (213633Z, 211417Z).
 STATION_FINAL_APPROACH_RELEASE_BLOCK_M = 200.0
+# Parado en andén: fuente única (p1_station_gate, vehicle_package).
+STATION_STOPPED_MPH = 1.5
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:

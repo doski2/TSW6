@@ -294,17 +294,21 @@ def test_parked_short_of_platform_is_not_departing_session_014422() -> None:
 
 
 def test_departing_clears_when_next_stop_distance_drops_session_20261003() -> None:
-    """Segunda parada: DEPARTING a ~21 mph no debe bloquear P1 en dwell."""
+    """Salida en línea a ~18 mph lejos del andén: DEPARTING no debe bloquear P1 en dwell.
+
+    Logs reales (scan 2026-10-12): DEPARTING a 18+ mph ocurre siempre a ~1.800 m
+    o ~12.000 m del andén, nunca a 300-800 m; la regla ``> 800 m`` cubre ese caso.
+    """
     gate = StationDwellGate()
     gate.update(speed_mph=0.5, station_dist_m=12.0, doors_telem=True)
     gate.update(speed_mph=0.5, station_dist_m=12.0, doors_telem=False)
     assert gate.state == "DEPARTING"
-    gate.update(speed_mph=21.0, station_dist_m=620.0, throttle_notch=6)
-    gate.update(speed_mph=21.0, station_dist_m=560.0, throttle_notch=6)
+    gate.update(speed_mph=18.0, station_dist_m=1795.0, throttle_notch=6)
+    gate.update(speed_mph=18.0, station_dist_m=1794.0, throttle_notch=6)
     assert gate.state is None
     assert not gate.suppress_station_brake(
         station_dist_m=35.0,
-        speed_mph=21.0,
+        speed_mph=18.0,
         throttle_notch=4,
     )
 

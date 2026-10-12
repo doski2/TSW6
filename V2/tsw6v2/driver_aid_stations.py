@@ -5,10 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from tsw6.telemetry.driver_aid_parser import (
+from tsw6v2.track_stations import (
     SCHEDULED_STOP_MIN_AHEAD_M,
-    filter_stations_by_service,
-    load_service_timetable,
     parse_track_data_stations,
     select_next_scheduled_stop,
     station_base_name,
@@ -16,8 +14,6 @@ from tsw6.telemetry.driver_aid_parser import (
 
 __all__ = [
     "SCHEDULED_STOP_MIN_AHEAD_M",
-    "filter_stations_by_service",
-    "load_service_timetable",
     "parse_track_data_stations",
     "poll_station_planning",
     "select_next_scheduled_stop",
@@ -28,13 +24,12 @@ __all__ = [
 def poll_station_planning(
     *,
     api_key: Optional[str] = None,
-    timetable_path: Optional[Path] = None,
+    hud_db_path: Optional[Path] = None,
     exclude_bases: Optional[set[str]] = None,
 ) -> dict[str, Any]:
-    """
-    Una lectura HTTP: TrackData + PlayerInfo → estaciones filtradas y próxima parada.
+    """Una lectura HTTP: TrackData + PlayerInfo → estaciones filtradas y próxima parada.
 
-    Horario: ``tsw_hud.db`` si está disponible; si no, ``timetable.json``.
+    Horario: ``tsw_hud.db`` vía ``hud_schedule`` (sin ``tsw6/``).
     """
     from tsw6v2.bridge.http_api import get_driver_aid_node
     from tsw6v2.hud_schedule import (
@@ -62,13 +57,12 @@ def poll_station_planning(
         lat, lng = player_geo_from_info(info)
 
     if raw_stations:
-        timetable = load_service_timetable(timetable_path)
         stations, schedule_source, hud_match = apply_station_schedule(
             raw_stations,
             service_name,
             lat=lat,
             lng=lng,
-            timetable=timetable,
+            hud_db_path=hud_db_path,
         )
         out["stations"] = stations
         out["schedule_source"] = schedule_source

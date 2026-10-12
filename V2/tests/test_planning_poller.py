@@ -63,7 +63,7 @@ def test_station_planning_reads_file(tmp_path):
 def test_station_planning_rejects_http_jump_to_next_stop(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {"next_stop": {"distance_m": 2211.0, "name": "Next"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 2211.0, "name": "Next"}},
     )
     src = StationPlanning(http_enabled=False)
     src._http_ok = True
@@ -100,7 +100,7 @@ def test_station_planning_skips_dead_reckoning_when_probe_seq_frozen():
 def test_station_planning_rejects_http_regression(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {"next_stop": {"distance_m": 235.4, "name": "Stn"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 235.4, "name": "Stn"}},
     )
     src = StationPlanning(http_enabled=False)
     src._http_ok = True
@@ -113,7 +113,7 @@ def test_station_planning_rejects_http_regression(monkeypatch):
 def test_station_planning_resets_on_first_probe_seq(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {
+        lambda exclude_bases=None, hud_db_path=None: {
             "next_stop": {"distance_m": 900.0, "name": "Sutton"},
             "service_name": "2R17",
             "hud_route_name": "Birmingham Cross-City",
@@ -132,7 +132,7 @@ def test_station_planning_keeps_distance_on_service_change(monkeypatch):
     """215536Z: cambio HUD al pasar andén no debe vaciar stn (dead-reckoning)."""
     calls = {"n": 0}
 
-    def fake_poll(exclude_bases=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -162,7 +162,7 @@ def test_station_planning_keeps_distance_on_service_change(monkeypatch):
 def test_station_planning_resets_on_service_change(monkeypatch):
     calls = {"n": 0}
 
-    def fake_poll(exclude_bases=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -190,7 +190,7 @@ def test_station_planning_resets_on_service_change(monkeypatch):
 def test_station_planning_sets_route_when_distance_rejected(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {
+        lambda exclude_bases=None, hud_db_path=None: {
             "next_stop": {"distance_m": 120.8, "name": "Wrong"},
             "service_name": "2R17",
             "hud_route_name": "Birmingham Cross-City",
@@ -215,7 +215,7 @@ def test_station_planning_rejects_large_yoyo_at_speed(monkeypatch):
 
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {"next_stop": {"distance_m": 120.8, "name": "Wrong"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 120.8, "name": "Wrong"}},
     )
     src._snap.station_distance_m = 22184.0
     src._poll_once()
@@ -223,7 +223,7 @@ def test_station_planning_rejects_large_yoyo_at_speed(monkeypatch):
 
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {"next_stop": {"distance_m": 24000.0, "name": "Far"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 24000.0, "name": "Far"}},
     )
     src._snap.station_distance_m = 2000.0
     src._poll_once()
@@ -233,7 +233,7 @@ def test_station_planning_rejects_large_yoyo_at_speed(monkeypatch):
 def test_station_planning_marks_served_after_marker_pass(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {
+        lambda exclude_bases=None, hud_db_path=None: {
             "next_stop": {"distance_m": 2682.0, "name": "University, andén 2"},
         },
     )
@@ -250,7 +250,7 @@ def test_station_planning_marks_served_after_marker_pass(monkeypatch):
 def test_station_planning_rejects_served_stop_on_poll(monkeypatch):
     """215036Z: parada servida no debe reasignarse por HTTP."""
 
-    def fake_poll(exclude_bases=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None):
         assert exclude_bases is not None and "five ways" in exclude_bases
         return {"next_stop": {"distance_m": 1680.0, "name": "University, andén 2"}}
 
@@ -269,7 +269,7 @@ def test_station_planning_rejects_served_stop_on_poll(monkeypatch):
 def test_station_planning_clears_served_bases_on_timetable_change(monkeypatch):
     calls = {"n": 0}
 
-    def fake_poll(exclude_bases=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -296,7 +296,7 @@ def test_station_planning_clears_served_bases_on_timetable_change(monkeypatch):
 def test_station_planning_keeps_served_bases_on_schedule_source_flicker(monkeypatch):
     calls = {"n": 0}
 
-    def fake_poll(exclude_bases=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -324,7 +324,7 @@ def test_station_planning_keeps_served_bases_on_schedule_source_flicker(monkeypa
 def test_station_planning_resets_on_probe_seq_discontinuity(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None: {"next_stop": {"distance_m": 1200.0, "name": "Far"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 1200.0, "name": "Far"}},
     )
     src = StationPlanning(http_enabled=False)
     src._http_ok = True

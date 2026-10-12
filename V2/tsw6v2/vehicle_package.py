@@ -24,6 +24,7 @@ from tsw6v2.constants import (
     LIMIT_UPHILL_GRADIENT_PCT,
     MC_INPUT_VALUE_EPS,
     NEUTRAL_NOTCH,
+    STATION_STOPPED_MPH,
 )
 from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG, SERVICE_PHASE_BY_HANDLE
 
@@ -570,9 +571,17 @@ def mc_grade_hold_fraction(
             return None
         return _light_hold()
     near_stop = mc_station_still_ahead(station_dist_m)
+    # Pendiente solo sostiene el freno en aproximación: ya parado y con el andén lejos
+    # (marcador saltado a ~360 m, 104834Z) no hay que retener.
+    parked_far = (
+        speed_mph <= STATION_STOPPED_MPH
+        and station_dist_m is not None
+        and float(station_dist_m) > MC_ARRIVAL_HOLD_MAX_M
+    )
     on_grade = (
         abs(gradient_pct) >= LIMIT_UPHILL_GRADIENT_PCT
         and speed_mph <= MC_GRADE_HOLD_MAX_MPH
+        and not parked_far
     )
     if not near_stop and not on_grade:
         return None

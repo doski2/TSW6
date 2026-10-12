@@ -1,44 +1,21 @@
-"""Horario HUD (``tsw_hud.db``) para planning de andén V2 — misma lógica que autopilot v1."""
+"""Horario HUD (``tsw_hud.db``) para planning de andén V2.
+
+Lee la BD con ``tsw6v2.hud_db`` (propio de V2). Sin ``tsw6/``.
+"""
 
 from __future__ import annotations
 
 import logging
-import sqlite3
+from pathlib import Path
 from typing import Any, Optional
 
-from tsw6.telemetry.driver_aid_parser import (
+from tsw6v2.hud_db import open_readonly, stops_for_service
+from tsw6v2.track_stations import (
     filter_stations_by_stop_names,
-    filter_stations_by_service,
     resolve_display_next_stop,
 )
 
-from tsw6v2.driver_aid_stations import load_service_timetable
-
 _log = logging.getLogger("tsw6v2.hud_schedule")
-
-_HUD_STORE: Any = None
-_HUD_TRIED = False
-
-
-def _hud_store() -> Any:
-    """``HudTimetableStore`` lazy; ``None`` si no hay BD."""
-    global _HUD_STORE, _HUD_TRIED
-    if _HUD_TRIED:
-        return _HUD_STORE
-    _HUD_TRIED = True
-    try:
-        from tsw6.hud.hud_timetable import HudTimetableStore
-
-        store = HudTimetableStore()
-        if store.available:
-            _HUD_STORE = store
-            _log.info("HUD timetable: %s", store.db_path)
-        else:
-            _HUD_STORE = None
-    except Exception as exc:
-        _log.debug("HUD timetable no disponible: %s", exc)
-        _HUD_STORE = None
-    return _HUD_STORE
 
 
 def player_geo_from_info(info: Any) -> tuple[Optional[float], Optional[float]]:
@@ -77,20 +54,29 @@ def service_name_variants(service_name: str) -> list[str]:
 def resolve_hud_service_stops(
     service_name: str,
     *,
-    lat: Optional[float] = None,
-    lng: Optional[float] = None,
+    hud_db_path: Optional[Path],
 ) -> Optional[dict[str, Any]]:
-    store = _hud_store()
-    if store is None:
+    """Paradas del servicio desde ``tsw_hud.db``; ``None`` si no hay BD o no hay match."""
+    if hud_db_path is None:
         return None
-    for variant in service_name_variants(service_name):
-        try:
-            resolved = store.resolve_service_stops(variant, lat=lat, lng=lng)
-        except sqlite3.Error as exc:
-            _log.warning("HUD query fallo (svc=%s): %s", variant, exc)
-            return None
-        if resolved:
-            return resolved
+    try:
+        conn = open_readonly(hud_db_path)
+    except Exception as exc:
+        _log.debug("HUD DB no disponible: %s", exc)
+        return None
+    try:
+        for variant in service_name_variants(service_name):
+            stops = stops_for_service(conn, variant)
+            if stops:
+                return {
+                    "service_name": variant,
+                    "stop_names": [s.name for s in stops],
+                    "stops": stops,
+                }
+    except Exception as exc:
+        _log.warning("HUD query fallo (svc=%s): %s", service_name, exc)
+    finally:
+        conn.close()
     return None
 
 
@@ -100,46 +86,26 @@ def apply_station_schedule(
     *,
     lat: Optional[float] = None,
     lng: Optional[float] = None,
-    timetable: Optional[dict[str, list[str]]] = None,
+    hud_db_path: Optional[Path] = None,
 ) -> tuple[list[dict[str, Any]], str, Optional[dict[str, Any]]]:
-    """
-    Filtra ``TrackData.markers`` con horario HUD o ``timetable.json``.
+    """Filtra ``TrackData.markers`` con el horario HUD.
 
     Returns:
         (estaciones, schedule_source, hud_match)
-        schedule_source: ``hud_db`` | ``timetable_json`` | ``track_only``
+        schedule_source: ``hud_db`` | ``track_only``
     """
     if not track_stations:
         return [], "none", None
 
     svc = (service_name or "").strip()
-    timetable = timetable if timetable is not None else load_service_timetable()
-
     if svc:
-        resolved = resolve_hud_service_stops(svc, lat=lat, lng=lng)
+        resolved = resolve_hud_service_stops(svc, hud_db_path=hud_db_path)
         if resolved:
-            store = _hud_store()
             matched = filter_stations_by_stop_names(
                 track_stations, resolved["stop_names"]
             )
-            merged: list[dict[str, Any]] = []
-            if store is not None:
-                merged = store.merge_schedule_stations(
-                    matched,
-                    resolved["entries"],
-                    resolved["stop_names"],
-                    lat=lat,
-                    lng=lng,
-                )
-            if merged:
-                return merged, "hud_db", resolved
             if matched:
                 return matched, "hud_db", resolved
-
-    if timetable:
-        filtered = filter_stations_by_service(track_stations, timetable, svc or None)
-        if filtered is not track_stations:
-            return filtered, "timetable_json", None
 
     return track_stations, "track_only", None
 
