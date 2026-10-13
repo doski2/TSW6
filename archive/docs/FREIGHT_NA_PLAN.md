@@ -419,6 +419,7 @@ otro SD40, etc.) debería usar el **mismo esquema** `freight_na_railbridge_v3`.
 
 **Fase 4:** `brake_selector.py` — el autopiloto elige qué freno usar (auto / ind / dyn).
 
-**En paralelo:** ver `INVESTIGACION.md` (arquitectura sin RailBridge) y `TSW_API_V2.md` (escritura HTTP frenos).
+**En paralelo:** ver `INVESTIGACION.md` (arquitectura sin RailBridge) y `TSW_API_V2.md` (escritura
+HTTP frenos).
 
 **Calibración en juego:** `aprender.bat` → opción **2** (mercancías) con SD40-2.

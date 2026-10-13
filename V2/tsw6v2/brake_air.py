@@ -45,8 +45,6 @@ def brake_decel_sample_ready(
     Misma escala que ``cap_escalation`` (92 % de ``pressure_for_handle``).
     """
     h = int(handle)
-    if lever is not None and int(lever) != h:
-        return False
     if brake_cyl_bar is None:
         return False
     return float(brake_cyl_bar) >= pressure_for_handle(h) * PRESSURE_CONFIRM_RATIO

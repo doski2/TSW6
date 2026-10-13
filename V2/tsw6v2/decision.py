@@ -27,6 +27,7 @@ from tsw6v2.vehicle_package import (
     vehicle_package_from_snap,
 )
 from tsw6v2.p1_station_gate import (
+    station_coast_release_in_motion,
     DEPARTING_CLEAR_MPH,
     PLATFORM_AT_STOP_M,
     departing_brake_needs_release,
@@ -40,7 +41,7 @@ from tsw6v2.p1_station_gate import (
 from tsw6v2.service_brake import should_release_over_braked_for_stop_target
 from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
-from tsw6v2.learner import LearnerProfile
+from tsw6v2.learner import LearnerProfile, _predict_for_kind
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
 from tsw6v2.p1_emergency import EmergencyTargetKind, check_p1_emergency
 from tsw6v2.p1_policy import (
@@ -55,6 +56,7 @@ from tsw6v2.station_plan import (
     station_within_dwell_zone,
 )
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
+from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
 from tsw6v2.signal_brake import evaluate_signal_brake
 from tsw6v2.signal_plan import (
@@ -85,6 +87,7 @@ class LimitBrakeDecision:
     handle_notch: Optional[int] = None
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
+    plan_decel_ms2: Optional[float] = None
     fb_shortfall: bool = False
     fb_escalated: bool = False
     target_kind: str = ""
@@ -142,6 +145,7 @@ class _TickCtx:
         handle_notch: Optional[int] = None,
         fb_a_pred_ms2: Optional[float] = None,
         fb_a_obs_ms2: Optional[float] = None,
+        plan_decel_ms2: Optional[float] = None,
         fb_shortfall: bool = False,
         fb_escalated: bool = False,
         target_kind: str = "",
@@ -164,6 +168,7 @@ class _TickCtx:
             handle_notch=handle_notch,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
+            plan_decel_ms2=plan_decel_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
             target_kind=target_kind,
@@ -178,6 +183,7 @@ class _TickCtx:
             kw.setdefault("detail", target.detail)
             kw.setdefault("fb_a_pred_ms2", target.fb_a_pred_ms2)
             kw.setdefault("fb_a_obs_ms2", target.fb_a_obs_ms2)
+            kw.setdefault("plan_decel_ms2", target.plan_decel_ms2)
             kw.setdefault("fb_shortfall", target.fb_shortfall)
             kw.setdefault("fb_escalated", target.fb_escalated)
             kw.setdefault("target_kind", target.target_kind)
@@ -199,6 +205,7 @@ class _TickCtx:
             handle_notch=cmd.target_notch,
             fb_a_pred_ms2=target.fb_a_pred_ms2,
             fb_a_obs_ms2=target.fb_a_obs_ms2,
+            plan_decel_ms2=target.plan_decel_ms2,
             fb_shortfall=target.fb_shortfall,
             fb_escalated=target.fb_escalated,
             target_kind=target.target_kind,
@@ -345,8 +352,18 @@ def _attempt_platform_parked_bleed_release(
     platform_bleed_b1_confirmed: bool,
     snap: ProbeSnapshot,
 ) -> Optional[LimitBrakeDecision]:
-    """RELEASE a neutro tras B1 bleed — sin cartel (195804Z)."""
-    if not platform_parked_bleed_release_needed(
+    """RELEASE a neutro tras B1 bleed — sin cartel (195804Z).
+
+    También RELEASE en marcha si la inercia basta para parar en el andén
+    (``station_coast_release_in_motion``, sesión 203439Z tick 611).
+    """
+    in_motion = station_coast_release_in_motion(
+        speed_mph=prep.ctx.speed_mph,
+        station_dist_m=station_dist_m,
+        required_decel_ms2=DEFAULT_MAX_BRAKE_DECEL * SERVICE_DECEL_FRAC_BY_HANDLE[1],
+        gradient_pct=float(snap.gradient_pct or 0.0),
+    )
+    if not in_motion and not platform_parked_bleed_release_needed(
         speed_mph=prep.ctx.speed_mph,
         station_dist_m=station_dist_m,
         combined_lever=prep.combined_lever,
@@ -431,6 +448,20 @@ _SIGNAL_CLEARED_RELEASE_REF = BrakeTargetResult(
     apply_now=False,
     detail="",
 )
+
+
+BRAKE_KIND_EPS = 0.02
+
+
+def _brake_kind(train_brake: Optional[float], dyn_brake: Optional[float]) -> str:
+    """``air`` | ``dyn`` | ``mixed`` según aire (train_brake) y dinámico (dyn_brake)."""
+    tb = float(train_brake or 0.0)
+    db = float(dyn_brake or 0.0)
+    if tb > BRAKE_KIND_EPS and db > BRAKE_KIND_EPS:
+        return "mixed"
+    if db > BRAKE_KIND_EPS:
+        return "dyn"
+    return "air"
 
 
 def _station_platform_blocks_signal_cleared_release(
@@ -555,7 +586,11 @@ def _prepare_tick(
         throttle_notch=throttle_notch_from_probe(snap, vehicle_pkg),
         escalate_cap=_escalate_cap_fn(learner, ctx.cyl) if learner else None,
         fill_s=learner.brake_fill_s if learner else DEFAULT_BRAKE_FILL_S,
-        predict=predict_decel or (learner.predict_decel if learner else None),
+        predict=predict_decel or (
+            _predict_for_kind(learner, _brake_kind(snap.train_brake, snap.dyn_brake))
+            if learner
+            else None
+        ),
     )
 
 
@@ -980,6 +1015,7 @@ def evaluate_p1_tick(
             lever=prep.lever,
             brake_cyl_bar=ctx.cyl,
             release_state=release_state,
+            brake_kind=_brake_kind(snap.train_brake, snap.dyn_brake),
         )
         limit_target = departure_limit_target_or_coast(
             limit_target,
@@ -1018,6 +1054,21 @@ def evaluate_p1_tick(
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
             allow_watch=station_allow_watch,
         )
+        if (
+            learner is not None
+            and station_target is not None
+            and station_target.apply_now
+            and station_target.handle_notch in (1, 2, 3)
+        ):
+            learner.observe_brake_decel(
+                handle=station_target.handle_notch,
+                speed_mph=ctx.speed_mph,
+                gradient_pct=ctx.grad,
+                accel_ms2=snap.accel_ms2,
+                lever=prep.lever,
+                brake_cyl_bar=ctx.cyl,
+                brake_kind=_brake_kind(snap.train_brake, snap.dyn_brake),
+            )
 
     signal_dist = _signal_distance_m(snap)
     signal_target: Optional[BrakeTargetResult] = None

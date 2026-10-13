@@ -734,6 +734,7 @@ def plan_station_service_brake(
             meters_until_action_m=max(0.0, dist_start),
             apply_now=is_in_apply_zone(dist_start, zone),
             using_learned=using_learned,
+            decel_ms2=decel,
         ))
 
     active = select_station_active_step(

@@ -293,6 +293,14 @@ def test_parked_short_of_platform_is_not_departing_session_014422() -> None:
     assert gate.state == "DEPARTING"
 
 
+def test_parked_at_265m_is_not_departing_session_184137() -> None:
+    """Parado a 265 m del marker, sin puertas: sigue llegada (sesión 184137Z, 2ª parada)."""
+    gate = StationDwellGate()
+    gate.state = "STOPPED"
+    gate.update(speed_mph=0.5, station_dist_m=265.0, doors_telem=False)
+    assert gate.state == "STOPPED"
+
+
 def test_departing_clears_when_next_stop_distance_drops_session_20261003() -> None:
     """Salida en línea a ~18 mph lejos del andén: DEPARTING no debe bloquear P1 en dwell.
 

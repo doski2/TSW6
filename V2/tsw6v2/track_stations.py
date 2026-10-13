@@ -77,6 +77,7 @@ def _track_marker_entry(item: dict[str, Any]) -> Optional[dict[str, Any]]:
     entry: dict[str, Any] = {
         "name": name,
         "distance_m": round(dist_m, 1),
+        "raw_distance_cm": float(item["distanceToStationCM"]),
         "scheduled": True,
     }
     if plat_m is not None and plat_m > 0:

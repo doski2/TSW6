@@ -542,7 +542,7 @@ del 323.
 | Señales / C1                        | F7                                    | L0.4b                                      | enum UK             | Por país/vehículo                        |
 | **Aire y manómetros**               | F5 × N + Shift+F5                     | **L0.6g**                                  | cilindro vía gauge₁ | **Repetir** — ver § L0.6g                |
 | **Confort accel/decel (blueprint)** | Export HTTP DrivableActor / Formation | **L0.6h**                                  | no barrido 323      | **Repetir** — `MaxComfortable*` por tren |
-| **Tracción Simulation**            | F5 + Shift+F5 (MC en potencia)        | **L0.6d**                                  | HTTP +651 N; Lua ∅  | **Repetir** — `simulation_traction`      |
+| **Tracción Simulation**             | F5 + Shift+F5 (MC en potencia)        | **L0.6d**                                  | HTTP +651 N; Lua ∅  | **Repetir** — `simulation_traction`      |
 
 `vehicle_class` en `session.json` + `notas_sesion.md`. Analizar amperímetro:
 `summarize_hud_amps.py <session>`. Freight / diesel: priorizar F6 (layout split), F5 (RPM, brakes),
@@ -736,7 +736,9 @@ es la API del instrumento de cabina; la 323 no alimenta esa aguja. El esfuerzo r
 | M3a HTTP `Axle_1_1/Axle.NetTractiveEffort`          | **≈ −26 N** (dump estático)         | `20261003T152838Z`                                                                               |
 | F5 `lua.simulation_traction` (retest)               | **pendiente** in-game               | ver [M3A § L0.6d](M3A_MTA_HTTP_VS_LUA.md#esfuerzo-tractivo--l06d-http-sí-hud-no-lua-a-revalidar) |
 
-###### Conclusión probe (323):** esfuerzo tractivo = **catálogo HTTP** hasta que F5/Shift+F5 en **M3a
+###### Conclusión probe (323)
+
+**Conclusión probe (323):** esfuerzo tractivo = **catálogo HTTP** hasta que F5/Shift+F5 en **M3a
 
 (o re-323) rellenen `simulation_traction` / `traction_probe`. **No cablear** en GetData sin D2.
 Frenado/tracción en tick 323: `dyn_brake` + `train_brake` + `brake_cyl_bar` + `accel_ms2` (sin

@@ -91,6 +91,7 @@ def target_from_stop_plan(
         dist_start=step.dist_start,
         apply_now=True,
         detail=detail,
+        plan_decel_ms2=step.decel_ms2,
     )
 
 

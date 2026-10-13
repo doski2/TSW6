@@ -1,7 +1,8 @@
 # Canal de control — histórico (archivado)
 
-> **No actualizar.** Documento de sesiones y fases A–C (2026-08).  
-> **Contrato v2 vigente:** [docs/CANAL_CONTROL.md](../../docs/CANAL_CONTROL.md) · plan: [PLAN_V2.md](../../docs/v2/PLAN_V2.md).
+> **No actualizar.** Documento de sesiones y fases A–C (2026-08).
+> **Contrato v2 vigente:** [docs/CANAL_CONTROL.md](../../docs/CANAL_CONTROL.md) · plan:
+> [PLAN_V2.md](../../docs/v2/PLAN_V2.md).
 
 ---
 
@@ -9,7 +10,8 @@
 
 **Última revisión:** 2026-08-28 — **A acordado** (A1 código; medir work); hitch carga OK; B.8 canal
 PASS
-**Relacionado:** [FLUJO_FRENOS.md](../../docs/v1/FLUJO_FRENOS.md) · [ESTADO.md](../../docs/v1/ESTADO.md) ·
+**Relacionado:** [FLUJO_FRENOS.md](../../docs/v1/FLUJO_FRENOS.md) ·
+[ESTADO.md](../../docs/v1/ESTADO.md) ·
 [ARQUITECTURA.md](../../docs/v1/ARQUITECTURA.md) · `tsw6/telemetry/channel_diagnostics.py` ·
 `install_ue4ss_probe.bat`
 
@@ -20,12 +22,12 @@ PASS
 El mod `mods/TelemetryProbeMod/Scripts/main.lua` **no llama a HTTP**. Usa la carpeta
 `%TEMP%\TSW6Bridge\` como **puente** entre Python (autopilot) y el juego (UE4SS):
 
-| Archivo | Quién escribe | Quién lee | Contenido |
-| --- | --- | --- | --- |
-| `GetData.txt` | **Lua** (~20 Hz) | **Python** | Telemetría (`speed_ms`, `lever_notch`, …) — **overwrite** mismo fichero cada ciclo (`io.open` modo `"w"`) |
-| `SendCommand.txt` | **Python** | **Lua** | Línea de mando (`PowerBrakeHandle:0.3750:42`) |
-| `TSW6ApplyCommands.flag` | **Python** | **Lua** | “Hay mandos armados” (evita órdenes huérfanas) |
-| `SendCommandAck.txt` | **Lua** | **Python** | Resultado (`PowerBrakeHandle:0.3750:ok:42` o `:fail:`) |
+| Archivo                  | Quién escribe    | Quién lee  | Contenido                                                                                                 |
+| ------------------------ | ---------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `GetData.txt`            | **Lua** (~20 Hz) | **Python** | Telemetría (`speed_ms`, `lever_notch`, …) — **overwrite** mismo fichero cada ciclo (`io.open` modo `"w"`) |
+| `SendCommand.txt`        | **Python**       | **Lua**    | Línea de mando (`PowerBrakeHandle:0.3750:42`)                                                             |
+| `TSW6ApplyCommands.flag` | **Python**       | **Lua**    | “Hay mandos armados” (evita órdenes huérfanas)                                                            |
+| `SendCommandAck.txt`     | **Lua**          | **Python** | Resultado (`PowerBrakeHandle:0.3750:ok:42` o `:fail:`)                                                    |
 
 **Lua no escribe los mandos en el puente** — los **recibe**, los aplica en el motor UE
 (`SetCurrentOutputValue` en `PowerBrakeHandle`) y devuelve ACK. Esa es la idea del canal IPC.
@@ -42,7 +44,8 @@ No hay sockets, URLs, `PATCH`, ni cliente HTTP **en el Lua**.
 
 **Nombres de mando:** no se descubren en el tick. Catálogo y **ruta de perfiles** (copia Desktop +
 GitHub)
-en [DRIVERINPUT_API.md](../../docs/reference/DRIVERINPUT_API.md). F9 = dump opcional. Tick: hijo `PowerBrakeHandle` del
+en [DRIVERINPUT_API.md](../../docs/reference/DRIVERINPUT_API.md). F9 = dump opcional. Tick: hijo
+`PowerBrakeHandle` del
 drivable.
 
 ---
@@ -54,13 +57,13 @@ Para seguir en Cursor: bloque **acordado** (A; B si el canal limita). Medidas:
 
 ### Hechos (no opinables)
 
-| Capa | Qué sale | Conclusión |
-| --- | --- | --- |
-| Lua `collect_sample` | `avg_ms ≈ 1` @ ~17 Hz | El probe **ya es liviano** |
-| seq 1→2 ~2,7 s | `writes=1`, `avg_ms` sigue ~1 | **ReceiveTick parado**; primer `GetDriverAidData` nativo. Ningún rewrite TS/C++ lo quita |
-| Autopilot tick | ~30 ms work + ~24 ms sleep @ 20 Hz | ~**56 % de un núcleo** del hilo de control; el presupuesto es 50 ms y **se cumple** |
-| `telem_poll` ~16 Hz vs `loop_hz` ~20 | Python lee más a menudo que Lua escribe | Espera a `GetData.txt`, no “Python lento” |
-| GUI tkinter | Fuera de `work=` | Otro hilo; no confundir con el tick |
+| Capa                                 | Qué sale                                | Conclusión                                                                               |
+| ------------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Lua `collect_sample`                 | `avg_ms ≈ 1` @ ~17 Hz                   | El probe **ya es liviano**                                                               |
+| seq 1→2 ~2,7 s                       | `writes=1`, `avg_ms` sigue ~1           | **ReceiveTick parado**; primer `GetDriverAidData` nativo. Ningún rewrite TS/C++ lo quita |
+| Autopilot tick                       | ~30 ms work + ~24 ms sleep @ 20 Hz      | ~**56 % de un núcleo** del hilo de control; el presupuesto es 50 ms y **se cumple**      |
+| `telem_poll` ~16 Hz vs `loop_hz` ~20 | Python lee más a menudo que Lua escribe | Espera a `GetData.txt`, no “Python lento”                                                |
+| GUI tkinter                          | Fuera de `work=`                        | Otro hilo; no confundir con el tick                                                      |
 
 ### Qué no hacer (propuesta)
 
@@ -73,12 +76,12 @@ Para seguir en Cursor: bloque **acordado** (A; B si el canal limita). Medidas:
 
 ### Opciones (para debatir)
 
-| ID | Idea | Gana | Cuesta | Riesgo |
-| --- | --- | --- | --- | --- |
-| **A** | Pulir tick Python (menos log, planning HTTP fuera del 20 Hz, leer GetData sin reabrir) | Días; `work` puede bajar de ~30 ms | Poco | Bajo |
-| **B** | Memoria compartida / pipe (Lua escribe struct binario; Python o Rust mínimo lee) | Latencia disco; Hz más estable | Semanas; Windows `CreateFileMapping` + versión de struct | Medio (sync, seq) |
-| **C** | Núcleo tick en **Rust o C++** (parse + notch + SendCommand); GUI/learner en Python | CPU del decider | Reimplementar contrato IPC; tests | Alto si se mueve P1 |
-| **D** | TypeScript | — | Stack nuevo | Alto, sin ganancia de canal |
+| ID    | Idea                                                                                   | Gana                               | Cuesta                                                   | Riesgo                      |
+| ----- | -------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------- | --------------------------- |
+| **A** | Pulir tick Python (menos log, planning HTTP fuera del 20 Hz, leer GetData sin reabrir) | Días; `work` puede bajar de ~30 ms | Poco                                                     | Bajo                        |
+| **B** | Memoria compartida / pipe (Lua escribe struct binario; Python o Rust mínimo lee)       | Latencia disco; Hz más estable     | Semanas; Windows `CreateFileMapping` + versión de struct | Medio (sync, seq)           |
+| **C** | Núcleo tick en **Rust o C++** (parse + notch + SendCommand); GUI/learner en Python     | CPU del decider                    | Reimplementar contrato IPC; tests                        | Alto si se mueve P1         |
+| **D** | TypeScript                                                                             | —                                  | Stack nuevo                                              | Alto, sin ganancia de canal |
 
 **Recomendación acordada (2026-08-28):** **A ahora** (estabilidad ~20 Hz). **B** solo si tras A el
 cuello es el fichero. **C** si B no basta. **D** no.
@@ -125,10 +128,10 @@ cae al load, no en marcha. No hay ticket de “arreglar hitch con C++”.
 `work` = tiempo de **un** `tick()` Python **sin** el `sleep` hasta el siguiente ciclo. Presupuesto
 50 ms @ 20 Hz:
 
-| Si `work` es… | Margen `sleep` | Qué duele |
-| --- | --- | --- |
-| ~30 ms (hoy) | ~20 ms | Un log extra o HTTP en el tick te come el margen |
-| 15–20 ms (objetivo A) | 30–35 ms | El hilo va holgado; **CPU del decider ya no es el problema** |
+| Si `work` es…         | Margen `sleep` | Qué duele                                                    |
+| --------------------- | -------------- | ------------------------------------------------------------ |
+| ~30 ms (hoy)          | ~20 ms         | Un log extra o HTTP en el tick te come el margen             |
+| 15–20 ms (objetivo A) | 30–35 ms       | El hilo va holgado; **CPU del decider ya no es el problema** |
 
 **Opción A** = hacer ese `tick` más barato (menos log, no reabrir fichero, HTTP/planning fuera del
 20 Hz). Sigues con `GetData.txt`.
@@ -156,11 +159,11 @@ solo si el cuello es el **canal**, no el **decider**.
 Este bloque (**V2**) es **cómo viaja** lo que **ya** está en `GetData.txt` (velocidad, 1 límite,
 palanca) y **a qué ritmo** corre el tick. No es “más datos de vía”.
 
-| Tema | Qué es | Dónde vive | Por qué no es canal v2 |
-| --- | --- | --- | --- |
-| **Lim2** | 2.º cambio de velocidad (no el cartel que ya frena P1) | HTTP `nextSpeedLimits[]`; Lua no lee el TArray en tick (hitch) | Hace falta **otro campo** y una regla P1; un pipe más rápido no inventa el 2.º float |
-| **C1 señales** | Distancia + aspecto DANGER → `evaluate_signal_brake` (hoy stub) | DriverAid HTTP; probe aún no | Cablear telemetría nueva a `TrainState` |
-| **C2 GPS andén** | Distancia fina al tablón (P1) | HTTP markers / HUD; OCR **no** en FSM | Coordinador P1, no Hz del puente |
+| Tema             | Qué es                                                          | Dónde vive                                                     | Por qué no es canal v2                                                               |
+| ---------------- | --------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Lim2**         | 2.º cambio de velocidad (no el cartel que ya frena P1)          | HTTP `nextSpeedLimits[]`; Lua no lee el TArray en tick (hitch) | Hace falta **otro campo** y una regla P1; un pipe más rápido no inventa el 2.º float |
+| **C1 señales**   | Distancia + aspecto DANGER → `evaluate_signal_brake` (hoy stub) | DriverAid HTTP; probe aún no                                   | Cablear telemetría nueva a `TrainState`                                              |
+| **C2 GPS andén** | Distancia fina al tablón (P1)                                   | HTTP markers / HUD; OCR **no** en FSM                          | Coordinador P1, no Hz del puente                                                     |
 
 Cadena de producto: **E1** (validar frenado v2 in-game) → **C1** → **C2**. Mezclar lim2/señales en
 SHM retrasaría E1. C4 en ESTADO es el 2.º límite en log, **después**.
@@ -171,13 +174,13 @@ Contrato a congelar si un día hay B: mismos campos que hoy (`seq`, `speed_ms`, 
 ```text
 ```
 
-| Concepto | Lua (probe) | HTTP API (Python) |
-| --- | --- | --- |
-| Transporte | Ficheros en `%TEMP%\TSW6Bridge\` | `PATCH /set/...` en `:31270` |
-| Quién escribe mandos al tren | **Lua** (tras leer `SendCommand.txt`) | **Python** vía HTTP PATCH si IPC falla |
-| Ruta `DriverInput/PowerBrakeHandle` | **No existe** como llamada HTTP | Namespace virtual del catálogo HTTP |
-| Búsqueda en Lua | `try_child(actor, "PowerBrakeHandle")`, `FindAllOf(IrregularLeverComponent)`, etc. | N/A |
-| Escala del mando en línea IPC | `cmd` 0..1 (`muesca/8`) en `SendCommand.txt` | HTTP palanca **no** es el canal de producción |
+| Concepto                            | Lua (probe)                                                                        | HTTP API (Python)                             |
+| ----------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------- |
+| Transporte                          | Ficheros en `%TEMP%\TSW6Bridge\`                                                   | `PATCH /set/...` en `:31270`                  |
+| Quién escribe mandos al tren        | **Lua** (tras leer `SendCommand.txt`)                                              | **Python** vía HTTP PATCH si IPC falla        |
+| Ruta `DriverInput/PowerBrakeHandle` | **No existe** como llamada HTTP                                                    | Namespace virtual del catálogo HTTP           |
+| Búsqueda en Lua                     | `try_child(actor, "PowerBrakeHandle")`, `FindAllOf(IrregularLeverComponent)`, etc. | N/A                                           |
+| Escala del mando en línea IPC       | `cmd` 0..1 (`muesca/8`) en `SendCommand.txt`                                       | HTTP palanca **no** es el canal de producción |
 
 **Importante:** `cmd=0.375` en log Lua es la línea IPC (destino muesca 3), no HTTP.
 Lua da **un paso** de HUD hacia ese destino y escribe **salida** `muesca − 4` (no el eje
@@ -185,27 +188,27 @@ InputValue).
 
 ### Class 323 (UK) — IPC **validado** 2026-08-27 17:13
 
-| Dato | Valor |
-| --- | --- |
-| Estado | ✅ HUD y tren responden; `last_ack_ok=1`; un paso por IPC |
-| Build probe | `20260828a` |
-| Objeto UE | `…PowerBrakeHandle` (`IrregularLeverComponent`) |
-| UFunction | `SetCurrentOutputValue` (escala potencia **−4…+4** = `muesca − 4`) |
+| Dato                   | Valor                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| Estado                 | ✅ HUD y tren responden; `last_ack_ok=1`; un paso por IPC                      |
+| Build probe            | `20260828a`                                                                    |
+| Objeto UE              | `…PowerBrakeHandle` (`IrregularLeverComponent`)                                |
+| UFunction              | `SetCurrentOutputValue` (escala potencia **−4…+4** = `muesca − 4`)             |
 | `Notches` (InputValue) | 9 detentes irregulares −1…1 (tabla abajo); **no** usar este eje en OutputValue |
-| Contrato | Python manda destino 0..1; Lua aplica **HUD ± 1**; ACK si el HUD se acerca |
-| Fallback | Teclado A/D si ACK fail — **sin** PATCH HTTP de palanca |
+| Contrato               | Python manda destino 0..1; Lua aplica **HUD ± 1**; ACK si el HUD se acerca     |
+| Fallback               | Teclado A/D si ACK fail — **sin** PATCH HTTP de palanca                        |
 
 | HUD | Palanca | InputValue (`Notches`) | Output (`SetCurrentOutputValue`) |
-| --- | --- | --- | --- |
-| 0 | B4 | −1.00 | −4 |
-| 1 | B3 | −0.60 | −3 |
-| 2 | B2 | −0.40 | −2 |
-| 3 | B1 | −0.20 | −1 |
-| 4 | costa | 0.00 | 0 |
-| 5 | P1 | 0.25 | +1 |
-| 6 | P2 | 0.50 | +2 |
-| 7 | P3 | 0.75 | +3 |
-| 8 | P4 | 1.00 | +4 |
+| --- | ------- | ---------------------- | -------------------------------- |
+| 0   | B4      | −1.00                  | −4                               |
+| 1   | B3      | −0.60                  | −3                               |
+| 2   | B2      | −0.40                  | −2                               |
+| 3   | B1      | −0.20                  | −1                               |
+| 4   | costa   | 0.00                   | 0                                |
+| 5   | P1      | 0.25                   | +1                               |
+| 6   | P2      | 0.50                   | +2                               |
+| 7   | P3      | 0.75                   | +3                               |
+| 8   | P4      | 1.00                   | +4                               |
 
 **No mezclar escalas:** `SetCurrentOutputValue(0.25)` (eje P1) se interpreta como potencia ≈ 0 →
 costa. Eso era el salto 6→4.
@@ -246,13 +249,13 @@ Objeto correcto (ya no es un puntero opaco):
 ```text
 ```
 
-| Qué | Resultado |
-| --- | --- |
-| IPC id=1 y id=2 | ✅ `last_cmd_id` sube |
-| `ctrl.InputValue = eje` | ❌ `readback InputValue=nil` — **la propiedad no está en el UClass** |
+| Qué                                                             | Resultado                                                                                            |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| IPC id=1 y id=2                                                 | ✅ `last_cmd_id` sube                                                                                |
+| `ctrl.InputValue = eje`                                         | ❌ `readback InputValue=nil` — **la propiedad no está en el UClass**                                 |
 | `ProcessEvent SetCurrentInputValue` / `SetNormalisedInputValue` | ❌ sin línea `PE … pcall=ok` → `GetFunction`/`ProcessEvent` falló (params mal nombrados) o no aplicó |
-| HUD / `lever_notch` | ❌ sigue en **6** (tracción P2); objetivo era 3 luego 4 |
-| Crash | ✅ no |
+| HUD / `lever_notch`                                             | ❌ sigue en **6** (tracción P2); objetivo era 3 luego 4                                              |
+| Crash                                                           | ✅ no                                                                                                |
 
 Jerarquía y campos relevantes del dump:
 
@@ -304,17 +307,17 @@ sin búsqueda de candidatos ni fallback Simulation en modo SAFE; log `IPC recv` 
 
 Logs: `autopilot_20260827_014810.log` + `UE4SS.log` (23:47–23:49 local).
 
-| Criterio | Resultado |
-| --- | --- |
-| Telemetría probe ~20 Hz | ✅ `frozen=N`, Class 323 en cabina |
-| IPC entrega mandos | ✅ `last_cmd_id` 0→38+; líneas `IPC delegate … → HTTP` en UE4SS |
-| Sin crash UE4SS | ✅ (modo `IPC_DELEGATE_HTTP`, sin `FindAllOf`) |
-| ACK honesto | ✅ `lua_rejected` / `last_ack_ok=0` (delegate intencional) |
-| Fix `http_ok` falso | ✅ `http_ok=0` — ya no cuenta PATCH sin efecto |
-| HTTP fallback | ❌ `api_error msg=Not Set` en cada intento |
-| `lever_notch` / HUD | ❌ fijo en **4** durante toda la fase P1 (objetivo 3→2→1) |
-| `match_hb` | ❌ 0 |
-| `SESIÓN CANAL` | ❌ **FAIL** — `ipc_ok=0 http_ok=0 total_ok=0/46` |
+| Criterio                | Resultado                                                       |
+| ----------------------- | --------------------------------------------------------------- |
+| Telemetría probe ~20 Hz | ✅ `frozen=N`, Class 323 en cabina                              |
+| IPC entrega mandos      | ✅ `last_cmd_id` 0→38+; líneas `IPC delegate … → HTTP` en UE4SS |
+| Sin crash UE4SS         | ✅ (modo `IPC_DELEGATE_HTTP`, sin `FindAllOf`)                  |
+| ACK honesto             | ✅ `lua_rejected` / `last_ack_ok=0` (delegate intencional)      |
+| Fix `http_ok` falso     | ✅ `http_ok=0` — ya no cuenta PATCH sin efecto                  |
+| HTTP fallback           | ❌ `api_error msg=Not Set` en cada intento                      |
+| `lever_notch` / HUD     | ❌ fijo en **4** durante toda la fase P1 (objetivo 3→2→1)       |
+| `match_hb`              | ❌ 0                                                            |
+| `SESIÓN CANAL`          | ❌ **FAIL** — `ipc_ok=0 http_ok=0 total_ok=0/46`                |
 
 **Interpretación:** el canal **sí recibe mandos** (IPC ≠ palanca movida). Lua hace su parte
 (delegate + ACK `:fail:`). Python intenta HTTP y la CommAPI responde `Result: Error` /
@@ -333,13 +336,13 @@ que el autopilot). Si sigue `Not Set`, revisar `MasterKey`, `MCB_TrainBrake` o d
 
 ### Estado sesión 2026-08-27 01:18 (Class 323)
 
-| Criterio | Resultado |
-| --- | --- |
-| Fix ACK optimista | ✅ `lua_rejected` visible en log |
-| HTTP fallback dispara | ✅ pero `lever=4` sin cambio |
+| Criterio              | Resultado                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------- |
+| Fix ACK optimista     | ✅ `lua_rejected` visible en log                                                        |
+| HTTP fallback dispara | ✅ pero `lever=4` sin cambio                                                            |
 | Causa HTTP sin efecto | ❌ PATCH a `PowerBrakeHandle` (ruta corta) — corregido → `DriverInput.PowerBrakeHandle` |
-| `frozen=Y` falso | ❌ usaba dist. al cartel (2495 m fija) — corregido → odómetro/velocidad |
-| `match_hb=0` | ❌ mando no llegó al HUD |
+| `frozen=Y` falso      | ❌ usaba dist. al cartel (2495 m fija) — corregido → odómetro/velocidad                 |
+| `match_hb=0`          | ❌ mando no llegó al HUD                                                                |
 
 **Build `20260827m`:** crash `EXCEPTION_ACCESS_VIOLATION` al llamar `SetCurrentNotchIndex` —
 retirado en `n`.
@@ -356,14 +359,14 @@ Juego murió → telemetría congelada, HTTP `connection_refused`.
 
 ### Estado sesión 2026-08-27 01:11 (Class 323)
 
-| Criterio CANAL_CONTROL | Resultado |
-| --- | --- |
-| Probe ~20 Hz, `lever_notch` lectura | ✅ |
-| IPC entrega mandos (`last_cmd_id` sube) | ✅ |
-| Lua encuentra `IrregularLeverComponent` | ✅ |
-| `ctrl.InputValue = eje` mueve HUD | ❌ `no HUD change` |
-| `last_ack_ok=1` | ❌ 0 % |
-| `SESIÓN CANAL [PASS]` | ❌ FAIL (ipc 2 %, match=N) — **ipc_ok 100 % era falso positivo** (corregido) |
+| Criterio CANAL_CONTROL                  | Resultado                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------- |
+| Probe ~20 Hz, `lever_notch` lectura     | ✅                                                                           |
+| IPC entrega mandos (`last_cmd_id` sube) | ✅                                                                           |
+| Lua encuentra `IrregularLeverComponent` | ✅                                                                           |
+| `ctrl.InputValue = eje` mueve HUD       | ❌ `no HUD change`                                                           |
+| `last_ack_ok=1`                         | ❌ 0 %                                                                       |
+| `SESIÓN CANAL [PASS]`                   | ❌ FAIL (ipc 2 %, match=N) — **ipc_ok 100 % era falso positivo** (corregido) |
 
 **Bloqueo (histórico, sesión 01:11):** `InputValue` no movía el HUD. Resuelto:
 `SetCurrentOutputValue` (build `20260828a`).
@@ -386,12 +389,12 @@ consumir el fichero de mando).
 
 HTTP (`-HTTPAPI`) queda **solo** para planning/estaciones (DriverAid), no para la palanca.
 
-| Capa | Rol | Estado Class 323 |
-| --- | --- | --- |
-| IPC fichero | Bus de mandos + telemetría | ✅ entrega y GetData ~20 Hz |
-| Lua UObject | Palanca Class 323 | ✅ `SetCurrentOutputValue(muesca−4)`; `test-ipc` PASS |
-| Teclado A/D | Fallback si ACK Lua `fail` | ✅ sí mueve la palanca |
-| HTTP CommAPI | **No se usa para mandos** | — |
+| Capa         | Rol                        | Estado Class 323                                      |
+| ------------ | -------------------------- | ----------------------------------------------------- |
+| IPC fichero  | Bus de mandos + telemetría | ✅ entrega y GetData ~20 Hz                           |
+| Lua UObject  | Palanca Class 323          | ✅ `SetCurrentOutputValue(muesca−4)`; `test-ipc` PASS |
+| Teclado A/D  | Fallback si ACK Lua `fail` | ✅ sí mueve la palanca                                |
+| HTTP CommAPI | **No se usa para mandos**  | —                                                     |
 
 **Por qué teclado y no HTTP:** CommAPI responde `Not Set` en el Class 323 y el usuario no quiere
 PATCH de palanca. El teclado usa el mismo camino que el jugador (`IncreaseInputs` / digital). TSW
@@ -414,13 +417,13 @@ Fuente: [UObject](https://docs.ue4ss.com/lua-api/classes/uobject.html),
 [UFunction](https://docs.ue4ss.com/lua-api/classes/ufunction.html), [Creating a Lua
 mod](<https://docs.ue4ss.com/dev/guides/creating-a-lua-mod.html>).
 
-| Mecanismo | Uso correcto | Lo que hicimos mal |
-| --- | --- | --- |
-| Leer/escribir campo | `obj.Prop` / `obj.Prop = x` o `SetPropertyValue` | `InputValue` no existe; `CurrentInputValue` sí pero el tren ignora el espejo |
-| Llamar UFunction | **dos puntos y args posicionales:** `obj:CanJump()`, `obj:SetCurrentInputValue(eje)` | `ProcessEvent(fn, { CurrentInputValue = eje })` no es la API Lua |
-| UFunction sin contexto | `fn(objeto, args…)` si se obtuvo con `StaticFindObject` | — |
-| Hilo | `ExecuteInGameThread` (o ya estar en `ReceiveTick`) | El probe ya corre en el hook del tick |
-| Out-params | pasar `{}` y leer `t.NombreParam` ([issue #368](https://github.com/UE4SS-RE/RE-UE4SS/issues/368)) | — |
+| Mecanismo              | Uso correcto                                                                                      | Lo que hicimos mal                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Leer/escribir campo    | `obj.Prop` / `obj.Prop = x` o `SetPropertyValue`                                                  | `InputValue` no existe; `CurrentInputValue` sí pero el tren ignora el espejo |
+| Llamar UFunction       | **dos puntos y args posicionales:** `obj:CanJump()`, `obj:SetCurrentInputValue(eje)`              | `ProcessEvent(fn, { CurrentInputValue = eje })` no es la API Lua             |
+| UFunction sin contexto | `fn(objeto, args…)` si se obtuvo con `StaticFindObject`                                           | —                                                                            |
+| Hilo                   | `ExecuteInGameThread` (o ya estar en `ReceiveTick`)                                               | El probe ya corre en el hook del tick                                        |
+| Out-params             | pasar `{}` y leer `t.NombreParam` ([issue #368](https://github.com/UE4SS-RE/RE-UE4SS/issues/368)) | —                                                                            |
 
 Build `s` llama `SetCurrentInputValue(eje)`, `SetNormalisedInputValue(0..1)`,
 `SetPositionDeltaAnalogue(delta)` y un paso `BeginDecreaseDigital`/`BeginIncreaseDigital`. Dump
@@ -434,17 +437,17 @@ probar Lua hace falta `test-ipc` o autopilot con probe armado.
 
 ### Meta a medio plazo (Lua puro, sin crash)
 
-| Enfoque | Estado | Notas |
-| --- | --- | --- |
-| `ctrl.InputValue = eje` | ❌ no existe en UClass | Nombre CommAPI |
-| `SetCurrentNotchIndex` / `SetInputValue()` / `ConditionalBeginTick` | ❌ crash | No reactivar |
-| `CurrentInputValue` assign | 🟡 `q` | Se pega; HUD no |
-| `TargetInputValue` assign | ⬜ `r` | En `q` no se llegó (ACK falso) |
-| `ProcessEvent(fn, {Nombre=val})` | ❌ no es la API Lua | Docs: no hay ese contrato |
-| `obj:UFunction(args)` / `CallFunction` | 🟡 build `s` | [UObject Lua API](https://docs.ue4ss.com/lua-api/classes/uobject.html) |
-| `BeginIncreaseDigital` / `BeginDecreaseDigital` | 🟡 build `s` | Un paso; equivalente A/D |
-| HTTP palanca | ❌ fuera | No PATCH de mandos |
-| Teclado A/D | ✅ | Fallback |
+| Enfoque                                                             | Estado                 | Notas                                                                  |
+| ------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------- |
+| `ctrl.InputValue = eje`                                             | ❌ no existe en UClass | Nombre CommAPI                                                         |
+| `SetCurrentNotchIndex` / `SetInputValue()` / `ConditionalBeginTick` | ❌ crash               | No reactivar                                                           |
+| `CurrentInputValue` assign                                          | 🟡 `q`                 | Se pega; HUD no                                                        |
+| `TargetInputValue` assign                                           | ⬜ `r`                 | En `q` no se llegó (ACK falso)                                         |
+| `ProcessEvent(fn, {Nombre=val})`                                    | ❌ no es la API Lua    | Docs: no hay ese contrato                                              |
+| `obj:UFunction(args)` / `CallFunction`                              | 🟡 build `s`           | [UObject Lua API](https://docs.ue4ss.com/lua-api/classes/uobject.html) |
+| `BeginIncreaseDigital` / `BeginDecreaseDigital`                     | 🟡 build `s`           | Un paso; equivalente A/D                                               |
+| HTTP palanca                                                        | ❌ fuera               | No PATCH de mandos                                                     |
+| Teclado A/D                                                         | ✅                     | Fallback                                                               |
 
 ### Cómo validar el próximo intento
 
@@ -458,26 +461,26 @@ probar Lua hace falta `test-ipc` o autopilot con probe armado.
 ```text
 ```
 
-| Señal | Interpretación |
-| --- | --- |
-| `KEY` + `match=Y` | P1 vía teclado; TSW en primer plano |
+| Señal                                   | Interpretación                                |
+| --------------------------------------- | --------------------------------------------- |
+| `KEY` + `match=Y`                       | P1 vía teclado; TSW en primer plano           |
 | `PBH readback` cambia pero `hud=` igual | UObject escrito pero simulación no enganchada |
-| Solo `WARN ... no HUD change` | Lua no actúa; debe seguir teclado, no HTTP |
-| Crash tras quitar `SAFE_LEVER_WRITE` | Volver a modo seguro |
+| Solo `WARN ... no HUD change`           | Lua no actúa; debe seguir teclado, no HTTP    |
+| Crash tras quitar `SAFE_LEVER_WRITE`    | Volver a modo seguro                          |
 
 ### Criterios B.8 (sesión P1 Class 323)
 
 P1 es `ipc_only`: si Lua falla no hay A/D en esa rama (`p1rej`). `test-ipc` no sustituye esta
 sesión.
 
-| Criterio | Umbral |
-| --- | --- |
-| `loop_hz` / `telem_poll` | ≥ 18 / ≥ 15 Hz |
-| `ipc_ok` | ≥ 95 % |
-| `KEY` en P1 | 0 (WARN si `KEY>0` en acciones no-P1) |
-| `p1rej` | 0 |
-| `lever_notch` | ±1 muesca en &lt; 1 s tras cada IPC |
-| Actuador | `last_ack_ok=1` Lua; teclado solo fuera de P1 o ACK fail; nunca HTTP palanca |
+| Criterio                 | Umbral                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `loop_hz` / `telem_poll` | ≥ 18 / ≥ 15 Hz                                                               |
+| `ipc_ok`                 | ≥ 95 %                                                                       |
+| `KEY` en P1              | 0 (WARN si `KEY>0` en acciones no-P1)                                        |
+| `p1rej`                  | 0                                                                            |
+| `lever_notch`            | ±1 muesca en &lt; 1 s tras cada IPC                                          |
+| Actuador                 | `last_ack_ok=1` Lua; teclado solo fuera de P1 o ACK fail; nunca HTTP palanca |
 
 ---
 
@@ -493,29 +496,29 @@ distinta en `CONTROL_ALIASES` — sin mezclar HTTP en el Lua.
 
 ## Diagnóstico (resumen)
 
-| Síntoma en log | Causa real |
-| --- | --- |
-| `hz=427` en heartbeat | **No** es frecuencia del bucle — es `1/mean(tick_work)` |
-| `tgt=10Hz` | Objetivo real del bucle Python (GUI usa 20 Hz tras Fase A) |
-| `tick=2787ms` | Bucle **bloqueado** esperando ACK IPC síncrono |
+| Síntoma en log                | Causa real                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `hz=427` en heartbeat         | **No** es frecuencia del bucle — es `1/mean(tick_work)`                      |
+| `tgt=10Hz`                    | Objetivo real del bucle Python (GUI usa 20 Hz tras Fase A)                   |
+| `tick=2787ms`                 | Bucle **bloqueado** esperando ACK IPC síncrono                               |
 | `IPC falló` + `KEY notch 4→3` | Teclado incremental — **esperar** `lever_notch` en GetData entre pulsaciones |
-| `age=10s` `seq` congelado | Bucle colapsado; telemetría no se lee |
-| `ipc=OK` en cycle | Significa “encoló mando”, no que la palanca se movió |
-| `IPC ok id=N` en log | ACK Lua `ok` — verificar `match=` / `lever` (no hay fallback HTTP de mandos) |
-| `handle_notch` | Derivado de HUD Power; usar `lever_notch` para palanca real |
-| `cf=N` pero `match=Y` | ACK IPC falló o tardó; palanca sí llegó vía GetData |
-| `ack_timeout` al 100 % | Mod no cargado, ACK no leído a tiempo, o timeout &lt; latencia real |
+| `age=10s` `seq` congelado     | Bucle colapsado; telemetría no se lee                                        |
+| `ipc=OK` en cycle             | Significa “encoló mando”, no que la palanca se movió                         |
+| `IPC ok id=N` en log          | ACK Lua `ok` — verificar `match=` / `lever` (no hay fallback HTTP de mandos) |
+| `handle_notch`                | Derivado de HUD Power; usar `lever_notch` para palanca real                  |
+| `cf=N` pero `match=Y`         | ACK IPC falló o tardó; palanca sí llegó vía GetData                          |
+| `ack_timeout` al 100 %        | Mod no cargado, ACK no leído a tiempo, o timeout &lt; latencia real          |
 
 ---
 
 ## Fase 0 — Instrumentación (hecho)
 
-| ID | Tarea | Estado |
-| --- | --- | --- |
-| 0.1 | Métricas canal en log autopilot (`channel_diagnostics.py`) | ✅ |
-| 0.2 | Penalización IPC 300 s → 5 s + reintentos | ✅ |
-| 0.3 | Heartbeat honesto: `loop_hz`, `work_ms`, `sleep_ms` | ✅ |
-| 0.4 | Documento de fases (este archivo) | ✅ |
+| ID  | Tarea                                                      | Estado |
+| --- | ---------------------------------------------------------- | ------ |
+| 0.1 | Métricas canal en log autopilot (`channel_diagnostics.py`) | ✅     |
+| 0.2 | Penalización IPC 300 s → 5 s + reintentos                  | ✅     |
+| 0.3 | Heartbeat honesto: `loop_hz`, `work_ms`, `sleep_ms`        | ✅     |
+| 0.4 | Documento de fases (este archivo)                          | ✅     |
 
 **Criterio de aceptación Fase 0:** una sesión de autopilot con veredicto `canal [PASS]` o
 `SESIÓN CANAL … [PASS]`: p95 ACK &lt; 200 ms, &gt; 95 % IPC OK, `KEY=0` en P1,
@@ -530,33 +533,33 @@ Separar **lectura**, **escritura** y **decisión** en ritmos distintos.
 ```text
 ```
 
-| ID | Tarea | Estado |
-| --- | --- | --- |
-| A.1 | `TelemetryReader` — hilo 20 Hz | ✅ |
-| A.2 | `AsyncCommandWriter` — cola IPC | ✅ |
-| A.3 | Integrar en `TswTelemetrySource` | ✅ |
-| A.4 | `HandleController` encola mandos | ✅ |
-| A.5 | Heartbeat: `loop_hz` `work_ms` `sleep_ms` `cmd_q` | ✅ |
-| A.6 | Lua: `lever_notch` + `last_cmd_id` | ✅ |
-| A.7 | Parser probe: priorizar `lever_notch` | ✅ |
-| A.8 | Tests `test_control_channel.py` | ✅ |
-| A.9 | `loop_hz=20` alineado con Lua | ✅ |
+| ID  | Tarea                                             | Estado |
+| --- | ------------------------------------------------- | ------ |
+| A.1 | `TelemetryReader` — hilo 20 Hz                    | ✅     |
+| A.2 | `AsyncCommandWriter` — cola IPC                   | ✅     |
+| A.3 | Integrar en `TswTelemetrySource`                  | ✅     |
+| A.4 | `HandleController` encola mandos                  | ✅     |
+| A.5 | Heartbeat: `loop_hz` `work_ms` `sleep_ms` `cmd_q` | ✅     |
+| A.6 | Lua: `lever_notch` + `last_cmd_id`                | ✅     |
+| A.7 | Parser probe: priorizar `lever_notch`             | ✅     |
+| A.8 | Tests `test_control_channel.py`                   | ✅     |
+| A.9 | `loop_hz=20` alineado con Lua                     | ✅     |
 
 ---
 
 ## Fase B — IPC robusto (hecho)
 
-| ID | Tarea | Estado |
-| --- | --- | --- |
-| B.1 | `adaptive_ack_timeout_s()` — 2–4 frames + p95 | ✅ |
-| B.2 | ACK `path:value:ok:cmd_id` + correlación GetData | ✅ |
-| B.3 | P1 sin fallback teclado (`ipc_only=True`) | ✅ |
-| B.4 | Reintento en cola (3×, sin penalizar canal) | ✅ |
-| B.5 | (Opcional) socket/pipe en lugar de archivos | ⏸ no bloquea P1 ni Fase C |
-| B.6 | HTTP fallback palanca | ❌ retirado a propósito (teclado si IPC fail) |
-| B.7 | Write UE4SS Class 323 `SetCurrentOutputValue` | ✅ 2026-08-27 17:13 |
-| B.8 | Canal: `ipc_ok` alto, `KEY≈0`, HUD = 1 paso IPC | ✅ 2026-08-27 19:23 (`ipc_ok=5/5`, `KEY=0`, ACK 13–37 ms) |
-| B.8b | P1: plan coherente y palanca a costa en andén | ❌ palanca se queda en B1 (`notch=3`); ver Fase C |
+| ID   | Tarea                                            | Estado                                                    |
+| ---- | ------------------------------------------------ | --------------------------------------------------------- |
+| B.1  | `adaptive_ack_timeout_s()` — 2–4 frames + p95    | ✅                                                        |
+| B.2  | ACK `path:value:ok:cmd_id` + correlación GetData | ✅                                                        |
+| B.3  | P1 sin fallback teclado (`ipc_only=True`)        | ✅                                                        |
+| B.4  | Reintento en cola (3×, sin penalizar canal)      | ✅                                                        |
+| B.5  | (Opcional) socket/pipe en lugar de archivos      | ⏸ no bloquea P1 ni Fase C                                 |
+| B.6  | HTTP fallback palanca                            | ❌ retirado a propósito (teclado si IPC fail)             |
+| B.7  | Write UE4SS Class 323 `SetCurrentOutputValue`    | ✅ 2026-08-27 17:13                                       |
+| B.8  | Canal: `ipc_ok` alto, `KEY≈0`, HUD = 1 paso IPC  | ✅ 2026-08-27 19:23 (`ipc_ok=5/5`, `KEY=0`, ACK 13–37 ms) |
+| B.8b | P1: plan coherente y palanca a costa en andén    | ❌ palanca se queda en B1 (`notch=3`); ver Fase C         |
 
 ---
 
@@ -571,12 +574,12 @@ Cada IPC es **HUD ± 1**. El plan que pide B2 desde P2 necesita varios ciclos; `
 
 Four Oaks, Class 323, probe `20260828a`.
 
-| Fuente | En el log | ¿Fiable? |
-| --- | --- | --- |
-| Estación `parada=Four Oaks@2591m` → `@101m` | HTTP + odometría Python | Sí — baja con `spd` |
-| Plan STATION `p1d=715m` → `600m` | Misma estación | Sí |
+| Fuente                                          | En el log                                           | ¿Fiable?                                      |
+| ----------------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| Estación `parada=Four Oaks@2591m` → `@101m`     | HTTP + odometría Python                             | Sí — baja con `spd`                           |
+| Plan STATION `p1d=715m` → `600m`                | Misma estación                                      | Sí                                            |
 | Cartel `next_lim=55@2495.8m` / `probe Δdist=+0` | DriverAid cm (Lua hold + Python sin odo de límites) | **No** — fijo ~2 min; heartbeat `dist=1.6 mi` |
-| `gap=` | `estación − cartel` | Basura (−2 km) porque el cartel no avanza |
+| `gap=`                                          | `estación − cartel`                                 | Basura (−2 km) porque el cartel no avanza     |
 
 Secuencia palanca:
 
@@ -601,17 +604,17 @@ El “no vuelve a 0, se queda en 1” es **B1** (`notch=3`), no P1 de tracción.
 
 Independientes: **C.3a** (metros de cartel) no suelta la palanca; **C.2** sí.
 
-| ID | Tarea | Cómo | Por qué |
-| --- | --- | --- | --- |
-| C.3a | Cartel: odometría si probe plano | ✅ `dist` baja; `probe_raw` sigue 2495.8 m (`20260827_202354`) | Evita SPEED_LIMIT @2496 m fijo |
-| C.2 | No matar P1 con freno puesto | ⚠ + keep P1 si ya activo y `spd≤12` en APPROACHING | Reset @9.9 con handle retrasado |
-| C.2b | RELEASE al cortar P1 | ✅ STOPPED con freno → `RELEASE`; reset con `brake_active` → notch 4 | Andén palanca 0/3 |
-| C.1 | Esperar HUD antes de cambiar fase | Un destino por IPC | Burst B2→B1→RELEASE |
-| C.3b | No B2 al 55 a ~1 km | ✅ horizonte B1: `bd+(reacción)+(zona apply)` | 56 mph @1018 m |
-| C.3c | GUI distancia de límite interpolada | ✅ `Próx. límite` sin `probe` 1.6 mi | Punto 2 |
-| C.3d | No resync cartel al parar | ✅ `spd<0.5` no pisa odo con raw 2495 | Tras Four Oaks |
-| C.5 | FSM STOPPED → DEPARTING | ✅ parado + andén FSM / next_stop saltado / `_we_stopped` &lt;150 m | Punto 3 |
-| C.4 | Watchdog vs cola IPC | No saturar / no pisar APPLY | No saltó |
+| ID   | Tarea                               | Cómo                                                                 | Por qué                         |
+| ---- | ----------------------------------- | -------------------------------------------------------------------- | ------------------------------- |
+| C.3a | Cartel: odometría si probe plano    | ✅ `dist` baja; `probe_raw` sigue 2495.8 m (`20260827_202354`)       | Evita SPEED_LIMIT @2496 m fijo  |
+| C.2  | No matar P1 con freno puesto        | ⚠ + keep P1 si ya activo y `spd≤12` en APPROACHING                  | Reset @9.9 con handle retrasado |
+| C.2b | RELEASE al cortar P1                | ✅ STOPPED con freno → `RELEASE`; reset con `brake_active` → notch 4 | Andén palanca 0/3               |
+| C.1  | Esperar HUD antes de cambiar fase   | Un destino por IPC                                                   | Burst B2→B1→RELEASE             |
+| C.3b | No B2 al 55 a ~1 km                 | ✅ horizonte B1: `bd+(reacción)+(zona apply)`                        | 56 mph @1018 m                  |
+| C.3c | GUI distancia de límite interpolada | ✅ `Próx. límite` sin `probe` 1.6 mi                                 | Punto 2                         |
+| C.3d | No resync cartel al parar           | ✅ `spd<0.5` no pisa odo con raw 2495                                | Tras Four Oaks                  |
+| C.5  | FSM STOPPED → DEPARTING             | ✅ parado + andén FSM / next_stop saltado / `_we_stopped` &lt;150 m  | Punto 3                         |
+| C.4  | Watchdog vs cola IPC                | No saturar / no pisar APPLY                                          | No saltó                        |
 
 No meter freight ni sockets aquí. No reactivar UFunctions crashy. No PATCH palanca HTTP.
 
@@ -645,11 +648,11 @@ cartel **resync 2495.8 m**. Tras puertas, tracción `lever=6` y P1 **SPEED_LIMIT
 
 No hace falta para dar por bueno el canal 323. Sirve a física / learner / logs.
 
-| ID | Tarea | Estado |
-| --- | --- | --- |
-| D.1 | `brake_cyl_bar` fiable en probe (Class 323) | ⏸ |
+| ID  | Tarea                                                           | Estado                                                                                            |
+| --- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| D.1 | `brake_cyl_bar` fiable en probe (Class 323)                     | ⏸                                                                                                 |
 | D.2 | `probe_raw` / `dist_limit` fiable (Lua hold vs DriverAid plano) | ⏸ tras C.3a: si el HUD del juego también queda en 1.6 mi, interpolar; no “arreglar” cm inventados |
-| D.3 | Resumen de sesión al cerrar autopilot | ✅ |
+| D.3 | Resumen de sesión al cerrar autopilot                           | ✅                                                                                                |
 
 ---
 
@@ -693,11 +696,11 @@ Canal **PASS**. Criterio P1 (B.8b) **FAIL** — seguir Fase C, no repetir B.8 de
 
 ### Veredicto automático (`acceptance_verdict`)
 
-| Resultado | Condición |
-| --- | --- |
-| **PASS** | Sin incidencias en criterios abajo |
-| **WARN** | Incidencia menor (p. ej. ack 50–95 %, `ack_p95` &gt; 200 ms, `KEY` &gt; 0) |
-| **FAIL** | `ack_ok` &lt; 50 %, mod Lua sin `lever_notch`/`last_cmd_id`, bucle lento |
+| Resultado | Condición                                                                  |
+| --------- | -------------------------------------------------------------------------- |
+| **PASS**  | Sin incidencias en criterios abajo                                         |
+| **WARN**  | Incidencia menor (p. ej. ack 50–95 %, `ack_p95` &gt; 200 ms, `KEY` &gt; 0) |
+| **FAIL**  | `ack_ok` &lt; 50 %, mod Lua sin `lever_notch`/`last_cmd_id`, bucle lento   |
 
 Criterios evaluados: `work>150ms`, `loop_hz_min<18`, `telem_poll<15Hz`, `mod_lua_viejo`,
 `ack_ok<95%`, `ack_p95>200ms`, `KEY>0`.
@@ -706,29 +709,29 @@ Criterios evaluados: `work>150ms`, `loop_hz_min<18`, `telem_poll<15Hz`, `mod_lua
 
 ## Glosario de campos en log
 
-| Campo | Significado |
-| --- | --- |
-| `loop_hz` | Frecuencia real del bucle (ticks/s en ventana 2 s) |
-| `work_ms` | Tiempo de `tick()` sin sleep |
-| `sleep_ms` | Sleep hasta próximo tick |
-| `telem_poll` | Hz del `TelemetryReader` |
-| `cmd_q` | Mandos en cola + inflight |
-| `id` | Último `cmd_id` enviado |
-| `cf` | `last_cmd_id` en GetData coincide con `id` enviado |
-| `ack` | Último ACK IPC en hilo escritor (ms) |
-| `ret` | Reintentos acumulados en sesión |
-| `err` | Último error IPC (`ack_timeout`, etc.) |
-| `match` | `lever_notch` == objetivo del último mando |
-| `lever` / `hud` | Muesca palanca real vs HUD Power |
-| `P` / `fill` / `lrn` | Presión cilindro, fill-time learner (si hay datos) |
+| Campo                                 | Significado                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `loop_hz`                             | Frecuencia real del bucle (ticks/s en ventana 2 s)                                              |
+| `work_ms`                             | Tiempo de `tick()` sin sleep                                                                    |
+| `sleep_ms`                            | Sleep hasta próximo tick                                                                        |
+| `telem_poll`                          | Hz del `TelemetryReader`                                                                        |
+| `cmd_q`                               | Mandos en cola + inflight                                                                       |
+| `id`                                  | Último `cmd_id` enviado                                                                         |
+| `cf`                                  | `last_cmd_id` en GetData coincide con `id` enviado                                              |
+| `ack`                                 | Último ACK IPC en hilo escritor (ms)                                                            |
+| `ret`                                 | Reintentos acumulados en sesión                                                                 |
+| `err`                                 | Último error IPC (`ack_timeout`, etc.)                                                          |
+| `match`                               | `lever_notch` == objetivo del último mando                                                      |
+| `lever` / `hud`                       | Muesca palanca real vs HUD Power                                                                |
+| `P` / `fill` / `lrn`                  | Presión cilindro, fill-time learner (si hay datos)                                              |
 | `dist` / `probe` / `frozen` / `stale` | Planning interpolado vs cm probe; `frozen` = juego pausado; `stale=Y` = cartel plano + odo C.3a |
-| `canal [PASS]` | Resumen cada 10 s |
-| `SESIÓN CANAL` | Resumen al cerrar — **suficiente para validar Fase A/B** |
-| `IPC ok id=N` | Línea por mando con ACK correcto |
-| `IPC async id=N … falló` | Línea por mando sin ACK tras reintentos |
-| `HTTP fallback OK` | IPC Lua falló; PATCH `InputValue` en Python tuvo éxito |
-| `HTTP mandos falló` | Ni IPC ni HTTP movieron el mando |
-| `http_ok` / `http_fb` | (propuesto) contador en `SESIÓN CANAL` cuando se exponga en métricas |
+| `canal [PASS]`                        | Resumen cada 10 s                                                                               |
+| `SESIÓN CANAL`                        | Resumen al cerrar — **suficiente para validar Fase A/B**                                        |
+| `IPC ok id=N`                         | Línea por mando con ACK correcto                                                                |
+| `IPC async id=N … falló`              | Línea por mando sin ACK tras reintentos                                                         |
+| `HTTP fallback OK`                    | IPC Lua falló; PATCH `InputValue` en Python tuvo éxito                                          |
+| `HTTP mandos falló`                   | Ni IPC ni HTTP movieron el mando                                                                |
+| `http_ok` / `http_fb`                 | (propuesto) contador en `SESIÓN CANAL` cuando se exponga en métricas                            |
 
 ---
 
@@ -738,44 +741,44 @@ Lo que **aún no** está disponible, no es fiable, o no se registra en el log de
 
 ### Telemetría GetData — ausente o poco fiable
 
-| Campo | Estado | Impacto |
-| --- | --- | --- |
-| `brake_cyl_bar` | En mod Lua; a menudo `—` en Class 323 | Learner fill-time, `P=` en heartbeat, filtro “esperando aire” |
-| `last_ack_ok` | Solo en línea `Probe mod:` al arranque | No se repite en heartbeat; diagnóstico ACK Lua vs Python |
-| `handle_notch` | HUD Power derivado | Obsoleto para control; usar `lever_notch` |
-| `probe_dist_limit_m` / `probe_raw` | Puede quedar **fijo** con `frozen=N` (sesión 19:23: 2495.8 m) | C.3a — no usar solo `frozen=` |
-| `distance_next_m` (HTTP) | Poll lento (~1 Hz) | `dist` en heartbeat puede ir retrasado respecto al juego |
+| Campo                              | Estado                                                        | Impacto                                                       |
+| ---------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------- |
+| `brake_cyl_bar`                    | En mod Lua; a menudo `—` en Class 323                         | Learner fill-time, `P=` en heartbeat, filtro “esperando aire” |
+| `last_ack_ok`                      | Solo en línea `Probe mod:` al arranque                        | No se repite en heartbeat; diagnóstico ACK Lua vs Python      |
+| `handle_notch`                     | HUD Power derivado                                            | Obsoleto para control; usar `lever_notch`                     |
+| `probe_dist_limit_m` / `probe_raw` | Puede quedar **fijo** con `frozen=N` (sesión 19:23: 2495.8 m) | C.3a — no usar solo `frozen=`                                 |
+| `distance_next_m` (HTTP)           | Poll lento (~1 Hz)                                            | `dist` en heartbeat puede ir retrasado respecto al juego      |
 
 ### Métricas IPC — no expuestas en resumen canal
 
-| Dato | Estado | Notas |
-| --- | --- | --- |
-| `telem_ms` | No logueado | Tiempo hasta `lever_notch` == objetivo (solo `ack_ms`) |
-| `roundtrip_ms` | No logueado | ACK + confirmación en GetData en un solo número |
-| `telem_cmd_id` vs `id` | Parcial (`cf=Y/N`) | No se imprime `telem_cmd_id` numérico en heartbeat |
-| Latencia por mando (CSV) | Eliminado | Antes `control_latency_probe.py`; ver líneas `IPC ok` / `IPC async` |
-| `ack_timeout_s` adaptativo | Interno en `CommandState` | No visible en log salvo que infieras por `ack_timeout` |
+| Dato                       | Estado                    | Notas                                                               |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------- |
+| `telem_ms`                 | No logueado               | Tiempo hasta `lever_notch` == objetivo (solo `ack_ms`)              |
+| `roundtrip_ms`             | No logueado               | ACK + confirmación en GetData en un solo número                     |
+| `telem_cmd_id` vs `id`     | Parcial (`cf=Y/N`)        | No se imprime `telem_cmd_id` numérico en heartbeat                  |
+| Latencia por mando (CSV)   | Eliminado                 | Antes `control_latency_probe.py`; ver líneas `IPC ok` / `IPC async` |
+| `ack_timeout_s` adaptativo | Interno en `CommandState` | No visible en log salvo que infieras por `ack_timeout`              |
 
 ### Lógica de control — no sincronizada (Fase C)
 
-| Dato / comportamiento | Estado |
-| --- | --- |
-| `reached_notch` bloquea FSM P1 | No — P1 puede avanzar sin esperar palanca |
-| RELEASE STATION | Solo si plan vivo y `spd≤~2`; P1 muere antes (`_p1_should_run`) |
-| `_p1_should_run` @ APPROACHING ≤10 mph | ~~Corta P1 salvo cluster~~ C.2: si `brake_active` P1 sigue |
-| Ventanas `sin_plan_activo` | Siguen con cartel plano / plan caído |
-| Watchdog vs cola IPC saturada | Sin coordinación explícita |
+| Dato / comportamiento                  | Estado                                                          |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `reached_notch` bloquea FSM P1         | No — P1 puede avanzar sin esperar palanca                       |
+| RELEASE STATION                        | Solo si plan vivo y `spd≤~2`; P1 muere antes (`_p1_should_run`) |
+| `_p1_should_run` @ APPROACHING ≤10 mph | ~~Corta P1 salvo cluster~~ C.2: si `brake_active` P1 sigue      |
+| Ventanas `sin_plan_activo`             | Siguen con cartel plano / plan caído                            |
+| Watchdog vs cola IPC saturada          | Sin coordinación explícita                                      |
 
 ### Qué añadir cuando toque cada fase
 
-| Fase | Log / dato nuevo propuesto |
-| --- | --- |
-| C.1 | `p1_wait=notch` / `p1_timeout` en cycle o heartbeat |
-| C.2 | `p1on` sigue Y con `notch<4`; log `P1 RELEASE` al reset; no `P1 reset` @10 mph en freno |
+| Fase | Log / dato nuevo propuesto                                                                  |
+| ---- | ------------------------------------------------------------------------------------------- |
+| C.1  | `p1_wait=notch` / `p1_timeout` en cycle o heartbeat                                         |
+| C.2  | `p1on` sigue Y con `notch<4`; log `P1 RELEASE` al reset; no `P1 reset` @10 mph en freno     |
 | C.3a | `next_lim` baja o `probe_stale=Y` + dist interpolada; `gap` no −2000 m con estación a 600 m |
-| D.1 | `brake_cyl_bar` en heartbeat y flag `mod` sin `falta=brake_cyl_bar` |
-| D.2 | Tras C.3a: deprecar `probe=` o `probe_src=held/odo` |
-| B.5 | No priorizar; archivos bastan a 20 Hz |
+| D.1  | `brake_cyl_bar` en heartbeat y flag `mod` sin `falta=brake_cyl_bar`                         |
+| D.2  | Tras C.3a: deprecar `probe=` o `probe_src=held/odo`                                         |
+| B.5  | No priorizar; archivos bastan a 20 Hz                                                       |
 
 ---
 

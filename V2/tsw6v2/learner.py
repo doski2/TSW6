@@ -18,6 +18,25 @@ from tsw6v2.learner_v1 import EMA_ALPHA, MIN_SAMPLES, V1LearnerData, speed_band_
 REGEN_AMPS_BELOW_A = -1.0
 
 
+
+def _predict_for_kind(learner: "LearnerProfile", brake_kind: str):
+    """Predictor de decel fijado al tipo de freno (`air` | `dyn` | `mixed`)."""
+
+    def _predict(handle_notch: int, speed_mph: float, gradient_pct: float):
+        handle = int(handle_notch)
+        flat = learner._by_notch.get(handle)
+        if flat is not None and flat > 0.05:
+            return float(flat)
+        if brake_kind == "air":
+            v1 = learner._v1
+        else:
+            v1 = learner.__dict__.get("_v1_by_kind", {}).get(brake_kind)
+        if v1 is None:
+            return None
+        return v1.predict_brake_decel_ms2(handle, speed_mph, gradient_pct)
+
+    return _predict
+
 class LearnerProfile:
     """Lookup decel por muesca; vacío = usar fracciones fijas del plan."""
 
@@ -80,12 +99,18 @@ class LearnerProfile:
     def _set_learn_event(self, kind: str, accepted: bool, reason: str) -> None:
         self._learn_event = LearnEvent(kind, accepted, reason)
 
-    def _ensure_v1(self) -> V1LearnerData:
-        if self._v1 is None:
-            self._v1 = V1LearnerData()
-            if self._v1_snapshot is None:
-                self._v1_snapshot = {}
-        return self._v1
+    def _ensure_v1(self, brake_kind: str = "air") -> V1LearnerData:
+        """Perfil v1 del tipo de freno (``air`` = tabla original; ``mixed``/``dyn`` nuevas)."""
+        if brake_kind == "air":
+            if self._v1 is None:
+                self._v1 = V1LearnerData()
+                if self._v1_snapshot is None:
+                    self._v1_snapshot = {}
+            return self._v1
+        tables = self.__dict__.setdefault("_v1_by_kind", {})
+        if brake_kind not in tables:
+            tables[brake_kind] = V1LearnerData()
+        return tables[brake_kind]
 
     def observe_brake_decel(
         self,
@@ -96,6 +121,7 @@ class LearnerProfile:
         accel_ms2: Optional[float],
         lever: int | None = None,
         brake_cyl_bar: float | None = None,
+        brake_kind: str = "air",
         now: float | None = None,
     ) -> bool:
         """Registra ``accel_ms2`` tras ventana estable + filtros de calidad.
@@ -104,7 +130,7 @@ class LearnerProfile:
         """
         if accel_ms2 is None:
             return False
-        if self._electric_brake_now():
+        if brake_kind == "air" and self._electric_brake_now():
             self._set_learn_event("decel", False, "electric")
             return False
         if not brake_decel_sample_ready(
@@ -116,6 +142,7 @@ class LearnerProfile:
             return False
 
         t = time.monotonic() if now is None else now
+        brake_kind = brake_kind or "air"
         ready = self._decel_window.feed(
             t=t,
             handle=handle,
@@ -130,7 +157,7 @@ class LearnerProfile:
             return False
 
         handle_i, measured_norm, avg_speed, _avg_grad = ready
-        v1 = self._ensure_v1()
+        v1 = self._ensure_v1(brake_kind)
         band = speed_band_index(avg_speed)
         band_n = v1.n_bands[band].get(handle_i, 0)
         prior = v1.ema_bands[band].get(handle_i)
@@ -146,6 +173,8 @@ class LearnerProfile:
         if not ok:
             return False
         self._decel_observe_n += 1
+        counts = self.__dict__.setdefault("_decel_n_by_kind", {})
+        counts[brake_kind] = counts.get(brake_kind, 0) + 1
         return True
 
     def observe_mc_brake(
@@ -266,6 +295,12 @@ class LearnerProfile:
         profile = cls(by_notch, air=air, v1=v1, v1_snapshot=snapshot)
         mc_raw = data.get("decel_by_mc") or {}
         profile._by_mc = {int(k): float(v) for k, v in mc_raw.items()}
+        for kind in ("mixed", "dyn"):
+            block = data.get(f"v1_{kind}")
+            if isinstance(block, dict):
+                loaded = V1LearnerData.from_dict(block)
+                if loaded is not None:
+                    profile.__dict__.setdefault("_v1_by_kind", {})[kind] = loaded
         return profile
 
     @classmethod
@@ -288,6 +323,8 @@ class LearnerProfile:
             if self._by_mc:
                 data["decel_by_mc"] = {str(k): v for k, v in self._by_mc.items()}
             data.update(self._air.to_dict())
+            for kind, v1k in self.__dict__.get("_v1_by_kind", {}).items():
+                data[f"v1_{kind}"] = v1k.to_dict()
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             self._v1_snapshot = data
             return
@@ -296,6 +333,8 @@ class LearnerProfile:
             "decel_by_mc": {str(k): v for k, v in self._by_mc.items()},
             **self._air.to_dict(),
         }
+        for kind, v1k in self.__dict__.get("_v1_by_kind", {}).items():
+            data[f"v1_{kind}"] = v1k.to_dict()
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @property

@@ -491,5 +491,40 @@ class TestAgentLoop:
         assert loop.active_learner is explicit
 
 
+class TestNotchStepPending:
+    def test_no_pending_without_state(self, tmp_path: Path) -> None:
+        loop = AgentLoop(getdata_path=tmp_path / "GetData.txt", post_ipc_sleep_s=0.0)
+        loop.request_notch(3)
+        assert loop._notch_step_pending(4) is False
+
+    def test_pending_blocks_resend_while_lever_unchanged(self, tmp_path: Path) -> None:
+        loop = AgentLoop(getdata_path=tmp_path / "GetData.txt", post_ipc_sleep_s=0.0)
+        loop.request_notch(3)
+        loop._pending_notch_step = (3, 4)
+        assert loop._notch_step_pending(4) is True
+
+    def test_pending_cleared_when_lever_changes(self, tmp_path: Path) -> None:
+        loop = AgentLoop(getdata_path=tmp_path / "GetData.txt", post_ipc_sleep_s=0.0)
+        loop.request_notch(3)
+        loop._pending_notch_step = (3, 4)
+        assert loop._notch_step_pending(3) is False
+        assert loop._pending_notch_step is None
+
+    def test_pending_cleared_when_target_changes(self, tmp_path: Path) -> None:
+        loop = AgentLoop(getdata_path=tmp_path / "GetData.txt", post_ipc_sleep_s=0.0)
+        loop.request_notch(2)
+        loop._pending_notch_step = (3, 4)
+        assert loop._notch_step_pending(4) is False
+        assert loop._pending_notch_step is None
+
+    def test_clear_target_drops_pending(self, tmp_path: Path) -> None:
+        loop = AgentLoop(getdata_path=tmp_path / "GetData.txt", post_ipc_sleep_s=0.0)
+        loop.request_notch(3)
+        loop._pending_notch_step = (3, 4)
+        with patch("tsw6v2.loop.purge_lua_commands"):
+            loop.clear_target()
+        assert loop._pending_notch_step is None
+
+
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())

@@ -76,7 +76,7 @@ def test_pressure_for_handle_b1() -> None:
 
 def test_brake_decel_sample_ready() -> None:
     assert brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.65)
-    assert not brake_decel_sample_ready(handle=3, lever=6, brake_cyl_bar=1.65)
+    assert brake_decel_sample_ready(handle=3, lever=6, brake_cyl_bar=1.65)  # palanca no es condición (estación)
     assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=1.2)
     assert not brake_decel_sample_ready(handle=3, lever=3, brake_cyl_bar=None)
 

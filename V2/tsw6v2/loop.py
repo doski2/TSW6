@@ -1,4 +1,4 @@
-"""Bucle agente — un tick: GetData → decisión → (opcional) un paso IPC."""
+"""Bucle agente â€” un tick: GetData â†’ decisiÃ³n â†’ (opcional) un paso IPC."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ _MC_DRIVER_POWER_TAKEOVER = 0.05
 
 
 def agent_snapshot_probe_ok(snap: Optional[AgentSnapshot]) -> bool:
-    """Telemetría coherente (evita capas P1 falsas en GUI/JSONL)."""
+    """TelemetrÃ­a coherente (evita capas P1 falsas en GUI/JSONL)."""
     if snap is None:
         return False
     return probe_identity_ok(snap.seq, snap.vehicle)
@@ -103,6 +103,8 @@ class AgentSnapshot:
     p1_layer: str = ""
     p1_target_kind: str = ""
     station_dist_m: Optional[float] = None
+    raw_station_dist_m: Optional[float] = None
+    planning_rejected_n: int = 0
     station_name: Optional[str] = None
     service_name: Optional[str] = None
     schedule_source: str = ""
@@ -115,9 +117,11 @@ class AgentSnapshot:
     brake_fill_s: Optional[float] = None
     brake_fill_n: Optional[int] = None
     decel_observe_n: Optional[int] = None
+    decel_n_by_kind: Optional[dict] = None
     regen_n: Optional[int] = None
     fb_a_pred_ms2: Optional[float] = None
     fb_a_obs_ms2: Optional[float] = None
+    plan_decel_ms2: Optional[float] = None
     fb_shortfall: bool = False
     fb_escalated: bool = False
     driver_override_s: float = 0.0  # legacy jsonl/GUI; cooldown manual retirado
@@ -148,6 +152,8 @@ class AgentSnapshot:
         p1_layer: str = "",
         p1_target_kind: str = "",
         station_dist_m: Optional[float] = None,
+        raw_station_dist_m: Optional[float] = None,
+        planning_rejected_n: int = 0,
         station_name: Optional[str] = None,
         service_name: Optional[str] = None,
         schedule_source: str = "",
@@ -160,9 +166,11 @@ class AgentSnapshot:
         brake_fill_s: Optional[float] = None,
         brake_fill_n: Optional[int] = None,
         decel_observe_n: Optional[int] = None,
+        decel_n_by_kind: Optional[dict] = None,
         regen_n: Optional[int] = None,
         fb_a_pred_ms2: Optional[float] = None,
         fb_a_obs_ms2: Optional[float] = None,
+        plan_decel_ms2: Optional[float] = None,
         fb_shortfall: bool = False,
         fb_escalated: bool = False,
         driver_override_s: float = 0.0,
@@ -189,6 +197,8 @@ class AgentSnapshot:
                 p1_layer=p1_layer,
                 p1_target_kind=p1_target_kind,
                 station_dist_m=station_dist_m,
+                raw_station_dist_m=raw_station_dist_m,
+                planning_rejected_n=planning_rejected_n,
                 station_name=station_name,
                 service_name=service_name,
                 schedule_source=schedule_source,
@@ -198,9 +208,11 @@ class AgentSnapshot:
                 brake_fill_s=brake_fill_s,
                 brake_fill_n=brake_fill_n,
                 decel_observe_n=decel_observe_n,
+                decel_n_by_kind=decel_n_by_kind,
                 regen_n=regen_n,
                 fb_a_pred_ms2=fb_a_pred_ms2,
                 fb_a_obs_ms2=fb_a_obs_ms2,
+                plan_decel_ms2=plan_decel_ms2,
                 fb_shortfall=fb_shortfall,
                 fb_escalated=fb_escalated,
                 driver_override_s=driver_override_s,
@@ -247,6 +259,8 @@ class AgentSnapshot:
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
+            raw_station_dist_m=raw_station_dist_m,
+            planning_rejected_n=planning_rejected_n,
             station_name=station_name,
             service_name=service_name,
             schedule_source=schedule_source,
@@ -259,6 +273,7 @@ class AgentSnapshot:
             brake_fill_s=brake_fill_s,
             brake_fill_n=brake_fill_n,
             decel_observe_n=decel_observe_n,
+            decel_n_by_kind=decel_n_by_kind,
             regen_n=regen_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
@@ -303,6 +318,11 @@ class AgentLoop:
     profiles_dir: Optional[Path] = None
 
     _target_notch: Optional[int] = field(default=None, init=False, repr=False)
+    # Paso combinado pendiente: (target, lever_al_enviar). Evita reenviar
+    # el mismo paso relativo mientras el juego aún no refleja el anterior.
+    _pending_notch_step: Optional[tuple[int, Optional[int]]] = field(
+        default=None, init=False, repr=False
+    )
     _target_fraction: Optional[float] = field(default=None, init=False, repr=False)
     _next_cmd_id: int = field(default=1, init=False, repr=False)
     _tick: int = field(default=0, init=False, repr=False)
@@ -338,7 +358,7 @@ class AgentLoop:
 
     @property
     def profile_save_path(self) -> Optional[Path]:
-        """Ruta para persistir learner (cargada o auto por vehículo)."""
+        """Ruta para persistir learner (cargada o auto por vehÃ­culo)."""
         if self._profile_path is not None:
             return self._profile_path
         if self._vehicle_slug:
@@ -354,7 +374,7 @@ class AgentLoop:
 
     @property
     def station_planning_source(self) -> str:
-        """``http`` | ``file`` | ``none`` (planning andén)."""
+        """``http`` | ``file`` | ``none`` (planning andÃ©n)."""
         return self._station_planning.source
 
     def planning_context(self) -> dict[str, object]:
@@ -363,7 +383,7 @@ class AgentLoop:
 
     @property
     def station_planning_channel(self) -> str:
-        """Descripción humana de la fuente de distancia andén."""
+        """DescripciÃ³n humana de la fuente de distancia andÃ©n."""
         if self._station_planning.http_active:
             sched = self._station_planning.schedule_source
             base = "HTTP DriverAid.TrackData (~2 s)"
@@ -433,6 +453,21 @@ class AgentLoop:
             purge_lua_commands()
         self._target_notch = None
         self._target_fraction = None
+        self._pending_notch_step = None
+
+    def _notch_step_pending(self, lever: Optional[int]) -> bool:
+        """True si el último paso (mismo objetivo) aún no cambió la palanca."""
+        pending = self._pending_notch_step
+        if pending is None or self._target_notch is None:
+            return False
+        target, lever_at_send = pending
+        if int(target) != int(self._target_notch):
+            self._pending_notch_step = None
+            return False
+        if lever is not None and lever_at_send is not None and int(lever) != int(lever_at_send):
+            self._pending_notch_step = None
+            return False
+        return True
 
     @property
     def target_notch(self) -> Optional[int]:
@@ -469,7 +504,7 @@ class AgentLoop:
         neutral = int(self.neutral_notch)
         lev = int(lever) if lever is not None else neutral
         if cmd.kind == "RELEASE":
-            # Freno aplicado → neutro; ya en neutro/P: no repetir (214610Z).
+            # Freno aplicado â†’ neutro; ya en neutro/P: no repetir (214610Z).
             if fraction is not None:
                 self.request_input_fraction(fraction)
             elif lev >= neutral:
@@ -477,7 +512,7 @@ class AgentLoop:
             else:
                 self.request_neutral()
         elif cmd.kind == "COAST_THROTTLE":
-            # Tracción → neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
+            # TracciÃ³n â†’ neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
             pkg = self._vehicle_package
             mc = pkg is not None and uses_mc_analog_ipc(pkg)
             if fraction is not None:
@@ -498,7 +533,7 @@ class AgentLoop:
         return float(tb) if tb is not None else None
 
     def _mc_ramp_ipc_fraction(self, target: float, current: Optional[float]) -> float:
-        """Un paso hacia ``target`` (frenar/soltar gradual, sesión 215905Z)."""
+        """Un paso hacia ``target`` (frenar/soltar gradual, sesiÃ³n 215905Z)."""
         t = float(target)
         if current is None:
             return t
@@ -511,7 +546,7 @@ class AgentLoop:
         return min(t, c + step)
 
     def _fraction_ipc_target_reached(self, snap: ProbeSnapshot) -> bool:
-        """MC: feedback vía ``probe_mc_input_fraction`` (no ``train_brake`` HUD UK)."""
+        """MC: feedback vÃ­a ``probe_mc_input_fraction`` (no ``train_brake`` HUD UK)."""
         if self._target_fraction is None:
             return False
         target = float(self._target_fraction)
@@ -571,7 +606,7 @@ class AgentLoop:
         lever: Optional[int],
         snap: Optional[ProbeSnapshot] = None,
     ) -> None:
-        """Suelta ``target`` IPC si la palanca ya alcanzó el objetivo."""
+        """Suelta ``target`` IPC si la palanca ya alcanzÃ³ el objetivo."""
         if self._target_fraction is not None:
             self._clear_fraction_target_if_reached(snap)
             return
@@ -589,7 +624,7 @@ class AgentLoop:
         lever: int,
         snap: Optional[ProbeSnapshot] = None,
     ) -> None:
-        """Si la palanca se aleja del objetivo IPC, asumir conducción manual."""
+        """Si la palanca se aleja del objetivo IPC, asumir conducciÃ³n manual."""
         if self._target_fraction is not None:
             if snap is not None:
                 self._check_driver_takeover_mc_fraction(snap, lever)
@@ -628,10 +663,13 @@ class AgentLoop:
         ipc_cmd_id: Optional[int] = None
         fb_a_pred_ms2: Optional[float] = None
         fb_a_obs_ms2: Optional[float] = None
+        plan_decel_ms2: Optional[float] = None
         fb_shortfall = False
         fb_escalated = False
 
         station_dist_m: Optional[float] = None
+        raw_station_dist_m: Optional[float] = None
+        planning_rejected_n: int = 0
         station_name: Optional[str] = None
         service_name: Optional[str] = None
         schedule_source = ""
@@ -684,6 +722,8 @@ class AgentLoop:
                     probe_vehicle=snap.vehicle,
                 )
                 station_dist_m = planning.station_distance_m
+                raw_station_dist_m = planning.raw_station_distance_m
+                planning_rejected_n = planning.planning_rejected_n
                 station_name = planning.station_name
                 service_name = planning.service_name
                 schedule_source = planning.schedule_source
@@ -742,6 +782,7 @@ class AgentLoop:
                 station_dist_m = decision.station_dist_m
             fb_a_pred_ms2 = decision.fb_a_pred_ms2
             fb_a_obs_ms2 = decision.fb_a_obs_ms2
+            plan_decel_ms2 = decision.plan_decel_ms2
             fb_shortfall = decision.fb_shortfall
             fb_escalated = decision.fb_escalated
             if dwell_cmd is not None:
@@ -753,7 +794,7 @@ class AgentLoop:
                 p1_apply_now = True
                 self._apply_brake_command(dwell_cmd, lever=lever, apply_actuator=True)
             elif decision.command is not None:
-                # ``decide()`` ya llamó ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
+                # ``decide()`` ya llamÃ³ ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
                 cmd = decision.command
                 if cmd.kind == "RELEASE" and snap is not None and snap.speed_ms is not None:
                     speed_mph = float(snap.speed_ms) * MS_TO_MPH
@@ -766,7 +807,7 @@ class AgentLoop:
                         is True
                         and speed_mph <= DOORS_OPEN_MAX_SPEED_MPH
                     )
-                    # Histéresis: parada ya en curso (anchor) no vuelve a rodar a neutro.
+                    # HistÃ©resis: parada ya en curso (anchor) no vuelve a rodar a neutro.
                     stop_running = _station_stop_continues(
                         self._limit_state, station_dist_m, speed_mph
                     )
@@ -789,7 +830,7 @@ class AgentLoop:
                             target_fraction=hold,
                             phase=f"{hold:.3f}",
                             reason=(
-                                "Andén: mantener parada"
+                                "AndÃ©n: mantener parada"
                                 if doors_open or mc_station_still_ahead(station_dist_m)
                                 else "Pendiente: mantener freno"
                             ),
@@ -872,6 +913,7 @@ class AgentLoop:
                 self._target_notch is not None
                 and lever is not None
                 and int(lever) != int(self._target_notch)
+                and not self._notch_step_pending(lever)
             ):
                 ipc_cmd_id = self._next_cmd_id
                 ipc_result = dispatch_step_toward_notch(
@@ -881,6 +923,11 @@ class AgentLoop:
                     vehicle=snap.vehicle,
                 )
                 self._next_cmd_id += 1
+                # Pendiente hasta que la palanca cambie o el ACK sea ok.
+                if ipc_result is not None and ipc_result.get("ok"):
+                    self._pending_notch_step = None
+                else:
+                    self._pending_notch_step = (int(self._target_notch), lever)
                 ipc_sent = True
                 if self.post_ipc_sleep_s > 0:
                     time.sleep(self.post_ipc_sleep_s)
@@ -907,6 +954,8 @@ class AgentLoop:
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
+            raw_station_dist_m=raw_station_dist_m,
+            planning_rejected_n=planning_rejected_n,
             station_name=station_name,
             service_name=service_name,
             schedule_source=schedule_source,
@@ -916,9 +965,11 @@ class AgentLoop:
             brake_fill_s=self._learner.brake_fill_s,
             brake_fill_n=self._learner.brake_fill_n,
             decel_observe_n=self._learner.decel_observe_n,
+            decel_n_by_kind=dict(self._learner.__dict__.get("_decel_n_by_kind", {})),
             regen_n=self._learner.regen_n,
             fb_a_pred_ms2=fb_a_pred_ms2,
             fb_a_obs_ms2=fb_a_obs_ms2,
+            plan_decel_ms2=plan_decel_ms2,
             fb_shortfall=fb_shortfall,
             fb_escalated=fb_escalated,
             driver_override_s=0.0,

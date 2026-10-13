@@ -65,7 +65,8 @@ Código (`constants.py`):
 **Evaluación dual (2026-09-12):** BRAKE_LIMIT y HOLD_DH se calculan sobre **copias
 
 (`LimitBrakeState.snapshot()`); solo la ruta ganadora hace `replace_from` al estado vivo. El learner
-solo observa decel en la ruta BRAKE_LIMIT comprometida — evita latch/EMA contaminados por la rama
+solo observa decel en la ruta BRAKE_LIMIT comprometida y en la ruta STATION con `apply_now` - evita
+latch/EMA contaminados por la rama
 perdedora (sesión `201456Z`).
 
 **Horizonte cinemático:** `limit_horizon.py` — `next_limit_brake_horizon_m` /
@@ -215,8 +216,11 @@ decel / aire**.
 
 **Presión de aire (L4):** sí en **decisión** (`air_ready` bloquea APPLY, `cap_escalation` limita
 escalón, `inhibit_reapply` anti-bombeo, `observe_air` → `brake_fill_s`). **Feedback y EMA** solo
-miden/aprenden si `brake_decel_sample_ready`: palanca = muesca comprometida y `P ≥ 92 %` de la
-presión esperada (`brake_air.pressure_for_handle`).
+miden/aprenden si `brake_decel_sample_ready`: solo exige `P ≥ 92 %` de la presión esperada para el
+handle (`brake_air.pressure_for_handle`). **La palanca ya no es condición** (2026-10-12): el
+aprendizaje
+debe funcionar en otros tipos de tren (p. ej. alemanes), donde la muesca de mando no coincide con el
+handle de freno.
 
 Constantes (`brake_feedback.py`): `DECEL_SHORTFALL_RATIO=0.70`, `WEAK_DECEL_TICKS=2`,
 `DECEL_MIN_PRED_MS2=0.15`, `DECEL_MIN_OBS_MS2=0.08`.
@@ -239,9 +243,16 @@ cerrar
 
 Solo si hubo muestras válidas (`decel_n > 0`) o ajuste de aire. No aprende en WATCH/HOLD_DH.
 
-**Alcance:** `observe_brake_decel` solo en ventana APPLY del **cartel** (`limits.py` al
-`replace_from`); frenos STATION/SIGNAL no aportan EMA decel. Rechazos `pressure` masivos en JSONL
-son normales (neutro / llenado de aire). Herramienta: `V2/scripts/analyze_learner_jsonl.py`.
+**Alcance:** `observe_brake_decel` en ventana APPLY del **cartel** (`limits.py`, `replace_from`,
+pasa `brake_kind` desde `decision.py`) y de **estación** (`decision.py`, `apply_now`, handle 1-3).
+Cada muestra va al perfil de su tipo de freno (ver abajo); frenos SIGNAL no aportan EMA decel.
+Rechazos `pressure` masivos en JSONL son normales (neutro / llenado de aire). Herramienta:
+`V2/scripts/analyze_learner_jsonl.py`.
+**Perfil por tipo de freno:** la clase de freno sale de `train_brake` (aire) y `dyn_brake`
+(dinámico) del mismo tick, umbral 0.02: `air` = solo aire, `dyn` = solo dinámico, `mixed` = ambos.
+Cada tipo tiene su propia tabla de decel (`_v1_by_kind`); `air` es la tabla original. El freno
+eléctrico (`amps < -1 A`) descarta la muestra solo para `air`; `mixed` y `dyn` la aceptan. Se
+guardan como `v1_mixed` / `v1_dyn` en el JSON; perfiles antiguos se cargan como `air`.
 
 Con filtro aire (post 2026-09-09), `decel_n` modesto (p. ej. **14** en ~33k ticks, sesión `213920Z`)
 es normal con perfil maduro (`brake_fill_n` ≥ 100). Validación campo:
@@ -508,7 +519,10 @@ llegada, sigue siendo passthrough.
 
 ##### Salida andén — mapa de responsabilidades (2026-09-14)
 
-**Llegada con tracción (sesión `080746Z`):** con tracción a más de 2,2 mph y en la zona de llegada (≤ 150 m de andén, `TURNAROUND_DEPARTURE_MAX_DIST_M`, rama de viraje) el tren no está saliendo; el plan de andén debe frenar. La rama de viraje solo suprime el crawl de salida (> 0,45 mph y ≤ 2,2 mph).
+**Llegada con tracción (sesión `080746Z`):** con tracción a más de 2,2 mph y en la zona de llegada
+(≤ 150 m de andén, `TURNAROUND_DEPARTURE_MAX_DIST_M`, rama de viraje) el tren no está saliendo; el
+plan de andén debe frenar. La rama de viraje solo suprime el crawl de salida (> 0,45 mph y ≤ 2,2
+mph).
 
 Fuente única **«¿estamos en salida?»**: `station_departure_active()` (`p1_station_gate.py`):
 
@@ -810,7 +824,7 @@ RELEASE / COAST_PWR**.
 | 2026-09-29 | Sesión `191919Z`: 90→15 @ ~90 mph — plan anticipado B1 (horizonte extendido caída grande); señal/andén no sustituyen cartel cuando el 15 va primero                                                                                                                         |
 | 2026-09-22 | Sesiones `200405Z`/`202017Z`: rojo @ ~90 m @ 22 mph saltaba a B3 — horizonte 120 m + `_signal_horizon_apply_plan` (B1 hasta ventana B3); `_air_apply_block` no bloquea si palanca == target                                                                                 |
 | 2026-10-12 | Sesión `080746Z` (cola en bajada): llegada a 23 mph con tracción a 61 m no es salida; `should_suppress_station_braking_for_departure` rama de viraje solo para crawl ≤ 2,2 mph (`station_plan.py`); test `test_approach_under_traction_at_23mph_plans_brake_session_080746` |
-| 2026-10-12 | Sesión `090737Z` (ping-pong RELEASE/APPLY a ~65 m): histéresis de espera de clic con parada en curso (`mc_grade_hold_fraction(stop_running=…)`, `loop.py`); test `test_grade_hold_does_not_release_when_stop_running_session_090737` |
+| 2026-10-12 | Sesión `090737Z` (ping-pong RELEASE/APPLY a ~65 m): histéresis de espera de clic con parada en curso (`mc_grade_hold_fraction(stop_running=…)`, `loop.py`); test `test_grade_hold_does_not_release_when_stop_running_session_090737`                                        |
 | 2026-09-21 | Sesión `195804Z`: ping-pong B1/neutro — `PlatformBleedEpisode` + `platform_bleed_release` dedicado; cartel bloqueado en episodio                                                                                                                                            |
 | 2026-09-21 | Sesión `193606Z`: andén mid-route neutro + cilindros cargados → `platform_parked_residual_bleed_needed` / APPLY B1; skip RELEASE solo si aire bajo; sin RELEASE fantasma con tracción                                                                                       |
 | 2026-09-21 | Sesión `191546Z`: salida primer servicio mid-route (~1.5 km al next stop): helpers `is_service_platform_*` en `station_plan`; `should_suppress_station_braking_for_departure` incluye mid-route; FSM DEPARTING creep tras marker; limpiar target IPC tras RELEASE en neutro |

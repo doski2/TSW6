@@ -118,12 +118,13 @@ IPC, jitter probe, holgura ETA (D9).
 
 Ruta: `%TEMP%\TSW6Bridge\` (`GetData.txt`, `SendCommand.txt`, `SendCommandAck.txt`).
 
-| Síntoma          | Revisar                                                                        |
-| ---------------- | ------------------------------------------------------------------------------ |
-| Mando no aplica  | `last_cmd_id` / `last_ack_ok` en GetData · cola IPC · nombre control G-B       |
-| ACK fail         | Palanca equivocada · `lever_notch` vs `handle_notch` · layout combined/freight |
-| Python no lee    | Ruta bridge · antivirus · probe OFF                                            |
-| Telemetría stale | `seq` congelado · comparar timestamp archivo                                   |
+| Síntoma                                                         | Revisar                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Mando no aplica                                                 | `last_cmd_id` / `last_ack_ok` en GetData · cola IPC · nombre control G-B                                                                                                                                                                                                                                                                                                                                                             |
+| ACK fail                                                        | Palanca equivocada · `lever_notch` vs `handle_notch` · layout combined/freight                                                                                                                                                                                                                                                                                                                                                       |
+| ACK timeout repetido (palanca alterna 3↔4 con objetivo estable) | `ipc.error=ack_timeout` en JSONL. Timeout del bucle agente = `AGENT_ACK_TIMEOUT_S` (`constants.py`, 0.35 s, igual que `IPC_ACK_TIMEOUT_S` del diagnóstico). Si con 0.35 s sigue fallando, la latencia del juego supera el timeout: no es lógica de frenado. Paso combinado sin ACK `ok`: `AgentLoop._pending_notch_step` bloquea reenvío hasta que la palanca cambie o cambie el objetivo (`loop.py`, tests `TestNotchStepPending`). |
+| Python no lee                                                   | Ruta bridge · antivirus · probe OFF                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Telemetría stale                                                | `seq` congelado · comparar timestamp archivo                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Herramientas:
 
@@ -275,17 +276,18 @@ caso es reproducible sin juego.
 
 Cada tick → una línea JSON en `logs/v2/<timestamp>_<route>_limit.jsonl` (o ruta con `--log PATH`).
 
-| Campo tick                     | Uso al debatir                                          |
-| ------------------------------ | ------------------------------------------------------- |
-| `lim_mph` / `lim_dist_m`       | Cartel adelante                                         |
-| `eff_mph`                      | Límite vigente (`speed_limit_ms`)                       |
-| `p1.dist_start_m`              | ¿Frenamos pronto/tarde?                                 |
-| `p1.apply_now`                 | ¿En ventana cinemática?                                 |
-| `p1.reason`                    | `plan`, `release`, `apply_deferred`, `coast_latch`, …   |
-| `p1.detail`                    | Texto del plan (contención bajada, latch, …)            |
-| `brake_fill_s`                 | Tiempo de llenado aire aprendido (perfil activo)        |
-| `ipc`                          | Mandos enviados y ACK                                   |
-| `signal_red` / `signal_dist_m` | Semáforo rojo (probe C1); replay HTML sección **Señal** |
+| Campo tick                            | Uso al debatir                                                     |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `lim_mph` / `lim_dist_m`              | Cartel adelante                                                    |
+| `eff_mph`                             | Límite vigente (`speed_limit_ms`)                                  |
+| `p1.dist_start_m`                     | ¿Frenamos pronto/tarde?                                            |
+| `p1.apply_now`                        | ¿En ventana cinemática?                                            |
+| `p1.reason`                           | `plan`, `release`, `apply_deferred`, `coast_latch`, …              |
+| `p1.detail`                           | Texto del plan (contención bajada, latch, …)                       |
+| `brake_fill_s`                        | Tiempo de llenado aire aprendido (perfil activo)                   |
+| `ipc`                                 | Mandos enviados y ACK                                              |
+| `signal_red` / `signal_dist_m`        | Semáforo rojo (probe C1); replay HTML sección **Señal**            |
+| `decel_observe_n` / `decel_n_by_kind` | Muestras de decel aceptadas (total y por tipo `air`/`dyn`/`mixed`) |
 
 Valores de `p1.reason`:
 

@@ -215,3 +215,57 @@ def test_learner_load_default_found(tmp_path: Path) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())
+
+
+def _feed_mixed_decel(p: LearnerProfile) -> None:
+    mph = [20.0, 19.6, 19.2, 18.8, 18.4, 18.0, 17.6, 17.2, 16.8, 16.4]
+    for rep in range(4):
+        for i, m in enumerate(mph):
+            p.observe_brake_decel(
+                handle=2,
+                speed_mph=m,
+                gradient_pct=-0.6,
+                accel_ms2=-0.38,
+                lever=2,
+                brake_cyl_bar=10.7,
+                now=float(rep * 100 + i),
+                brake_kind="mixed",
+            )
+
+
+def test_mixed_profile_survives_save_and_reload(tmp_path: Path) -> None:
+    """Perfil ``mixed`` (freno eléctrico + aire) guardado, recargado y usado en predicción."""
+    from tsw6v2.learner import _predict_for_kind
+
+    p = LearnerProfile()
+    p.note_amps(-80.0)
+    _feed_mixed_decel(p)
+    path = tmp_path / "profile.json"
+    p.save_json(path)
+
+    reloaded = LearnerProfile.from_json(path)
+    assert "mixed" in reloaded.__dict__.get("_v1_by_kind", {})
+    assert _predict_for_kind(reloaded, "mixed")(2, 18.0, -0.6) == pytest.approx(0.38, abs=0.02)
+    assert _predict_for_kind(reloaded, "air")(2, 18.0, -0.6) is None
+
+
+def test_electric_sample_rejected_for_air_accepted_for_mixed() -> None:
+    air = LearnerProfile()
+    air.note_amps(-80.0)
+    air.observe_brake_decel(
+        handle=3, speed_mph=30.0, gradient_pct=0.0, accel_ms2=-0.4,
+        lever=3, brake_cyl_bar=2.0, brake_kind="air",
+    )
+    air_ev = air.pop_learn_event()
+    assert air_ev is not None
+    assert air_ev.reason == "electric"
+
+    mixed = LearnerProfile()
+    mixed.note_amps(-80.0)
+    mixed.observe_brake_decel(
+        handle=3, speed_mph=30.0, gradient_pct=0.0, accel_ms2=-0.4,
+        lever=3, brake_cyl_bar=2.0, brake_kind="mixed",
+    )
+    ev = mixed.pop_learn_event()
+    assert ev is None or ev.reason != "electric"
+    assert mixed._decel_window.last_reason != "electric"

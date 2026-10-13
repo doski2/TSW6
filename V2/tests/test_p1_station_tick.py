@@ -622,3 +622,31 @@ def test_p1_tick_release_after_stop_session_222115() -> None:
     assert decision.command is not None
     assert decision.command.kind == "APPLY"
     assert decision.reason == "platform_bleed"
+
+
+def test_limit_passed_below_speed_releases_toward_station_session_203439() -> None:
+    """Sesión 203439Z tick 611: cartel 35 ya pasado, 31 mph, andén a 438 m.
+
+    Antes: APPLY hasta parar en ~177 m (sin release al pasar el cartel).
+    Ahora: el cartel ya no limita y el andén no exige frenar más → RELEASE.
+    """
+    snap = ProbeSnapshot.from_dict(
+        {
+            "seq": 1,
+            "speed_ms": 13.75,  # ~30.8 mph (tick 611)
+            "lever_notch": 2,
+            "dist_limit_cm": 60.0,  # cartel 35 pasado (~0.6 m)
+            "next_limit_ms": 15.6464,  # 35 mph
+            "speed_limit_ms": 22.3520,  # eff=50 vigente (tick 611)
+        }
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(),
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=438.4,
+        limit_brake_enabled=True,
+        station_brake_enabled=True,
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "RELEASE"

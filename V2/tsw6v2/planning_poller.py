@@ -387,6 +387,7 @@ class StationPlanning:
                 new_name=str(name) if name else None,
                 exclude_bases=self._served_bases,
             ):
+                self._snap.planning_rejected_n += 1
                 _log.info(
                     "planning: ignorar lectura HTTP %.0f -> %.0f m (spd=%.1f, stop=%s)",
                     prev or -1,
@@ -403,6 +404,10 @@ class StationPlanning:
             )
             if name:
                 self._snap.station_name = str(name)
+            raw_cm = nxt.get("raw_distance_cm")
+            self._snap.raw_station_distance_m = (
+                float(raw_cm) / 100.0 if raw_cm is not None else None
+            )
             snap = self._snap
         write_planning_snapshot(
             station_distance_m=snap.station_distance_m,

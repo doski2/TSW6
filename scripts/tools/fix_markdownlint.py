@@ -27,7 +27,24 @@ import unicodedata
 from pathlib import Path
 from typing import Sequence
 
-ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    """Raíz del repo: ``git rev-parse``; si no hay git, sube buscando ``.git``."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start, capture_output=True, text=True, check=False,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return Path(out.stdout.strip()).resolve()
+    except OSError:
+        pass
+    for candidate in [start, *start.parents]:
+        if (candidate / ".git").exists() or (candidate / ".markdownlint.json").exists():
+            return candidate
+    return start
+
+
+ROOT = _find_repo_root(Path.cwd())
 
 BQ_PREFIX = re.compile(r"^(\s*>\s)")
 MD013_WIDTH = 100
@@ -983,12 +1000,22 @@ def fix_markdown(text: str) -> tuple[str, dict[str, int]]:
     return text, stats
 
 
+EXCLUDED_DIRS = {
+    ".git", ".venv", "venv", "node_modules", "__pycache__",
+    ".pytest_cache", "build", "dist", ".tox", "site-packages",
+}
+
+
 def collect_markdown_files(paths: list[Path], all_docs: bool) -> list[Path]:
+    """Explícitos: rutas dadas. ``--all``: todos los .md bajo la raíz del repo."""
     if all_docs:
         found: list[Path] = []
-        for pattern in ("docs/**/*.md", "camiones/**/*.md", "datos/**/*.md", "*.md"):
-            found.extend(ROOT.glob(pattern))
-        return sorted({p.resolve() for p in found if p.is_file()})
+        for p in ROOT.rglob("*.md"):
+            if any(part in EXCLUDED_DIRS for part in p.relative_to(ROOT).parts):
+                continue
+            if p.is_file():
+                found.append(p.resolve())
+        return sorted(set(found))
     return [p.resolve() for p in paths]
 
 

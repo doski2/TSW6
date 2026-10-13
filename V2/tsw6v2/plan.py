@@ -23,6 +23,7 @@ class BrakePlanStep:
     meters_until_action_m: float
     apply_now: bool
     using_learned: bool = False
+    decel_ms2: Optional[float] = None
 
 
 @dataclass

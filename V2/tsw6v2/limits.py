@@ -68,6 +68,7 @@ def evaluate_limit_brake(
     lever: int | None = None,
     brake_cyl_bar: float | None = None,
     release_state: Optional[BrakeReleaseState] = None,
+    brake_kind: str = "air",
 ) -> Optional[BrakeTargetResult]:
     """Planifica frenada al cartel. Re-latch si cambia el límite objetivo."""
     base = state.snapshot()
@@ -126,6 +127,7 @@ def evaluate_limit_brake(
                 accel_ms2=accel_ms2,
                 lever=lever,
                 brake_cyl_bar=brake_cyl_bar,
+                brake_kind=brake_kind,
             )
 
     def _commit_downhill() -> None:

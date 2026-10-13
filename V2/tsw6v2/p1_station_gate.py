@@ -22,7 +22,6 @@ from tsw6v2.command import (
     throttle_notch_from_lever,
 )
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
-from tsw6v2.vehicle_package import MC_ARRIVAL_HOLD_MAX_M
 from tsw6v2.limit_containment import try_downhill_coast_watch
 from tsw6v2.limit_state import LimitBrakeState
 from tsw6v2.station_plan import (
@@ -44,6 +43,8 @@ DEPARTING_CLEAR_MPH = ORIGIN_DEPARTURE_MAX_SPEED_MPH
 # Salida lejos del andén a marcha: no es creep de andén ni reabre DEPARTING.
 DEPARTING_FAR_MIN_M = 800.0
 DEPARTING_FAR_MIN_MPH = 18.0
+# Parado casi sin velocidad lejos del and\u00e9n: sigue llegada, no salida (265 m, sesi\u00f3n 184137Z).
+ARRIVAL_PARKED_MAX_M = 300.0
 
 
 def blocks_inherited_release_in_station_final_approach(
@@ -547,6 +548,30 @@ def platform_parked_residual_bleed_needed(
     return _service_platform_residual_pressure(brake_cyl_bar)
 
 
+def station_coast_release_in_motion(
+    *,
+    speed_mph: float,
+    station_dist_m: Optional[float],
+    required_decel_ms2: float,
+    gradient_pct: float = 0.0,
+) -> bool:
+    """RELEASE en marcha hacia el andén: la inercia basta para parar allí.
+
+    Decel necesaria para parar en el andén desde la velocidad real:
+    ``a_req = v² / (2·d)``. Si la decel mínima que el andén exige
+    (``required_decel_ms2``, p. ej. la de fase B1) ya es ≥ ``a_req``, la
+    frenada actual sobra y se puede soltar sin pasarse del andén.
+    Solo aplica con velocidad y distancia válidas (andén delante, en marcha).
+    """
+    if station_dist_m is None or station_dist_m <= 0:
+        return False
+    if speed_mph <= 0.0:
+        return False
+    v_ms = float(speed_mph) * 0.44704
+    a_req = (v_ms * v_ms) / (2.0 * float(station_dist_m))
+    return a_req <= float(required_decel_ms2)
+
+
 def platform_parked_bleed_release_needed(
     *,
     speed_mph: float,
@@ -698,7 +723,7 @@ def _left_platform(
         # Solo parado (≤ STATION_STOPPED_MPH); un pase a 8 mph no cuenta como parada.
         if (
             speed_mph <= STATION_STOPPED_MPH
-            and station_dist_m <= MC_ARRIVAL_HOLD_MAX_M
+            and station_dist_m <= ARRIVAL_PARKED_MAX_M
         ):
             return False
         return True

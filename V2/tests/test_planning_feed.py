@@ -60,6 +60,13 @@ def test_planning_distance_rejects_http_regression_while_approaching():
     assert planning_distance_accept(230.7, 235.4, 2.0)  # parado: aceptar
 
 
+def test_planning_distance_rejects_big_rise_when_slow_in_approach_session_20261012_155138():
+    """155138Z: HTTP salta de 101 a 234 m a ~1 mph en aproximación; no debe resetear."""
+    assert not planning_distance_accept(101.0, 234.6, 1.0)
+    # Ajuste pequeño parado: sigue aceptado (test de arriba).
+    assert planning_distance_accept(230.7, 235.4, 2.0)
+
+
 def test_planning_distance_accepts_large_jump_after_save_load():
     """Tras cargar partida: salto legítimo a otra posición en ruta."""
     assert planning_distance_accept(235.0, 1800.0, 45.0)

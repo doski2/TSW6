@@ -9,11 +9,11 @@ Inspirado en el `command_bus` de [Dastsc](C:\Users\doski\Dastsc) (Train Simulato
 
 ## Objetivo
 
-| Antes (archivado) | Ahora (activo) |
-| ----------------- | -------------- |
+| Antes (archivado)                                              | Ahora (activo)                                                             |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Telemetría + mandos vía **RailBridge** (`archive/railbridge/`) | **Lectura** `tsw_telemetry_source.py` + **escritura** `tsw_command_bus.py` |
-| RPC companion | `PATCH /set/{ruta}.Value` → juego directo |
-| Dependencia RailBridge + CMP | Solo TSW6 con `-HTTPAPI` (futuro: mod UE4SS — ver `INVESTIGACION.md`) |
+| RPC companion                                                  | `PATCH /set/{ruta}.Value` → juego directo                                  |
+| Dependencia RailBridge + CMP                                   | Solo TSW6 con `-HTTPAPI` (futuro: mod UE4SS — ver `INVESTIGACION.md`)      |
 
 **RailBridge está archivado** (2026-06-13). El stack activo es:
 
@@ -22,7 +22,8 @@ Inspirado en el `command_bus` de [Dastsc](C:\Users\doski\Dastsc) (Train Simulato
 - **Escritura (frenos / handle combinado):** `tsw_command_bus.py`.
 - **Diagnóstico humano:** `tsw_monitor.py`, `diag_controles.bat` (lanza el monitor).
 
-Alcance inicial V2: **frenos** (+ handle combinado UK). Tracción libre, reverser y emergencia bloqueados.
+Alcance inicial V2: **frenos** (+ handle combinado UK). Tracción libre, reverser y emergencia
+bloqueados.
 
 ---
 
@@ -34,61 +35,46 @@ hasta que exista el mod UE4SS (ver `INVESTIGACION.md`).
 
 ### Mediciones en sesión real (Class 323, PC local)
 
-| Operación | Latencia observada | Notas |
-| --------- | ------------------ | ----- |
-| Primera petición de una ráfaga | ~**2 s** | Penalización intermitente de la API |
-| Cada `GET /get/...` siguiente (misma sesión) | ~**15 ms** | Solo en serie, no en paralelo |
-| 4 lecturas HUD (speed + mando + freno + acel.) | ~**80 ms** | `FastControlReader` optimizado → ~12 Hz máx |
-| `PATCH /set` (escribir freno) | ~**50–150 ms** | Una orden por petición |
-| Suscripción `/subscription` | Variable / a menudo vacía | Conocido como poco fiable en foros Dovetail |
+| Operación                                      | Latencia observada        | Notas                                       |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------- |
+| Primera petición de una ráfaga                 | ~**2 s**                  | Penalización intermitente de la API         |
+| Cada `GET /get/...` siguiente (misma sesión)   | ~**15 ms**                | Solo en serie, no en paralelo               |
+| 4 lecturas HUD (speed + mando + freno + acel.) | ~**80 ms**                | `FastControlReader` optimizado → ~12 Hz máx |
+| `PATCH /set` (escribir freno)                  | ~**50–150 ms**            | Una orden por petición                      |
+| Suscripción `/subscription`                    | Variable / a menudo vacía | Conocido como poco fiable en foros Dovetail |
 
 ### Ciclo cerrado leer → decidir → mandar (solo HTTP)
 
 En el mejor caso, un ciclo completo por API sería:
 
 ```text
-  leer telemetría (~80 ms)  +  decidir  +  PATCH freno (~100 ms)  ≈  180–300 ms por ciclo
-  → 3–5 decisiones por segundo como techo práctico
 ```
 
-A **80 km/h** el tren avanza **~4–7 m** entre ciclos. Eso **no es preciso** para reaccionar a un límite
+A **80 km/h** el tren avanza **~4–7 m** entre ciclos. Eso **no es preciso** para reaccionar a un
+límite
 de velocidad, una señal o una pendiente pronunciada.
 
 ### Comparación histórica (RailBridge archivado)
 
-| | RailBridge (archivado) | API HTTP TSW (activo) |
-| --- | --- | --- |
-| Modelo | Push SSE | Poll HTTP |
-| Latencia lectura | ~50–200 ms | ~80 ms+ por ciclo |
-| Datos | Velocidad, límite, gradiente, planning… | HUD básico (speed, mando, freno) |
-| Estado | `archive/railbridge/` | `tsw_telemetry_source.py` |
+|                  | RailBridge (archivado)                  | API HTTP TSW (activo)            |
+| ---------------- | --------------------------------------- | -------------------------------- |
+| Modelo           | Push SSE                                | Poll HTTP                        |
+| Latencia lectura | ~50–200 ms                              | ~80 ms+ por ciclo                |
+| Datos            | Velocidad, límite, gradiente, planning… | HUD básico (speed, mando, freno) |
+| Estado           | `archive/railbridge/`                   | `tsw_telemetry_source.py`        |
 
 ### Qué usar para qué
 
-| Uso | Fuente | ¿Apto? |
-| --- | --- | --- |
+| Uso                         | Fuente                    | ¿Apto?              |
+| --------------------------- | ------------------------- | ------------------- |
 | Autopiloto / aprender (hoy) | `tsw_telemetry_source.py` | ✅ con limitaciones |
-| Mandar freno / handle | `tsw_command_bus.py` | ✅ |
-| Monitor humano | `tsw_monitor.py` | ✅ |
-| Autopiloto preciso (futuro) | Mod UE4SS | 🟡 planificado |
+| Mandar freno / handle       | `tsw_command_bus.py`      | ✅                  |
+| Monitor humano              | `tsw_monitor.py`          | ✅                  |
+| Autopiloto preciso (futuro) | Mod UE4SS                 | 🟡 planificado      |
 
 ### Arquitectura actual
 
 ```text
-  ┌─────────────┐   GET /get HUD_*    ┌──────────────────────┐
-  │   TSW6      │ ──────────────────► │ tsw_telemetry_source │  ← lectura
-  │  (-HTTPAPI) │                     └──────────┬───────────┘
-  └──────┬──────┘                                │
-         │ PATCH /set                            ▼
-         │                              ┌──────────────────┐
-         └────────────────────────────► │ speed_decider +  │
-                                        │ handle_controller│
-                                        └────────┬─────────┘
-                                                 │
-                                                 ▼
-                                        ┌──────────────────┐
-                                        │ tsw_command_bus  │  ← escritura
-                                        └──────────────────┘
 ```
 
 El monitor (`iniciar_monitor.bat`) **no participa** en el autopiloto: es diagnóstico humano.
@@ -98,7 +84,6 @@ El monitor (`iniciar_monitor.bat`) **no participa** en el autopiloto: es diagnó
 Con TSW en cabina y `-HTTPAPI` activo:
 
 ```bat
-python -c "from tsw_fast_telemetry import reader_from_key_file, benchmark; r=reader_from_key_file(); print(benchmark(r))"
 ```
 
 Salida esperada (orden de magnitud): `avg_ms` ~80, `hz` ~10–12, `source` `poll` o `subscription`.
@@ -114,7 +99,7 @@ el plan es **mod UE4SS** (`INVESTIGACION.md`). RailBridge quedó en `archive/rai
 
 - [Dovetail — Train Sim World API
 
-  Support](https://forums.dovetailgames.com/threads/train-sim-world-api-support.94488/) — PDF *TSW
+  Support](<https://forums.dovetailgames.com/threads/train-sim-world-api-support.94488/>) — PDF *TSW
   External Interface API 1.5*
 
 - API base: `http://localhost:31270`
@@ -278,6 +263,7 @@ API).
 
 ## Próximo paso de código
 
-**V2.2:** `descubrir_mandos.py` + `.bat` — en cabina con Class 323, `GET /list` → `tsw_api_paths` en `control_schemas`.
+**V2.2:** `descubrir_mandos.py` + `.bat` — en cabina con Class 323, `GET /list` → `tsw_api_paths` en
+`control_schemas`.
 
 **V2.3:** `probar_freno.bat` — prueba manual B2 / neutro sin RailBridge.

@@ -44,6 +44,7 @@ class BrakeTargetResult:
     dist_start: float
     apply_now: bool
     detail: str = ""
+    plan_decel_ms2: Optional[float] = None
     downhill_hold: bool = False
     downhill_coast_watch: bool = False
     coast_trim_deferred: bool = False

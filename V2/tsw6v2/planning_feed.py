@@ -22,6 +22,10 @@ def default_planning_path() -> Path:
 @dataclass
 class PlanningSnapshot:
     station_distance_m: Optional[float] = None
+    # distanceToStationCM crudo de TrackData (m), solo para diagnóstico de referencia.
+    raw_station_distance_m: Optional[float] = None
+    # Lecturas HTTP descartadas por ``apply_station_distance_reading`` (diagnóstico).
+    planning_rejected_n: int = 0
     station_name: Optional[str] = None
     service_name: Optional[str] = None
     hud_route_name: Optional[str] = None
@@ -40,6 +44,8 @@ PLANNING_APPROACH_MIN_SPEED_MPH = 3.0
 PLANNING_NEXT_STOP_MIN_SPEED_MPH = 8.0
 # Salto hacia atrás en marcha (sesión 211414Z: 22184→120 m @ 45 mph).
 PLANNING_APPROACH_PREV_MIN_M = 1000.0
+# Subida grande de distancia en aproximación (155138Z: 101→234 m @ 1 mph): rechazar aun parado.
+PLANNING_SLOW_RISE_REJECT_M = 50.0
 
 
 def planning_distance_accept(
@@ -72,9 +78,10 @@ def planning_distance_accept(
         and abs(new_m - prev_m) > jump_reject_m
     ):
         return False
-    # Andén y aproximación final: rechazar salto HTTP a la siguiente parada.
-    # Salida legítima arriba (prev≤5 m @ ≥8 mph). Save/load: prev≥200 m.
-    if new_m > prev_m + jump_reject_m and prev_m < mid_approach_max_m:
+    # Andén y aproximación final: rechazar subida HTTP grande (siguiente parada, o
+    # 155138Z: 101→234 m @ 1 mph). Salida legítima arriba (prev≤5 m @ ≥8 mph) va antes.
+    # Save/load: prev≥200 m queda fuera de esta zona.
+    if new_m > prev_m + PLANNING_SLOW_RISE_REJECT_M and prev_m < mid_approach_max_m:
         return False
     # En marcha: no aceptar HTTP que aleja (confiar en v×dt hasta el próximo poll válido).
     if (
