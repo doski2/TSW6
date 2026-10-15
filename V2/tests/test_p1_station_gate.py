@@ -867,3 +867,28 @@ def test_station_dwell_skips_repeat_b1_when_service_brake_held_session_075637() 
         snap=snap,
         vehicle_package=pkg,
     ) is None
+
+
+def test_in_motion_release_ignored_far_from_station_session_20261015() -> None:
+    """20261015T123018Z: tras el cambio de límite soltó a 2,1–2,5 km del andén (32 mph)."""
+    from tsw6v2.p1_station_gate import station_coast_release_in_motion
+
+    assert not station_coast_release_in_motion(
+        speed_mph=32.0,
+        station_dist_m=2496.0,
+        required_decel_ms2=0.353,
+    )
+    assert station_coast_release_in_motion(
+        speed_mph=31.0,
+        station_dist_m=438.0,
+        required_decel_ms2=0.353,
+    )
+
+
+def test_in_motion_release_uses_gradient_uphill_helps_stop() -> None:
+    """Subida ayuda a parar: a_req baja con pendiente positiva (misma convención que service_strength)."""
+    from tsw6v2.p1_station_gate import station_coast_release_in_motion
+
+    kwargs = dict(speed_mph=32.0, station_dist_m=204.0, required_decel_ms2=0.353)
+    assert not station_coast_release_in_motion(gradient_pct=0.0, **kwargs)
+    assert station_coast_release_in_motion(gradient_pct=5.0, **kwargs)

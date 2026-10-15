@@ -20,8 +20,10 @@ from tsw6v2.command import (
 )
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
+    mc_click_hysteresis_m,
     mc_click_wait,
     mc_first_click_fraction,
+    mc_station_roll_allowed,
     mc_stop_brake_fraction,
     uses_mc_analog_ipc,
     vehicle_package_from_snap,
@@ -39,7 +41,8 @@ from tsw6v2.p1_station_gate import (
     station_departure_active,
 )
 from tsw6v2.service_brake import should_release_over_braked_for_stop_target
-from tsw6v2.constants import MS_TO_MPH, NEUTRAL_NOTCH
+from tsw6v2 import diag_station  # DIAG_STATION_TEMPORAL: quitar tras 212814Z
+from tsw6v2.constants import LIMIT_SIGN_PASSED_M, MS_TO_MPH, NEUTRAL_NOTCH
 from tsw6v2.ipc import probe_lever
 from tsw6v2.learner import LearnerProfile, _predict_for_kind
 from tsw6v2.limits import LimitBrakeState, evaluate_limit_brake
@@ -132,6 +135,7 @@ class _TickCtx:
     cyl: Optional[float]
     vehicle_package: Optional[dict[str, Any]] = None
     click_decel_ms2: Optional[float] = None
+    mc_decel_table: Optional[dict[float, float]] = None
 
     def decide(
         self,
@@ -351,17 +355,27 @@ def _attempt_platform_parked_bleed_release(
     platform_bleed_episode: bool,
     platform_bleed_b1_confirmed: bool,
     snap: ProbeSnapshot,
+    station_stop_running: bool = False,
+    other_target_active: bool = False,
+    limit_sign_passed: bool = False,
 ) -> Optional[LimitBrakeDecision]:
     """RELEASE a neutro tras B1 bleed — sin cartel (195804Z).
 
     También RELEASE en marcha si la inercia basta para parar en el andén
     (``station_coast_release_in_motion``, sesión 203439Z tick 611).
     """
-    in_motion = station_coast_release_in_motion(
-        speed_mph=prep.ctx.speed_mph,
-        station_dist_m=station_dist_m,
-        required_decel_ms2=DEFAULT_MAX_BRAKE_DECEL * SERVICE_DECEL_FRAC_BY_HANDLE[1],
-        gradient_pct=float(snap.gradient_pct or 0.0),
+    # Solo sin otro objetivo activo (cartel/señal/bajada) ni parada en curso
+    # (tests 005614, zona 40, downhill hold, señal).
+    in_motion = (
+        not station_stop_running
+        and not other_target_active
+        and limit_sign_passed
+        and station_coast_release_in_motion(
+            speed_mph=prep.ctx.speed_mph,
+            station_dist_m=station_dist_m,
+            required_decel_ms2=DEFAULT_MAX_BRAKE_DECEL * SERVICE_DECEL_FRAC_BY_HANDLE[3],
+            gradient_pct=float(snap.gradient_pct or 0.0),
+        )
     )
     if not in_motion and not platform_parked_bleed_release_needed(
         speed_mph=prep.ctx.speed_mph,
@@ -571,6 +585,11 @@ def _prepare_tick(
         vehicle_package=vehicle_pkg,
         click_decel_ms2=(
             learner.mc_decel_for(mc_first_click_fraction(vehicle_pkg))
+            if learner is not None and vehicle_pkg is not None
+            else None
+        ),
+        mc_decel_table=(
+            learner.mc_decel_table()
             if learner is not None and vehicle_pkg is not None
             else None
         ),
@@ -806,6 +825,7 @@ def _mc_station_fraction_command(
         speed_mph=ctx.speed_mph,
         distance_m=distance_m,
         gradient_pct=ctx.grad,
+        decel_table=ctx.mc_decel_table,
     )
     if frac is None:
         return None
@@ -832,6 +852,22 @@ def _continue_station_stop(
         return None
     if not uses_mc_analog_ipc(ctx.vehicle_package):
         return None
+    if mc_station_roll_allowed(dist, stop_running=True) and mc_click_wait(
+        ctx.vehicle_package,
+        speed_mph=ctx.speed_mph,
+        distance_m=dist,
+        gradient_pct=ctx.grad,
+        click_decel_ms2=ctx.click_decel_ms2,
+        extra_margin_m=mc_click_hysteresis_m(dist, stop_running=True),
+    ):
+        rel = BrakeCommand(
+            kind="RELEASE",
+            target_notch=NEUTRAL_NOTCH,
+            phase="NEU",
+            reason="Andén: rodar hasta el clic",
+            distance_m=dist,
+        )
+        return _decide_station_neutral_release(ctx, rel, "station_roll")
     cmd = _mc_station_fraction_command(ctx, dist)
     if cmd is None:
         return None
@@ -860,14 +896,14 @@ def _mc_station_stop_fraction(
     if not uses_mc_analog_ipc(ctx.vehicle_package):
         return cmd
     # Histéresis: con la parada ya en curso (clic aplicado) no volver a rodar (oscilación).
-    if not _station_stop_continues(
-        limit_state, target.distance_m, ctx.speed_mph
-    ) and mc_click_wait(
+    running = _station_stop_continues(limit_state, target.distance_m, ctx.speed_mph)
+    if mc_station_roll_allowed(target.distance_m, stop_running=running) and mc_click_wait(
         ctx.vehicle_package,
         speed_mph=ctx.speed_mph,
         distance_m=target.distance_m,
         gradient_pct=ctx.grad,
         click_decel_ms2=ctx.click_decel_ms2,
+        extra_margin_m=mc_click_hysteresis_m(target.distance_m, stop_running=running),
     ):
         # Rodar en neutro: el clic 0,64 frenaría de más a esta distancia (011059Z).
         return BrakeCommand(
@@ -1054,6 +1090,18 @@ def evaluate_p1_tick(
             base_decel=DEFAULT_MAX_BRAKE_DECEL,
             allow_watch=station_allow_watch,
         )
+        # DIAG_STATION_TEMPORAL: quitar tras investigación 212814Z.
+        diag_station.log_station_tick(
+            tick_ctx=ctx,
+            station_plan_dist=station_plan_dist,
+            station_eta=station_eta,
+            station_allow_watch=station_allow_watch,
+            throttle_notch=prep.throttle_notch,
+            station_target=station_target,
+            predict_decel=prep.predict,
+            brake_fill_s=prep.fill_s,
+            base_decel=DEFAULT_MAX_BRAKE_DECEL,
+        )
         if (
             learner is not None
             and station_target is not None
@@ -1142,6 +1190,13 @@ def evaluate_p1_tick(
         platform_bleed_episode=platform_bleed_episode,
         platform_bleed_b1_confirmed=platform_bleed_b1_confirmed,
         snap=snap,
+        station_stop_running=limit_state.station_stop_m is not None,
+        other_target_active=bool(
+            (limit_target is not None and limit_target.apply_now)
+            or (signal_target is not None and signal_target.apply_now)
+            or (limit_target is not None and limit_target.downhill_hold)
+        ),
+        limit_sign_passed=prep.dist_m is not None and prep.dist_m <= LIMIT_SIGN_PASSED_M,
     )
     if platform_bleed_release is not None:
         return platform_bleed_release

@@ -486,7 +486,23 @@ def mc_first_click_fraction(package: Optional[dict[str, Any]]) -> Optional[float
 # OBSERVATION 011059Z: 0,64 @ ~14 mph bajó ~0,36 m/s² en pista. Respaldo si no hay aprendido.
 MC_CLICK_DECEL_FALLBACK_MS2 = 0.36
 MC_CLICK_WAIT_MARGIN_M = 5.0
+# Parada ya iniciada y lejos de la marca: banda antes de volver a rodar (sobrefrenado
+# 225331Z a 119-147 m). Cerca de la marca no aplica: 090737Z (ping-pong a ~65 m).
+MC_CLICK_HYSTERESIS_M = 30.0
+MC_CLICK_HYSTERESIS_MIN_DIST_M = 100.0
 MC_CLICK_ZONE_FRAC = 0.04
+
+
+def mc_station_roll_allowed(distance_m: float, *, stop_running: bool) -> bool:
+    """¿Puede rodar en neutro? Con la parada en curso solo lejos de la marca (090737Z)."""
+    return (not stop_running) or distance_m > MC_CLICK_HYSTERESIS_MIN_DIST_M
+
+
+def mc_click_hysteresis_m(distance_m: float, *, stop_running: bool) -> float:
+    """Banda extra para ``mc_click_wait`` con la parada en curso (0 si no aplica)."""
+    if stop_running and distance_m > MC_CLICK_HYSTERESIS_MIN_DIST_M:
+        return MC_CLICK_HYSTERESIS_M
+    return 0.0
 
 
 def mc_click_wait(
@@ -496,6 +512,7 @@ def mc_click_wait(
     distance_m: float,
     gradient_pct: float = 0.0,
     click_decel_ms2: Optional[float] = None,
+    extra_margin_m: float = 0.0,
 ) -> bool:
     """Frenada suave cerca del clic: rodar en neutro hasta que el clic toque.
 
@@ -523,7 +540,7 @@ def mc_click_wait(
         decel = float(click_decel_ms2)
     speed_ms = speed_mph * MPH_TO_MS
     stop_at_click_m = speed_ms * speed_ms / (2.0 * decel)
-    return distance_m > stop_at_click_m + MC_CLICK_WAIT_MARGIN_M
+    return distance_m > stop_at_click_m + MC_CLICK_WAIT_MARGIN_M + extra_margin_m
 
 
 MC_GRADE_HOLD_MAX_MPH = 3.0
@@ -549,8 +566,13 @@ def mc_grade_hold_fraction(
     doors_open: bool = False,
     click_decel_ms2: Optional[float] = None,
     stop_running: bool = False,
+    departing: bool = False,
+    decel_table: Optional[dict[float, float]] = None,
 ) -> Optional[float]:
     """No soltar a neutro en MC: pendiente casi parado, o andén todavía delante.
+
+    ``departing`` (FSM DEPARTING, 225331Z/Crestwood): el andén ya dio paso a la salida,
+    así que no se retiene por andén delante; sí se mantiene la pendiente.
 
     El 323 se sostiene al abrir puertas. Este combinado no.
     Puertas abiertas: el marker puede saltar (011059Z, 98 m → 234 m) y no es salida.
@@ -567,10 +589,10 @@ def mc_grade_hold_fraction(
     if doors_open:
         return _light_hold()
     if speed_mph <= 0.4:
-        if not mc_station_still_ahead(station_dist_m):
+        if departing or not mc_station_still_ahead(station_dist_m):
             return None
         return _light_hold()
-    near_stop = mc_station_still_ahead(station_dist_m)
+    near_stop = mc_station_still_ahead(station_dist_m) and not departing
     # Pendiente solo sostiene el freno en aproximación: ya parado y con el andén lejos
     # (marcador saltado a ~360 m, 104834Z) no hay que retener.
     parked_far = (
@@ -586,13 +608,15 @@ def mc_grade_hold_fraction(
     if not near_stop and not on_grade:
         return None
     if near_stop and station_dist_m is not None:
-        # Con la parada ya en curso no volver a rodar a neutro (histéresis, 090737Z).
-        if not stop_running and mc_click_wait(
+        # Parada en curso: no volver a rodar salvo lejos de la marca (banda, 225331Z; 090737Z).
+        d_station = float(station_dist_m)
+        if mc_station_roll_allowed(d_station, stop_running=stop_running) and mc_click_wait(
             package,
             speed_mph=speed_mph,
-            distance_m=float(station_dist_m),
+            distance_m=d_station,
             gradient_pct=gradient_pct,
             click_decel_ms2=click_decel_ms2,
+            extra_margin_m=mc_click_hysteresis_m(d_station, stop_running=stop_running),
         ):
             return None
         stopping = mc_stop_brake_fraction(
@@ -600,10 +624,32 @@ def mc_grade_hold_fraction(
             speed_mph=speed_mph,
             distance_m=float(station_dist_m),
             gradient_pct=gradient_pct,
+            decel_table=decel_table,
         )
         if stopping is not None:
             return stopping
     return _light_hold()
+
+
+def mc_fraction_for_decel(
+    package: Optional[dict[str, Any]],
+    needed_ms2: float,
+    decel_table: dict[float, float],
+) -> Optional[float]:
+    """Posición MC más suave cuya decel medida cubre ``needed_ms2``.
+
+    Usa la curva aprendida (no la rampa lineal): en Crestwood 0,54 daba ~0,5 m/s²
+    frente a ~0,27 de la rampa (sobrefrenado a 1294 m, 20261014T200929Z).
+    """
+    neu, full = mc_lever_brake_ends(package)
+    if neu is None or full is None:
+        return None
+    ok = [
+        f
+        for f, decel in decel_table.items()
+        if full - 1e-4 <= f < neu - 1e-4 and decel >= needed_ms2
+    ]
+    return max(ok) if ok else None
 
 
 def mc_stop_brake_fraction(
@@ -612,14 +658,26 @@ def mc_stop_brake_fraction(
     speed_mph: float,
     distance_m: float,
     gradient_pct: float = 0.0,
+    decel_table: Optional[dict[float, float]] = None,
 ) -> Optional[float]:
-    """Fracción MC para parar en ``distance_m``. No usa peldaños B1/B2/B3."""
-    from tsw6v2.physics import service_strength_for_stop
+    """Fracción MC para parar en ``distance_m``. No usa peldaños B1/B2/B3.
 
-    raw = mc_fraction_for_strength(
-        package,
-        service_strength_for_stop(speed_mph, distance_m, gradient_pct),
-    )
+    Con ``decel_table`` (curva aprendida) elige la posición medida; sin dato cae a la rampa.
+    """
+    from tsw6v2.physics import MPH_TO_MS, gravity_acceleration_ms2, service_strength_for_stop
+
+    raw: Optional[float] = None
+    if decel_table and distance_m > 1.0:
+        speed_ms = speed_mph * MPH_TO_MS
+        needed = (speed_ms * speed_ms) / (2.0 * distance_m) - gravity_acceleration_ms2(
+            gradient_pct
+        )
+        raw = mc_fraction_for_decel(package, needed, decel_table)
+    if raw is None:
+        raw = mc_fraction_for_strength(
+            package,
+            service_strength_for_stop(speed_mph, distance_m, gradient_pct),
+        )
     if raw is None:
         return None
     return snap_mc_brake_fraction(package, raw)

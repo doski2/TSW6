@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -91,12 +92,16 @@ class JsonlTrace:
     def __init__(self, path: Path, session: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self._lock = threading.Lock()
         self._fp = path.open("w", encoding="utf-8")
         self.write({"type": "session", **session})
 
     def write(self, row: dict[str, Any]) -> None:
-        self._fp.write(json.dumps(row, ensure_ascii=False) + "\n")
-        self._fp.flush()
+        # Un lock por archivo: líneas JSON completas aunque escriban varios hilos (220924Z).
+        line = json.dumps(row, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._fp.write(line)
+            self._fp.flush()
 
     def write_session_detect(self, **fields: Any) -> None:
         """Ruta/servicio detectados por HTTP (línea aparte; se fusiona al leer JSONL)."""
@@ -163,7 +168,7 @@ class JsonlTrace:
             "lim_dist_m": _round_opt(snap.limit_dist_m, 1),
             "stn_dist_m": _round_opt(snap.station_dist_m, 1),
             "raw_stn_dist_m": _round_opt(snap.raw_station_dist_m, 1),
-            "planning_rejected_n": snap.planning_rejected_n,
+            "planning_rejected_n": snap.planning_rejected_n,            "planning_reject": snap.planning_reject_last,
             "station_name": snap.station_name or None,
             "service_name": snap.service_name or None,
             "schedule_source": snap.schedule_source or None,

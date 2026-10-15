@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from tsw6v2.constants import (
     STATION_APPROACH_PRIORITY_M,
     STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+    PLATFORM_AT_STOP_M,
     STATION_STOPPED_MPH,
 )
 from tsw6v2.command import (
@@ -21,7 +22,7 @@ from tsw6v2.command import (
     is_brake_released,
     throttle_notch_from_lever,
 )
-from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
+from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR, gravity_acceleration_ms2
 from tsw6v2.limit_containment import try_downhill_coast_watch
 from tsw6v2.limit_state import LimitBrakeState
 from tsw6v2.station_plan import (
@@ -42,6 +43,9 @@ if TYPE_CHECKING:
 DEPARTING_CLEAR_MPH = ORIGIN_DEPARTURE_MAX_SPEED_MPH
 # Salida lejos del andén a marcha: no es creep de andén ni reabre DEPARTING.
 DEPARTING_FAR_MIN_M = 800.0
+# Tope propio de station_coast_release_in_motion (20261015T123018Z). Mismo valor que
+# DEPARTING_FAR_MIN_M por casualidad: conceptos distintos, no enlazar ambos.
+STATION_IN_MOTION_RELEASE_MAX_M = 800.0
 DEPARTING_FAR_MIN_MPH = 18.0
 # Parado casi sin velocidad lejos del and\u00e9n: sigue llegada, no salida (265 m, sesi\u00f3n 184137Z).
 ARRIVAL_PARKED_MAX_M = 300.0
@@ -63,7 +67,6 @@ def blocks_inherited_release_in_station_final_approach(
         return False
     return speed_mph > STATION_STOPPED_MPH
 DEPARTING_MAX_S = 90.0
-PLATFORM_AT_STOP_M = 55.0
 DOORS_OPEN_MAX_SPEED_MPH = 8.0
 # Rollo passthrough en andén: ≥10 mph sin puertas (9 mph neutro = aún parada).
 PLATFORM_ROLL_THROUGH_MIN_MPH = 10.0
@@ -567,8 +570,15 @@ def station_coast_release_in_motion(
         return False
     if speed_mph <= 0.0:
         return False
+    # Sin tope, a_req ~0,04 m/s² a 2,5 km cumple siempre y soltaba en marcha al cambiar
+    # el límite (20261015T123018Z, 520 ticks a 2114–2496 m).
+    if float(station_dist_m) > STATION_IN_MOTION_RELEASE_MAX_M:
+        return False
     v_ms = float(speed_mph) * 0.44704
-    a_req = (v_ms * v_ms) / (2.0 * float(station_dist_m))
+    # Pendiente: misma convención que service_strength_for_stop (subida ayuda a parar).
+    a_req = (v_ms * v_ms) / (2.0 * float(station_dist_m)) - gravity_acceleration_ms2(
+        gradient_pct
+    )
     return a_req <= float(required_decel_ms2)
 
 

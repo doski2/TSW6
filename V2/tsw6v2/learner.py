@@ -79,6 +79,10 @@ class LearnerProfile:
             return None
         return self._by_mc.get(int(round(float(fraction) * 100)))
 
+    def mc_decel_table(self) -> dict[float, float]:
+        """Curva medida posición MC (0..1) → decel (m/s²) para elegir la fracción de parada."""
+        return {k / 100.0: v for k, v in self._by_mc.items()}
+
     def note_amps(self, amps: Optional[float]) -> None:
         """Última lectura de amperios. Retención: ``amps`` < −1 A."""
         self._last_amps = None if amps is None else float(amps)

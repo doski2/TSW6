@@ -492,8 +492,9 @@ def test_click_wait_coasts_until_click_stops_at_marker_session_011059() -> None:
     assert not mc_click_wait(pkg, speed_mph=10.0, distance_m=40.0)
 
 
-def test_click_wait_does_not_restart_once_stop_running_session_011059() -> None:
-    """Clic ya aplicado (ancla): 14 mph @ 140 m no vuelve a rodar en neutro."""
+def test_click_wait_band_far_from_marker_session_011059_225331() -> None:
+    """Clic ya aplicado (ancla): lejos de la marca (>100 m) rueda si el clic sobrefrenaría
+    (225331Z); cerca no vuelve a rodar (090737Z)."""
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.command import BrakeReleaseState
     from tsw6v2.decision import evaluate_p1_tick
@@ -512,7 +513,7 @@ def test_click_wait_does_not_restart_once_stop_running_session_011059() -> None:
     )
     state = LimitBrakeState()
     state.station_stop_m = 140.0
-    d = evaluate_p1_tick(
+    far = evaluate_p1_tick(
         state,
         BrakeReleaseState(),
         snap,
@@ -520,8 +521,20 @@ def test_click_wait_does_not_restart_once_stop_running_session_011059() -> None:
         limit_brake_enabled=False,
         signal_brake_enabled=False,
     )
-    assert d.command is not None
-    assert d.command.kind == "APPLY"
+    assert far.command is not None
+    assert far.command.kind == "RELEASE"
+
+    state.station_stop_m = 140.0
+    near = evaluate_p1_tick(
+        state,
+        BrakeReleaseState(),
+        snap,
+        station_distance_m=80.0,
+        limit_brake_enabled=False,
+        signal_brake_enabled=False,
+    )
+    assert near.command is not None
+    assert near.command.kind == "APPLY"
 
 
 def test_grade_hold_releases_while_click_waits_session_011059() -> None:
@@ -609,3 +622,45 @@ def test_station_stop_keeps_easing_after_plan_drops_session_005614() -> None:
     assert decision.command.target_fraction is not None
     assert decision.command.target_fraction > 0.45
     assert decision.reason != "release"
+
+
+def test_grade_hold_releases_departing_from_stop_short_of_marker_session_20261014() -> None:
+    """Parado a ~55 m del andén: sin salida retiene; en DEPARTING no retiene por andén delante."""
+    from tsw6v2.vehicle_package import mc_grade_hold_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    kwargs = dict(speed_mph=0.0, gradient_pct=0.0, station_dist_m=55.4)
+    assert mc_grade_hold_fraction(pkg, **kwargs) is not None
+    assert mc_grade_hold_fraction(pkg, departing=True, **kwargs) is None
+
+
+def test_mc_fraction_for_decel_picks_softest_position_covering_need() -> None:
+    """Curva medida: la posición más suave que aún cubre la decel necesaria (20261014T200929Z)."""
+    from tsw6v2.vehicle_package import mc_fraction_for_decel
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    table = {0.54: 0.50, 0.64: 0.31, 0.50: 0.60}
+    # Necesaria 0,26: incluso el clic 0,64 (0,31) basta.
+    assert mc_fraction_for_decel(pkg, 0.26, table) == 0.64
+    # Necesaria 0,45: 0,64 no basta; el más suave válido es 0,54.
+    assert mc_fraction_for_decel(pkg, 0.45, table) == 0.54
+
+
+def test_mc_stop_brake_fraction_uses_learned_curve_not_linear_ramp() -> None:
+    """Crestwood 1294 m a 58 mph: la rampa daba ~0,54 y sobrefrenaba; la curva deja 0,64."""
+    from tsw6v2.vehicle_package import mc_stop_brake_fraction
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    table = {0.54: 0.50, 0.64: 0.31, 0.50: 0.60}
+    linear = mc_stop_brake_fraction(pkg, speed_mph=58.0, distance_m=1294.0)
+    learned = mc_stop_brake_fraction(
+        pkg, speed_mph=58.0, distance_m=1294.0, decel_table=table
+    )
+    assert linear is not None and learned is not None
+    assert learned > linear

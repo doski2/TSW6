@@ -30,3 +30,6 @@ tsw_hud.db-wal
 .pytest_cache/
 
 .project_explorer/
+
+# Node (dependencias locales, se reinstalan con npm install)
+node_modules/

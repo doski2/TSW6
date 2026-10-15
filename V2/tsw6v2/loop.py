@@ -104,7 +104,7 @@ class AgentSnapshot:
     p1_target_kind: str = ""
     station_dist_m: Optional[float] = None
     raw_station_dist_m: Optional[float] = None
-    planning_rejected_n: int = 0
+    planning_rejected_n: int = 0    planning_reject_last: Optional[str] = None
     station_name: Optional[str] = None
     service_name: Optional[str] = None
     schedule_source: str = ""
@@ -153,7 +153,7 @@ class AgentSnapshot:
         p1_target_kind: str = "",
         station_dist_m: Optional[float] = None,
         raw_station_dist_m: Optional[float] = None,
-        planning_rejected_n: int = 0,
+        planning_rejected_n: int = 0,        planning_reject_last: Optional[str] = None,
         station_name: Optional[str] = None,
         service_name: Optional[str] = None,
         schedule_source: str = "",
@@ -198,7 +198,7 @@ class AgentSnapshot:
                 p1_target_kind=p1_target_kind,
                 station_dist_m=station_dist_m,
                 raw_station_dist_m=raw_station_dist_m,
-                planning_rejected_n=planning_rejected_n,
+                planning_rejected_n=planning_rejected_n,                planning_reject_last=planning_reject_last,
                 station_name=station_name,
                 service_name=service_name,
                 schedule_source=schedule_source,
@@ -260,7 +260,7 @@ class AgentSnapshot:
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
             raw_station_dist_m=raw_station_dist_m,
-            planning_rejected_n=planning_rejected_n,
+            planning_rejected_n=planning_rejected_n,            planning_reject_last=planning_reject_last,
             station_name=station_name,
             service_name=service_name,
             schedule_source=schedule_source,
@@ -669,7 +669,7 @@ class AgentLoop:
 
         station_dist_m: Optional[float] = None
         raw_station_dist_m: Optional[float] = None
-        planning_rejected_n: int = 0
+        planning_rejected_n: int = 0        planning_reject_last: Optional[str] = None
         station_name: Optional[str] = None
         service_name: Optional[str] = None
         schedule_source = ""
@@ -723,7 +723,7 @@ class AgentLoop:
                 )
                 station_dist_m = planning.station_distance_m
                 raw_station_dist_m = planning.raw_station_distance_m
-                planning_rejected_n = planning.planning_rejected_n
+                planning_rejected_n = planning.planning_rejected_n                planning_reject_last = planning.planning_reject_last
                 station_name = planning.station_name
                 service_name = planning.service_name
                 schedule_source = planning.schedule_source
@@ -821,6 +821,8 @@ class AgentLoop:
                             mc_first_click_fraction(self._vehicle_package)
                         ),
                         stop_running=stop_running,
+                        departing=station_fsm == "DEPARTING",
+                        decel_table=self._learner.mc_decel_table(),
                     )
                     if hold is not None:
                         cmd = replace(
@@ -955,7 +957,7 @@ class AgentLoop:
             p1_target_kind=p1_target_kind,
             station_dist_m=station_dist_m,
             raw_station_dist_m=raw_station_dist_m,
-            planning_rejected_n=planning_rejected_n,
+            planning_rejected_n=planning_rejected_n,            planning_reject_last=planning_reject_last,
             station_name=station_name,
             service_name=service_name,
             schedule_source=schedule_source,

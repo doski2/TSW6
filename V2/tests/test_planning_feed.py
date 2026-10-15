@@ -5,6 +5,7 @@ from __future__ import annotations
 from tsw6v2.planning_feed import (
     PlanningFeed,
     PlanningSnapshot,
+    advance_station_distance_tick,
     apply_station_distance_reading,
     planning_distance_accept,
     tick_station_distance_m,
@@ -106,3 +107,53 @@ def test_planning_distance_rejects_large_yoyo_at_speed():
     assert planning_distance_accept(None, 120.8, 45.0)
     assert planning_distance_accept(None, 24000.0, 45.0)
     assert planning_distance_accept(22184.0, 120.8, 2.0)
+
+
+def test_resync_after_two_rejects_in_final_approach_session_214350Z():
+    """Estimación 148 m con lectura real 198.7 m: la 1.ª se rechaza, la 2.ª re-sincroniza."""
+    snap = PlanningSnapshot(station_distance_m=148.0)
+    assert apply_station_distance_reading(snap, 198.7, 29.5) is False
+    assert snap.planning_reject_streak == 1
+    assert apply_station_distance_reading(snap, 198.7, 29.5) is True
+    assert snap.station_distance_m == 198.7
+    assert snap.planning_reject_streak == 0
+
+
+
+def test_stall_freezes_estimate_above_marker_session_220924Z():
+    """Feed obsoleto a 157.6 m: no se resta distancia hasta 0 m."""
+    snap = PlanningSnapshot(station_distance_m=157.6)
+    for _ in range(50):
+        advance_station_distance_tick(snap, 11.0, 0.2, freeze=True)
+    assert snap.station_distance_m == 157.6
+
+
+def test_freeze_still_reaches_marker_passed_zero():
+    """Cerca del andén (<= marker) sigue el dead-reckoning normal."""
+    snap = PlanningSnapshot(station_distance_m=3.0)
+    advance_station_distance_tick(snap, 11.0, 1.0, freeze=True)
+    assert snap.station_distance_m == 0.0
+
+def test_station_reading_stale_threshold_allows_poll_cycle():
+    """Ciclo de sondeo ~4 s (log 223124Z): no congelar antes de 5 s sin lectura HTTP."""
+    import time
+
+    from tsw6v2.planning_poller import PLANNING_STALE_AFTER_S, StationPlanning
+
+    sp = StationPlanning(http_enabled=False)
+    assert PLANNING_STALE_AFTER_S == 5.0
+    sp._last_reading_t = time.monotonic() - 4.2
+    assert sp._reading_stale() is False
+    sp._last_reading_t = time.monotonic() - 6.0
+    assert sp._reading_stale() is True
+
+
+def test_planning_reject_last_records_slow_rise_reason_session_20261015() -> None:
+    """20261015T123018Z: HTTP 200 m tras integrar a 64 m; el motivo queda en el snapshot."""
+    from tsw6v2.planning_feed import PlanningSnapshot, apply_station_distance_reading
+
+    snap = PlanningSnapshot(station_distance_m=64.0)
+    assert not apply_station_distance_reading(snap, 200.0, 14.0)
+    assert snap.planning_reject_last == "slow_rise@200"
+    assert apply_station_distance_reading(snap, 60.0, 14.0)
+    assert snap.planning_reject_last is None

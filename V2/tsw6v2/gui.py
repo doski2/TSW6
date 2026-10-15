@@ -19,6 +19,7 @@ from tsw6v2.gui_view import (
     snapshot_to_fields,
 )
 from tsw6v2.learner import LearnerProfile
+from tsw6v2.control_lock import ControlLockError, acquire_control_lock
 from tsw6v2.loop import AgentLoop, AgentSnapshot
 from tsw6v2.p1_mode import (
     GUI_P1_MODES,
@@ -263,6 +264,7 @@ class AgentGuiApp:
         self.loop.post_ipc_sleep_s = 0.0
         self._p1_mode = self._normalize_mode(p1_mode)
         self._running = True
+        self._ui_after_id: Optional[str] = None
         self._agent_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self._last: Optional[AgentSnapshot] = None
@@ -674,7 +676,7 @@ class AgentGuiApp:
         self._render_dashboard(dash)
         self._refresh_ai_json(snap, dash)
 
-        self.root.after(_UI_MS, self._schedule_ui)
+        self._ui_after_id = self.root.after(_UI_MS, self._schedule_ui)
 
     def _copy_ai_json(self) -> None:
         with self._lock:
@@ -704,6 +706,10 @@ class AgentGuiApp:
             self.loop,
             self._profile_path_override,
         )
+        # Cancelar el siguiente refresco: si queda programado, Tk lo ejecuta tras destroy().
+        if self._ui_after_id is not None:
+            self.root.after_cancel(self._ui_after_id)
+            self._ui_after_id = None
         self.root.destroy()
 
     @property
@@ -720,6 +726,11 @@ def run_gui(
     open_html: bool = True,
     no_log: bool = False,
 ) -> int:
+    try:
+        acquire_control_lock()
+    except ControlLockError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
     try:
         root = tk.Tk()
     except tk.TclError as exc:

@@ -82,6 +82,10 @@ STATION_APPROACH_PRIORITY_M = 600.0
 STATION_FINAL_APPROACH_RELEASE_BLOCK_M = 200.0
 # Parado en andén: fuente única (p1_station_gate, vehicle_package).
 STATION_STOPPED_MPH = 1.5
+# Andén: distancia de parada (fuente única; p1_station_gate la reexporta).
+PLATFORM_AT_STOP_M = 55.0
+# Lecturas HTTP seguidas rechazadas antes de re-sincronizar la estimación en aproximación final.
+PLANNING_RESYNC_AFTER_REJECTS = 2
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:

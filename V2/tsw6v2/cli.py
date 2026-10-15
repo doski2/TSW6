@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from tsw6v2.constants import DEFAULT_LOOP_HZ
+from tsw6v2.control_lock import ControlLockError, acquire_control_lock
 from tsw6v2.diagnostic import run_ipc_brake_test
 from tsw6v2.gui import run_gui
 from tsw6v2.learner import LearnerProfile
@@ -48,6 +49,11 @@ def run_console(
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 2
+    try:
+        acquire_control_lock()
+    except ControlLockError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
 
     learner = LearnerProfile.from_json(profile_path) if profile_path else None
     loop = AgentLoop(

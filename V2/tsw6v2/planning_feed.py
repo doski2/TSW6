@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Optional
 
 from tsw6v2.bridge.getdata import parse_probe_line
-from tsw6v2.constants import MPH_TO_MS, STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+from tsw6v2.constants import (
+    MPH_TO_MS,
+    PLANNING_RESYNC_AFTER_REJECTS,
+    STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+)
 from tsw6v2.driver_aid_stations import station_base_name
 from tsw6v2.probe_seq import probe_seq_dt_s
 
@@ -26,6 +30,10 @@ class PlanningSnapshot:
     raw_station_distance_m: Optional[float] = None
     # Lecturas HTTP descartadas por ``apply_station_distance_reading`` (diagnóstico).
     planning_rejected_n: int = 0
+    # Rechazos HTTP seguidos; >0 = estimación fuera de sincronía (suelo + re-sync).
+    planning_reject_streak: int = 0
+    # Último rechazo HTTP ("motivo@metros") o None si la última lectura se aceptó (diagnóstico).
+    planning_reject_last: Optional[str] = None
     station_name: Optional[str] = None
     service_name: Optional[str] = None
     hud_route_name: Optional[str] = None
@@ -60,8 +68,35 @@ def planning_distance_accept(
     approach_prev_min_m: float = PLANNING_APPROACH_PREV_MIN_M,
 ) -> bool:
     """``False`` si el HTTP salta a la siguiente estación o aleja del andén en marcha."""
+    return (
+        planning_reject_reason(
+            prev_m,
+            new_m,
+            speed_mph,
+            jump_reject_m=jump_reject_m,
+            mid_approach_max_m=mid_approach_max_m,
+            regression_m=regression_m,
+            approach_min_speed_mph=approach_min_speed_mph,
+            approach_prev_min_m=approach_prev_min_m,
+        )
+        is None
+    )
+
+
+def planning_reject_reason(
+    prev_m: Optional[float],
+    new_m: float,
+    speed_mph: float,
+    *,
+    jump_reject_m: float = PLANNING_JUMP_REJECT_M,
+    mid_approach_max_m: float = STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
+    regression_m: float = PLANNING_HTTP_REGRESSION_M,
+    approach_min_speed_mph: float = PLANNING_APPROACH_MIN_SPEED_MPH,
+    approach_prev_min_m: float = PLANNING_APPROACH_PREV_MIN_M,
+) -> Optional[str]:
+    """Motivo de rechazo de una lectura HTTP, o ``None`` si se acepta (diagnóstico incluido)."""
     if prev_m is None:
-        return True
+        return None
     # Salida: marker pasado (≈0 m) → HTTP de la siguiente parada (km). No confundir con
     # creep en andén (152306Z @ 3.4 mph) ni salto desde ~52 m aún en plataforma.
     if (
@@ -69,7 +104,7 @@ def planning_distance_accept(
         and new_m > jump_reject_m
         and speed_mph >= PLANNING_NEXT_STOP_MIN_SPEED_MPH
     ):
-        return True
+        return None
     # En marcha con distancia consolidada: rechazar yo-yo grande (atrás o adelante).
     # Tras invalidate() prev=None acepta save/load; prev<1000 m deja pasar 235→1800 m.
     if (
@@ -77,20 +112,20 @@ def planning_distance_accept(
         and prev_m >= approach_prev_min_m
         and abs(new_m - prev_m) > jump_reject_m
     ):
-        return False
+        return "yoyo_far"
     # Andén y aproximación final: rechazar subida HTTP grande (siguiente parada, o
     # 155138Z: 101→234 m @ 1 mph). Salida legítima arriba (prev≤5 m @ ≥8 mph) va antes.
     # Save/load: prev≥200 m queda fuera de esta zona.
     if new_m > prev_m + PLANNING_SLOW_RISE_REJECT_M and prev_m < mid_approach_max_m:
-        return False
+        return "slow_rise"
     # En marcha: no aceptar HTTP que aleja (confiar en v×dt hasta el próximo poll válido).
     if (
         speed_mph >= approach_min_speed_mph
         and new_m > prev_m + regression_m
         and new_m < prev_m + jump_reject_m
     ):
-        return False
-    return True
+        return "regress_moving"
+    return None
 
 
 def resolve_station_tick_dt(
@@ -127,8 +162,16 @@ def advance_station_distance_tick(
     snap: PlanningSnapshot,
     speed_mph: float,
     dt: float,
+    *,
+    freeze: bool = False,
 ) -> None:
-    """Un tick de dead-reckoning sobre ``snap`` (HTTP y archivo)."""
+    """Un tick de dead-reckoning sobre ``snap`` (HTTP y archivo).
+
+    ``freeze``: sin respuesta HTTP válida (feed obsoleto). Por encima del marker no se
+    resta distancia, para no llegar a 0 m con una lectura que no se actualiza (220924Z).
+    """
+    if freeze and snap.station_distance_m is not None and snap.station_distance_m > PLATFORM_MARKER_PASSED_M:
+        return
     snap.station_distance_m = tick_station_distance_m(
         snap.station_distance_m,
         speed_mph,
@@ -149,8 +192,19 @@ def apply_station_distance_reading(
     stop_base = station_base_name(stop_name or "")
     if exclude_bases and stop_base and stop_base in exclude_bases:
         return False
-    if not planning_distance_accept(snap.station_distance_m, new_dist, speed_mph):
-        return False
+    reason = planning_reject_reason(snap.station_distance_m, new_dist, speed_mph)
+    if reason is not None:
+        # Re-sincronía: en aproximación final, tras varios rechazos seguidos, la lectura
+        # HTTP manda sobre la estimación (la regla de subida la rechazaba en bucle).
+        if (
+            snap.planning_reject_streak + 1 < PLANNING_RESYNC_AFTER_REJECTS
+            or new_dist > STATION_FINAL_APPROACH_RELEASE_BLOCK_M
+        ):
+            snap.planning_reject_streak += 1
+            snap.planning_reject_last = f"{reason}@{new_dist:.0f}"
+            return False
+    snap.planning_reject_streak = 0
+    snap.planning_reject_last = None
     snap.station_distance_m = new_dist
     return True
 

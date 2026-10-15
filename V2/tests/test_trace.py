@@ -213,3 +213,29 @@ def test_resolve_session_log_path() -> None:
 
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())
+
+
+def test_jsonl_trace_concurrent_writes_keep_lines_valid_session_220924Z(tmp_path):
+    """Varios hilos escribiendo el mismo JSONL no deben mezclar líneas (220924Z)."""
+    import json as _json
+    import threading as _threading
+
+    from tsw6v2.trace import JsonlTrace
+
+    path = tmp_path / "concurrent.jsonl"
+    trace = JsonlTrace(path, {"mode": "station"})
+
+    def worker(wid: int) -> None:
+        for i in range(300):
+            trace.write({"type": "tick", "w": wid, "i": i, "pad": "x" * 200})
+
+    threads = [_threading.Thread(target=worker, args=(w,)) for w in range(6)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    trace._fp.close()
+
+    rows = [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["type"] == "session"
+    assert len(rows) == 1 + 6 * 300

@@ -30,6 +30,9 @@ _log = logging.getLogger("tsw6v2.planning_poller")
 
 PLANNING_MIN_INTERVAL_S = 2.0
 PLANNING_READ_TIMEOUT_S = 1.0
+# Ciclo real de sondeo ≈ espera (2 s) + 2 GET (hasta 1 s c/u) ≈ 4 s (log 223124Z: 4.2 s).
+# Congelar a los 2 s dejaba ~59% de ticks en marcha sin v×dt (~40 m de error a 40 mph).
+PLANNING_STALE_AFTER_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,8 @@ class StationPlanning:
         self._cache_lock = threading.Lock()
         self._last_tick_t = 0.0
         self._last_speed_mph = 0.0
+        # Última respuesta HTTP con distancia válida (reloj de pared, como el poll).
+        self._last_reading_t: Optional[float] = None
         self._last_probe_seq: Optional[int] = None
         self._last_probe_vehicle: Optional[str] = None
         self._startup_invalidate_pending = True
@@ -340,9 +345,23 @@ class StationPlanning:
         self._last_speed_mph = float(speed_mph)
         self._note_probe_seq(probe_seq)
         with self._cache_lock:
-            advance_station_distance_tick(self._snap, speed_mph, dt)
+            advance_station_distance_tick(
+                self._snap,
+                speed_mph,
+                dt,
+                freeze=self._reading_stale(),
+            )
             snap = self._snap
         return self._strip_untrusted_station_fields(snap, probe_vehicle)
+
+    def _reading_stale(self) -> bool:
+        """True si hace más de un poll que no llega una distancia HTTP válida.
+
+        Sin ninguna lectura previa no hay nada que congelar (la distancia solo viene de una lectura).
+        """
+        if self._last_reading_t is None:
+            return False
+        return (time.monotonic() - self._last_reading_t) > PLANNING_STALE_AFTER_S
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -377,6 +396,7 @@ class StationPlanning:
         if dist is None or float(dist) <= 0:
             return
         new_dist = float(dist)
+        self._last_reading_t = time.monotonic()
         with self._cache_lock:
             prev = self._snap.station_distance_m
             prev_name = self._snap.station_name
