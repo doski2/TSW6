@@ -87,6 +87,7 @@ def apply_station_schedule(
     lat: Optional[float] = None,
     lng: Optional[float] = None,
     hud_db_path: Optional[Path] = None,
+    fallback_all_when_unmatched: bool = True,
 ) -> tuple[list[dict[str, Any]], str, Optional[dict[str, Any]]]:
     """Filtra ``TrackData.markers`` con el horario HUD.
 
@@ -106,6 +107,10 @@ def apply_station_schedule(
             )
             if matched:
                 return matched, "hud_db", resolved
+            if not fallback_all_when_unmatched:
+                # Servicio conocido pero su siguiente parada aún no sale en TrackData: sin
+                # parada próxima (no frenar para una estación que no está en el horario).
+                return [], "hud_db", resolved
 
     return track_stations, "track_only", None
 

@@ -30,6 +30,7 @@ def log_station_tick(
     predict_decel: Any,
     brake_fill_s: float,
     base_decel: float,
+    plan_decel_ms2: Optional[float] = None,
 ) -> None:
     if not enabled() or station_plan_dist is None:
         return
@@ -45,6 +46,7 @@ def log_station_tick(
         throttle_notch=throttle_notch,
         station_eta=station_eta,
         brake_fill_s=brake_fill_s,
+        plan_decel_ms2=plan_decel_ms2,
     )
     step = getattr(plan, "active_step", None) if plan is not None else None
     row = {

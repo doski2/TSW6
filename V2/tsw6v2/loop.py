@@ -882,6 +882,7 @@ class AgentLoop:
                         stop_running=stop_running,
                         departing=station_fsm == "DEPARTING",
                         decel_table=self._learner.mc_decel_table(),
+                        roll_latch=self._limit_state.roll_latch_for(stop_running),
                     )
                     if hold is not None:
                         cmd = replace(

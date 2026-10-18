@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import (
     BrakeCommand,
@@ -23,7 +24,6 @@ from tsw6v2.vehicle_package import (
     mc_click_hysteresis_m,
     mc_click_wait,
     mc_first_click_fraction,
-    mc_station_roll_allowed,
     mc_stop_brake_fraction,
     uses_mc_analog_ipc,
     vehicle_package_from_snap,
@@ -59,7 +59,12 @@ from tsw6v2.station_plan import (
     should_suppress_station_braking_for_departure,
     station_within_dwell_zone,
 )
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL, set_active_physics
+from tsw6v2.physics import (
+    DEFAULT_BRAKE_FILL_S,
+    DEFAULT_MAX_BRAKE_DECEL,
+    VehiclePhysics,
+    set_active_physics,
+)
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
 from tsw6v2.signal_brake import evaluate_signal_brake
@@ -73,7 +78,6 @@ from tsw6v2.station_brake import (
 )
 from tsw6v2.target import BrakeTargetResult
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
 
 @dataclass
@@ -137,6 +141,7 @@ class _TickCtx:
     vehicle_package: Optional[dict[str, Any]] = None
     click_decel_ms2: Optional[float] = None
     mc_decel_table: Optional[dict[float, float]] = None
+    physics: VehiclePhysics = field(default_factory=lambda: vehicle_physics(None))
 
     def decide(
         self,
@@ -378,8 +383,7 @@ def _attempt_platform_parked_bleed_release(
             speed_mph=prep.ctx.speed_mph,
             station_dist_m=station_dist_m,
             required_decel_ms2=(
-                vehicle_physics(ctx.vehicle_package).max_decel_ms2
-                * vehicle_physics(ctx.vehicle_package).service_decel_frac[3]
+                ctx.physics.max_decel_ms2 * ctx.physics.service_decel_frac[3]
             ),
             gradient_pct=float(snap.gradient_pct or 0.0),
         )
@@ -588,7 +592,8 @@ def _prepare_tick(
     if lever is None:
         lever = NEUTRAL_NOTCH
     vehicle_pkg = vehicle_package_from_snap(snap)
-    set_active_physics(vehicle_physics(vehicle_pkg))
+    physics = vehicle_physics(vehicle_pkg)
+    set_active_physics(physics)
     combined_lever = combined_lever_for_station_gate(snap, lever, vehicle_pkg)
     ctx = _TickCtx(
         dist_m=dist_m,
@@ -599,6 +604,7 @@ def _prepare_tick(
         lever=lever,
         cyl=snap.brake_cyl_bar,
         vehicle_package=vehicle_pkg,
+        physics=physics,
         click_decel_ms2=(
             learner.mc_decel_for(mc_first_click_fraction(vehicle_pkg))
             if learner is not None and vehicle_pkg is not None
@@ -855,6 +861,25 @@ def _mc_station_fraction_command(
     )
 
 
+def _mc_station_roll_wanted(
+    ctx: _TickCtx,
+    limit_state: LimitBrakeState,
+    distance_m: float,
+    *,
+    running: bool,
+) -> bool:
+    """¿Rodar en neutro hasta el clic? Misma regla para el plan y para ``_continue_station_stop``."""
+    return mc_click_wait(
+        ctx.vehicle_package,
+        speed_mph=ctx.speed_mph,
+        distance_m=distance_m,
+        gradient_pct=ctx.grad,
+        click_decel_ms2=ctx.click_decel_ms2,
+        extra_margin_m=mc_click_hysteresis_m(distance_m, stop_running=running),
+        latch=limit_state.roll_latch_for(running),
+    )
+
+
 def _continue_station_stop(
     ctx: _TickCtx,
     limit_state: LimitBrakeState,
@@ -868,14 +893,7 @@ def _continue_station_stop(
         return None
     if not uses_mc_analog_ipc(ctx.vehicle_package):
         return None
-    if mc_station_roll_allowed(dist, stop_running=True) and mc_click_wait(
-        ctx.vehicle_package,
-        speed_mph=ctx.speed_mph,
-        distance_m=dist,
-        gradient_pct=ctx.grad,
-        click_decel_ms2=ctx.click_decel_ms2,
-        extra_margin_m=mc_click_hysteresis_m(dist, stop_running=True),
-    ):
+    if _mc_station_roll_wanted(ctx, limit_state, dist, running=True):
         rel = BrakeCommand(
             kind="RELEASE",
             target_notch=NEUTRAL_NOTCH,
@@ -913,14 +931,7 @@ def _mc_station_stop_fraction(
         return cmd
     # Histéresis: con la parada ya en curso (clic aplicado) no volver a rodar (oscilación).
     running = _station_stop_continues(limit_state, target.distance_m, ctx.speed_mph)
-    if mc_station_roll_allowed(target.distance_m, stop_running=running) and mc_click_wait(
-        ctx.vehicle_package,
-        speed_mph=ctx.speed_mph,
-        distance_m=target.distance_m,
-        gradient_pct=ctx.grad,
-        click_decel_ms2=ctx.click_decel_ms2,
-        extra_margin_m=mc_click_hysteresis_m(target.distance_m, stop_running=running),
-    ):
+    if _mc_station_roll_wanted(ctx, limit_state, target.distance_m, running=running):
         # Rodar en neutro: el clic 0,64 frenaría de más a esta distancia (011059Z).
         return BrakeCommand(
             kind="RELEASE",
@@ -1069,7 +1080,7 @@ def evaluate_p1_tick(
             release_state=release_state,
             brake_kind=_brake_kind(snap.train_brake, snap.dyn_brake),
             brake_applied=_brake_applied(snap.train_brake, snap.dyn_brake),
-            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
+            base_decel=ctx.physics.max_decel_ms2,
         )
         limit_target = departure_limit_target_or_coast(
             limit_target,
@@ -1105,8 +1116,9 @@ def evaluate_p1_tick(
             station_eta=station_eta,
             schedule_slack_enabled=schedule_slack_enabled,
             brake_fill_s=prep.fill_s,
-            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
+            base_decel=ctx.physics.max_decel_ms2,
             allow_watch=station_allow_watch,
+            plan_decel_ms2=ctx.physics.station_plan_decel_ms2,
         )
         # DIAG_STATION_TEMPORAL: quitar tras investigación 212814Z.
         diag_station.log_station_tick(
@@ -1118,7 +1130,8 @@ def evaluate_p1_tick(
             station_target=station_target,
             predict_decel=prep.predict,
             brake_fill_s=prep.fill_s,
-            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
+            base_decel=ctx.physics.max_decel_ms2,
+            plan_decel_ms2=ctx.physics.station_plan_decel_ms2,
         )
         if (
             learner is not None
@@ -1154,7 +1167,7 @@ def evaluate_p1_tick(
             throttle_notch=prep.throttle_notch,
             station_distance_m=station_dist_geo,
             brake_fill_s=prep.fill_s,
-            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
+            base_decel=ctx.physics.max_decel_ms2,
         )
 
     target = pick_p1_brake_target(

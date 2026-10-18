@@ -77,6 +77,7 @@ def test_http_converted_to_board_frame_and_offset_refined() -> None:
     anchor, est = _locked(offset=100.0)
     assert anchor.to_board(900.0) == pytest.approx(800.0)
     anchor.note_http_end(est + 110.0, est, now=10.6)
+    assert anchor.offset_m is not None
     assert 100.0 < anchor.offset_m < 110.0
     before = HudAnchor()
     assert before.to_board(900.0) == 900.0  # sin ancla: marco fin de andén
@@ -112,7 +113,8 @@ def test_station_planning_anchors_distance_to_hud() -> None:
     snap = src.update(MPH, probe_seq=102, hud_ocr=_read(800.5, time.monotonic()))
     assert src._anchor is not None and src._anchor.board_frame
     assert snap.station_distance_m == pytest.approx(800.0, abs=3.0)
-    assert src.anchor_status().startswith("board")
+    status = src.anchor_status()
+    assert status is not None and status.startswith("board")
 
 
 def test_station_planning_without_anchor_is_unchanged() -> None:
@@ -130,7 +132,7 @@ def test_station_planning_without_anchor_is_unchanged() -> None:
 def test_http_reading_uses_board_frame_and_station_change_resets(monkeypatch) -> None:
     calls = {"n": 0}
 
-    def fake_poll(exclude_bases=None, hud_db_path=None):
+    def fake_poll(exclude_bases=None, hud_db_path=None, **_):
         calls["n"] += 1
         name = "Fleetwood" if calls["n"] == 1 else "Bronxville"
         dist = 905.0 if calls["n"] == 1 else 3000.0

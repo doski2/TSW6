@@ -673,7 +673,9 @@ def plan_station_service_brake(
     schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
     min_speed_ms: float = 0.5,
+    plan_decel_ms2: Optional[float] = None,
 ) -> Optional[BrakePlan]:
+    """``plan_decel_ms2``: decel única de plan (por vehículo); sustituye la de cada escalón."""
     speed_ms = speed_mph * MPH_TO_MS
     target_ms = 0.0
 
@@ -712,6 +714,8 @@ def plan_station_service_brake(
     for i, phase in enumerate(UK_SERVICE_PHASES):
         decel, using_learned = resolve_phase_decel(
             phase, speed_mph, gradient_pct, base_decel, predict_decel)
+        if plan_decel_ms2 is not None:
+            decel, using_learned = float(plan_decel_ms2), False
         dist_needed = braking_distance_m(
             speed_ms,
             target_ms,
@@ -770,6 +774,7 @@ def plan_brake_for_station(
     cfg: StationBrakeConfig = DEFAULT_STATION_CFG,
     schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+    plan_decel_ms2: Optional[float] = None,
 ) -> Optional[BrakePlan]:
     if station_distance_m < 0:
         return None
@@ -802,6 +807,7 @@ def plan_brake_for_station(
         cfg=cfg,
         schedule_slack_enabled=schedule_slack_enabled,
         brake_fill_s=brake_fill_s,
+        plan_decel_ms2=plan_decel_ms2,
     )
     if (
         service is not None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S
 from tsw6v2.service_brake import target_from_stop_plan
 from tsw6v2.p1_station_gate import STATION_STOPPED_MPH
@@ -14,7 +15,6 @@ from tsw6v2.station_plan import (
 )
 from tsw6v2.target import BrakeTargetResult
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
 
 def station_distance_for_brake_plan(
@@ -45,6 +45,7 @@ def evaluate_station_brake(
     schedule_slack_enabled: bool = STATION_SCHEDULE_SLACK_ENABLED,
     brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
     allow_watch: bool = False,
+    plan_decel_ms2: Optional[float] = None,
 ) -> Optional[BrakeTargetResult]:
     if station_distance_m is None or station_distance_m <= 0:
         return None
@@ -61,6 +62,7 @@ def evaluate_station_brake(
         station_anchor_m=station_anchor_m,
         schedule_slack_enabled=schedule_slack_enabled,
         brake_fill_s=brake_fill_s,
+        plan_decel_ms2=plan_decel_ms2,
     )
     if plan is None:
         return None

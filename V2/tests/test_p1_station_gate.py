@@ -897,8 +897,11 @@ def test_in_motion_release_uses_gradient_uphill_helps_stop() -> None:
 def _bleed_release_fakes(lever: int):
     from types import SimpleNamespace
 
+    from tsw6v2.vehicle_package import vehicle_physics
+
     ctx = SimpleNamespace(
         vehicle_package=None,
+        physics=vehicle_physics(None),
         decide=lambda *a, **k: "DECIDED",
         speed_mph=1.0,
     )

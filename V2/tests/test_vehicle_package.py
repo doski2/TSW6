@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from tsw6v2.bridge.commands import combined_notch_to_value, master_controller_input_value
@@ -548,21 +549,62 @@ def test_grade_hold_releases_while_click_waits_session_011059() -> None:
     assert near is not None and near < 0.64  # ya toca frenar: fracción de parada, no rodar
 
 
-def test_grade_hold_does_not_release_when_stop_running_session_090737() -> None:
-    """Con la parada en curso a ~65 m no vuelve a rodar a neutro (ping-pong 3754–3757)."""
+def test_grade_hold_rolls_with_stop_running_but_latch_prevents_ping_pong_181008z() -> None:
+    """Parada en curso a 65 m/9 mph: el clic frenaría de más → rodar; el pestillo evita 090737Z."""
+    from tsw6v2.roll_latch import StationRollLatch
     from tsw6v2.vehicle_package import mc_grade_hold_fraction
 
     clear_package_cache()
     pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
     assert pkg is not None
-    running = mc_grade_hold_fraction(
-        pkg,
-        speed_mph=9.0,
-        gradient_pct=0.0,
-        station_dist_m=65.0,
-        stop_running=True,
+    def hold(**extra):
+        return mc_grade_hold_fraction(
+            pkg,
+            speed_mph=9.0,
+            gradient_pct=0.0,
+            station_dist_m=65.0,
+            stop_running=True,
+            **extra,
+        )
+
+    assert hold() is None  # sin pestillo: rueda (ya no hay corte a 100 m)
+    latch = StationRollLatch()
+    latch.active, latch.since = False, time.monotonic()  # frenando desde hace un instante
+    assert hold(roll_latch=latch) is not None  # sigue frenando
+    latch.since = time.monotonic() - 10.0  # pasado el tiempo mínimo: puede soltar
+    assert hold(roll_latch=latch) is None
+
+
+def test_click_wait_hard_brake_overrides_latch_hold() -> None:
+    """Sin holgura para el clic no se sigue rodando aunque el pestillo no haya vencido."""
+    from tsw6v2.roll_latch import StationRollLatch
+    from tsw6v2.vehicle_package import mc_click_wait
+
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
+    assert pkg is not None
+    latch = StationRollLatch()
+    latch.active, latch.since = True, time.monotonic()  # rodando desde hace un instante
+    # 12 mph (5,4 m/s): el clic (0,34) para en ~43 m; a 40 m ya no llega aunque rodara hace 0 s
+    assert not mc_click_wait(
+        pkg, speed_mph=12.0, distance_m=40.0, click_decel_ms2=0.34, latch=latch
     )
-    assert running is not None
+    assert latch.active is False
+    # con holgura de sobra sí puede rodar
+    latch.reset()
+    assert mc_click_wait(pkg, speed_mph=12.0, distance_m=120.0, click_decel_ms2=0.34, latch=latch)
+
+
+def test_roll_latch_idempotent_within_tick_and_switches_after_min_time() -> None:
+    from tsw6v2.roll_latch import MC_ROLL_SWITCH_MIN_S, StationRollLatch
+
+    latch = StationRollLatch()
+    assert latch.resolve(True, 100.0) is True
+    assert latch.resolve(False, 100.0 + MC_ROLL_SWITCH_MIN_S - 0.1) is True
+    assert latch.resolve(False, 100.0 + MC_ROLL_SWITCH_MIN_S) is False
+    assert latch.resolve(False, 100.0 + MC_ROLL_SWITCH_MIN_S) is False  # misma llamada, mismo valor
+    latch.reset()
+    assert latch.active is None
 
 
 def test_grade_hold_does_not_hold_parked_far_from_station_session_104834() -> None:

@@ -26,8 +26,15 @@ def poll_station_planning(
     api_key: Optional[str] = None,
     hud_db_path: Optional[Path] = None,
     exclude_bases: Optional[set[str]] = None,
+    service_name_hint: Optional[str] = None,
+    fallback_all_when_unmatched: bool = True,
 ) -> dict[str, Any]:
     """Una lectura HTTP: TrackData + PlayerInfo → estaciones filtradas y próxima parada.
+
+    ``service_name_hint``: último servicio conocido si ``PlayerInfo`` falla en este poll
+    (203040Z: sin él el poll caía a ``track_only`` y el filtro de horario desaparecía).
+    ``fallback_all_when_unmatched``: si el servicio está en la BD pero ninguna de sus paradas
+    sale en ``TrackData`` (siguiente parada aún lejos), no ofrecer estaciones no programadas.
 
     Horario: ``tsw_hud.db`` vía ``hud_schedule`` (sin ``tsw6/``).
     """
@@ -55,6 +62,8 @@ def poll_station_planning(
             service_name = str(svc).strip()
             out["service_name"] = service_name
         lat, lng = player_geo_from_info(info)
+    if not service_name and service_name_hint:
+        service_name = service_name_hint
 
     if raw_stations:
         stations, schedule_source, hud_match = apply_station_schedule(
@@ -63,6 +72,7 @@ def poll_station_planning(
             lat=lat,
             lng=lng,
             hud_db_path=hud_db_path,
+            fallback_all_when_unmatched=fallback_all_when_unmatched,
         )
         out["stations"] = stations
         out["schedule_source"] = schedule_source

@@ -62,6 +62,10 @@ class VehiclePhysics:
     safety_margin: float
     brake_transition_s: float
     service_decel_frac: dict[int, float]
+    # Deceleración con la que el plan de estación calcula dónde empezar a frenar (None = la de
+    # cada escalón B1-B3). En el M3A los escalones salen de ~0,35 m/s² aunque las posiciones MC
+    # llegan a 0,5-0,6 (203040Z: ~14 s perdidos por parada).
+    station_plan_decel_ms2: Optional[float] = None
 
 
 # Física del vehículo activo; ``decision`` la fija cada tick (None = defaults 323).
@@ -91,6 +95,11 @@ def active_coast_decel() -> float:
 def active_safety_margin() -> float:
     p = _ACTIVE_PHYSICS.get()
     return p.safety_margin if p is not None else SAFETY_MARGIN
+
+
+def active_station_plan_decel() -> Optional[float]:
+    p = _ACTIVE_PHYSICS.get()
+    return p.station_plan_decel_ms2 if p is not None else None
 
 
 def active_brake_transition_s() -> float:

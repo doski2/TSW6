@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Callable, Literal, Optional
 if TYPE_CHECKING:
     from tsw6v2.bridge.getdata import ProbeSnapshot
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     SIGNAL_PRE_COAST_MAX_M,
@@ -28,7 +29,6 @@ from tsw6v2.physics import (
     speed_limit_pre_coast_horizon_m,
 )
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 from tsw6v2.plan import BrakePlan, profile_cap_from_plan
 from tsw6v2.constants import (
     EMERGENCY_BRAKE_HANDLE,

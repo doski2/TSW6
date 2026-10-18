@@ -31,8 +31,9 @@ from tsw6v2.vehicle_package import station_planning_trusted
 _log = logging.getLogger("tsw6v2.planning_poller")
 
 PLANNING_MIN_INTERVAL_S = 2.0
+# Solo el sondeo inicial ``probe_http_api``; los GET de poll usan ``DEFAULT_READ_TIMEOUT_S`` (3 s).
 PLANNING_READ_TIMEOUT_S = 1.0
-# Ciclo real de sondeo ≈ espera (2 s) + 2 GET (hasta 1 s c/u) ≈ 4 s (log 223124Z: 4.2 s).
+# Ciclo real de sondeo ≈ espera (2 s) + 2 GET de ~1-2 s ≈ 4-6 s (223124Z: 4,2 s; 104709Z: ~6,2 s).
 # Congelar a los 2 s dejaba ~59% de ticks en marcha sin v×dt (~40 m de error a 40 mph).
 # 103432Z: 1 de cada 3 polls falla y el hueco pasa de 4,2 a 8,3 s; con 5 s la distancia se
 # congelaba ~3,3 s a 30-47 mph (50-70 m de error). Dos ciclos fallidos seguidos ≈ 12,5 s.
@@ -107,6 +108,9 @@ class StationPlanning:
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
         self._served_bases: set[str] = set()
         self._anchor: Optional[HudAnchor] = None
+        # Algún poll ya cruzó paradas del horario con TrackData: si luego ninguna coincide es que
+        # la siguiente parada está lejos (no que los nombres no cuadren).
+        self._schedule_matched_once = False
         self._source = "none"
         if self.http_enabled and find_api_key() is not None:
             self._http_ok = probe_http_api(timeout_s=PLANNING_READ_TIMEOUT_S)
@@ -173,6 +177,7 @@ class StationPlanning:
         with self._cache_lock:
             self._snap = PlanningSnapshot()
             self._served_bases = set()
+            self._schedule_matched_once = False
             if self._anchor is not None:
                 self._anchor.reset()
         self._file_feed.reset()
@@ -333,6 +338,7 @@ class StationPlanning:
                     new_tid,
                 )
                 self._clear_served_bases()
+                self._schedule_matched_once = False  # otro servicio: sin historial de nombres
             _log.info(
                 "planning: cambio servicio %s / %s -> %s / %s (conservar dist)",
                 prev[0] or "?",
@@ -409,12 +415,16 @@ class StationPlanning:
     def _poll_once(self, *, skip_identity_check: bool = False) -> None:
         with self._cache_lock:
             exclude_bases = set(self._served_bases)
+            service_hint = self._snap.service_name
+            allow_fallback = not self._schedule_matched_once
         POLL_TIMING_MS["http"] = POLL_TIMING_MS["json"] = 0.0
         t_poll = time.perf_counter()
         try:
             result = poll_station_planning(
                 exclude_bases=exclude_bases,
                 hud_db_path=default_hud_db_path(),
+                service_name_hint=service_hint,
+                fallback_all_when_unmatched=allow_fallback,
             )
         except Exception as exc:
             _log.debug("poll_station_planning: %s", exc)
@@ -423,6 +433,8 @@ class StationPlanning:
             self.last_poll_ms = (time.perf_counter() - t_poll) * 1000.0
             self.last_poll_http_ms = POLL_TIMING_MS["http"]
             self.last_poll_json_ms = POLL_TIMING_MS["json"]
+        if result.get("schedule_source") == "hud_db" and result.get("stations"):
+            self._schedule_matched_once = True
         if not skip_identity_check:
             self._note_schedule_identity(result)
         self._apply_poll_metadata(result)

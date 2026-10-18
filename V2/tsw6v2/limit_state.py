@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
     DEFAULT_REACTION_S,
@@ -19,9 +20,9 @@ from tsw6v2.plan import (
     resolve_phase_decel,
 )
 from tsw6v2.constants import passenger_ops_target_mph
+from tsw6v2.roll_latch import StationRollLatch
 from tsw6v2.target import SERVICE_HANDLES_WEAK_TO_STRONG
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
 LIMIT_REACTION_S = DEFAULT_REACTION_S
 
@@ -50,11 +51,20 @@ class LimitBrakeState:
     committed_phase: Optional[str] = None
     weak_decel_ticks: int = 0
     station_stop_m: Optional[float] = None
+    roll_latch: StationRollLatch = field(default_factory=StationRollLatch)
+
+    def roll_latch_for(self, running: bool) -> Optional[StationRollLatch]:
+        """Pestillo rodar↔frenar solo con la parada en curso; si no, se reinicia."""
+        if not running:
+            self.roll_latch.reset()
+            return None
+        return self.roll_latch
 
     def reset(self) -> None:
         self.latch = None
         self.last_limit_mph = None
         self.station_stop_m = None
+        self.roll_latch.reset()
         self.clear_commitment()
 
     def clear_commitment(self) -> None:
@@ -75,6 +85,7 @@ class LimitBrakeState:
         self.committed_phase = other.committed_phase
         self.weak_decel_ticks = other.weak_decel_ticks
         self.station_stop_m = other.station_stop_m
+        self.roll_latch = other.roll_latch
 
 
 def limit_changed(

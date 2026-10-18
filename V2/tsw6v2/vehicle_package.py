@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from tsw6v2.bridge.commands import (
     master_controller_input_value,
 )
 from tsw6v2.physics import VehiclePhysics
+from tsw6v2.roll_latch import StationRollLatch
 from tsw6v2.constants import (
     B1_NOTCH,
     LIMIT_UPHILL_GRADIENT_PCT,
@@ -487,23 +489,24 @@ def mc_first_click_fraction(package: Optional[dict[str, Any]]) -> Optional[float
 # OBSERVATION 011059Z: 0,64 @ ~14 mph bajó ~0,36 m/s² en pista. Respaldo si no hay aprendido.
 MC_CLICK_DECEL_FALLBACK_MS2 = 0.36
 MC_CLICK_WAIT_MARGIN_M = 5.0
-# Parada ya iniciada y lejos de la marca: banda antes de volver a rodar (sobrefrenado
-# 225331Z a 119-147 m). Cerca de la marca no aplica: 090737Z (ping-pong a ~65 m).
-MC_CLICK_HYSTERESIS_M = 30.0
-MC_CLICK_HYSTERESIS_MIN_DIST_M = 100.0
+# Parada ya iniciada: banda proporcional a la distancia antes de volver a rodar (sobrefrenado
+# 225331Z a 119-147 m). El ping-pong cerca de la marca (090737Z, ~65 m) lo evita ahora el
+# pestillo de tiempo ``StationRollLatch``, no un corte por distancia: con el corte a 100 m el
+# clic frenaba hasta 40-58 m corto (181008Z).
+MC_CLICK_HYSTERESIS_FRAC = 0.10
+MC_CLICK_HYSTERESIS_MIN_M = 2.0
+MC_CLICK_HYSTERESIS_MAX_M = 20.0
 MC_CLICK_ZONE_FRAC = 0.04
-
-
-def mc_station_roll_allowed(distance_m: float, *, stop_running: bool) -> bool:
-    """¿Puede rodar en neutro? Con la parada en curso solo lejos de la marca (090737Z)."""
-    return (not stop_running) or distance_m > MC_CLICK_HYSTERESIS_MIN_DIST_M
 
 
 def mc_click_hysteresis_m(distance_m: float, *, stop_running: bool) -> float:
     """Banda extra para ``mc_click_wait`` con la parada en curso (0 si no aplica)."""
-    if stop_running and distance_m > MC_CLICK_HYSTERESIS_MIN_DIST_M:
-        return MC_CLICK_HYSTERESIS_M
-    return 0.0
+    if not stop_running:
+        return 0.0
+    return max(
+        MC_CLICK_HYSTERESIS_MIN_M,
+        min(MC_CLICK_HYSTERESIS_MAX_M, MC_CLICK_HYSTERESIS_FRAC * distance_m),
+    )
 
 
 def mc_click_wait(
@@ -514,16 +517,26 @@ def mc_click_wait(
     gradient_pct: float = 0.0,
     click_decel_ms2: Optional[float] = None,
     extra_margin_m: float = 0.0,
+    latch: Optional["StationRollLatch"] = None,
 ) -> bool:
     """Frenada suave cerca del clic: rodar en neutro hasta que el clic toque.
 
     Zona de 0,60 a neutro: el clic 0,64 y el análogo 0,60–0,63 frenan casi igual
     (011059Z: 0,62 y 0,64 bajaron ~0,36 m/s²). Por debajo de 3 mph no espera (grade hold).
     """
+    now = time.monotonic()
+
+    def _brake() -> bool:
+        # Cualquier salida «no esperar el clic» es frenar: el pestillo lo anota (sin esperar)
+        # para que rodar no vuelva antes de MC_ROLL_SWITCH_MIN_S.
+        if latch is not None:
+            latch.force(False, now)
+        return False
+
     if not package or not uses_mc_analog_ipc(package) or speed_mph <= MC_GRADE_HOLD_MAX_MPH:
-        return False
+        return _brake()
     if distance_m <= 0.0:
-        return False
+        return _brake()
     from tsw6v2.physics import MPH_TO_MS, service_strength_for_stop
 
     neu = profile_brake_fraction(package, "neutral")
@@ -533,15 +546,22 @@ def mc_click_wait(
         service_strength_for_stop(speed_mph, distance_m, gradient_pct),
     )
     if neu is None or click is None or raw is None:
-        return False
+        return _brake()
     if not (click - MC_CLICK_ZONE_FRAC + 1e-4 < raw < neu - 1e-4):
-        return False
+        return _brake()
     decel = MC_CLICK_DECEL_FALLBACK_MS2
     if click_decel_ms2 is not None and click_decel_ms2 > 0:
         decel = float(click_decel_ms2)
     speed_ms = speed_mph * MPH_TO_MS
     stop_at_click_m = speed_ms * speed_ms / (2.0 * decel)
-    return distance_m > stop_at_click_m + MC_CLICK_WAIT_MARGIN_M + extra_margin_m
+    if distance_m <= stop_at_click_m + MC_CLICK_WAIT_MARGIN_M:
+        # Sin banda ni espera: el clic ya no llega con holgura. El pestillo solo retiene dentro
+        # de la banda de histéresis; nunca mantiene rodando cuando hay que frenar.
+        return _brake()
+    want_roll = distance_m > stop_at_click_m + MC_CLICK_WAIT_MARGIN_M + extra_margin_m
+    if latch is not None:
+        return latch.resolve(want_roll, now)
+    return want_roll
 
 
 MC_GRADE_HOLD_MAX_MPH = 3.0
@@ -569,6 +589,7 @@ def mc_grade_hold_fraction(
     stop_running: bool = False,
     departing: bool = False,
     decel_table: Optional[dict[float, float]] = None,
+    roll_latch: Optional["StationRollLatch"] = None,
 ) -> Optional[float]:
     """No soltar a neutro en MC: pendiente casi parado, o andén todavía delante.
 
@@ -611,13 +632,14 @@ def mc_grade_hold_fraction(
     if near_stop and station_dist_m is not None:
         # Parada en curso: no volver a rodar salvo lejos de la marca (banda, 225331Z; 090737Z).
         d_station = float(station_dist_m)
-        if mc_station_roll_allowed(d_station, stop_running=stop_running) and mc_click_wait(
+        if mc_click_wait(
             package,
             speed_mph=speed_mph,
             distance_m=d_station,
             gradient_pct=gradient_pct,
             click_decel_ms2=click_decel_ms2,
             extra_margin_m=mc_click_hysteresis_m(d_station, stop_running=stop_running),
+            latch=roll_latch if stop_running else None,
         ):
             return None
         stopping = mc_stop_brake_fraction(
@@ -958,6 +980,13 @@ def vehicle_physics(package: Optional[dict[str, Any]]) -> VehiclePhysics:
             return float(default)
         return v if v > 0 else float(default)
 
+    def _opt_decel(value: Any) -> Optional[float]:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        return v if 0.2 <= v <= 1.2 else None
+
     frac = dict(SERVICE_DECEL_FRAC_BY_HANDLE)
     raw = block.get("service_decel_frac")
     if isinstance(raw, dict):
@@ -974,6 +1003,7 @@ def vehicle_physics(package: Optional[dict[str, Any]]) -> VehiclePhysics:
         safety_margin=_pos("safety_margin", SAFETY_MARGIN),
         brake_transition_s=_pos("brake_transition_s", BRAKE_TRANSITION_S),
         service_decel_frac=frac,
+        station_plan_decel_ms2=_opt_decel(block.get("station_plan_decel_ms2")),
     )
 
 

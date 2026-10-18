@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
 from tsw6v2.service_brake import target_from_stop_plan
 from tsw6v2.signal_plan import signal_apply_horizon_m, plan_brake_for_signal
 from tsw6v2.target import BrakeTargetResult
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
 
 def evaluate_signal_brake(

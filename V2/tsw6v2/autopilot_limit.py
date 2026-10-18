@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, Tuple
 
+from tsw6v2.plan import PredictDecelFn
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.constants import MPH_TO_MS
 from tsw6v2.decision import evaluate_p1_tick
@@ -20,7 +21,6 @@ from tsw6v2.command import (
 
 _log = logging.getLogger("tsw6v2.autopilot_limit")
 
-PredictDecelFn = Callable[[int, float, float], Optional[float]]
 
 
 def snapshot_from_autopilot(
