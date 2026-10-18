@@ -526,12 +526,19 @@ class AgentGuiApp:
 
     def _agent_loop(self) -> None:
         interval = 1.0 / _AGENT_HZ
+        last_t0: Optional[float] = None
+        last_rec_ms = 0.0
         while self._running:
             t0 = time.perf_counter()
             snap = self.loop.step()
+            snap.rec_ms = round(last_rec_ms, 2)
+            snap.gap_ms = None if last_t0 is None else round((t0 - last_t0) * 1000.0, 1)
+            last_t0 = t0
             recorder = self._ensure_session_recorder(snap)
             if recorder is not None:
+                t_rec = time.perf_counter()
                 recorder.record(snap)
+                last_rec_ms = (time.perf_counter() - t_rec) * 1000.0
             with self._lock:
                 self._last = snap
                 self._agent_reads += 1

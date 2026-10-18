@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from tsw6v2.bridge.http_api import find_api_key, probe_http_api
+from tsw6v2.bridge.http_api import POLL_TIMING_MS, find_api_key, probe_http_api
 from tsw6v2.driver_aid_stations import poll_station_planning, station_base_name
 from tsw6v2.hud_db import default_hud_db_path
 from tsw6v2.planning_feed import (
@@ -33,7 +33,9 @@ PLANNING_MIN_INTERVAL_S = 2.0
 PLANNING_READ_TIMEOUT_S = 1.0
 # Ciclo real de sondeo ≈ espera (2 s) + 2 GET (hasta 1 s c/u) ≈ 4 s (log 223124Z: 4.2 s).
 # Congelar a los 2 s dejaba ~59% de ticks en marcha sin v×dt (~40 m de error a 40 mph).
-PLANNING_STALE_AFTER_S = 5.0
+# 103432Z: 1 de cada 3 polls falla y el hueco pasa de 4,2 a 8,3 s; con 5 s la distancia se
+# congelaba ~3,3 s a 30-47 mph (50-70 m de error). Dos ciclos fallidos seguidos ≈ 12,5 s.
+PLANNING_STALE_AFTER_S = 13.0
 
 
 @dataclass(frozen=True)
@@ -92,9 +94,13 @@ class StationPlanning:
         self._cache_lock = threading.Lock()
         self._last_tick_t = 0.0
         self._last_speed_mph = 0.0
+        self.last_poll_ms = 0.0  # duración del último poll (HTTP + BD), para diagnóstico
+        self.last_poll_http_ms = 0.0
+        self.last_poll_json_ms = 0.0
         # Última respuesta HTTP con distancia válida (reloj de pared, como el poll).
         self._last_reading_t: Optional[float] = None
         self._last_probe_seq: Optional[int] = None
+        self._last_seq_change_t: Optional[float] = None
         self._last_probe_vehicle: Optional[str] = None
         self._startup_invalidate_pending = True
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
@@ -341,9 +347,12 @@ class StationPlanning:
             probe_seq=probe_seq,
             last_wall_t=self._last_tick_t,
             now=now,
+            last_seq_change_t=self._last_seq_change_t,
         )
         self._last_tick_t = now
         self._last_speed_mph = float(speed_mph)
+        if probe_seq is not None and probe_seq != self._last_probe_seq:
+            self._last_seq_change_t = now
         self._note_probe_seq(probe_seq)
         with self._cache_lock:
             advance_station_distance_tick(
@@ -373,6 +382,8 @@ class StationPlanning:
     def _poll_once(self, *, skip_identity_check: bool = False) -> None:
         with self._cache_lock:
             exclude_bases = set(self._served_bases)
+        POLL_TIMING_MS["http"] = POLL_TIMING_MS["json"] = 0.0
+        t_poll = time.perf_counter()
         try:
             result = poll_station_planning(
                 exclude_bases=exclude_bases,
@@ -381,6 +392,10 @@ class StationPlanning:
         except Exception as exc:
             _log.debug("poll_station_planning: %s", exc)
             return
+        finally:
+            self.last_poll_ms = (time.perf_counter() - t_poll) * 1000.0
+            self.last_poll_http_ms = POLL_TIMING_MS["http"]
+            self.last_poll_json_ms = POLL_TIMING_MS["json"]
         if not skip_identity_check:
             self._note_schedule_identity(result)
         self._apply_poll_metadata(result)

@@ -81,7 +81,23 @@ def test_station_planning_http_dead_reckoning():
     src._startup_invalidate_pending = False
     src._last_probe_seq = 100
     src._snap.station_distance_m = 500.0
+    src._last_tick_t = time.monotonic() - 0.2
     snap = src.update(60.0, probe_seq=103)
+    assert snap.station_distance_m is not None
+    assert snap.station_distance_m < 500.0
+
+
+def test_station_planning_advances_on_repeated_seq_with_fps_cap():
+    """Límite 50 fps: seq repetido en ticks consecutivos (<0,3 s) sigue avanzando con el reloj."""
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    src._source = "http"
+    src._startup_invalidate_pending = False
+    src._last_probe_seq = 100
+    src._last_seq_change_t = time.monotonic() - 0.05
+    src._snap.station_distance_m = 500.0
+    src._last_tick_t = time.monotonic() - 0.05
+    snap = src.update(60.0, probe_seq=100)
     assert snap.station_distance_m is not None
     assert snap.station_distance_m < 500.0
 
@@ -93,6 +109,8 @@ def test_station_planning_skips_dead_reckoning_when_probe_seq_frozen():
     src._startup_invalidate_pending = False
     src._last_probe_seq = 100
     src._snap.station_distance_m = 500.0
+    src._last_tick_t = time.monotonic() - 0.1
+    src._last_seq_change_t = time.monotonic() - 1.0  # pausa: seq quieto > PROBE_FROZEN_S
     snap = src.update(60.0, probe_seq=100)
     assert snap.station_distance_m == 500.0
 
@@ -154,6 +172,7 @@ def test_station_planning_keeps_distance_on_service_change(monkeypatch):
     src._schedule_identity = ("5P06", "", 127679)
     src._snap.station_distance_m = 130.0
     src._poll_once()
+    src._last_tick_t = time.monotonic() - 0.2
     src.update(27.0, probe_seq=200)
     assert src._snap.station_distance_m is not None
     assert src._snap.station_distance_m < 130.0

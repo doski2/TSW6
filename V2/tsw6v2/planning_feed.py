@@ -12,11 +12,12 @@ from tsw6v2.bridge.getdata import parse_probe_line
 from tsw6v2.constants import (
     MPH_TO_MS,
     PLANNING_HTTP_LAG_S,
+    PROBE_FROZEN_S,
+    PROBE_SEQ_MAX_MS,
     PLANNING_RESYNC_AFTER_REJECTS,
     STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
 )
 from tsw6v2.driver_aid_stations import station_base_name
-from tsw6v2.probe_seq import probe_seq_dt_s
 
 
 def default_planning_path() -> Path:
@@ -135,14 +136,26 @@ def resolve_station_tick_dt(
     probe_seq: int | None,
     last_wall_t: float,
     now: float,
+    last_seq_change_t: Optional[float] = None,
 ) -> float:
-    """``dt`` para dead-reckoning: prioriza ``probe_seq``, fallback reloj de pared."""
-    game_dt = probe_seq_dt_s(last_probe_seq, probe_seq)
-    if game_dt is not None:
-        return game_dt
-    if last_wall_t <= 0:
+    """``dt`` para dead-reckoning: reloj de pared acotado por el ``seq`` del probe.
+
+    El probe escribe cada N fotogramas, así que su periodo real depende del límite de fps
+    (50 fps → 60 ms, no los 50 ms de ``PROBE_SEQ_MS``; 102047Z: la distancia avanzaba un ~20 %
+    de menos y el 17 % de los ticks repetía ``seq``). El ``seq`` solo sirve para detectar
+    pausa/carga: sin cambio durante ``PROBE_FROZEN_S`` o con retroceso no se avanza.
+    """
+    wall_dt = max(0.0, now - last_wall_t) if last_wall_t > 0 else 0.0
+    if last_probe_seq is None or probe_seq is None:
+        return wall_dt
+    delta = int(probe_seq) - int(last_probe_seq)
+    if delta < 0:
         return 0.0
-    return max(0.0, now - last_wall_t)
+    if delta == 0:
+        if last_seq_change_t is not None and now - last_seq_change_t > PROBE_FROZEN_S:
+            return 0.0
+        return wall_dt
+    return min(wall_dt, delta * PROBE_SEQ_MAX_MS / 1000.0)
 
 
 def compensate_http_distance_m(
@@ -236,6 +249,7 @@ class PlanningFeed:
         self._last_reload = 0.0
         self._last_tick_t = 0.0
         self._last_probe_seq: Optional[int] = None
+        self._last_seq_change_t: Optional[float] = None
         self._last_speed_mph = 0.0
         self.reload_interval_s = 0.5
 
@@ -256,9 +270,12 @@ class PlanningFeed:
             probe_seq=probe_seq,
             last_wall_t=self._last_tick_t,
             now=now,
+            last_seq_change_t=self._last_seq_change_t,
         )
         self._last_tick_t = now
         if probe_seq is not None:
+            if probe_seq != self._last_probe_seq:
+                self._last_seq_change_t = now
             self._last_probe_seq = int(probe_seq)
         self._last_speed_mph = float(speed_mph)
         advance_station_distance_tick(self._snap, speed_mph, dt)
@@ -269,6 +286,7 @@ class PlanningFeed:
         self._snap = PlanningSnapshot()
         self._last_tick_t = 0.0
         self._last_probe_seq = None
+        self._last_seq_change_t = None
 
     def force_reload(self) -> None:
         """Releer ``Planning.txt`` sin esperar intervalo."""

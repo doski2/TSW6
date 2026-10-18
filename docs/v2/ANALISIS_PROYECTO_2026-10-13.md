@@ -228,6 +228,7 @@ Logs `20261015T184644Z` a `20261015T210604Z`, ruta `gct-mnr`, M3A.
   decía ~2 s). Se añadió `PLANNING_HTTP_LAG_S = 2.0` y `compensate_http_distance_m`
   (`planning_feed.py`). Efecto en campo: UNKNOWN.
 - **OCR del HUD (medición, 2026-10-18).** El OCR se había descartado como control (`PLAN_V2` §4.4). Se añadió como medición: `--hud-ocr` graba `hud_ocr_m` en el JSONL y `scripts/analyze_hud_ocr.py` evalúa «corregir cada N capturas». Ver [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md). Resultado en campo: UNKNOWN.
+- **Dead-reckoning con límite de fps (2026-10-18).** Con el juego limitado a 50 fps el probe escribe un `seq` cada 60 ms (16,67 Hz), no cada 50 ms. Convertir `seq×50 ms` hacía avanzar la distancia ≈ 20 % de menos entre lecturas HTTP y dejaba plana la distancia en el 17 % de los ticks (micro paradas). Ahora el `dt` sale del reloj de pared y el `seq` solo detecta pausa (`PROBE_FROZEN_S`) o retroceso (`resolve_station_tick_dt`). Sin validar en juego. `active_t_ms` del informe sigue usando `seq×50 ms`. Diagnóstico de fluidez: `perf_ms` en el JSONL.
 - **Paradas no repetibles.** La distancia que la app cree que queda al parar varía mucho entre
   sesiones (White Plains 54–118 m, Hartsdale 7–92 m). Un offset constante no lo arreglaría.
 - **Base de datos.** `tsw_hud.db` tiene la Harlem Line (ruta 13, 303 tablones), pero los 4991

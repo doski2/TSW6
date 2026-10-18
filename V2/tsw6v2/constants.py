@@ -88,6 +88,9 @@ PLATFORM_AT_STOP_M = 55.0
 PLANNING_RESYNC_AFTER_REJECTS = 2
 # Antigüedad media de la lectura HTTP de TrackData (refresco ~4 s medido, 20261015T190718Z).
 PLANNING_HTTP_LAG_S = 2.0
+# Dead-reckoning de distancia: reloj de pared; el seq del probe solo detecta pausa (ver planning_feed).
+PROBE_FROZEN_S = 0.3  # seq sin cambiar más que esto = juego en pausa/menú: no avanzar
+PROBE_SEQ_MAX_MS = 100.0  # cota de juego por paso de seq (el periodo real depende del límite de fps)
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:

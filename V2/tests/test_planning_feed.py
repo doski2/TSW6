@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from tsw6v2.planning_feed import (
     PlanningFeed,
     PlanningSnapshot,
@@ -31,8 +35,37 @@ def test_planning_feed_skips_dead_reckoning_when_probe_seq_frozen(tmp_path):
     path.write_text("station_dist_m=1000.0\n", encoding="utf-8")
     feed = PlanningFeed(path=path)
     feed.update(60.0, probe_seq=500)
+    # seq sin cambiar > PROBE_FROZEN_S = juego en pausa: no avanza aunque pase el reloj
+    feed._last_seq_change_t = time.monotonic() - 1.0
+    feed._last_tick_t = time.monotonic() - 0.1
     snap = feed.update(60.0, probe_seq=500)
     assert snap.station_distance_m == 1000.0
+
+
+def test_resolve_station_tick_dt_uses_wall_clock_with_fps_capped_probe():
+    """Límite 50 fps: el probe repite seq (16,7 Hz) y la distancia no debe quedarse plana."""
+    from tsw6v2.planning_feed import resolve_station_tick_dt
+
+    kw = dict(last_wall_t=10.0, now=10.05)
+    assert resolve_station_tick_dt(
+        last_probe_seq=7, probe_seq=7, last_seq_change_t=10.0, **kw
+    ) == pytest.approx(0.05)
+    # un paso de seq tras 60 ms reales: dt = 0,06 (no los 0,05 de PROBE_SEQ_MS)
+    assert resolve_station_tick_dt(
+        last_probe_seq=7, probe_seq=8, last_wall_t=10.0, now=10.06
+    ) == pytest.approx(0.06)
+    # pausa: seq sin cambiar > PROBE_FROZEN_S
+    assert resolve_station_tick_dt(
+        last_probe_seq=7, probe_seq=7, last_seq_change_t=9.0, **kw
+    ) == 0.0
+    # retroceso de seq (carga)
+    assert resolve_station_tick_dt(last_probe_seq=9, probe_seq=3, **kw) == 0.0
+    # hueco de reloj largo con pocos pasos de seq: acotado por el juego
+    assert resolve_station_tick_dt(
+        last_probe_seq=7, probe_seq=8, last_wall_t=10.0, now=12.0
+    ) == pytest.approx(0.1)
+    # sin seq: reloj de pared
+    assert resolve_station_tick_dt(last_probe_seq=None, probe_seq=None, **kw) == pytest.approx(0.05)
 
 
 def test_planning_distance_rejects_jump_after_platform():
@@ -135,7 +168,7 @@ def test_freeze_still_reaches_marker_passed_zero():
     assert snap.station_distance_m == 0.0
 
 def test_station_reading_stale_threshold_allows_poll_cycle():
-    """Ciclo de sondeo ~4 s (log 223124Z): no congelar antes de 5 s sin lectura HTTP."""
+    """Ciclo ~4 s, ~8 s con un poll fallido (103432Z): no congelar antes de 13 s sin lectura."""
     import time
 
     from tsw6v2.planning_poller import PLANNING_STALE_AFTER_S, StationPlanning

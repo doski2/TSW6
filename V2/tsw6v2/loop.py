@@ -133,6 +133,13 @@ class AgentSnapshot:
     hud_ocr_age_s: Optional[float] = None
     hud_ocr_raw: Optional[str] = None
     hud_ocr_diag: Optional[str] = None
+    step_ms: Optional[float] = None
+    probe_ms: Optional[float] = None
+    poll_ms: Optional[float] = None  # duración del último poll HTTP+BD (hilo aparte)
+    poll_http_ms: Optional[float] = None
+    poll_json_ms: Optional[float] = None
+    rec_ms: Optional[float] = None  # grabación del tick anterior (la fija la GUI)
+    gap_ms: Optional[float] = None  # hueco real desde el inicio del tick anterior (GUI)
 
     @classmethod
     def from_probe(
@@ -351,6 +358,7 @@ class AgentLoop:
     _vehicle_package: Optional[dict[str, Any]] = field(default=None, init=False, repr=False)
     _last_probe_snap: Optional[ProbeSnapshot] = field(default=None, init=False, repr=False)
     _hud_ocr: Optional[Any] = field(default=None, init=False, repr=False)
+    _probe_ms: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.learner is not None:
@@ -487,7 +495,11 @@ class AgentLoop:
         return self._target_fraction
 
     def read_probe(self) -> Optional[ProbeSnapshot]:
-        return read_probe_file(self.getdata_path)
+        t0 = time.perf_counter()
+        try:
+            return read_probe_file(self.getdata_path)
+        finally:
+            self._probe_ms = (time.perf_counter() - t0) * 1000.0
 
     def _coalesce_probe(self, snap: Optional[ProbeSnapshot]) -> Optional[ProbeSnapshot]:
         if probe_snapshot_usable(snap):
@@ -651,7 +663,14 @@ class AgentLoop:
             self.clear_target()
 
     def step(self) -> AgentSnapshot:
+        t0 = time.perf_counter()
         out = self._step_core()
+        out.step_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+        out.probe_ms = round(self._probe_ms, 2)
+        sp = self._station_planning
+        out.poll_ms = round(float(getattr(sp, "last_poll_ms", 0.0)), 1)
+        out.poll_http_ms = round(float(getattr(sp, "last_poll_http_ms", 0.0)), 1)
+        out.poll_json_ms = round(float(getattr(sp, "last_poll_json_ms", 0.0)), 1)
         reader = self._hud_ocr
         if reader is not None:
             out.hud_ocr_diag = reader.diag()

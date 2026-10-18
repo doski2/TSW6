@@ -14,6 +14,10 @@ from tsw6v2.gui_view import format_ipc_target_display
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import format_layer_tag, layer_label
 
+# Ticks con step/grabación/hueco >= este valor llevan ``perf_ms`` en el JSONL (diagnóstico de fluidez).
+PERF_LOG_MS = 25.0
+PERF_GAP_LOG_MS = 120.0
+
 
 def _ipc_target_trace(snap: AgentSnapshot) -> str:
     return format_ipc_target_display(snap) or "—"
@@ -195,6 +199,20 @@ class JsonlTrace:
             row["regen_n"] = snap.regen_n
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
+        if (
+            (snap.step_ms or 0.0) >= PERF_LOG_MS
+            or (snap.rec_ms or 0.0) >= PERF_LOG_MS
+            or (snap.gap_ms or 0.0) >= PERF_GAP_LOG_MS
+        ):
+            row["perf_ms"] = {
+                "step": snap.step_ms,
+                "probe": snap.probe_ms,
+                "poll": snap.poll_ms,
+                "poll_http": snap.poll_http_ms,
+                "poll_json": snap.poll_json_ms,
+                "rec": snap.rec_ms,
+                "gap": snap.gap_ms,
+            }
         if snap.hud_ocr_diag is not None and snap.tick % 100 == 1:
             row["hud_ocr_diag"] = snap.hud_ocr_diag
         if snap.hud_ocr_m is not None:
