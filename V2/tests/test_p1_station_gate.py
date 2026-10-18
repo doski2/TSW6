@@ -892,3 +892,33 @@ def test_in_motion_release_uses_gradient_uphill_helps_stop() -> None:
     kwargs = dict(speed_mph=32.0, station_dist_m=204.0, required_decel_ms2=0.353)
     assert not station_coast_release_in_motion(gradient_pct=0.0, **kwargs)
     assert station_coast_release_in_motion(gradient_pct=5.0, **kwargs)
+
+
+def _bleed_release_fakes(lever: int):
+    from types import SimpleNamespace
+
+    ctx = SimpleNamespace(
+        vehicle_package=None,
+        decide=lambda *a, **k: "DECIDED",
+        speed_mph=1.0,
+    )
+    prep = SimpleNamespace(ctx=ctx, combined_lever=lever)
+    snap = SimpleNamespace(gradient_pct=0.0)
+    return ctx, prep, snap
+
+
+def test_in_motion_bleed_release_skipped_when_lever_not_braking_session_201122() -> None:
+    """Crestwood 201122Z: RELEASE cada 2 ticks con palanca ya en neutro pisaba al maquinista."""
+    from tsw6v2.decision import _attempt_platform_parked_bleed_release
+
+    kwargs = dict(
+        station_fsm="DEPARTING",
+        station_dist_m=27.0,
+        platform_bleed_episode=False,
+        platform_bleed_b1_confirmed=False,
+        limit_sign_passed=True,
+    )
+    ctx, prep, snap = _bleed_release_fakes(lever=4)
+    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) is None
+    ctx, prep, snap = _bleed_release_fakes(lever=3)
+    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) == "DECIDED"

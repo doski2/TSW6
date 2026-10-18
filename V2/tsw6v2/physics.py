@@ -27,7 +27,8 @@ el RELEASE en pendiente se adelanta un poco en mph.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Optional
 
 from tsw6v2.constants import (
@@ -46,6 +47,55 @@ DEFAULT_MAX_BRAKE_DECEL = MAX_DECEL_MS2
 APPLY_NOW_MARGIN_M = 150.0
 APPLY_NOW_MARGIN_MIN_M = 25.0
 APPLY_ZONE_SPEED_S = 2.0  # ~2 s de marcha en ventana APPLY
+
+
+@dataclass(frozen=True)
+class VehiclePhysics:
+    """Física de frenado propia de cada vehículo (bloque ``physics`` del paquete JSON).
+
+    Sin bloque (o sin una clave) valen los defaults de ``constants.py`` / ``plan.py``,
+    que vienen de la Class 323.
+    """
+
+    max_decel_ms2: float
+    coast_decel_ms2: float
+    safety_margin: float
+    brake_transition_s: float
+    service_decel_frac: dict[int, float]
+
+
+# Física del vehículo activo; ``decision`` la fija cada tick (None = defaults 323).
+_ACTIVE_PHYSICS: ContextVar[Optional[VehiclePhysics]] = ContextVar(
+    "active_vehicle_physics", default=None
+)
+
+
+def set_active_physics(physics: Optional[VehiclePhysics]) -> None:
+    _ACTIVE_PHYSICS.set(physics)
+
+
+def get_active_physics() -> Optional[VehiclePhysics]:
+    return _ACTIVE_PHYSICS.get()
+
+
+def active_max_decel() -> float:
+    p = _ACTIVE_PHYSICS.get()
+    return p.max_decel_ms2 if p is not None else MAX_DECEL_MS2
+
+
+def active_coast_decel() -> float:
+    p = _ACTIVE_PHYSICS.get()
+    return p.coast_decel_ms2 if p is not None else COAST_DECEL_MS2
+
+
+def active_safety_margin() -> float:
+    p = _ACTIVE_PHYSICS.get()
+    return p.safety_margin if p is not None else SAFETY_MARGIN
+
+
+def active_brake_transition_s() -> float:
+    p = _ACTIVE_PHYSICS.get()
+    return p.brake_transition_s if p is not None else BRAKE_TRANSITION_S
 TARGET_CLUSTER_GAP_M = 350.0
 STATION_COAST_CUTOFF_M = 100.0
 # Señal: coast con tracción mientras dist_start ≤ este tope (225433Z).
@@ -64,10 +114,10 @@ BRAKE_FILL_CLAMP = (1.5, 5.0)
 class BrakePhysicsContext:
     """Entorno cinemático compartido por plan y consultas puntuales."""
 
-    base_decel_ms2: float = DEFAULT_MAX_BRAKE_DECEL
-    safety_margin: float = SAFETY_MARGIN
-    coast_decel_ms2: float = COAST_DECEL_MS2
-    brake_transition_s: float = BRAKE_TRANSITION_S
+    base_decel_ms2: float = field(default_factory=lambda: active_max_decel())
+    safety_margin: float = field(default_factory=lambda: active_safety_margin())
+    coast_decel_ms2: float = field(default_factory=lambda: active_coast_decel())
+    brake_transition_s: float = field(default_factory=lambda: active_brake_transition_s())
     gradient_pct: float = 0.0
     current_accel_ms2: Optional[float] = None
     # F-B (PLAN_V2 §2 paso 9): mass_factor en decel cuando HTTP masa cableado.
@@ -111,7 +161,7 @@ def coast_trim_covers_overspeed(
     overspeed_ms = max(0.0, speed_mph - target_mph) * MPH_TO_MS
     if overspeed_ms <= 0:
         return False
-    coast_a = effective_decel_ms2(COAST_DECEL_MS2, gradient_pct)
+    coast_a = effective_decel_ms2(active_coast_decel(), gradient_pct)
     if coast_a <= 0.03:
         return False
     bleed_m = overspeed_ms ** 2 / (2.0 * coast_a)
@@ -121,9 +171,10 @@ def coast_trim_covers_overspeed(
 def effective_decel_ms2(
     decel_ms2: float,
     gradient_pct: float,
-    coast_floor: float = COAST_DECEL_MS2,
+    coast_floor: Optional[float] = None,
 ) -> float:
-    return max(decel_ms2 + gravity_acceleration_ms2(gradient_pct), coast_floor)
+    floor = active_coast_decel() if coast_floor is None else coast_floor
+    return max(decel_ms2 + gravity_acceleration_ms2(gradient_pct), floor)
 
 
 _RELEASE_PROJECT_MIN_DECEL_MS2 = 0.08
@@ -147,7 +198,7 @@ def projected_speed_mph_at_distance(
     if accel_ms2 is not None and float(accel_ms2) < -0.02:
         a_net = float(accel_ms2)
     else:
-        a_net = -effective_decel_ms2(COAST_DECEL_MS2, gradient_pct)
+        a_net = -effective_decel_ms2(active_coast_decel(), gradient_pct)
     v2 = speed_ms * speed_ms + 2.0 * a_net * float(distance_m)
     if v2 <= 0.0:
         return 0.0
@@ -369,10 +420,10 @@ def brake_ctx_for_decel(
         gradient_pct=0.0 if using_learned else gradient_pct,
         current_accel_ms2=current_accel_ms2,
         brake_transition_s=(
-            BRAKE_TRANSITION_S if brake_transition_s is None else brake_transition_s
+            active_brake_transition_s() if brake_transition_s is None else brake_transition_s
         ),
         base_decel_ms2=(
-            DEFAULT_MAX_BRAKE_DECEL if base_decel_ms2 is None else base_decel_ms2
+            active_max_decel() if base_decel_ms2 is None else base_decel_ms2
         ),
     )
 

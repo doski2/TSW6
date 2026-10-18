@@ -14,6 +14,7 @@ from tsw6v2.physics import (
 )
 from tsw6v2.plan import (
     SERVICE_DECEL_FRAC_BY_HANDLE,
+    service_decel_frac,
     UK_SERVICE_PHASES,
     resolve_phase_decel,
 )
@@ -96,7 +97,7 @@ def decel_for_handle(
     """(decel m/s², using_learned). Aprendido ya incluye grado."""
     phase = next((p for p in UK_SERVICE_PHASES if p.handle_notch == handle), None)
     if phase is None:
-        frac = SERVICE_DECEL_FRAC_BY_HANDLE.get(handle, 0.80)
+        frac = service_decel_frac(handle, 0.80)
         return max(base_decel * frac, 0.05), False
     return resolve_phase_decel(
         phase, speed_mph, gradient_pct, base_decel, predict_decel)

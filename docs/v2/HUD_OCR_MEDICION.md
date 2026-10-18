@@ -1,0 +1,115 @@
+# Medición de la distancia del HUD por OCR
+
+Estado: **herramienta de medición** (2026-10-18). No interviene en el frenado: lee el número que
+muestra el HUD del juego y lo graba en el JSONL para evaluar si merece la pena corregir la
+distancia de la app cada N capturas.
+
+## Por qué
+
+- `DriverAid.TrackData.markers[].distanceToStationCM` es el **fin del andén**, no el tablón de parada
+  ([DRIVERAID_API.md](../reference/DRIVERAID_API.md) §TrackData). El HUD del juego muestra, bajo el
+  icono de la mano, la distancia al **punto de parada** (`1.465 ft (pies)`, `51 ft (pies)`).
+- Medido el 2026-10-15 contra el HUD: White Plains 133,4 m (app) frente a 15,5 m (HUD); Hartsdale
+  481 m frente a ≈ 447 m. El desfase cambia por estación (≈ 35 a ≈ 118 m) y la lectura HTTP llega con
+  un refresco de ~4,2 s de mediana ([ANALISIS_PROYECTO § 7](ANALISIS_PROYECTO_2026-10-13.md)).
+- [PLAN_V2 § 4.4](PLAN_V2.md) descartó el OCR **como entrada de control** (herencia de Dastsc/TSC:
+  lento, frágil). Aquí se usa solo para **medir**; si los datos lo justifican se decide después
+  (§ Criterios).
+
+## Qué hace y qué no
+
+| Hace                                                                          | No hace                                             |
+| ----------------------------------------------------------------------------- | --------------------------------------------------- |
+| Captura una región del monitor principal cada 0,5 s y lee `N ft (pies)` / `m` | Cambiar `stn_dist_m` ni ninguna decisión de frenado |
+| Convierte a metros y guarda `hud_ocr_m`, `hud_ocr_age_s`, `hud_ocr_raw`       | Funcionar sin el marcador de parada visible         |
+| Evalúa offline «corregir cada N capturas» (`scripts/analyze_hud_ocr.py`)      | Leer otros textos del HUD (nombre, hora)            |
+
+El HUD solo muestra la distancia cuando el marcador de parada está en pantalla. Fuera de esa zona no
+hay lectura y los campos no se escriben.
+
+## Requisitos
+
+```text
+pip install -r requirements-ocr.txt
+```
+
+Además el binario **Tesseract** (Windows: `C:\Program Files\Tesseract-OCR\tesseract.exe`; se
+detecta solo, o `TSW6_TESSERACT=<ruta>`). Sin él el agente funciona igual y avisa de que el OCR
+queda desactivado.
+
+## Uso
+
+1. **Calibrar la región** (juego abierto, marcador de parada visible):
+
+   ```text
+   python -m tsw6v2 hud-ocr-calibrate
+   ```
+
+   Guarda `monitor.png`, `recorte.png` y `recorte_procesado.png` en `logs/v2/hud_ocr_calibration/`
+   y muestra la lectura. **Ojo:** `monitor.png` es una captura completa de tu monitor principal;
+   bórrala si no quieres conservarla. Si la lectura sale vacía, ajusta la región como fracciones del
+   monitor `izquierda,arriba,ancho,alto`:
+
+   ```text
+   set TSW6_HUD_OCR_REGION=0.135,0.085,0.075,0.040
+   ```
+
+   (valor por defecto, medido sobre 2560×1440 con el HUD en su sitio habitual).
+2. **Grabar una sesión con OCR:** añade `--hud-ocr` al comando de siempre, o `set TSW6_HUD_OCR=1`
+   antes de lanzar el `.bat`:
+
+   ```text
+   python -m tsw6v2 gui --hud-ocr
+   python -m tsw6v2 console --mode station --hud-ocr
+   ```
+
+3. **Analizar** el JSONL resultante:
+
+   ```text
+   python V2/scripts/analyze_hud_ocr.py logs/v2/<sesión>.jsonl --every 1,2,3,5,10
+   ```
+
+Variables: `TSW6_HUD_OCR` (1 activa), `TSW6_HUD_OCR_REGION`, `TSW6_HUD_OCR_MONITOR` (índice de `mss`;
+por defecto el principal), `TSW6_HUD_OCR_INTERVAL` (s, 0,5), `TSW6_TESSERACT`.
+
+## Qué se graba
+
+Por tick con lectura reciente (< 3 s): `hud_ocr_m` (distancia del HUD en metros),
+`hud_ocr_age_s` (antigüedad de la captura) y `hud_ocr_raw` (texto OCR, para depurar). El código está
+en `V2/tsw6v2/hud_ocr.py`; el cableado, en `AgentLoop.step()` y `trace.py`.
+
+## Cómo se evalúa «corregir cada N capturas»
+
+`hud_ocr_eval.py` trabaja por aproximación a cada estación:
+
+1. Una captura es nueva cuando `hud_ocr_age_s` baja respecto al tick anterior. Se le resta
+   `v × edad` para llevarla a «ahora».
+2. **Política «ancla cada N»:** en cada N-ésima captura la distancia se fija al valor del HUD y,
+   entre anclas, se resta lo recorrido (odometría de `spd_mph`). El error se mide en las capturas
+   que **no** son ancla, frente al HUD.
+3. Se compara con la distancia actual de la app (`stn_dist_m`), por bandas de distancia
+   (0–100, 100–300, 300–1000 m), y se informa el desfase mediano por estación.
+
+La tabla da, por política y banda: nº de muestras, error absoluto medio, sesgo y percentil 95.
+
+## Criterios para decidir (propuestos, a confirmar con datos)
+
+| Resultado en la banda 100–300 m                           | Decisión                                                               |
+| --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| «app» ≫ «ancla cada N» (p. ej. 35–118 m frente a < 15 m) | Merece corregir; elegir el N más alto que se mantenga bajo el umbral    |
+| El sesgo de «app» es estable por estación                 | Bastaría un desfase por estación (sin OCR en el control)                |
+| El sesgo de «app» cambia entre sesiones                   | La corrección debe ser en vivo (OCR o ancla de tablón por coordenadas)  |
+| Pocas lecturas válidas (`n` bajo)                         | Recalibrar la región, o el OCR no es viable con tu HUD                  |
+
+Antes de llevar el OCR al control habría que diseñar fallos (lectura errónea, HUD oculto, idioma) y
+un tope de corrección por tick; no está hecho.
+
+## Límites conocidos (UNKNOWN hasta medir)
+
+- El HUD está localizado («pies»); con otro idioma o escala de interfaz la región y el parser
+  pueden fallar.
+- Solo se captura el **monitor principal**; si el juego está en otro monitor, usar
+  `TSW6_HUD_OCR_MONITOR`.
+- La frecuencia con la que el HUD refresca el número no está medida; `hud_ocr_age_s` solo cubre el
+  retardo propio de la captura.
+- Un solo marcador visible: con varias paradas cercanas el número puede ser del siguiente andén.

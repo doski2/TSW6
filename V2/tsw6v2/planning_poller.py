@@ -20,6 +20,7 @@ from tsw6v2.planning_feed import (
     PlanningSnapshot,
     advance_station_distance_tick,
     apply_station_distance_reading,
+    compensate_http_distance_m,
     default_planning_path,
     resolve_station_tick_dt,
     write_planning_snapshot,
@@ -395,7 +396,7 @@ class StationPlanning:
         name = nxt.get("name")
         if dist is None or float(dist) <= 0:
             return
-        new_dist = float(dist)
+        new_dist = compensate_http_distance_m(float(dist), self._last_speed_mph)
         self._last_reading_t = time.monotonic()
         with self._cache_lock:
             prev = self._snap.station_distance_m

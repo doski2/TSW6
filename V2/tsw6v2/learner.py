@@ -126,6 +126,7 @@ class LearnerProfile:
         lever: int | None = None,
         brake_cyl_bar: float | None = None,
         brake_kind: str = "air",
+        brake_applied: bool | None = None,
         now: float | None = None,
     ) -> bool:
         """Registra ``accel_ms2`` tras ventana estable + filtros de calidad.
@@ -133,6 +134,10 @@ class LearnerProfile:
         Con retención en amperios la muestra no entra en la media de aire.
         """
         if accel_ms2 is None:
+            return False
+        if brake_applied is False:
+            self._decel_window.reset()
+            self._set_learn_event("decel", False, "no_brake")
             return False
         if brake_kind == "air" and self._electric_brake_now():
             self._set_learn_event("decel", False, "electric")

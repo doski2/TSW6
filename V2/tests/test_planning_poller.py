@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from tsw6v2.planning_feed import format_planning_line
+from tsw6v2.planning_feed import compensate_http_distance_m, format_planning_line
 from tsw6v2.planning_poller import StationPlanning
 
 
@@ -100,7 +100,7 @@ def test_station_planning_skips_dead_reckoning_when_probe_seq_frozen():
 def test_station_planning_rejects_http_regression(monkeypatch):
     monkeypatch.setattr(
         "tsw6v2.planning_poller.poll_station_planning",
-        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 235.4, "name": "Stn"}},
+        lambda exclude_bases=None, hud_db_path=None: {"next_stop": {"distance_m": 255.0, "name": "Stn"}},
     )
     src = StationPlanning(http_enabled=False)
     src._http_ok = True
@@ -244,7 +244,7 @@ def test_station_planning_marks_served_after_marker_pass(monkeypatch):
     src._last_speed_mph = 12.0
     src._poll_once()
     assert "five ways" in src._served_bases
-    assert src._snap.station_distance_m == 2682.0
+    assert src._snap.station_distance_m == compensate_http_distance_m(2682.0, 12.0)
 
 
 def test_station_planning_rejects_served_stop_on_poll(monkeypatch):
@@ -262,7 +262,7 @@ def test_station_planning_rejects_served_stop_on_poll(monkeypatch):
     src._snap.station_name = "University, andén 2"
     src._last_speed_mph = 47.6
     src._poll_once()
-    assert src._snap.station_distance_m == 1680.0
+    assert src._snap.station_distance_m == compensate_http_distance_m(1680.0, 47.6)
     assert "university" in (src._snap.station_name or "").lower()
 
 
@@ -331,4 +331,13 @@ def test_station_planning_resets_on_probe_seq_discontinuity(monkeypatch):
     src._snap.station_distance_m = 235.0
     src._last_probe_seq = 5000
     src.update(60.0, probe_seq=120)
-    assert src._snap.station_distance_m == 1200.0
+    assert src._snap.station_distance_m == compensate_http_distance_m(1200.0, 60.0)
+
+
+def test_compensate_http_distance_subtracts_lag_only_when_moving():
+    assert compensate_http_distance_m(500.0, 0.0) == 500.0
+    assert compensate_http_distance_m(500.0, 2.0) == 500.0
+    got = compensate_http_distance_m(500.0, 46.7, lag_s=2.0)
+    assert abs(got - (500.0 - 46.7 * 0.44704 * 2.0)) < 1e-6
+    assert compensate_http_distance_m(20.0, 60.0) == 5.0
+    assert compensate_http_distance_m(3.0, 60.0) == 3.0

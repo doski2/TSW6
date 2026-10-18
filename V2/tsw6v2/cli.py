@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -155,6 +156,24 @@ def run_console(
     return 0
 
 
+def run_hud_ocr_calibrate(out_dir: Path) -> int:
+    """Una captura de prueba del HUD: guarda imágenes y muestra la lectura OCR."""
+    from tsw6v2.hud_ocr import calibrate
+
+    try:
+        result = calibrate(out_dir)
+    except Exception as exc:  # noqa: BLE001 - mensaje claro al usuario
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"Monitor usado : {result['monitor']}")
+    print(f"Región (frac.): {result['region']}  → píxeles {result['box']}")
+    print(f"Lectura OCR   : {result['reading_m']} m   (texto: {result['raw']!r})")
+    print(f"Imágenes en   : {result['out_dir']}  (monitor.png, recorte.png, recorte_procesado.png)")
+    if result["reading_m"] is None:
+        print("Sin lectura: con el marcador de parada visible, ajusta TSW6_HUD_OCR_REGION=l,t,w,h")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="tsw6v2", description="TSW6 proyecto V2")
     sub = parser.add_subparsers(dest="command")
@@ -208,7 +227,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Abrir replay HTML en el navegador al cerrar sesión",
     )
 
+    console_p.add_argument(
+        "--hud-ocr",
+        action="store_true",
+        help="Medir la distancia del HUD por OCR y grabarla en el JSONL (solo medición; ver docs/v2/HUD_OCR_MEDICION.md)",
+    )
+
     sub.add_parser("test-ipc", help="Prueba B1 vía IPC (interactiva)")
+    cal_p = sub.add_parser(
+        "hud-ocr-calibrate",
+        help="Captura el monitor y el recorte del HUD y muestra qué lee el OCR",
+    )
+    cal_p.add_argument("--out", type=Path, default=Path("logs/v2/hud_ocr_calibration"))
     gui_p = sub.add_parser("gui", help="Visor tkinter + config P1 (Fase A)")
     gui_p.add_argument(
         "--mode",
@@ -242,10 +272,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         dest="open_html",
         help="No abrir navegador al cerrar",
     )
+    gui_p.add_argument(
+        "--hud-ocr",
+        action="store_true",
+        help="Medir la distancia del HUD por OCR y grabarla en el JSONL (solo medición; ver docs/v2/HUD_OCR_MEDICION.md)",
+    )
     gui_p.set_defaults(open_html=True)
 
     args = parser.parse_args(argv)
     command: str | None = getattr(args, "command", None)
+    if getattr(args, "hud_ocr", False):
+        os.environ["TSW6_HUD_OCR"] = "1"
+    if command == "hud-ocr-calibrate":
+        return run_hud_ocr_calibrate(Path(args.out))
     if command == "console":
         log_arg = getattr(args, "log", None)
         mode_arg = getattr(args, "mode", None)

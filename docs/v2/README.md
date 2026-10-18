@@ -22,6 +22,7 @@ Plan maestro del autopilot TSW6 v2 (paquete tren, probe I/O, producto Python `V2
 | [PROBE_LOGS.md](PROBE_LOGS.md)                         | Layout `logs/probe/<sesión>/` vs `logs/v2/` JSONL P1                                     | Tras `probe_ue4ss.bat`                   |
 | [COMPARATIVA_323_M3A.md](COMPARATIVA_323_M3A.md)       | Qué extrae el probe y qué usa P1 — 323 vs M3a (tabla básica)                             | Elegir tren / no mezclar umbrales        |
 | [M3A_MTA_HTTP_VS_LUA.md](M3A_MTA_HTTP_VS_LUA.md)       | Dumps HTTP escritorio `m3a mta` vs GetData probe / lab F5–F7                             | M3a MTA investigación RailBridge         |
+| [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)             | **Medición OCR** de la distancia del HUD al marcador de parada — uso, log y criterios    | Distancia a estación / tablón            |
 | [INVESTIGAR.md](INVESTIGAR.md)                         | **Cola lab/campo** — retests pendientes (tracción Lua, masa M3a, confort)                | Antes de cablear D2 / nuevos trenes      |
 
 **Backlog de producto:** solo [PLAN_V2.md](PLAN_V2.md). **Investigación pendiente:**

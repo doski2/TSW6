@@ -239,3 +239,18 @@ def test_jsonl_trace_concurrent_writes_keep_lines_valid_session_220924Z(tmp_path
     rows = [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows[0]["type"] == "session"
     assert len(rows) == 1 + 6 * 300
+
+
+def test_jsonl_trace_hud_ocr_fields(tmp_path: Path) -> None:
+    path = tmp_path / "ocr.jsonl"
+    trace = JsonlTrace(path, session_meta(mode="station", route="test"))
+    trace.write_tick(
+        AgentSnapshot(tick=1, speed_mph=20.0, hud_ocr_m=446.5, hud_ocr_age_s=0.31, hud_ocr_raw="1.465 ft"),
+        t_ms=50.0,
+    )
+    trace.write_tick(AgentSnapshot(tick=2, speed_mph=20.0), t_ms=100.0)
+    trace.close()
+    lines = [json.loads(x) for x in path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[1]["hud_ocr_m"] == 446.5 and lines[1]["hud_ocr_age_s"] == 0.31
+    assert lines[1]["hud_ocr_raw"] == "1.465 ft"
+    assert "hud_ocr_m" not in lines[2]  # sin lector no se ensucia el log

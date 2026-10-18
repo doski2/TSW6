@@ -86,6 +86,8 @@ STATION_STOPPED_MPH = 1.5
 PLATFORM_AT_STOP_M = 55.0
 # Lecturas HTTP seguidas rechazadas antes de re-sincronizar la estimación en aproximación final.
 PLANNING_RESYNC_AFTER_REJECTS = 2
+# Antigüedad media de la lectura HTTP de TrackData (refresco ~4 s medido, 20261015T190718Z).
+PLANNING_HTTP_LAG_S = 2.0
 
 
 def passenger_ops_target_mph(posted_limit_mph: float) -> float:

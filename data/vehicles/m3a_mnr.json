@@ -6,6 +6,14 @@
   "match": {
     "vehicle_class": "RVM_NYH_MNR_M3a"
   },
+  "physics": {
+    "max_decel_ms2": 1.071,
+    "coast_decel_ms2": 0.095,
+    "safety_margin": 1.1,
+    "brake_transition_s": 0.5,
+    "service_decel_frac": {"3": 0.33, "2": 0.55, "1": 0.8},
+    "source": "heredado de la Class 323; pendiente de medir en M3A (decel aprendida B1~0.30, B2~0.48 m/s2)"
+  },
   "layout": "combined",
   "brake_input": {
     "neutral": 0.72,

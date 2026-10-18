@@ -1,0 +1,5 @@
+# Medición opcional de la distancia del HUD por OCR (docs/v2/HUD_OCR_MEDICION.md)
+mss>=10.0
+pillow>=10.0
+pytesseract>=0.3.10
+# Además: binario Tesseract (Windows: C:\Program Files\Tesseract-OCR\tesseract.exe)

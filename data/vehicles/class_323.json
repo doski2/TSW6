@@ -5,6 +5,14 @@
   "match": {
     "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
   },
+  "physics": {
+    "max_decel_ms2": 1.071,
+    "coast_decel_ms2": 0.095,
+    "safety_margin": 1.1,
+    "brake_transition_s": 0.5,
+    "service_decel_frac": {"3": 0.33, "2": 0.55, "1": 0.8},
+    "source": "Class 323: constantes de constants.py/plan.py (PLAN_V2 §2)"
+  },
   "layout": "combined",
   "controls": {
     "PowerBrakeHandle": {

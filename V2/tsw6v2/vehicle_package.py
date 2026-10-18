@@ -19,6 +19,7 @@ from tsw6v2.bridge.commands import (
     combined_notch_to_value,
     master_controller_input_value,
 )
+from tsw6v2.physics import VehiclePhysics
 from tsw6v2.constants import (
     B1_NOTCH,
     LIMIT_UPHILL_GRADIENT_PCT,
@@ -934,6 +935,46 @@ def combined_notch_to_ipc_value(
         if frac is not None:
             return frac
     return combined_notch_to_value(n)
+
+
+def vehicle_physics(package: Optional[dict[str, Any]]) -> VehiclePhysics:
+    """Parámetros de física del vehículo; los que falten caen al valor por defecto."""
+    from tsw6v2.constants import (
+        BRAKE_TRANSITION_S,
+        COAST_DECEL_MS2,
+        MAX_DECEL_MS2,
+        SAFETY_MARGIN,
+    )
+    from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+
+    block = (package or {}).get("physics")
+    if not isinstance(block, dict):
+        block = {}
+
+    def _pos(key: str, default: float) -> float:
+        try:
+            v = float(block.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+        return v if v > 0 else float(default)
+
+    frac = dict(SERVICE_DECEL_FRAC_BY_HANDLE)
+    raw = block.get("service_decel_frac")
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                fv = float(v)
+                if fv > 0:
+                    frac[int(k)] = fv
+            except (TypeError, ValueError):
+                continue
+    return VehiclePhysics(
+        max_decel_ms2=_pos("max_decel_ms2", MAX_DECEL_MS2),
+        coast_decel_ms2=_pos("coast_decel_ms2", COAST_DECEL_MS2),
+        safety_margin=_pos("safety_margin", SAFETY_MARGIN),
+        brake_transition_s=_pos("brake_transition_s", BRAKE_TRANSITION_S),
+        service_decel_frac=frac,
+    )
 
 
 def clear_package_cache() -> None:

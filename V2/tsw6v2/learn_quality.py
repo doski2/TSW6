@@ -13,8 +13,8 @@ from tsw6v2.learner_v1 import (
 MIN_STABLE_S = 2.0
 MIN_DV_MPH = 0.6
 MIN_WINDOW_SAMPLES = 4
-OUTLIER_RATIO = 0.30
-MIN_OUTLIER_ABS_MS2 = 0.08
+OUTLIER_RATIO = 0.40
+MIN_OUTLIER_ABS_MS2 = 0.15
 FILL_OUTLIER_RATIO = 0.35
 FILL_OUTLIER_MIN_S = 0.40
 
@@ -41,6 +41,10 @@ class DecelObserveWindow:
 
     _samples: list[_DecelTick] = field(default_factory=list)
     last_reason: str = "accumulating"
+
+    def reset(self) -> None:
+        self._samples.clear()
+        self.last_reason = "accumulating"
 
     def feed(
         self,

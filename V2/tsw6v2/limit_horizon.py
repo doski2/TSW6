@@ -6,12 +6,12 @@ from typing import Optional
 
 from tsw6v2.limit_state import LIMIT_REACTION_S
 from tsw6v2.physics import (
-    DEFAULT_MAX_BRAKE_DECEL,
+    active_max_decel,
     brake_ctx_for_decel,
     kinematic_horizon_m,
 )
 from tsw6v2.planning import large_zone_to_next_drop
-from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
+from tsw6v2.plan import service_decel_frac
 
 # Caída grande (90→15): margen más allá del horizonte cinemático base (20260929Z).
 _LARGE_DROP_HORIZON_SCALE = 1.12
@@ -25,11 +25,11 @@ def next_limit_brake_horizon_m(
 ) -> float:
     """Distancia al cartel donde empieza BRAKE_LIMIT (s + reacción + zona)."""
     ctx = brake_ctx_for_decel(gradient_pct=gradient_pct, using_learned=False)
-    b1_frac = SERVICE_DECEL_FRAC_BY_HANDLE[3]
+    b1_frac = service_decel_frac(3)
     horizon = kinematic_horizon_m(
         speed_mph,
         limit_mph,
-        decel_ms2=DEFAULT_MAX_BRAKE_DECEL * b1_frac,
+        decel_ms2=active_max_decel() * b1_frac,
         ctx=ctx,
         apply_margin=False,
         reaction_base_s=LIMIT_REACTION_S,

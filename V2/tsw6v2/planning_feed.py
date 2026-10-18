@@ -11,6 +11,7 @@ from typing import Optional
 from tsw6v2.bridge.getdata import parse_probe_line
 from tsw6v2.constants import (
     MPH_TO_MS,
+    PLANNING_HTTP_LAG_S,
     PLANNING_RESYNC_AFTER_REJECTS,
     STATION_FINAL_APPROACH_RELEASE_BLOCK_M,
 )
@@ -142,6 +143,20 @@ def resolve_station_tick_dt(
     if last_wall_t <= 0:
         return 0.0
     return max(0.0, now - last_wall_t)
+
+
+def compensate_http_distance_m(
+    distance_m: float,
+    speed_mph: float,
+    *,
+    lag_s: float = PLANNING_HTTP_LAG_S,
+    min_speed_mph: float = PLANNING_APPROACH_MIN_SPEED_MPH,
+) -> float:
+    """Resta ``v×lag`` a una lectura HTTP: ya llega con ~lag_s de antigüedad."""
+    if speed_mph < min_speed_mph or lag_s <= 0:
+        return distance_m
+    comp = distance_m - speed_mph * MPH_TO_MS * lag_s
+    return max(PLATFORM_MARKER_PASSED_M, comp) if distance_m > PLATFORM_MARKER_PASSED_M else distance_m
 
 
 def tick_station_distance_m(

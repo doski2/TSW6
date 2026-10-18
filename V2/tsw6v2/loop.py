@@ -37,6 +37,7 @@ from tsw6v2.p1_station_gate import (
 )
 from tsw6v2.planning_poller import StationPlanning
 from tsw6v2.ipc import dispatch_step_toward_notch, dispatch_to_input_fraction, probe_lever
+from tsw6v2.hud_ocr import hud_ocr_from_env
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
@@ -128,6 +129,9 @@ class AgentSnapshot:
     learn_kind: Optional[str] = None
     learn_accepted: Optional[bool] = None
     learn_reject_reason: Optional[str] = None
+    hud_ocr_m: Optional[float] = None
+    hud_ocr_age_s: Optional[float] = None
+    hud_ocr_raw: Optional[str] = None
 
     @classmethod
     def from_probe(
@@ -345,12 +349,14 @@ class AgentLoop:
     _brake_air_vehicle: Optional[str] = field(default=None, init=False, repr=False)
     _vehicle_package: Optional[dict[str, Any]] = field(default=None, init=False, repr=False)
     _last_probe_snap: Optional[ProbeSnapshot] = field(default=None, init=False, repr=False)
+    _hud_ocr: Optional[Any] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.learner is not None:
             self._learner = self.learner
             self._learner_explicit = True
         self._station_planning = StationPlanning(http_enabled=self.station_planning_http)
+        self._hud_ocr = hud_ocr_from_env()
 
     @property
     def loaded_profile_path(self) -> Optional[Path]:
@@ -397,6 +403,8 @@ class AgentLoop:
     def shutdown(self) -> None:
         """Cierra recursos en segundo plano (planning HTTP)."""
         self._station_planning.close()
+        if self._hud_ocr is not None:
+            self._hud_ocr.stop()
 
     def _note_vehicle(self, vehicle: str) -> None:
         if vehicle and vehicle != "?":
@@ -642,6 +650,17 @@ class AgentLoop:
             self.clear_target()
 
     def step(self) -> AgentSnapshot:
+        out = self._step_core()
+        reader = self._hud_ocr
+        if reader is not None:
+            reading = reader.latest()
+            if reading is not None:
+                out.hud_ocr_m = reading.value_m
+                out.hud_ocr_age_s = round(time.monotonic() - reading.t, 3)
+                out.hud_ocr_raw = reading.raw
+        return out
+
+    def _step_core(self) -> AgentSnapshot:
         self._tick += 1
         snap = self._coalesce_probe(self.read_probe())
         if snap is not None:

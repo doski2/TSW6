@@ -664,3 +664,56 @@ def test_mc_stop_brake_fraction_uses_learned_curve_not_linear_ramp() -> None:
     )
     assert linear is not None and learned is not None
     assert learned > linear
+
+
+def test_vehicle_physics_defaults_and_overrides() -> None:
+    from tsw6v2.constants import MAX_DECEL_MS2
+    from tsw6v2.vehicle_package import vehicle_physics
+
+    d = vehicle_physics(None)
+    assert d.max_decel_ms2 == MAX_DECEL_MS2
+    assert d.service_decel_frac[3] == 0.33
+
+    p = vehicle_physics(
+        {"physics": {"max_decel_ms2": 0.6, "service_decel_frac": {"3": 0.5}, "safety_margin": -1}}
+    )
+    assert p.max_decel_ms2 == 0.6
+    assert p.service_decel_frac[3] == 0.5 and p.service_decel_frac[2] == 0.55
+    assert p.safety_margin == d.safety_margin  # valor inválido → por defecto
+
+
+def test_vehicle_packages_ship_physics_block() -> None:
+    from tsw6v2.vehicle_package import resolve_vehicle_package, vehicle_physics
+
+    for veh in ("RVM_NYH_MNR_M3a-A_C", "RVM_BCC_WRM_Class323_DMS_A_C"):
+        pkg = resolve_vehicle_package(veh)
+        assert pkg is not None and isinstance(pkg.get("physics"), dict)
+        assert vehicle_physics(pkg).max_decel_ms2 > 0
+
+
+def test_active_vehicle_physics_drives_coast_and_service_frac() -> None:
+    from tsw6v2.physics import (
+        VehiclePhysics,
+        active_max_decel,
+        effective_decel_ms2,
+        set_active_physics,
+    )
+    from tsw6v2.plan import service_decel_frac
+
+    try:
+        set_active_physics(
+            VehiclePhysics(
+                max_decel_ms2=0.5,
+                coast_decel_ms2=0.2,
+                safety_margin=1.1,
+                brake_transition_s=0.5,
+                service_decel_frac={3: 0.6, 2: 0.7, 1: 0.9},
+            )
+        )
+        assert active_max_decel() == 0.5
+        assert effective_decel_ms2(0.0, 0.0) == 0.2
+        assert service_decel_frac(3) == 0.6
+    finally:
+        set_active_physics(None)
+    assert service_decel_frac(3) == 0.33
+    assert effective_decel_ms2(0.0, 0.0) == 0.095

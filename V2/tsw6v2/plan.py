@@ -54,6 +54,18 @@ SERVICE_DECEL_FRAC_BY_HANDLE: dict[int, float] = {
 }
 
 
+def service_decel_frac(handle: int, default: Optional[float] = None) -> float:
+    """Fracción de decel del escalón ``handle``: la del vehículo activo o la tabla 323."""
+    from tsw6v2.physics import get_active_physics
+
+    active = get_active_physics()
+    if active is not None and handle in active.service_decel_frac:
+        return active.service_decel_frac[handle]
+    if default is not None:
+        return SERVICE_DECEL_FRAC_BY_HANDLE.get(handle, default)
+    return SERVICE_DECEL_FRAC_BY_HANDLE[handle]
+
+
 def resolve_phase_decel(
     phase: BrakePhase,
     speed_mph: float,

@@ -195,6 +195,10 @@ class JsonlTrace:
             row["regen_n"] = snap.regen_n
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
+        if snap.hud_ocr_m is not None:
+            row["hud_ocr_m"] = round(snap.hud_ocr_m, 1)
+            row["hud_ocr_age_s"] = snap.hud_ocr_age_s
+            row["hud_ocr_raw"] = snap.hud_ocr_raw
         if snap.learn_kind is not None:
             row["learn_kind"] = snap.learn_kind
             row["learn_accepted"] = snap.learn_accepted

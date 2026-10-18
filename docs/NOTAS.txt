@@ -4,7 +4,7 @@ estudiado documento estado:
 1. una vez terminado plan v2 revisar documentacion y sincronizar el resto de doc con plan v2
 2 cameraMode insertar y probar mas adelante
 3.patinaje ver si hay un valor que a partir de eso patina? en dastsc si estaba añadir reglas
-4. python -m tsw6v2 console --mode station --log logs\v2\validacion_estacion.jsonl
+4. 
 5.
 6.revisa la presion de aire si se muestra correctamente en gui m3a
 7.simular un escenario logico para las reglas de frenado

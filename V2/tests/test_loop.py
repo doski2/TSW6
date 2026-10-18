@@ -528,3 +528,28 @@ class TestNotchStepPending:
 
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())
+
+
+def test_agent_step_attaches_hud_ocr_reading(tmp_path: Path) -> None:
+    """Con un lector activo, ``step()`` añade la última lectura del HUD al snapshot."""
+    import time
+
+    from tsw6v2.hud_ocr import HudOcrReading
+
+    getdata = tmp_path / "GetData.txt"
+    getdata.write_text("seq=1 speed_ms=10.0 lever_notch=4\n", encoding="utf-8")
+    loop = AgentLoop(getdata_path=getdata, station_planning_http=False)
+
+    class _Reader:
+        def latest(self):
+            return HudOcrReading(value_m=123.4, raw="405 ft", t=time.monotonic() - 0.2)
+
+        def stop(self):
+            pass
+
+    loop._hud_ocr = _Reader()
+    snap = loop.step()
+    assert snap.hud_ocr_m == 123.4
+    assert snap.hud_ocr_raw == "405 ft"
+    assert 0.1 < snap.hud_ocr_age_s < 1.0
+    loop.shutdown()

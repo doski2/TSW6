@@ -27,6 +27,7 @@ from tsw6v2.vehicle_package import (
     mc_stop_brake_fraction,
     uses_mc_analog_ipc,
     vehicle_package_from_snap,
+    vehicle_physics,
 )
 from tsw6v2.p1_station_gate import (
     station_coast_release_in_motion,
@@ -58,7 +59,7 @@ from tsw6v2.station_plan import (
     should_suppress_station_braking_for_departure,
     station_within_dwell_zone,
 )
-from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL
+from tsw6v2.physics import DEFAULT_BRAKE_FILL_S, DEFAULT_MAX_BRAKE_DECEL, set_active_physics
 from tsw6v2.plan import SERVICE_DECEL_FRAC_BY_HANDLE
 from tsw6v2.planning import effective_limit_mph, next_speed_limit
 from tsw6v2.signal_brake import evaluate_signal_brake
@@ -366,14 +367,20 @@ def _attempt_platform_parked_bleed_release(
     """
     # Solo sin otro objetivo activo (cartel/señal/bajada) ni parada en curso
     # (tests 005614, zona 40, downhill hold, señal).
+    # Solo con freno aplicado: en neutro/tracción el RELEASE no aporta y pisa la palanca
+    # del maquinista en DEPARTING (sesión 201122Z, Crestwood: RELEASE cada 2 ticks).
     in_motion = (
         not station_stop_running
         and not other_target_active
         and limit_sign_passed
+        and departing_brake_needs_release(prep.combined_lever)
         and station_coast_release_in_motion(
             speed_mph=prep.ctx.speed_mph,
             station_dist_m=station_dist_m,
-            required_decel_ms2=DEFAULT_MAX_BRAKE_DECEL * SERVICE_DECEL_FRAC_BY_HANDLE[3],
+            required_decel_ms2=(
+                vehicle_physics(ctx.vehicle_package).max_decel_ms2
+                * vehicle_physics(ctx.vehicle_package).service_decel_frac[3]
+            ),
             gradient_pct=float(snap.gradient_pct or 0.0),
         )
     )
@@ -465,6 +472,14 @@ _SIGNAL_CLEARED_RELEASE_REF = BrakeTargetResult(
 
 
 BRAKE_KIND_EPS = 0.02
+
+
+def _brake_applied(train_brake: Optional[float], dyn_brake: Optional[float]) -> bool:
+    """Freno realmente aplicado (aire o dinámico) según telemetría."""
+    return (
+        float(train_brake or 0.0) > BRAKE_KIND_EPS
+        or float(dyn_brake or 0.0) > BRAKE_KIND_EPS
+    )
 
 
 def _brake_kind(train_brake: Optional[float], dyn_brake: Optional[float]) -> str:
@@ -573,6 +588,7 @@ def _prepare_tick(
     if lever is None:
         lever = NEUTRAL_NOTCH
     vehicle_pkg = vehicle_package_from_snap(snap)
+    set_active_physics(vehicle_physics(vehicle_pkg))
     combined_lever = combined_lever_for_station_gate(snap, lever, vehicle_pkg)
     ctx = _TickCtx(
         dist_m=dist_m,
@@ -1052,6 +1068,8 @@ def evaluate_p1_tick(
             brake_cyl_bar=ctx.cyl,
             release_state=release_state,
             brake_kind=_brake_kind(snap.train_brake, snap.dyn_brake),
+            brake_applied=_brake_applied(snap.train_brake, snap.dyn_brake),
+            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
         )
         limit_target = departure_limit_target_or_coast(
             limit_target,
@@ -1087,7 +1105,7 @@ def evaluate_p1_tick(
             station_eta=station_eta,
             schedule_slack_enabled=schedule_slack_enabled,
             brake_fill_s=prep.fill_s,
-            base_decel=DEFAULT_MAX_BRAKE_DECEL,
+            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
             allow_watch=station_allow_watch,
         )
         # DIAG_STATION_TEMPORAL: quitar tras investigación 212814Z.
@@ -1100,7 +1118,7 @@ def evaluate_p1_tick(
             station_target=station_target,
             predict_decel=prep.predict,
             brake_fill_s=prep.fill_s,
-            base_decel=DEFAULT_MAX_BRAKE_DECEL,
+            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
         )
         if (
             learner is not None
@@ -1116,6 +1134,7 @@ def evaluate_p1_tick(
                 lever=prep.lever,
                 brake_cyl_bar=ctx.cyl,
                 brake_kind=_brake_kind(snap.train_brake, snap.dyn_brake),
+                brake_applied=_brake_applied(snap.train_brake, snap.dyn_brake),
             )
 
     signal_dist = _signal_distance_m(snap)
@@ -1135,7 +1154,7 @@ def evaluate_p1_tick(
             throttle_notch=prep.throttle_notch,
             station_distance_m=station_dist_geo,
             brake_fill_s=prep.fill_s,
-            base_decel=DEFAULT_MAX_BRAKE_DECEL,
+            base_decel=vehicle_physics(ctx.vehicle_package).max_decel_ms2,
         )
 
     target = pick_p1_brake_target(

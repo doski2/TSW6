@@ -806,7 +806,7 @@ HTTP + odometría Python. El tablón fino (`car_stop_signs` en `tsw_hud.db`) es 
    `odo_m` del probe (aún).
 
 El probe **sí** manda `odo_m` (~20 Hz) y puertas (`doors_telem` / `doors_dmi`); **no**
-`station_dist_cm`. **Sin OCR** (Dastsc).
+`station_dist_cm`. **Sin OCR en el control** (Dastsc); desde 2026-10-18 hay OCR **solo de medición** del HUD (`--hud-ocr`, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)).
 
 **Tres capas (no confundir):**
 
@@ -827,7 +827,8 @@ v2 salvo F9 con escalar legible.
 | **Parcial**         | P1 usa fin de plataforma, no tablón; `odo_m` no ancla estaciones | C2                               |
 | **Aplazado**        | `station_dist_cm` en GetData (Lua)                               | F9 frente a andén; después de C1 |
 | **Investigar (C2)** | Ancla HTTP + Δ`odo_m` probe (como C.3a en carteles)              | Medir si ~2 s + `v×dt` no basta  |
-| **Fuera v2**        | HTTP cada tick; OCR tablón; `markers[]` TArray en Lua sin F9     | Lento / TSC / hitch              |
+| **En medición**     | OCR del HUD en el log (`--hud-ocr`); no entra en el frenado       | Ver [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md) |
+| **Fuera v2**        | HTTP cada tick; OCR tablón **como control**; `markers[]` TArray en Lua sin F9 | Lento / TSC / hitch              |
 
 | Alternativa                                   | Pros                              | Contras                                   |
 | --------------------------------------------- | --------------------------------- | ----------------------------------------- |
@@ -835,7 +836,7 @@ v2 salvo F9 con escalar legible.
 | `station_dist_cm` en GetData (Lua)            | Mismo Hz que límites              | ¿Existe escalar en `GetDriverAidData`? F9 |
 | Híbrido `odo_m` + ancla HTTP                  | Más precisión entre polls HTTP    | Hoy solo `v×dt`; Δ`odo_m` = C2            |
 | GPS / coordenadas mundo                       | `distanceToStation` {x,y} en HTTP | Actor pos en Lua incierto                 |
-| OCR (Dastsc)                                  | Tablón visual                     | No — TSC                                  |
+| OCR (Dastsc)                                  | Tablón visual                     | Control: no — TSC. **Medición: sí** (2026-10-18, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
 
 **v2:** seguir HTTP + resta. **C2** después de **C1** (señales): F9 en andén — ¿existe
 `distanceToNextStation` / `distanceToStationCM` como **número** en el struct que ya lee Lua? Si sí →
@@ -847,6 +848,7 @@ duplicar reglas aquí).
 | Duda                              | Por qué importa                          | Cómo salir                                           |
 | --------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
 | ¿Fin de plataforma basta para P1? | Parada corta vs tablón desplazado        | Sesión andén conocido; comparar con `car_stop_signs` |
+| **Respuesta parcial (2026-10-15):** no basta, desfase app−HUD ≈ 35 a ≈ 118 m según estación | Ver [ANALISIS § 7](ANALISIS_PROYECTO_2026-10-13.md) | Medir con OCR ([HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
 | ¿`v×dt` vs Δ`odo_m`?              | Deriva en pendiente / velocidad errática | Log dist estación vs `odo_m` en tramo largo          |
 | ¿Marker de la vía contraria?      | Sutton / Four Oaks                       | `hud_geo` + `stop_names` (§4.6); no “más cercano”    |
 | ¿Escalar andén en Lua al tick?    | Misma pregunta que lim2                  | F9 en APPROACHING; no TArray a ciegas                |
