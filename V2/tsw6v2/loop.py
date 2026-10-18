@@ -37,6 +37,12 @@ from tsw6v2.p1_station_gate import (
 )
 from tsw6v2.planning_poller import StationPlanning
 from tsw6v2.ipc import dispatch_step_toward_notch, dispatch_to_input_fraction, probe_lever
+from tsw6v2.hud_anchor import (
+    AnchorReading,
+    HudAnchor,
+    hud_ocr_control_enabled,
+    set_board_frame,
+)
 from tsw6v2.hud_ocr import hud_ocr_from_env
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.vehicle_package import (
@@ -133,6 +139,7 @@ class AgentSnapshot:
     hud_ocr_age_s: Optional[float] = None
     hud_ocr_raw: Optional[str] = None
     hud_ocr_diag: Optional[str] = None
+    ocr_anchor: Optional[str] = None  # estado del ancla al HUD (si el OCR controla la distancia)
     step_ms: Optional[float] = None
     probe_ms: Optional[float] = None
     poll_ms: Optional[float] = None  # duración del último poll HTTP+BD (hilo aparte)
@@ -366,6 +373,8 @@ class AgentLoop:
             self._learner_explicit = True
         self._station_planning = StationPlanning(http_enabled=self.station_planning_http)
         self._hud_ocr = hud_ocr_from_env()
+        if self._hud_ocr is not None and hud_ocr_control_enabled():
+            self._station_planning.set_hud_anchor(HudAnchor())
 
     @property
     def loaded_profile_path(self) -> Optional[Path]:
@@ -662,11 +671,19 @@ class AgentLoop:
         if abs(lever - target) > abs(prev - target):
             self.clear_target()
 
+    def _anchor_reading(self) -> Optional[AnchorReading]:
+        reader = self._hud_ocr
+        if reader is None:
+            return None
+        reading = reader.latest(max_age_s=1.5)
+        return None if reading is None else AnchorReading(reading.value_m, reading.t)
+
     def step(self) -> AgentSnapshot:
         t0 = time.perf_counter()
         out = self._step_core()
         out.step_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         out.probe_ms = round(self._probe_ms, 2)
+        out.ocr_anchor = self._station_planning.anchor_status()
         sp = self._station_planning
         out.poll_ms = round(float(getattr(sp, "last_poll_ms", 0.0)), 1)
         out.poll_http_ms = round(float(getattr(sp, "last_poll_http_ms", 0.0)), 1)
@@ -760,6 +777,7 @@ class AgentLoop:
                     mph,
                     probe_seq=snap.seq,
                     probe_vehicle=snap.vehicle,
+                    hud_ocr=self._anchor_reading(),
                 )
                 station_dist_m = planning.station_distance_m
                 raw_station_dist_m = planning.raw_station_distance_m
@@ -768,6 +786,7 @@ class AgentLoop:
                 service_name = planning.service_name
                 schedule_source = planning.schedule_source
                 combined_lever = combined_lever_gate
+                set_board_frame(self._station_planning.board_frame)
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,

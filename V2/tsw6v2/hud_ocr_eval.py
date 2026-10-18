@@ -21,6 +21,9 @@ from typing import Any, Iterable, Optional
 
 MPH_TO_MS = 0.44704
 PASSED_MARKER_M = 15.0
+# Lectura incoherente con la app (104709Z: «0 m» con el tablón a 1,5 km): se descarta. El fin de
+# andén y el tablón difieren ~35-120 m, así que 400 m deja margen sin admitir lecturas rotas.
+MAX_APP_HUD_GAP_M = 400.0
 DISTANCE_BANDS = ((0.0, 100.0), (100.0, 300.0), (300.0, 1000.0))
 
 
@@ -90,7 +93,7 @@ def extract_captures(
         if not fresh or app is None or spd < min_speed_mph:
             continue
         hud_now = float(hud) - spd * MPH_TO_MS * float(age)
-        if not 0.0 < hud_now <= max_dist_m:
+        if not 0.0 < hud_now <= max_dist_m or abs(float(app) - hud_now) > MAX_APP_HUD_GAP_M:
             continue
         if min_hud is not None and hud_now > min_hud + PASSED_MARKER_M:
             continue  # ya pasó el marcador: el HUD vuelve a crecer

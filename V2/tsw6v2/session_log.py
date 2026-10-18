@@ -13,7 +13,7 @@ from tsw6v2.loop import AgentLoop, AgentSnapshot
 
 class PlanningContextSource(Protocol):
     def planning_context(self) -> dict[str, object]: ...
-from tsw6v2.trace import advance_probe_active_ms
+from tsw6v2.planning_feed import resolve_station_tick_dt
 from tsw6v2.session_report import (
     MIN_HTML_DURATION_S,
     MIN_HTML_TICKS,
@@ -54,6 +54,8 @@ class SessionRecorder:
         self._last_detect_key: Optional[tuple[object, ...]] = None
         self._t0 = time.monotonic()
         self._last_seq: Optional[int] = None
+        self._last_seq_change_t: Optional[float] = None
+        self._last_wall_t = 0.0
         self._active_t_ms = 0.0
 
     def _ensure_trace(self) -> JsonlTrace:
@@ -93,12 +95,22 @@ class SessionRecorder:
     def record(self, snap: AgentSnapshot) -> None:
         trace = self._ensure_trace()
         self._maybe_emit_route_detect(trace)
-        self._active_t_ms, self._last_seq = advance_probe_active_ms(
-            self._active_t_ms,
-            self._last_seq,
-            snap.seq,
+        now = time.monotonic()
+        # Mismo criterio que la distancia de estación: reloj de pared, y el seq solo detecta pausa.
+        # ``seq×50 ms`` colapsaba ticks con seq repetido en el mismo punto del eje X (104709Z).
+        self._active_t_ms += 1000.0 * resolve_station_tick_dt(
+            last_probe_seq=self._last_seq,
+            probe_seq=snap.seq,
+            last_wall_t=self._last_wall_t,
+            now=now,
+            last_seq_change_t=self._last_seq_change_t,
         )
-        t_ms = (time.monotonic() - self._t0) * 1000.0
+        if snap.seq is not None:
+            if snap.seq != self._last_seq:
+                self._last_seq_change_t = now
+            self._last_seq = int(snap.seq)
+        self._last_wall_t = now
+        t_ms = (now - self._t0) * 1000.0
         trace.write_tick(
             snap,
             t_ms=t_ms,

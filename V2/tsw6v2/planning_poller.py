@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.http_api import POLL_TIMING_MS, find_api_key, probe_http_api
 from tsw6v2.driver_aid_stations import poll_station_planning, station_base_name
+from tsw6v2.hud_anchor import AnchorReading, HudAnchor
 from tsw6v2.hud_db import default_hud_db_path
 from tsw6v2.planning_feed import (
     PLANNING_JUMP_REJECT_M,
@@ -105,6 +106,7 @@ class StationPlanning:
         self._startup_invalidate_pending = True
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
         self._served_bases: set[str] = set()
+        self._anchor: Optional[HudAnchor] = None
         self._source = "none"
         if self.http_enabled and find_api_key() is not None:
             self._http_ok = probe_http_api(timeout_s=PLANNING_READ_TIMEOUT_S)
@@ -120,6 +122,19 @@ class StationPlanning:
                 _log.debug("HTTPAPI no responde; fallback Planning.txt")
         if not self._http_ok:
             self._source = "file"
+
+    def set_hud_anchor(self, anchor: Optional[HudAnchor]) -> None:
+        """Activa el ancla al HUD (OCR): el objetivo pasa a ser el marcador del juego."""
+        self._anchor = anchor
+
+    @property
+    def board_frame(self) -> bool:
+        """True si la distancia de estación ya va en el marco del tablón (ancla HUD)."""
+        return self._anchor is not None and self._anchor.board_frame
+
+    def anchor_status(self) -> Optional[str]:
+        anchor = self._anchor
+        return None if anchor is None else anchor.status()
 
     @property
     def source(self) -> str:
@@ -158,6 +173,8 @@ class StationPlanning:
         with self._cache_lock:
             self._snap = PlanningSnapshot()
             self._served_bases = set()
+            if self._anchor is not None:
+                self._anchor.reset()
         self._file_feed.reset()
         self._last_tick_t = 0.0
 
@@ -331,6 +348,7 @@ class StationPlanning:
         *,
         probe_seq: Optional[int] = None,
         probe_vehicle: Optional[str] = None,
+        hud_ocr: Optional[AnchorReading] = None,
     ) -> PlanningSnapshot:
         self._note_probe_vehicle(probe_vehicle)
         self._suppress_untrusted_station_cache(probe_vehicle)
@@ -361,6 +379,15 @@ class StationPlanning:
                 dt,
                 freeze=self._reading_stale(),
             )
+            if self._anchor is not None and hud_ocr is not None:
+                anchored = self._anchor.apply(
+                    self._snap.station_distance_m,
+                    hud_ocr,
+                    now=now,
+                    speed_mph=float(speed_mph),
+                )
+                if anchored is not None:
+                    self._snap.station_distance_m = anchored
             snap = self._snap
         return self._strip_untrusted_station_fields(snap, probe_vehicle)
 
@@ -416,6 +443,13 @@ class StationPlanning:
         with self._cache_lock:
             prev = self._snap.station_distance_m
             prev_name = self._snap.station_name
+            anchor = self._anchor
+            if anchor is not None:
+                if prev_name and name and str(name) != prev_name:
+                    anchor.reset()  # otra estación: el desfase aprendido ya no vale
+                else:
+                    anchor.note_http_end(new_dist, prev, now=time.monotonic())
+                    new_dist = anchor.to_board(new_dist)
             if not apply_station_distance_reading(
                 self._snap,
                 new_dist,

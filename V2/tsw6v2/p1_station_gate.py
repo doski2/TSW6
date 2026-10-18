@@ -22,6 +22,7 @@ from tsw6v2.command import (
     is_brake_released,
     throttle_notch_from_lever,
 )
+from tsw6v2.hud_anchor import board_frame_active
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR, gravity_acceleration_ms2
 from tsw6v2.limit_containment import try_downhill_coast_watch
 from tsw6v2.limit_state import LimitBrakeState
@@ -72,6 +73,14 @@ DOORS_OPEN_MAX_SPEED_MPH = 8.0
 PLATFORM_ROLL_THROUGH_MIN_MPH = 10.0
 # Marker pasado con marcha (hueco 112457Z: paró a 1.48 mph con umbral >1.5).
 MARKER_PASSED_MIN_MPH = 1.0
+# Con la distancia al tablón (ancla HUD) stn≤1 m es el punto de parada: un tren que llega a
+# 1-1,5 mph no «pasó el marcador» (181008Z Fleetwood: STOPPED→DEPARTING a 1,1 mph y 1,0 m, y
+# el plan frenó a fondo hasta emergencia). Solo se considera pasado a marcha clara.
+MARKER_PASSED_MIN_MPH_BOARD = 5.0
+
+
+def marker_passed_min_mph() -> float:
+    return MARKER_PASSED_MIN_MPH_BOARD if board_frame_active() else MARKER_PASSED_MIN_MPH
 # Próximo andén: dist planning bajando desde lejos (20261003Z White Plains vía 2).
 APPROACH_PREV_MIN_M = 150.0
 APPROACH_DIST_DROP_M = 5.0
@@ -707,7 +716,7 @@ def should_skip_p1_release(
     if (
         station_dist_m is not None
         and station_dist_m <= 1.0
-        and speed_mph >= MARKER_PASSED_MIN_MPH
+        and speed_mph >= marker_passed_min_mph()
     ):
         return False
     if blocks_inherited_release_in_station_final_approach(
@@ -738,7 +747,7 @@ def _left_platform(
             return False
         return True
     # Planning: stn≈0 al pasar el marker con el tren en marcha.
-    if station_dist_m <= 1.0 and speed_mph >= MARKER_PASSED_MIN_MPH:
+    if station_dist_m <= 1.0 and speed_mph >= marker_passed_min_mph():
         return True
     return False
 

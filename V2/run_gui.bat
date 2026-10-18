@@ -4,8 +4,10 @@ REM Monitor primario: set TSW6_GUI_SECONDARY=0 antes de ejecutar.
 cd /d "%~dp0.."
 set "PYTHONPATH=%CD%;%CD%\V2"
 set "TSW6_GUI_SECONDARY=1"
-REM OCR del HUD (solo medicion, graba hud_ocr_m en el JSONL). Desactivar: set TSW6_HUD_OCR=0 antes de ejecutar.
+REM OCR del HUD (graba hud_ocr_m en el JSONL). Desactivar: set TSW6_HUD_OCR=0 antes de ejecutar.
 if not defined TSW6_HUD_OCR set "TSW6_HUD_OCR=1"
+REM El OCR manda sobre la distancia de parada (marcador del HUD); HTTP queda de referencia. Desactivar: set TSW6_HUD_OCR_CONTROL=0 antes de ejecutar.
+if not defined TSW6_HUD_OCR_CONTROL set "TSW6_HUD_OCR_CONTROL=1"
 python -m tsw6v2 gui %*
 set "ERR=%ERRORLEVEL%"
 if %ERR% NEQ 0 pause

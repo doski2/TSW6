@@ -213,6 +213,8 @@ class JsonlTrace:
                 "rec": snap.rec_ms,
                 "gap": snap.gap_ms,
             }
+        if snap.ocr_anchor is not None:
+            row["ocr_anchor"] = snap.ocr_anchor
         if snap.hud_ocr_diag is not None and snap.tick % 100 == 1:
             row["hud_ocr_diag"] = snap.hud_ocr_diag
         if snap.hud_ocr_m is not None:

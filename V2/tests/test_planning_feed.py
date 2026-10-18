@@ -174,10 +174,10 @@ def test_station_reading_stale_threshold_allows_poll_cycle():
     from tsw6v2.planning_poller import PLANNING_STALE_AFTER_S, StationPlanning
 
     sp = StationPlanning(http_enabled=False)
-    assert PLANNING_STALE_AFTER_S == 5.0
-    sp._last_reading_t = time.monotonic() - 4.2
+    assert PLANNING_STALE_AFTER_S == 13.0
+    sp._last_reading_t = time.monotonic() - 8.3
     assert sp._reading_stale() is False
-    sp._last_reading_t = time.monotonic() - 6.0
+    sp._last_reading_t = time.monotonic() - 14.0
     assert sp._reading_stale() is True
 
 

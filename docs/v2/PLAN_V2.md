@@ -806,7 +806,7 @@ HTTP + odometría Python. El tablón fino (`car_stop_signs` en `tsw_hud.db`) es 
    `odo_m` del probe (aún).
 
 El probe **sí** manda `odo_m` (~20 Hz) y puertas (`doors_telem` / `doors_dmi`); **no**
-`station_dist_cm`. **Sin OCR en el control** (Dastsc); desde 2026-10-18 hay OCR **solo de medición** del HUD (`--hud-ocr`, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)).
+`station_dist_cm`. **Sin OCR en el control** (Dastsc); desde 2026-10-18 el OCR del HUD **ancla la distancia de parada** al marcador del juego (`TSW6_HUD_OCR_CONTROL`, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)); HTTP queda de referencia.
 
 **Tres capas (no confundir):**
 
@@ -827,7 +827,7 @@ v2 salvo F9 con escalar legible.
 | **Parcial**         | P1 usa fin de plataforma, no tablón; `odo_m` no ancla estaciones | C2                               |
 | **Aplazado**        | `station_dist_cm` en GetData (Lua)                               | F9 frente a andén; después de C1 |
 | **Investigar (C2)** | Ancla HTTP + Δ`odo_m` probe (como C.3a en carteles)              | Medir si ~2 s + `v×dt` no basta  |
-| **En medición**     | OCR del HUD en el log (`--hud-ocr`); no entra en el frenado       | Ver [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md) |
+| **En prueba**       | Ancla OCR: el HUD manda sobre la distancia de parada (tablón); HTTP de referencia | Ver [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md) |
 | **Fuera v2**        | HTTP cada tick; OCR tablón **como control**; `markers[]` TArray en Lua sin F9 | Lento / TSC / hitch              |
 
 | Alternativa                                   | Pros                              | Contras                                   |
@@ -836,7 +836,7 @@ v2 salvo F9 con escalar legible.
 | `station_dist_cm` en GetData (Lua)            | Mismo Hz que límites              | ¿Existe escalar en `GetDriverAidData`? F9 |
 | Híbrido `odo_m` + ancla HTTP                  | Más precisión entre polls HTTP    | Hoy solo `v×dt`; Δ`odo_m` = C2            |
 | GPS / coordenadas mundo                       | `distanceToStation` {x,y} en HTTP | Actor pos en Lua incierto                 |
-| OCR (Dastsc)                                  | Tablón visual                     | Control: no — TSC. **Medición: sí** (2026-10-18, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
+| OCR (Dastsc)                                  | Tablón visual                     | TSC en origen. **Aquí sí, como ancla acotada** (2026-10-18, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
 
 **v2:** seguir HTTP + resta. **C2** después de **C1** (señales): F9 en andén — ¿existe
 `distanceToNextStation` / `distanceToStationCM` como **número** en el struct que ya lee Lua? Si sí →

@@ -1,8 +1,9 @@
 # Medición de la distancia del HUD por OCR
 
-Estado: **herramienta de medición** (2026-10-18). No interviene en el frenado: lee el número que
-muestra el HUD del juego y lo graba en el JSONL para evaluar si merece la pena corregir la
-distancia de la app cada N capturas.
+Estado (2026-10-18): **medición + ancla de control opcional**. La lectura se graba siempre en el
+JSONL. Con `TSW6_HUD_OCR_CONTROL=1` (activo en `run_gui.bat`) el HUD **manda sobre la distancia de
+parada**: el objetivo es el marcador del juego, no el fin de andén de `TrackData`, que queda de
+referencia (§ Ancla de control). Sin validar en juego.
 
 ## Por qué
 
@@ -20,7 +21,7 @@ distancia de la app cada N capturas.
 
 | Hace                                                                          | No hace                                             |
 | ----------------------------------------------------------------------------- | --------------------------------------------------- |
-| Captura una región del monitor principal cada 0,5 s y lee `N ft (pies)` / `m` | Cambiar `stn_dist_m` ni ninguna decisión de frenado |
+| Captura una región del monitor principal cada 0,5 s y lee `N ft (pies)` / `m` | Cambiar el frenado si `TSW6_HUD_OCR_CONTROL` no está activo |
 | Convierte a metros y guarda `hud_ocr_m`, `hud_ocr_age_s`, `hud_ocr_raw`       | Funcionar sin el marcador de parada visible         |
 | Evalúa offline «corregir cada N capturas» (`scripts/analyze_hud_ocr.py`)      | Leer otros textos del HUD (nombre, hora)            |
 
@@ -72,6 +73,21 @@ queda desactivado.
 
 Variables: `TSW6_HUD_OCR` (1 activa), `TSW6_HUD_OCR_REGION`, `TSW6_HUD_OCR_MONITOR` (índice de `mss`;
 por defecto el principal), `TSW6_HUD_OCR_INTERVAL` (s, 0,5), `TSW6_TESSERACT`.
+
+## Ancla de control (`hud_anchor.py`)
+
+Se activa con `TSW6_HUD_OCR=1` y `TSW6_HUD_OCR_CONTROL=1` (`run_gui.bat` pone ambas; `=0` la apaga):
+
+1. **Cambio de marco** fin de andén → tablón: dos capturas seguidas con el mismo desfase (±12 m,
+   dentro de −15…250 m). Una lectura rota («0 m» con el tablón a 1,5 km) no entra.
+2. **Seguimiento:** captura a más de 40 m de la estimación = descartada; corrección por captura
+   limitada a 15 m. La lectura se lleva a «ahora» restando `v × edad`.
+3. **HTTP:** sigue entrando, convertido al marco del tablón restando el desfase aprendido (se afina
+   con cada lectura HTTP mientras el ancla es reciente). Al cambiar de estación se descarta.
+4. **Sin lectura** (marcador fuera de pantalla, OCR caído, < 3 mph) la distancia sigue por `v×dt`.
+
+El estado se graba por tick en `ocr_anchor` (`wait …` / `board off=<desfase> n=<aceptadas> c=<corrección>`).
+Los umbrales salen de Fleetwood (desfase 95–101 m); otras estaciones sin medir.
 
 ## Qué se graba
 

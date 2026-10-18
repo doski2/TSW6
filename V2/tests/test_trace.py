@@ -5,6 +5,8 @@ import _path  # noqa: F401
 import json
 from pathlib import Path
 
+import pytest
+
 from tsw6v2.loop import AgentSnapshot
 from tsw6v2.session_log import SessionRecorder
 from tsw6v2.session_report import load_ticks
@@ -199,6 +201,27 @@ def test_session_recorder_emits_route_detect(tmp_path: Path) -> None:
     assert session is not None
     assert session["detected_route"] == "Birmingham Cross-City"
     assert session["service_name"] == "2R17"
+
+
+def test_session_recorder_active_time_follows_wall_clock_with_repeated_seq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Límite de fps: ticks con seq repetido no se apilan en el mismo punto del eje X (104709Z)."""
+    clock = {"t": 100.0}
+    monkeypatch.setattr("tsw6v2.session_log.time.monotonic", lambda: clock["t"])
+    path = tmp_path / "sess.jsonl"
+    rec = SessionRecorder(path, trace_mode="station", route="x")
+    for seq in (10, 10, 11, 11, 12):
+        rec.record(AgentSnapshot(tick=1, seq=seq, speed_mph=30.0))
+        clock["t"] += 0.05
+    for _ in range(10):  # pausa: seq quieto > PROBE_FROZEN_S
+        rec.record(AgentSnapshot(tick=1, seq=12, speed_mph=0.0))
+        clock["t"] += 0.05
+    rec.finish(generate_html=False)
+    ticks = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()][1:]
+    act = [t["active_t_ms"] for t in ticks]
+    assert act[:5] == pytest.approx([0.0, 50.0, 100.0, 150.0, 200.0])
+    assert act[-1] == act[-2] < 600.0  # en pausa se congela tras PROBE_FROZEN_S (0,3 s)
 
 
 def test_resolve_session_log_path() -> None:
