@@ -195,6 +195,8 @@ class JsonlTrace:
             row["regen_n"] = snap.regen_n
         if snap.driver_override_s > 0:
             row["manual_s"] = round(snap.driver_override_s, 1)
+        if snap.hud_ocr_diag is not None and snap.tick % 100 == 1:
+            row["hud_ocr_diag"] = snap.hud_ocr_diag
         if snap.hud_ocr_m is not None:
             row["hud_ocr_m"] = round(snap.hud_ocr_m, 1)
             row["hud_ocr_age_s"] = snap.hud_ocr_age_s

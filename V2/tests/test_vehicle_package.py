@@ -631,9 +631,16 @@ def test_grade_hold_releases_departing_from_stop_short_of_marker_session_2026101
     clear_package_cache()
     pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-A_C")
     assert pkg is not None
-    kwargs = dict(speed_mph=0.0, gradient_pct=0.0, station_dist_m=55.4)
-    assert mc_grade_hold_fraction(pkg, **kwargs) is not None
-    assert mc_grade_hold_fraction(pkg, departing=True, **kwargs) is None
+    assert (
+        mc_grade_hold_fraction(pkg, speed_mph=0.0, gradient_pct=0.0, station_dist_m=55.4)
+        is not None
+    )
+    assert (
+        mc_grade_hold_fraction(
+            pkg, speed_mph=0.0, gradient_pct=0.0, station_dist_m=55.4, departing=True
+        )
+        is None
+    )
 
 
 def test_mc_fraction_for_decel_picks_softest_position_covering_need() -> None:

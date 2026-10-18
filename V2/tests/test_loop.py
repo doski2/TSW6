@@ -544,6 +544,9 @@ def test_agent_step_attaches_hud_ocr_reading(tmp_path: Path) -> None:
         def latest(self):
             return HudOcrReading(value_m=123.4, raw="405 ft", t=time.monotonic() - 0.2)
 
+        def diag(self):
+            return "reads=1 hits=1"
+
         def stop(self):
             pass
 
@@ -551,5 +554,6 @@ def test_agent_step_attaches_hud_ocr_reading(tmp_path: Path) -> None:
     snap = loop.step()
     assert snap.hud_ocr_m == 123.4
     assert snap.hud_ocr_raw == "405 ft"
+    assert snap.hud_ocr_age_s is not None
     assert 0.1 < snap.hud_ocr_age_s < 1.0
     loop.shutdown()

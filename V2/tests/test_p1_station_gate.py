@@ -919,6 +919,6 @@ def test_in_motion_bleed_release_skipped_when_lever_not_braking_session_201122()
         limit_sign_passed=True,
     )
     ctx, prep, snap = _bleed_release_fakes(lever=4)
-    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) is None
+    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) is None  # type: ignore[arg-type]
     ctx, prep, snap = _bleed_release_fakes(lever=3)
-    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) == "DECIDED"
+    assert _attempt_platform_parked_bleed_release(ctx, prep, snap=snap, **kwargs) == "DECIDED"  # type: ignore[arg-type]

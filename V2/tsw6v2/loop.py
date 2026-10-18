@@ -132,6 +132,7 @@ class AgentSnapshot:
     hud_ocr_m: Optional[float] = None
     hud_ocr_age_s: Optional[float] = None
     hud_ocr_raw: Optional[str] = None
+    hud_ocr_diag: Optional[str] = None
 
     @classmethod
     def from_probe(
@@ -653,6 +654,7 @@ class AgentLoop:
         out = self._step_core()
         reader = self._hud_ocr
         if reader is not None:
+            out.hud_ocr_diag = reader.diag()
             reading = reader.latest()
             if reading is not None:
                 out.hud_ocr_m = reading.value_m

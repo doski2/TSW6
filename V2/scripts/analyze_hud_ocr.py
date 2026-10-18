@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(segments)} aproximaciones, {caps} capturas nuevas utilizables\n")
     options = [int(x) for x in args.every.split(",") if x.strip()]
     print(format_table(evaluate(segments, options)))
-    print("\nDesfase app − HUD por estación (marcador a < 300 m):")
+    print("\nDesfase app - HUD por estación (marcador a < 300 m):")
     for name, st in sorted(per_station_offset(segments).items()):
         print(f"  {name or '?':<28} n={int(st['n']):>4}  mediana={st['median_m']:>7.1f} m  desv={st['stdev_m']}")
     return 0

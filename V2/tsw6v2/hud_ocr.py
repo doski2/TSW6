@@ -116,10 +116,45 @@ def parse_region(text: str) -> tuple[float, float, float, float]:
     return parts  # type: ignore[return-value]
 
 
+def _game_window_center() -> Optional[tuple[int, int]]:
+    """Centro de la ventana visible de Train Sim World (Windows) o ``None``."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found: list[tuple[int, int]] = []
+
+        def _cb(hwnd: int, _lparam: int) -> bool:
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+                return True
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, buf, 256)
+            if "train sim world" in buf.value.lower():
+                rect = wintypes.RECT()
+                user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                found.append(((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2))
+            return True
+
+        proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows(proto(_cb), 0)
+        return found[0] if found else None
+    except Exception:  # noqa: BLE001 - sin win32 se usa el monitor principal
+        return None
+
+
 def _pick_monitor(sct: Any, index: Optional[int]) -> dict[str, int]:
     monitors = sct.monitors
     if index is not None and 0 <= index < len(monitors):
         return monitors[index]
+    center = _game_window_center()
+    if center is not None:
+        for mon in monitors[1:]:
+            if (
+                mon["left"] <= center[0] < mon["left"] + mon["width"]
+                and mon["top"] <= center[1] < mon["top"] + mon["height"]
+            ):
+                return mon
     for mon in monitors[1:]:
         if mon.get("is_primary"):
             return mon
@@ -134,7 +169,7 @@ def _preprocess(img: Any) -> Any:
     gray = gray.resize((gray.width * 3, gray.height * 3))
     if ImageStat.Stat(gray).mean[0] < 128:
         gray = ImageOps.invert(gray)
-    return gray.point(lambda p: 255 if p > 140 else 0)
+    return gray.point([0] * 141 + [255] * 115)
 
 
 _OCR_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789.,ftpiesmMIydkl() "
@@ -162,6 +197,7 @@ class HudOcrReader:
         self.error: Optional[str] = None
         self.reads = 0
         self.hits = 0
+        self.last_raw = ""
 
     def start(self) -> bool:
         if self._thread is not None:
@@ -186,6 +222,10 @@ class HudOcrReader:
             return None
         return reading
 
+    def diag(self) -> str:
+        """Estado para el log: lecturas, aciertos, último texto OCR y error."""
+        return f"reads={self.reads} hits={self.hits} last={self.last_raw!r} err={self.error}"
+
     def _crop_box(self, mon: dict[str, int]) -> dict[str, int]:
         left, top, width, height = self.region
         return {
@@ -206,6 +246,7 @@ class HudOcrReader:
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         raw = pytesseract.image_to_string(_preprocess(img), config=_OCR_CONFIG).strip()
         self.reads += 1
+        self.last_raw = raw.replace(chr(10), ' ')[:40]
         value = parse_hud_distance(raw)
         if value is None:
             return None

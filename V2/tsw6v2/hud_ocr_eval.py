@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 MPH_TO_MS = 0.44704
+PASSED_MARKER_M = 15.0
 DISTANCE_BANDS = ((0.0, 100.0), (100.0, 300.0), (300.0, 1000.0))
 
 
@@ -65,6 +66,7 @@ def extract_captures(
     odo = 0.0
     last_t: Optional[float] = None
     last_age: Optional[float] = None
+    min_hud: Optional[float] = None
     for i, row in enumerate(ticks):
         t_s = float(row.get("t_ms") or 0.0) / 1000.0
         spd = float(row.get("spd_mph") or 0.0)
@@ -73,6 +75,7 @@ def extract_captures(
             if len(current) >= 2:
                 segments.append(current)
             current, station, odo, last_t, last_age = [], name, 0.0, None, None
+            min_hud = None
         if last_t is not None and t_s > last_t:
             odo += spd * MPH_TO_MS * (t_s - last_t)
         last_t = t_s
@@ -89,6 +92,9 @@ def extract_captures(
         hud_now = float(hud) - spd * MPH_TO_MS * float(age)
         if not 0.0 < hud_now <= max_dist_m:
             continue
+        if min_hud is not None and hud_now > min_hud + PASSED_MARKER_M:
+            continue  # ya pasó el marcador: el HUD vuelve a crecer
+        min_hud = hud_now if min_hud is None else min(min_hud, hud_now)
         current.append(
             Capture(
                 index=i,

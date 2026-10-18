@@ -166,7 +166,7 @@ def run_hud_ocr_calibrate(out_dir: Path) -> int:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     print(f"Monitor usado : {result['monitor']}")
-    print(f"Región (frac.): {result['region']}  → píxeles {result['box']}")
+    print(f"Región (frac.): {result['region']}  -> píxeles {result['box']}")
     print(f"Lectura OCR   : {result['reading_m']} m   (texto: {result['raw']!r})")
     print(f"Imágenes en   : {result['out_dir']}  (monitor.png, recorte.png, recorte_procesado.png)")
     if result["reading_m"] is None:

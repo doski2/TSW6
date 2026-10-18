@@ -55,8 +55,9 @@ queda desactivado.
    ```
 
    (valor por defecto, medido sobre 2560×1440 con el HUD en su sitio habitual).
-2. **Grabar una sesión con OCR:** añade `--hud-ocr` al comando de siempre, o `set TSW6_HUD_OCR=1`
-   antes de lanzar el `.bat`:
+2. **Grabar una sesión con OCR:** `V2/run_gui.bat` lo activa por defecto (`TSW6_HUD_OCR=1`; para
+   desactivarlo, `set TSW6_HUD_OCR=0` antes de lanzarlo). En otros comandos, añade `--hud-ocr` o
+   `set TSW6_HUD_OCR=1`:
 
    ```text
    python -m tsw6v2 gui --hud-ocr
@@ -108,8 +109,10 @@ un tope de corrección por tick; no está hecho.
 
 - El HUD está localizado («pies»); con otro idioma o escala de interfaz la región y el parser
   pueden fallar.
-- Solo se captura el **monitor principal**; si el juego está en otro monitor, usar
-  `TSW6_HUD_OCR_MONITOR`.
+- El monitor se elige donde esté la ventana visible de «Train Sim World» (Windows); si no se
+  encuentra, el principal. `TSW6_HUD_OCR_MONITOR` (índice de `mss`) lo fuerza. En 2026-10-18 una
+  calibración eligió el monitor equivocado (1920×1080 en vez del 2560×1440 del juego); la
+  detección por ventana se añadió después y no está probada con el juego abierto.
 - La frecuencia con la que el HUD refresca el número no está medida; `hud_ocr_age_s` solo cubre el
   retardo propio de la captura.
 - Un solo marcador visible: con varias paradas cercanas el número puede ser del siguiente andén.
