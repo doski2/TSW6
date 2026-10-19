@@ -14,45 +14,13 @@ from tsw6v2.constants import (
 )
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
-    DEFAULT_MAX_BRAKE_DECEL,
     active_max_decel,
-    brake_ctx_for_decel,
-    braking_distance_mph,
-    decel_for_notch,
 )
-from tsw6v2.plan import service_decel_frac
+from tsw6v2.plan import service_stop_distance_m
 
 _log = logging.getLogger("tsw6v2.p1_emergency")
 
 EmergencyTargetKind = Literal["STATION", "SIGNAL"]
-
-
-def _service_decel(base_decel: float) -> float:
-    return decel_for_notch(service_decel_frac(1), base_decel)
-
-
-def _stop_distance(
-    speed_mph: float,
-    *,
-    base_decel: float,
-    gradient_pct: float,
-    brake_transition_s: float,
-    accel_ms2: Optional[float],
-) -> float:
-    ctx = brake_ctx_for_decel(
-        gradient_pct=gradient_pct,
-        using_learned=False,
-        current_accel_ms2=accel_ms2,
-        brake_transition_s=brake_transition_s,
-        base_decel_ms2=base_decel,
-    )
-    return braking_distance_mph(
-        speed_mph,
-        0.0,
-        decel_ms2=_service_decel(base_decel),
-        ctx=ctx,
-        apply_margin=True,
-    )
 
 
 def check_p1_emergency(
@@ -71,7 +39,7 @@ def check_p1_emergency(
 
     base = base_decel if base_decel is not None and base_decel > 0 else active_max_decel()
     grad = gradient_pct or 0.0
-    bd = _stop_distance(
+    bd = service_stop_distance_m(
         speed_mph,
         base_decel=base,
         gradient_pct=grad,

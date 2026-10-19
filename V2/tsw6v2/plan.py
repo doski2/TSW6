@@ -6,7 +6,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
-from tsw6v2.physics import decel_for_notch
+from tsw6v2.physics import (
+    brake_ctx_for_decel,
+    braking_distance_mph,
+    decel_for_notch,
+)
 
 TargetKind = Literal["SPEED_LIMIT", "STATION", "SIGNAL"]
 PredictDecelFn = Callable[[int, float, float], Optional[float]]
@@ -64,6 +68,31 @@ def service_decel_frac(handle: int, default: Optional[float] = None) -> float:
     if default is not None:
         return SERVICE_DECEL_FRAC_BY_HANDLE.get(handle, default)
     return SERVICE_DECEL_FRAC_BY_HANDLE[handle]
+
+
+def service_stop_distance_m(
+    speed_mph: float,
+    *,
+    base_decel: float,
+    gradient_pct: float = 0.0,
+    brake_transition_s: Optional[float] = None,
+    accel_ms2: Optional[float] = None,
+) -> float:
+    """Distancia v→0 con la muesca de servicio mínima (B1), con margen."""
+    ctx = brake_ctx_for_decel(
+        gradient_pct=gradient_pct,
+        using_learned=False,
+        current_accel_ms2=accel_ms2,
+        brake_transition_s=brake_transition_s,
+        base_decel_ms2=base_decel,
+    )
+    return braking_distance_mph(
+        speed_mph,
+        0.0,
+        decel_ms2=decel_for_notch(service_decel_frac(1), base_decel),
+        ctx=ctx,
+        apply_margin=True,
+    )
 
 
 def resolve_phase_decel(

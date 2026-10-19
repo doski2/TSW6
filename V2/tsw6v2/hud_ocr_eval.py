@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-MPH_TO_MS = 0.44704
+from tsw6v2.constants import MPH_TO_MS
+
 PASSED_MARKER_M = 15.0
 # Lectura incoherente con la app (104709Z: «0 m» con el tablón a 1,5 km): se descarta. El fin de
 # andén y el tablón difieren ~35-120 m, así que 400 m deja margen sin admitir lecturas rotas.

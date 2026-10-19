@@ -787,6 +787,8 @@ class AgentLoop:
                 schedule_source = planning.schedule_source
                 combined_lever = combined_lever_gate
                 set_board_frame(self._station_planning.board_frame)
+                if self._hud_ocr is not None:
+                    self._hud_ocr.set_context(station_dist_m, mph)
                 self._station_gate.update(
                     speed_mph=mph,
                     station_dist_m=station_dist_m,

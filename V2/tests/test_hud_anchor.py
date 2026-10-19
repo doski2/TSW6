@@ -165,3 +165,57 @@ def test_marker_passed_not_triggered_when_arriving_at_board_181008z() -> None:
         assert _left_platform(speed_mph=6.0, station_dist_m=0.5)  # pasa el tablón a marcha clara
     finally:
         set_board_frame(False)
+
+
+def test_anchor_resyncs_after_consistent_gated_captures() -> None:
+    """162907Z: estimación 47 m por encima del OCR; track_gate no puede bloquear para siempre."""
+    anchor, _ = _locked(offset=50.0, est=130.0)
+    est = 130.0
+    for i, t in enumerate((11.0, 11.5)):
+        assert anchor.apply(est, _read(est - 47.0 - i * 0.2, t), now=t, speed_mph=MPH) is None
+        assert anchor.last_reason == "track_gate"
+    out = anchor.apply(est, _read(est - 47.4, 12.0), now=12.0, speed_mph=MPH)
+    assert out == pytest.approx(est - 47.4, abs=0.1)
+    assert anchor.last_reason == "resync"
+
+
+def test_anchor_gate_streak_resets_on_inconsistent_captures() -> None:
+    anchor, _ = _locked(offset=50.0, est=130.0)
+    assert anchor.apply(130.0, _read(60.0, 11.0), now=11.0, speed_mph=MPH) is None
+    assert anchor.apply(130.0, _read(20.0, 11.5), now=11.5, speed_mph=MPH) is None
+    assert anchor.apply(130.0, _read(60.0, 12.0), now=12.0, speed_mph=MPH) is None
+    assert anchor.last_reason == "track_gate"
+
+
+def test_rejected_http_does_not_move_offset(monkeypatch) -> None:
+    """Una lectura HTTP rechazada no debe contaminar el desfase del ancla."""
+    src = _planning(80.0)
+    assert src._anchor is not None
+    src._anchor.board_frame = True
+    src._anchor.offset_m = 52.0
+    src._anchor._last_accept_t = time.monotonic()
+    src._last_speed_mph = 8.0
+    monkeypatch.setattr(
+        "tsw6v2.planning_poller.poll_station_planning",
+        lambda **_: {"next_stop": {"distance_m": 195.1, "name": "Fleetwood"}},
+    )
+    src._poll_once()
+    assert src._anchor.offset_m == pytest.approx(52.0)
+    assert src._snap.station_distance_m == pytest.approx(80.0)
+
+
+def test_http_contradicting_ocr_is_ignored(monkeypatch) -> None:
+    """162907Z: HTTP daba 3 m con el OCR en 34 m."""
+    src = _planning(36.0)
+    assert src._anchor is not None
+    src._anchor.board_frame = True
+    src._anchor.offset_m = 83.0
+    src._last_speed_mph = 7.8
+    src._last_ocr = _read(34.1, time.monotonic())
+    monkeypatch.setattr(
+        "tsw6v2.planning_poller.poll_station_planning",
+        lambda **_: {"next_stop": {"distance_m": 93.4, "name": "Fleetwood"}},
+    )
+    src._poll_once()
+    assert src._snap.station_distance_m == pytest.approx(36.0)
+    assert src._snap.planning_rejected_n >= 1

@@ -17,14 +17,10 @@ from tsw6v2.constants import (
 )
 from tsw6v2.physics import (
     DEFAULT_BRAKE_FILL_S,
-    DEFAULT_MAX_BRAKE_DECEL,
     active_max_decel,
     TARGET_CLUSTER_GAP_M,
-    brake_ctx_for_decel,
-    braking_distance_mph,
-    decel_for_notch,
 )
-from tsw6v2.plan import service_decel_frac
+from tsw6v2.plan import service_stop_distance_m
 from tsw6v2.p1_station_gate import blocks_inherited_release_in_station_final_approach
 from tsw6v2.station_plan import DEFAULT_STATION_CFG, station_within_dwell_zone
 from tsw6v2.signal_plan import (
@@ -181,19 +177,11 @@ def should_defer_station_brake(
         return False
     if base_decel_ms2 is None:
         base_decel_ms2 = active_max_decel()
-    decel = decel_for_notch(service_decel_frac(1), base_decel_ms2)
-    ctx = brake_ctx_for_decel(
-        gradient_pct=gradient_pct,
-        using_learned=False,
-        base_decel_ms2=base_decel_ms2,
-        brake_transition_s=brake_fill_s,
-    )
-    bd = braking_distance_mph(
+    bd = service_stop_distance_m(
         speed_mph,
-        0.0,
-        decel_ms2=decel,
-        ctx=ctx,
-        apply_margin=True,
+        base_decel=base_decel_ms2,
+        gradient_pct=gradient_pct,
+        brake_transition_s=brake_fill_s,
     )
     return station_dist_m > bd + HORIZON_SLACK_M
 

@@ -11,7 +11,8 @@ from typing import Any, Optional
 
 from tsw6v2.bridge.http_api import POLL_TIMING_MS, find_api_key, probe_http_api
 from tsw6v2.driver_aid_stations import poll_station_planning, station_base_name
-from tsw6v2.hud_anchor import AnchorReading, HudAnchor
+from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.hud_anchor import MIN_HUD_M, AnchorReading, HudAnchor
 from tsw6v2.hud_db import default_hud_db_path
 from tsw6v2.planning_feed import (
     PLANNING_JUMP_REJECT_M,
@@ -38,6 +39,9 @@ PLANNING_READ_TIMEOUT_S = 1.0
 # 103432Z: 1 de cada 3 polls falla y el hueco pasa de 4,2 a 8,3 s; con 5 s la distancia se
 # congelaba ~3,3 s a 30-47 mph (50-70 m de error). Dos ciclos fallidos seguidos ≈ 12,5 s.
 PLANNING_STALE_AFTER_S = 13.0
+# HTTP vs OCR (marco tablón): una lectura que difiere más es sospechosa (162907Z: 3 m vs 34 m).
+HTTP_OCR_AGREE_M = 20.0
+HTTP_OCR_MAX_AGE_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,7 @@ class StationPlanning:
         self._schedule_identity: tuple[str, str, Optional[int]] = ("", "", None)
         self._served_bases: set[str] = set()
         self._anchor: Optional[HudAnchor] = None
+        self._last_ocr: Optional[AnchorReading] = None
         # Algún poll ya cruzó paradas del horario con TrackData: si luego ninguna coincide es que
         # la siguiente parada está lejos (no que los nombres no cuadren).
         self._schedule_matched_once = False
@@ -375,6 +380,8 @@ class StationPlanning:
         )
         self._last_tick_t = now
         self._last_speed_mph = float(speed_mph)
+        if hud_ocr is not None:
+            self._last_ocr = hud_ocr
         if probe_seq is not None and probe_seq != self._last_probe_seq:
             self._last_seq_change_t = now
         self._note_probe_seq(probe_seq)
@@ -396,6 +403,17 @@ class StationPlanning:
                     self._snap.station_distance_m = anchored
             snap = self._snap
         return self._strip_untrusted_station_fields(snap, probe_vehicle)
+
+    def _contradicts_ocr(self, board_dist_m: float) -> bool:
+        """True si la lectura HTTP (marco tablón) difiere del OCR reciente más de ``HTTP_OCR_AGREE_M``."""
+        anchor, ocr = self._anchor, self._last_ocr
+        if anchor is None or ocr is None or not anchor.board_frame:
+            return False
+        age = time.monotonic() - ocr.t
+        if age > HTTP_OCR_MAX_AGE_S:
+            return False
+        hud_now = ocr.value_m - self._last_speed_mph * MPH_TO_MS * age
+        return hud_now >= MIN_HUD_M and abs(board_dist_m - hud_now) > HTTP_OCR_AGREE_M
 
     def _reading_stale(self) -> bool:
         """True si hace más de un poll que no llega una distancia HTTP válida.
@@ -456,12 +474,19 @@ class StationPlanning:
             prev = self._snap.station_distance_m
             prev_name = self._snap.station_name
             anchor = self._anchor
+            end_dist = new_dist
             if anchor is not None:
                 if prev_name and name and str(name) != prev_name:
                     anchor.reset()  # otra estación: el desfase aprendido ya no vale
                 else:
-                    anchor.note_http_end(new_dist, prev, now=time.monotonic())
-                    new_dist = anchor.to_board(new_dist)
+                    new_dist = anchor.to_board(end_dist)
+            if self._contradicts_ocr(new_dist):
+                self._snap.planning_rejected_n += 1
+                _log.info(
+                    "planning: ignorar lectura HTTP %.0f m (contradice al OCR del HUD)",
+                    new_dist,
+                )
+                return
             if not apply_station_distance_reading(
                 self._snap,
                 new_dist,
@@ -478,6 +503,9 @@ class StationPlanning:
                     name or "?",
                 )
                 return
+            if anchor is not None:
+                # Solo con la lectura ya validada: una rechazada no debe mover el desfase.
+                anchor.note_http_end(end_dist, prev, now=time.monotonic())
             self._maybe_mark_departed_stop(
                 prev,
                 prev_name,

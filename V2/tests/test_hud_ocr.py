@@ -56,3 +56,20 @@ def test_ocr_reads_rendered_hud_text() -> None:
     pytesseract.pytesseract.tesseract_cmd = tess
     raw = pytesseract.image_to_string(_preprocess(img), config=_OCR_CONFIG)
     assert parse_hud_distance(raw) == pytest.approx(1465 * FT_TO_M, abs=0.5)
+
+
+def test_ocr_interval_adapts_to_distance_and_speed() -> None:
+    from tsw6v2.hud_ocr import HudOcrReader
+
+    reader = HudOcrReader(adaptive=True, tesseract_cmd="x")
+    reader.set_context(80.0, 10.0)
+    assert reader.current_interval_s() == 0.25
+    reader.set_context(200.0, 10.0)
+    assert reader.current_interval_s() == 0.5
+    reader.set_context(800.0, 40.0)
+    assert reader.current_interval_s() == 0.5
+    reader.set_context(800.0, 10.0)
+    assert reader.current_interval_s() == 1.0
+    fixed = HudOcrReader(interval_s=0.7, tesseract_cmd="x")
+    fixed.set_context(80.0, 10.0)
+    assert fixed.current_interval_s() == 0.7

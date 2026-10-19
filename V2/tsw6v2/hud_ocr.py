@@ -29,6 +29,13 @@ MI_TO_M = 1609.344
 # ``TSW6_HUD_OCR_REGION`` tras ``hud-ocr-calibrate``.
 DEFAULT_REGION = (0.135, 0.085, 0.075, 0.040)
 DEFAULT_INTERVAL_S = 0.5
+# Intervalo adaptativo: cerca del andén cada captura aporta pocos metros; lejos solo hace falta
+# para confirmar el cambio de marco.
+NEAR_INTERVAL_S = 0.25
+NEAR_DIST_M = 120.0
+FAR_INTERVAL_S = 1.0
+FAR_DIST_M = 300.0
+FAST_MPH = 25.0
 MAX_READING_AGE_S = 3.0
 MAX_PLAUSIBLE_M = 20000.0
 
@@ -184,11 +191,15 @@ class HudOcrReader:
         region: tuple[float, float, float, float] = DEFAULT_REGION,
         monitor: Optional[int] = None,
         interval_s: float = DEFAULT_INTERVAL_S,
+        adaptive: bool = False,
         tesseract_cmd: Optional[str] = None,
     ) -> None:
         self.region = region
         self.monitor = monitor
         self.interval_s = max(0.1, interval_s)
+        self.adaptive = adaptive
+        self._dist_m: Optional[float] = None
+        self._speed_mph = 0.0
         self.tesseract_cmd = tesseract_cmd or find_tesseract()
         self._lock = threading.Lock()
         self._latest: Optional[HudOcrReading] = None
@@ -214,6 +225,21 @@ class HudOcrReader:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+
+    def set_context(self, dist_m: Optional[float], speed_mph: float) -> None:
+        """Distancia al andén y velocidad actuales, para el intervalo adaptativo."""
+        self._dist_m = dist_m
+        self._speed_mph = speed_mph
+
+    def current_interval_s(self) -> float:
+        if not self.adaptive:
+            return self.interval_s
+        dist, fast = self._dist_m, self._speed_mph > FAST_MPH
+        if dist is not None and dist < NEAR_DIST_M:
+            return NEAR_INTERVAL_S
+        if fast or (dist is not None and dist < FAR_DIST_M):
+            return self.interval_s
+        return FAR_INTERVAL_S
 
     def latest(self, *, max_age_s: float = MAX_READING_AGE_S) -> Optional[HudOcrReading]:
         with self._lock:
@@ -269,7 +295,7 @@ class HudOcrReader:
                     if reading is not None:
                         with self._lock:
                             self._latest = reading
-                    self._stop.wait(max(0.0, self.interval_s - (time.monotonic() - started)))
+                    self._stop.wait(max(0.0, self.current_interval_s() - (time.monotonic() - started)))
         except Exception as exc:  # noqa: BLE001 - mss/PIL ausentes
             self.error = f"{type(exc).__name__}: {exc}"
 
@@ -279,14 +305,16 @@ def hud_ocr_from_env() -> Optional[HudOcrReader]:
     if os.environ.get("TSW6_HUD_OCR", "").strip().lower() not in ("1", "true", "yes", "on"):
         return None
     mon_raw = os.environ.get("TSW6_HUD_OCR_MONITOR", "").strip()
+    interval_raw = os.environ.get("TSW6_HUD_OCR_INTERVAL", "").strip()
     try:
-        interval = float(os.environ.get("TSW6_HUD_OCR_INTERVAL", DEFAULT_INTERVAL_S))
+        interval = float(interval_raw) if interval_raw else DEFAULT_INTERVAL_S
     except ValueError:
-        interval = DEFAULT_INTERVAL_S
+        interval, interval_raw = DEFAULT_INTERVAL_S, ""
     reader = HudOcrReader(
         region=parse_region(os.environ.get("TSW6_HUD_OCR_REGION", "")),
         monitor=int(mon_raw) if mon_raw.isdigit() else None,
         interval_s=interval,
+        adaptive=not interval_raw,  # intervalo explícito = fijo
     )
     if not reader.start():
         print(f"AVISO: OCR del HUD desactivado: {reader.error}")

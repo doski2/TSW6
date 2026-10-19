@@ -24,13 +24,15 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional
 
-MPH_TO_MS = 0.44704
+from tsw6v2.constants import MPH_TO_MS
+
 # fin de andén − tablón (m): el tablón está antes que el fin del andén
 FRAME_MIN_M = -15.0
 FRAME_MAX_M = 250.0
 CONFIRM_AGREE_M = 12.0
 TRACK_GATE_M = 40.0
 MAX_CORRECTION_M = 15.0
+RESYNC_AFTER_GATED = 3  # capturas seguidas coherentes entre sí que contradicen la estimación
 MIN_SPEED_MPH = 3.0
 MIN_HUD_M = 3.0  # por debajo se está sobre el marcador: la lectura ya no aporta
 OFFSET_EMA = 0.3
@@ -77,6 +79,8 @@ class HudAnchor:
         self._last_t: Optional[float] = None
         self._cand_diff: Optional[float] = None
         self._last_accept_t: Optional[float] = None
+        self._gate_diff: Optional[float] = None
+        self._gate_streak = 0
 
     def apply(
         self,
@@ -115,7 +119,8 @@ class HudAnchor:
 
         diff = hud_now - est_m
         if abs(diff) > TRACK_GATE_M:
-            return self._reject("track_gate")
+            return self._gated(diff, hud_now, now)
+        self._gate_streak = 0
         corr = max(-MAX_CORRECTION_M, min(MAX_CORRECTION_M, diff))
         self.last_corr_m = corr
         self._accept(now)
@@ -149,6 +154,21 @@ class HudAnchor:
             f"board off={self.offset_m or 0.0:.0f} n={self.accepted_n} "
             f"c={self.last_corr_m:+.1f} {self.last_reason}"
         ).strip()
+
+    def _gated(self, diff: float, hud_now: float, now: float) -> Optional[float]:
+        """Captura fuera de puerta. Si varias seguidas coinciden entre sí, la estimación es la errónea."""
+        if self._gate_diff is not None and abs(diff - self._gate_diff) <= CONFIRM_AGREE_M:
+            self._gate_streak += 1
+        else:
+            self._gate_streak = 1
+        self._gate_diff = diff
+        if self._gate_streak < RESYNC_AFTER_GATED:
+            return self._reject("track_gate")
+        self._gate_streak = 0
+        self.last_corr_m = diff
+        self._accept(now)
+        self.last_reason = "resync"
+        return hud_now
 
     def _accept(self, now: float) -> None:
         self.accepted_n += 1
