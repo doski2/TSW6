@@ -11,6 +11,7 @@ from tsw6v2.bridge.getdata import (
     default_getdata_path,
     read_probe_file,
 )
+from tsw6v2.constants import IPC_ACK_TIMEOUT_S
 from tsw6v2.bridge.ipc_bus import (
     dispatch_ipc_combined_notch,
     dispatch_ipc_master_controller,
@@ -22,7 +23,7 @@ from tsw6v2.vehicle_package import (
     uses_mc_analog_ipc,
 )
 
-DEFAULT_ACK_TIMEOUT_S = 0.35
+DEFAULT_ACK_TIMEOUT_S = IPC_ACK_TIMEOUT_S
 DEFAULT_MAX_STEPS = 9
 DEFAULT_STEP_PAUSE_S = 0.08
 DEFAULT_STEP_WAIT_S = 0.6
@@ -62,7 +63,7 @@ def dispatch_to_input_fraction(
     fraction: float,
     *,
     cmd_id: int,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Un paso IPC hacia fracción 0..1 (MasterController / analógico)."""
     enable_lua_commands()
@@ -77,7 +78,7 @@ def dispatch_step_toward_notch(
     target: int,
     *,
     cmd_id: int,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S,
     vehicle: Optional[str] = None,
     vehicle_package: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:

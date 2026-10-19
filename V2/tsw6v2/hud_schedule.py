@@ -6,6 +6,7 @@ Lee la BD con ``tsw6v2.hud_db`` (propio de V2). Sin ``tsw6/``.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
@@ -61,7 +62,7 @@ def resolve_hud_service_stops(
         return None
     try:
         conn = open_readonly(hud_db_path)
-    except Exception as exc:
+    except (sqlite3.Error, OSError) as exc:
         _log.debug("HUD DB no disponible: %s", exc)
         return None
     try:
@@ -73,7 +74,7 @@ def resolve_hud_service_stops(
                     "stop_names": [s.name for s in stops],
                     "stops": stops,
                 }
-    except Exception as exc:
+    except (sqlite3.Error, KeyError, ValueError) as exc:
         _log.warning("HUD query fallo (svc=%s): %s", service_name, exc)
     finally:
         conn.close()

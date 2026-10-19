@@ -172,15 +172,12 @@ por vehículo (§2.4 paso 4) ya escritas, para poder comparar antes y después.
 
 ## 3. Duplicados (FACT)
 
-- **`DEFAULT_ACK_TIMEOUT_S` definido dos veces**: `ipc.py:25` (0.35) y `loop.py:58` (alias de
-  `AGENT_ACK_TIMEOUT_S`). Ambos valen 0.35 hoy, pero es una fuente de verdad duplicada. Riesgo:
-  divergencia futura.
-- **Timeouts por defecto inconsistentes**: `ipc.py` (funciones `dispatch_*`) y `bridge/ipc_bus.py`
-  usan `ack_timeout_s=0.12` por defecto, mientras el agente usa 0.35 y el diagnóstico
-  `IPC_ACK_TIMEOUT_S` (0.35). Una sola constante debería gobernar todo.
-- **`PredictDecelFn` redefinido en 7 módulos** (`autopilot_limit`, `command`, `decision`,
-  `limit_state`, `plan`, `signal_brake`, `station_brake`). Debe existir una sola definición (p. ej.
-  `learner_v1` o `constants`).
+- **Resuelto (2026-10-19): timeouts de ACK.** Una sola fuente, `constants.IPC_ACK_TIMEOUT_S` (0,35);
+  `AGENT_ACK_TIMEOUT_S`, `ipc.DEFAULT_ACK_TIMEOUT_S`, los defaults `ack_timeout_s` de `ipc.py` y de
+  `bridge/ipc_bus.py` (antes 0,12) la referencian. 546 tests en verde. El `timeout_s=0,12` de
+  `wait_send_ack` es otro parámetro y se deja.
+- **Resuelto: `PredictDecelFn`.** Ya solo se define en `plan.py`; el resto de módulos la importa
+  (el análisis original contaba 7 definiciones; verificado 2026-10-19).
 - **`main` en 2 módulos**: normal (puntos de entrada), sin acción.
 
 ## 4. Fallos y riesgos (FACT salvo indicado)
@@ -198,9 +195,7 @@ por vehículo (§2.4 paso 4) ya escritas, para poder comparar antes y después.
 
 ## 5. Mejoras propuestas (INFERENCE)
 
-1. Unificar `DEFAULT_ACK_TIMEOUT_S` y los `ack_timeout_s=0.12` en `constants.py`, y usar una sola
-   referencia en `ipc.py`, `ipc_bus.py` y `loop.py`.
-2. Mover `PredictDecelFn` a un único módulo y reexportarlo desde los demás.
+1. ~~Unificar timeouts de ACK~~ y 2. ~~`PredictDecelFn` única~~: hechos (ver §3).
 3. Sustituir los `except Exception` por excepciones concretas, o registrar con `logging` antes de
    continuar.
 4. Partir `session_report.py` en: métricas (sin HTML) y render HTML.
@@ -251,8 +246,8 @@ Logs `20261015T184644Z` a `20261015T210604Z`, ruta `gct-mnr`, M3A.
 
 ## 8. Orden sugerido de trabajo
 
-1. Unificar constantes de timeout (bajo riesgo, mejora de mantenibilidad).
-2. Unificar `PredictDecelFn` (bajo riesgo).
+1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
+2. ~~Unificar `PredictDecelFn`~~ (hecho).
 3. Terminar los parámetros de física por vehículo (medir M3A) y escribir pruebas de contrato por vehículo (§2.4 pasos 1 y 4).
 4. Revisar `except Exception` (riesgo de ocultar fallos).
 5. Cerrar hueco ACK ok (lógica de control; requiere validación).

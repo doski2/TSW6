@@ -444,8 +444,8 @@ class StationPlanning:
                 service_name_hint=service_hint,
                 fallback_all_when_unmatched=allow_fallback,
             )
-        except Exception as exc:
-            _log.debug("poll_station_planning: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - el hilo de poll no debe morir
+            _log.warning("poll_station_planning: %s: %s", type(exc).__name__, exc)
             return
         finally:
             self.last_poll_ms = (time.perf_counter() - t_poll) * 1000.0

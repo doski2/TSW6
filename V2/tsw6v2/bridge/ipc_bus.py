@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from tsw6v2.constants import IPC_ACK_TIMEOUT_S
 from tsw6v2.bridge.commands import (
     COMBINED_BRAKE,
     combined_notch_to_value,
@@ -194,7 +195,7 @@ def write_send_command_with_ack(
     value: float,
     schema: Optional[dict] = None,
     *,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = IPC_ACK_TIMEOUT_S,
     cmd_id: Optional[int] = None,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
@@ -261,7 +262,7 @@ def dispatch_ipc_brake(
     *,
     wait_ack: bool = True,
     cmd_id: Optional[int] = None,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = IPC_ACK_TIMEOUT_S,
 ) -> dict[str, Any]:
     key = str(control or "").strip()
     if key in _BLOCKED_CONTROLS:
@@ -296,7 +297,7 @@ def dispatch_ipc_combined_notch(
     schema: Optional[dict] = None,
     *,
     cmd_id: Optional[int] = None,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = IPC_ACK_TIMEOUT_S,
 ) -> dict[str, Any]:
     return dispatch_ipc_brake(
         COMBINED_BRAKE,
@@ -312,7 +313,7 @@ def dispatch_ipc_master_controller(
     schema: Optional[dict] = None,
     *,
     cmd_id: Optional[int] = None,
-    ack_timeout_s: float = 0.12,
+    ack_timeout_s: float = IPC_ACK_TIMEOUT_S,
 ) -> dict[str, Any]:
     """IPC analog MC 0..1 (M3a: Lua detecta MasterController y escribe InputValue)."""
     return dispatch_ipc_brake(
