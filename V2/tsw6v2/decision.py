@@ -19,13 +19,13 @@ from tsw6v2.command import (
     resolve_release_command,
     throttle_notch_from_probe,
 )
+from tsw6v2.vehicle_adapter import adapter_for_package
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
     mc_click_hysteresis_m,
     mc_click_wait,
     mc_first_click_fraction,
     mc_stop_brake_fraction,
-    uses_mc_analog_ipc,
     vehicle_package_from_snap,
     vehicle_physics,
 )
@@ -448,7 +448,7 @@ def _attempt_signal_inherited_release(
     if not brake_applied_from_probe(snap, prep.lever, ctx.vehicle_package):
         return None
     pkg = ctx.vehicle_package
-    if not (pkg and uses_mc_analog_ipc(pkg)):
+    if not adapter_for_package(pkg).analog_lever:
         if not should_release_over_braked_for_stop_target(release_ref, prep.lever):
             return None
     rel = release_service_over_brake_command(reason=reason)
@@ -891,7 +891,7 @@ def _continue_station_stop(
         dist = target.distance_m
     if dist is None or not _station_stop_continues(limit_state, dist, ctx.speed_mph):
         return None
-    if not uses_mc_analog_ipc(ctx.vehicle_package):
+    if not adapter_for_package(ctx.vehicle_package).analog_lever:
         return None
     if _mc_station_roll_wanted(ctx, limit_state, dist, running=True):
         rel = BrakeCommand(
@@ -927,7 +927,7 @@ def _mc_station_stop_fraction(
         return cmd
     if "puertas" in (cmd.reason or ""):
         return cmd
-    if not uses_mc_analog_ipc(ctx.vehicle_package):
+    if not adapter_for_package(ctx.vehicle_package).analog_lever:
         return cmd
     # Histéresis: con la parada ya en curso (clic aplicado) no volver a rodar (oscilación).
     running = _station_stop_continues(limit_state, target.distance_m, ctx.speed_mph)

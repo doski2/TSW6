@@ -13,7 +13,8 @@ from tsw6v2.loop import AgentSnapshot
 from tsw6v2.p1_layers import LAYERS, layer_help, layer_label
 
 from tsw6v2.p1_mode import resolve_gui_p1_mode
-from tsw6v2.vehicle_package import resolve_vehicle_package, uses_mc_analog_ipc
+from tsw6v2.vehicle_adapter import adapter_for_package
+from tsw6v2.vehicle_package import resolve_vehicle_package
 
 _LAYER_COLORS: dict[str, str] = {
     "BRAKE": "#ef4444",
@@ -43,8 +44,7 @@ def format_lever_display(snap: AgentSnapshot) -> Optional[int | str]:
         return None
     pkg = resolve_vehicle_package(snap.vehicle or "")
     if (
-        pkg
-        and uses_mc_analog_ipc(pkg)
+        adapter_for_package(pkg).analog_lever
         and snap.train_brake is not None
     ):
         return f"{snap.lever_notch} (MC {snap.train_brake:.2f})"

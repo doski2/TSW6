@@ -33,9 +33,26 @@ class VehicleAdapter(Protocol):
         """¿La palanca indica freno de servicio? ``None`` = no se puede saber."""
         ...
 
+    analog_lever: bool
+    """``True`` si la palanca es analógica (``lever_notch`` UK no es fiable; manda ``mc_input``)."""
+
+    single_step: bool
+    """``True`` si un solo mando IPC lleva la palanca al objetivo (sin pasos intermedios)."""
+
+    def wire_fraction(self, target: int) -> Optional[float]:
+        """Fracción 0..1 en línea para la muesca lógica ``target``; ``None`` = mando por muesca."""
+        ...
+
+    def fraction_feedback(self, snap: "ProbeSnapshot") -> Optional[float]:
+        """Posición 0..1 de la palanca leída del probe (feedback del mando por fracción)."""
+        ...
+
 
 class NotchAdapter:
     """Palanca combinada por muescas (Class 323)."""
+
+    analog_lever = False
+    single_step = False
 
     def __init__(self, package: Optional[dict] = None) -> None:
         self.package = package
@@ -54,9 +71,19 @@ class NotchAdapter:
 
         return is_brake_applied(int(lever) if lever is not None else NEUTRAL_NOTCH)
 
+    def wire_fraction(self, target: int) -> Optional[float]:
+        return None
+
+    def fraction_feedback(self, snap: "ProbeSnapshot") -> Optional[float]:
+        tb = snap.train_brake
+        return float(tb) if tb is not None else None
+
 
 class McAnalogAdapter:
     """Palanca MC analógica (M3A): la tracción sale de ``power`` / ``mc_input``, no de la muesca."""
+
+    analog_lever = True
+    single_step = True
 
     def __init__(self, package: dict) -> None:
         self.package = package
@@ -67,6 +94,14 @@ class McAnalogAdapter:
     def station_lever(self, snap: "ProbeSnapshot", lever: Optional[int]) -> int:
         th = self.throttle_notch(snap)
         return NEUTRAL_NOTCH + th if th > 0 else NEUTRAL_NOTCH
+
+    def wire_fraction(self, target: int) -> Optional[float]:
+        from tsw6v2.vehicle_package import combined_notch_to_ipc_value
+
+        return combined_notch_to_ipc_value(target, self.package)
+
+    def fraction_feedback(self, snap: "ProbeSnapshot") -> Optional[float]:
+        return probe_mc_input_fraction(snap, self.package)
 
     def lever_says_brake(self, snap: Optional["ProbeSnapshot"], lever: Optional[int]) -> Optional[bool]:
         neutral = profile_neutral_fraction(self.package)

@@ -17,11 +17,8 @@ from tsw6v2.bridge.ipc_bus import (
     dispatch_ipc_master_controller,
     enable_lua_commands,
 )
-from tsw6v2.vehicle_package import (
-    combined_notch_to_ipc_value,
-    resolve_vehicle_package,
-    uses_mc_analog_ipc,
-)
+from tsw6v2.vehicle_adapter import adapter_for_package
+from tsw6v2.vehicle_package import resolve_vehicle_package
 
 DEFAULT_ACK_TIMEOUT_S = IPC_ACK_TIMEOUT_S
 DEFAULT_MAX_STEPS = 9
@@ -84,8 +81,8 @@ def dispatch_step_toward_notch(
 ) -> dict[str, Any]:
     pkg = _package_for_vehicle(vehicle, vehicle_package)
     enable_lua_commands()
-    if pkg and uses_mc_analog_ipc(pkg):
-        fraction = combined_notch_to_ipc_value(target, pkg)
+    fraction = adapter_for_package(pkg).wire_fraction(target)
+    if fraction is not None:
         return dispatch_ipc_master_controller(
             fraction,
             cmd_id=cmd_id,
@@ -116,15 +113,15 @@ def drive_to_notch(
     if vehicle is None:
         vehicle = _vehicle_id_from_probe(read_probe_file(getdata))
     pkg = _package_for_vehicle(vehicle, vehicle_package)
-    mc_analog = pkg is not None and uses_mc_analog_ipc(pkg)
-    step_limit = 1 if mc_analog else max_steps
+    adapter = adapter_for_package(pkg)
+    step_limit = 1 if adapter.single_step else max_steps
     for _ in range(step_limit):
         snap = read_probe_file(getdata)
         if vehicle is None:
             vehicle = _vehicle_id_from_probe(snap)
             if vehicle:
                 pkg = _package_for_vehicle(vehicle, vehicle_package)
-                mc_analog = pkg is not None and uses_mc_analog_ipc(pkg)
+                adapter = adapter_for_package(pkg)
         current = probe_lever(snap)
         if current is not None and int(current) == int(target):
             return True, snap, results, len(results)
@@ -139,7 +136,7 @@ def drive_to_notch(
         cmd_id += 1
         if not result.get("ok"):
             return False, read_probe_file(getdata), results, len(results)
-        if mc_analog:
+        if adapter.single_step:
             return True, read_probe_file(getdata), results, len(results)
         prev = current
         deadline = time.monotonic() + step_wait_s

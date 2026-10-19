@@ -45,17 +45,15 @@ from tsw6v2.hud_anchor import (
 )
 from tsw6v2.hud_ocr import hud_ocr_from_env
 from tsw6v2.learner import LearnerProfile
+from tsw6v2.vehicle_adapter import VehicleAdapter, adapter_for_package
 from tsw6v2.vehicle_package import (
     apply_vehicle_brake_actuator,
-    combined_notch_to_ipc_value,
-    probe_mc_input_fraction,
     mc_first_click_fraction,
     mc_grade_hold_fraction,
     mc_station_still_ahead,
     mc_ipc_target_is_neutral_hold,
     profile_neutral_fraction,
     resolve_vehicle_package,
-    uses_mc_analog_ipc,
 )
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
@@ -465,12 +463,13 @@ class AgentLoop:
         self._target_notch = None
         self._target_fraction = max(0.0, min(1.0, float(fraction)))
 
+    def _adapter(self) -> VehicleAdapter:
+        return adapter_for_package(self._vehicle_package)
+
     def request_neutral(self) -> None:
-        pkg = self._vehicle_package
-        if pkg is not None and uses_mc_analog_ipc(pkg):
-            self.request_input_fraction(
-                combined_notch_to_ipc_value(self.neutral_notch, pkg)
-            )
+        fraction = self._adapter().wire_fraction(self.neutral_notch)
+        if fraction is not None:
+            self.request_input_fraction(fraction)
             return
         self.request_notch(self.neutral_notch)
 
@@ -543,8 +542,7 @@ class AgentLoop:
                 self.request_neutral()
         elif cmd.kind == "COAST_THROTTLE":
             # TracciÃ³n â†’ neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
-            pkg = self._vehicle_package
-            mc = pkg is not None and uses_mc_analog_ipc(pkg)
+            mc = self._adapter().analog_lever
             if fraction is not None:
                 self.request_input_fraction(fraction)
             elif mc or lev > neutral:
@@ -556,11 +554,7 @@ class AgentLoop:
                 self.request_notch(notch)
 
     def _mc_fraction_feedback(self, snap: ProbeSnapshot) -> Optional[float]:
-        pkg = self._vehicle_package
-        if pkg and uses_mc_analog_ipc(pkg):
-            return probe_mc_input_fraction(snap, pkg)
-        tb = snap.train_brake
-        return float(tb) if tb is not None else None
+        return self._adapter().fraction_feedback(snap)
 
     def _mc_ramp_ipc_fraction(self, target: float, current: Optional[float]) -> float:
         """Un paso hacia ``target`` (frenar/soltar gradual, sesiÃ³n 215905Z)."""
@@ -584,7 +578,7 @@ class AgentLoop:
         if current is not None and abs(current - target) <= MC_INPUT_VALUE_EPS:
             return True
         pkg = self._vehicle_package
-        if not (pkg and uses_mc_analog_ipc(pkg)):
+        if not self._adapter().analog_lever:
             return False
         neutral = profile_neutral_fraction(pkg)
         if neutral is None or abs(target - float(neutral)) > MC_INPUT_VALUE_EPS:
@@ -609,7 +603,7 @@ class AgentLoop:
         if self._target_fraction is None:
             return
         pkg = self._vehicle_package
-        if not (pkg and uses_mc_analog_ipc(pkg)):
+        if not self._adapter().analog_lever:
             return
         target = float(self._target_fraction)
         if mc_ipc_target_is_neutral_hold(pkg, target):

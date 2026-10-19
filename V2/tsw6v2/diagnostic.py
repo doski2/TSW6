@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from tsw6v2.vehicle_adapter import adapter_for_package
 from tsw6v2.vehicle_package import (
     combined_notch_to_ipc_value,
     resolve_vehicle_package,
-    uses_mc_analog_ipc,
 )
 from tsw6v2.bridge.getdata import ProbeSnapshot, default_getdata_path
 from tsw6v2.bridge.ipc_bus import bridge_dir, purge_lua_commands
@@ -116,7 +116,7 @@ def run_ipc_brake_test(*, interactive: bool = True) -> int:
 
     lever0 = probe_lever(snap)
     pkg = _vehicle_package(snap)
-    mc_mode = pkg is not None and uses_mc_analog_ipc(pkg)
+    mc_mode = adapter_for_package(pkg).analog_lever
     print_getdata_summary(snap, "Estado inicial (GetData)")
     if mc_mode:
         print(

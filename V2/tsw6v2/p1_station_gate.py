@@ -411,9 +411,9 @@ class PlatformBleedEpisode:
         vehicle_package: Optional[dict] = None,
     ) -> None:
         """Antes de ``evaluate_p1_tick`` — acumular B1 estable (105359Z)."""
+        from tsw6v2.vehicle_adapter import adapter_for_package
         from tsw6v2.vehicle_package import (
             mc_platform_bleed_b1_latched,
-            uses_mc_analog_ipc,
             vehicle_package_from_snap,
         )
 
@@ -421,7 +421,7 @@ class PlatformBleedEpisode:
             self._b1_latch_ticks = 0
             return
         pkg = vehicle_package_from_snap(snap, vehicle_package)
-        if not (snap is not None and pkg and uses_mc_analog_ipc(pkg)):
+        if not (snap is not None and adapter_for_package(pkg).analog_lever):
             self._b1_latch_ticks = 0
             return
         if mc_platform_bleed_b1_latched(snap, pkg):
@@ -476,7 +476,8 @@ def platform_mc_dwell_residual_bleed_needed(
     Sin esto solo RELEASE→0.72 no suelta aire con palanca en freno (081821Z).
     """
     from tsw6v2.brake_cab import service_brake_held_from_probe
-    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+    from tsw6v2.vehicle_adapter import adapter_for_package
+    from tsw6v2.vehicle_package import vehicle_package_from_snap
 
     if platform_bleed_episode:
         return False
@@ -489,7 +490,7 @@ def platform_mc_dwell_residual_bleed_needed(
     if not _service_platform_residual_pressure(brake_cyl_bar):
         return False
     pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if not (pkg and uses_mc_analog_ipc(pkg)):
+    if not adapter_for_package(pkg).analog_lever:
         return False
     return service_brake_held_from_probe(snap, combined_lever, pkg)
 
@@ -510,9 +511,9 @@ def platform_parked_residual_bleed_needed(
 
     TSW no ventila con mando en neutro: hay que meter B1 y luego RELEASE a neutro.
     """
+    from tsw6v2.vehicle_adapter import adapter_for_package
     from tsw6v2.vehicle_package import (
         mc_platform_bleed_should_reapply_b1,
-        uses_mc_analog_ipc,
         vehicle_package_from_snap,
     )
 
@@ -523,7 +524,7 @@ def platform_parked_residual_bleed_needed(
         return False
 
     pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if platform_bleed_episode and pkg and uses_mc_analog_ipc(pkg):
+    if platform_bleed_episode and adapter_for_package(pkg).analog_lever:
         if (
             _mc_approach_stopped_bleed_zone(
                 speed_mph=speed_mph,
@@ -603,10 +604,10 @@ def platform_parked_bleed_release_needed(
     vehicle_package: Optional[dict] = None,
 ) -> bool:
     """Tras APPLY bleed: RELEASE a neutro sin cartel (195804Z)."""
+    from tsw6v2.vehicle_adapter import adapter_for_package
     from tsw6v2.vehicle_package import (
         mc_platform_bleed_b1_latched,
         mc_platform_bleed_neutral_ipc,
-        uses_mc_analog_ipc,
         vehicle_package_from_snap,
     )
 
@@ -618,7 +619,7 @@ def platform_parked_bleed_release_needed(
     ):
         return False
     pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if pkg and uses_mc_analog_ipc(pkg):
+    if adapter_for_package(pkg).analog_lever:
         if not _mc_approach_stopped_bleed_zone(
             speed_mph=speed_mph,
             station_dist_m=station_dist_m,
