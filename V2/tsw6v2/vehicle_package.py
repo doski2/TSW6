@@ -46,10 +46,14 @@ def default_vehicles_dir() -> Path:
 
 
 def vehicle_route_fleet(probe_vehicle: str) -> Optional[str]:
-    """``uk`` | ``ny`` según prefijo GetData ``vehicle=`` (informe / HUD)."""
+    """``uk`` | ``ny`` según el campo ``fleet`` del paquete; sin paquete, prefijo de ``vehicle=``."""
     u = (probe_vehicle or "").upper()
     if not u or u == "?":
         return None
+    pkg = resolve_vehicle_package(probe_vehicle)
+    fleet = str((pkg or {}).get("fleet") or "").strip().lower()
+    if fleet:
+        return fleet
     if "NYH" in u or "_MNR_" in u:
         return "ny"
     if "BCC" in u or "CLASS323" in u:

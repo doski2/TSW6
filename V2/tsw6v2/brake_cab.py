@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Literal, Optional
 
-from tsw6v2.constants import MC_INPUT_VALUE_EPS, NEUTRAL_NOTCH
-from tsw6v2.command import is_brake_applied
 from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 
 if TYPE_CHECKING:
@@ -49,36 +47,16 @@ def brake_state_from_probe(
 
     UK: ``lever_notch``. MC: ``mc_input`` (D2) o estimación + cilindro residual.
     """
-    from tsw6v2.vehicle_package import (
-        probe_mc_input_fraction,
-        profile_neutral_fraction,
-        uses_mc_analog_ipc,
-        vehicle_package_from_snap,
-    )
+    from tsw6v2.vehicle_adapter import adapter_for_package
+    from tsw6v2.vehicle_package import vehicle_package_from_snap
 
-    lev = int(lever) if lever is not None else NEUTRAL_NOTCH
     pkg = vehicle_package_from_snap(snap, vehicle_package) if snap is not None else vehicle_package
-
-    if pkg and uses_mc_analog_ipc(pkg):
-        neutral = profile_neutral_fraction(pkg)
-        if neutral is not None:
-            est = probe_mc_input_fraction(snap, pkg)
-            if est is not None:
-                if float(est) < float(neutral) - MC_INPUT_VALUE_EPS:
-                    return BrakeCabState.HELD_SERVICE
-                if float(est) >= float(neutral) - MC_INPUT_VALUE_EPS:
-                    if _residual_brake_pressure(snap):
-                        return BrakeCabState.HELD_SERVICE
-                    return BrakeCabState.RELEASED
-        if _residual_brake_pressure(snap):
-            return BrakeCabState.HELD_SERVICE
-        return BrakeCabState.UNKNOWN
-
-    if is_brake_applied(lev):
+    said = adapter_for_package(pkg).lever_says_brake(snap, lever)
+    if said or _residual_brake_pressure(snap):
         return BrakeCabState.HELD_SERVICE
-    if _residual_brake_pressure(snap):
-        return BrakeCabState.HELD_SERVICE
-    return BrakeCabState.RELEASED
+    if said is False:
+        return BrakeCabState.RELEASED
+    return BrakeCabState.UNKNOWN
 
 
 def service_brake_held_from_probe(

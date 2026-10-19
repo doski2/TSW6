@@ -248,10 +248,10 @@ Logs `20261015T184644Z` a `20261015T210604Z`, ruta `gct-mnr`, M3A.
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
 2. ~~Unificar `PredictDecelFn`~~ (hecho).
-3. Terminar los parámetros de física por vehículo (medir M3A) y escribir pruebas de contrato por vehículo (§2.4 pasos 1 y 4).
-4. Revisar `except Exception` (riesgo de ocultar fallos).
+3. Terminar los parámetros de física por vehículo (medir M3A; pendiente, requiere sesión de juego). ~~Pruebas de contrato por vehículo~~ (hecho 2026-10-19: `V2/tests/test_vehicle_contract.py`, parametrizado con cada JSON de `data/vehicles/`: cabecera, resolución por clase, perfil de aire, física, valor IPC por muesca y `target_fraction` en layout MC; un vehículo nuevo debe pasarlas).
+4. ~~Revisar `except Exception`~~ (hecho 2026-10-19: `hud_schedule.py` con excepciones concretas; `planning_poller.py` mantiene la captura amplia para no matar el hilo, pero registra a nivel warning con el tipo).
 5. Cerrar hueco ACK ok (lógica de control; requiere validación).
 6. Decidir ventana de aprendizaje (diseño; requiere confirmación).
-7. Adaptador de vehículo (§2.4 paso 2) con el modelo de palanca de §2.6, y registro de flotas por datos (paso 3).
+7. Adaptador de vehículo (§2.4 paso 2) con el modelo de palanca de §2.6. *En curso (2026-10-19):* `vehicle_adapter.py` con `NotchAdapter` / `McAnalogAdapter` y tres operaciones migradas (`throttle_notch`, `station_lever`, `lever_says_brake`; `command.py` y `brake_cab.py` delegan). Quedan ≈ 27 puntos con `uses_mc_analog_ipc` (`loop.py`, `p1_station_gate.py`, `decision.py`, `ipc.py`, `brake_cab.py`, …), a migrar de uno en uno. Registro de flotas por datos (paso 3): *hecho* — campo `fleet` en cada JSON, `vehicle_route_fleet` lo usa y cae al prefijo solo si no hay paquete.
 8. Distancia al tablón a lo largo de la vía (§7), tras validar con sesión y capturas.
 9. Partir `session_report.py` y reorganizar carpetas (refactor grande; hacerlo aparte y al final).

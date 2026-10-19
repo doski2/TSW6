@@ -392,13 +392,11 @@ def combined_lever_for_station_gate(
     lev = int(lever) if lever is not None else NEUTRAL_NOTCH
     if snap is None:
         return lev
-    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+    from tsw6v2.vehicle_adapter import adapter_for_package
+    from tsw6v2.vehicle_package import vehicle_package_from_snap
 
     pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if pkg and uses_mc_analog_ipc(pkg):
-        th = throttle_notch_from_probe(snap, pkg)
-        return NEUTRAL_NOTCH + th if th > 0 else NEUTRAL_NOTCH
-    return lev
+    return adapter_for_package(pkg).station_lever(snap, lever)
 
 
 def throttle_notch_from_probe(
@@ -412,19 +410,11 @@ def throttle_notch_from_probe(
     """
     if snap is None:
         return 0
-    from tsw6v2.vehicle_package import uses_mc_analog_ipc, vehicle_package_from_snap
+    from tsw6v2.vehicle_adapter import adapter_for_package
+    from tsw6v2.vehicle_package import vehicle_package_from_snap
 
     pkg = vehicle_package_from_snap(snap, vehicle_package)
-    if pkg and uses_mc_analog_ipc(pkg):
-        from tsw6v2.vehicle_package import mc_has_traction_above_neutral
-
-        if mc_has_traction_above_neutral(snap, pkg):
-            return 1
-        return 0
-    lever = snap.combined_handle_notch()
-    if lever is None:
-        return 0
-    return throttle_notch_from_lever(int(lever))
+    return adapter_for_package(pkg).throttle_notch(snap)
 
 
 _COAST_THROTTLE_REASON = "Soltar tracción antes de freno"
