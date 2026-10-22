@@ -1,0 +1,62 @@
+// P1 V2 — un tick de decision.py (estado actual, orden real de evaluate_p1_tick).
+// Render: dot -Tsvg docs/assets/p1_decision_flujo.dot -o docs/assets/p1_decision_flujo.svg
+// El numero de cada caja es el paso del codigo; el color es el modulo destino (ver p1_decision_modulos.dot).
+digraph P1_TICK {
+  rankdir=TB; nodesep=0.3; ranksep=0.42; fontname="Segoe UI";
+  node [fontname="Segoe UI", fontsize=10, shape=box, style="rounded,filled", color="#444444"];
+  edge [fontname="Segoe UI", fontsize=9, color="#555555"];
+
+  snap [label="ProbeSnapshot\n(loop.step)", shape=oval, fillcolor="#d6eaf8"];
+
+  subgraph cluster_prep { label="1 · PREPARAR  — decision_prep"; style="rounded,filled"; fillcolor="#f2f4f4"; color="#7f8c8d";
+    prep [label="_prepare_tick\nctx: dist, cartel, lever, grad, cyl\npaquete + physics + tabla MC aprendida\nprep: fill_s, predict, escalate_cap", fillcolor="#e5e8e8"];
+  }
+
+  subgraph cluster_emg { label="2 · EMERGENCIA  — decision_emergency"; style="rounded,filled"; fillcolor="#fdedec"; color="#c0392b";
+    emg [label="_attempt_p1_emergency\nseñal roja / andén críticos\n(con supresiones de salida)", fillcolor="#f5b7b1"];
+  }
+
+  subgraph cluster_tgt { label="3 · OBJETIVOS  — decision_targets  (solo calculan, no mandan)"; style="rounded,filled"; fillcolor="#fef9e7"; color="#b7950b";
+    lim [label="cartel\nevaluate_limit_brake\n+ departure_limit_target_or_coast", fillcolor="#f9e79f"];
+    stn [label="andén\nevaluate_station_brake\n(+ observe_brake_decel)", fillcolor="#f9e79f"];
+    sig [label="señal\nevaluate_signal_brake", fillcolor="#f9e79f"];
+    pick [label="4 · pick_p1_brake_target\n(p1_policy: gana UNO)", fillcolor="#f7dc6f"];
+    lim -> pick; stn -> pick; sig -> pick;
+  }
+
+  subgraph cluster_rel { label="5 · SOLTAR  — decision_release  (un camino por tick)"; style="rounded,filled"; fillcolor="#eafaf1"; color="#1e8449";
+    bleed [label="platform_bleed\nB1 en andén si cilindros cargados", fillcolor="#abebc6"];
+    bleedrel [label="platform_bleed_release\nneutro tras bleed / en marcha", fillcolor="#abebc6"];
+    dep [label="departing_release\nsalida lenta", fillcolor="#abebc6"];
+    skip [label="¿should_skip_p1_release?", shape=diamond, fillcolor="#fcf3cf"];
+    sigrel [label="señal heredada\n(verde / WATCH)", fillcolor="#abebc6"];
+    limrel [label="cartel\nresolve_release_command\n→ huérfano (guarda de muesca comprometida)", fillcolor="#abebc6"];
+    bleed -> bleedrel -> dep -> skip;
+    skip -> sigrel [label="no"];
+    sigrel -> limrel;
+  }
+
+  subgraph cluster_fin { label="6 · FINALIZAR  — decision_finalize"; style="rounded,filled"; fillcolor="#ebf5fb"; color="#2874a6";
+    ovl [label="_overlay_active_zone_hold\n¿hay objetivo?", shape=diamond, fillcolor="#d6eaf8"];
+    idle [label="idle\nno_limit_sign · no_plan\n(+ _continue_station_stop)", fillcolor="#eaecee"];
+    cmd [label="target.to_brake_command\n(+ coast_latch)", fillcolor="#aed6f1"];
+    mc [label="MC analógico  — vehicle_adapter\nfracción andén · fracción cartel", fillcolor="#d2b4de"];
+    gate [label="¿APPLY sin apply_now?\nbloqueo de aire", shape=diamond, fillcolor="#d6eaf8"];
+    ovl -> idle [label="no"];
+    ovl -> cmd [label="sí"];
+    cmd -> mc -> gate;
+  }
+
+  out [label="ctx.decide → apply_vehicle_brake_actuator\n→ LimitBrakeDecision → IPC", shape=oval, fillcolor="#d6eaf8"];
+
+  snap -> prep -> emg;
+  emg -> out [label="gana", color="#c0392b"];
+  emg -> lim [label="no"];
+  emg -> stn [style=invis]; emg -> sig [style=invis];
+  pick -> bleed;
+  bleed -> out [label="mando", style=dashed, color="#1e8449", constraint=false];
+  limrel -> out [label="mando", style=dashed, color="#1e8449"];
+  limrel -> ovl [label="nada que soltar"];
+  gate -> out;
+  idle -> out [style=dashed];
+}

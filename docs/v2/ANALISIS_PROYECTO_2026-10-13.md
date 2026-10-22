@@ -1,7 +1,7 @@
-# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-21)
+# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23)
 
-Alcance: `V2/tsw6v2/` (66 módulos incluido `bridge/`, ~19,5 k líneas; 42 ficheros de test, 569
-pruebas).
+Alcance: `V2/tsw6v2/` (66 módulos incluido `bridge/`, ~19,5 k líneas; 43 ficheros de test, 590
+pruebas, 4 saltadas).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
 Evidencia clasificada según `00-tsw6-core.mdc`: FACT = código leído o medido en logs; INFERENCE =
@@ -11,6 +11,10 @@ Cambios respecto a la versión del 2026-10-13: tamaños (§1), arquitectura mult
 hallazgos de las sesiones del 2026-10-15 (§7) y re-análisis del 2026-10-19: duplicados, código sin
 uso, funciones largas y riesgos nuevos en §3–§5 (marcados «2026-10-19»). §9 resume lo hecho el
 2026-10-19 y lo pendiente con prioridad.
+
+Actualización 2026-10-23: §7 recoge los hallazgos de las sesiones `203644Z`, `205735Z` y
+`212139Z` (2026-10-22) y §10.4 contrasta lo pendiente de §10.2 con esos logs. **Empezar la próxima
+sesión por §10.5.** Inventario de trenes del DLC en [TRENES_DLC.md](TRENES_DLC.md).
 
 ## 1. Tamaño y complejidad (FACT)
 
@@ -470,6 +474,48 @@ Segunda guarda (2026-10-21): con la estimación ya en el andén servido (≤ 20 
 tras el último andén (d). Pendiente solo (b), defensa en profundidad: no emitir `P1-CRITICO-STATION`
   a alta velocidad si la distancia procede del ancla y acaba de saltar.
 
+### 7.1 Sesiones del 2026-10-22 (`203644Z`, `205735Z`, `212139Z`; M3A, servicio 500, `gct-mnr`)
+
+Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; la tercera con
+`40c3ec6` (ya con las correcciones a) y b) de abajo).
+
+- **a) Parpadeo APPLY/RELEASE al aproximar el cartel de 35** (`203644Z`, t = 432 s, 40,4 mph, 186 m).
+  17 ticks seguidos alternando `APPLY B1` y `RELEASE «Objetivo alcanzado»`; el tren casi no frenó
+  (40,39 → 40,18 mph). Causa: `resolve_orphan_limit_brake_release` usaba
+  `within_next_brake_horizon` (169 m) mientras el plan ya aplicaba a 186 m; fuera del horizonte
+  soltaba el freno recién aplicado (reproducido con los valores del log). Corrección `29ff979`: la
+  liberación huérfana respeta la muesca comprometida (`committed_limit_mph`). Sin validar en juego.
+- **b) Frenada en vía abierta por «3,0 mi» leído «30m»** (`205735Z`, t = 997 s, 71 mph). Mismo
+  fallo que 211925Z: pasados 15 s sin lectura coherente el ancla pierde la referencia
+  (`CONTINUITY_MAX_AGE_S`) y aceptó 30 m; `departed` no lo paró (30 m no sube 150 m sobre 0). Dio
+  `P1-EMERGENCIA-STATION` (523 ticks) y el tren paró a 2,7 mi de Harlem 125th. Corrección
+  `40c3ec6`: `parse_hud_distance` descarta la unidad `m` suelta (el HUD imperial solo muestra `ft`
+  o `mi`) salvo `TSW6_HUD_OCR_METERS=1`. En `212139Z` hubo 5 muestras `Nm lem…` y ninguna entró.
+- **c) Frenada al 100 % a 65-72 mph** (`212139Z`, t = 235 s, 71,6 mph, cartel 60 a 596 m). El plan
+  existía (B1 bastaba con 64 m de margen) pero la rama de overspeed de `apply_notch_hysteresis`
+  escalaba una muesca por tick (B1→B2→B3 en 3 ticks) porque lejos del cartel la velocidad siempre
+  supera el objetivo. El eje llegó a 0,27 (freno pleno) y el tren acabó a 57,6 mph, bajo los 59.
+  Corrección `ebc13dd`: solo escala si la muesca comprometida no llega al objetivo
+  (`_committed_notch_reaches_target`). Sin validar en juego.
+- **d) Cartel con eje analógico (M3A), sin commit.** `mc_limit_brake_fraction` +
+  `decision._mc_limit_fraction`: la posición del eje sale de la decel necesaria sobre la curva
+  aprendida `decel_by_mc`, no del peldaño B1/B2/B3. Envolvente monótona conservadora
+  (`_monotone_decel_table`) porque la curva es ruidosa (0,60 → 0,29 y 0,62 → 0,38 m/s²); también
+  afecta a la parada en andén. La 323 conserva las muescas. Sin validar en juego.
+- **e) Parpadeo persistente en la banda del límite (NUEVO, abierto).** En `212139Z` hay 199
+  alternancias APPLY↔RELEASE en 29 racimos. El mayor: zona de 10 mph hacia Grand Central
+  (t = 871-925 s): con la velocidad clavada en 9,26 mph y objetivo `@9`, `APPLY B1` / `RELEASE`
+  cada tick, 10-41 ticks por racimo, unas 15 veces. Causa probable (INFERENCE): umbrales
+  invertidos entre el plan (aplica si v > objetivo) y `resolve_release_command` (suelta si
+  v ≤ objetivo + `LIMIT_RELEASE_MAX_OVER_MPH` = 0,4); en [9,0; 9,4] ambos se cumplen y alternan. La
+  guarda de (a) cubre solo la rama huérfana, no esta. Parpadeo análogo en la aproximación a andén
+  (`Estación dist=43/32/20/10 m`, t = 1245-1257 s) y en `203644Z` (White Plains).
+- **f) Paradas contra el HUD** (última lectura OCR válida con el tren parado): 7,0 / 2,1 m
+  (`203644Z`); 2,1 / 1,8 / 1,8 / 1,5 / 1,5 / 1,5 m (`205735Z`); 2,1 / 3,0 / 7,9 m (`212139Z`). Todas
+  quedan cortas 1,5-8 m del tablón; ninguna se pasa. La app cree estar a 0,0-8,7 m (`stn_dist_m`).
+- **g) Tras el último andén** (`212139Z`): Fordham (79 s) → Harlem 125th (534 s) sin emergencias,
+  5239 capturas `departed` y 290 `jump` rechazadas, 0 movimientos de distancia.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -528,7 +574,11 @@ Pendiente, por prioridad:
 
 ### 10.1 Estado del árbol de trabajo (sin commit)
 
-569 pruebas en verde, 4 saltadas. Cambios sin confirmar: `.gitattributes`; normalización a LF de
+**Actualización 2026-10-23:** 590 pruebas en verde, 4 saltadas. Lo de abajo (2026-10-19) ya está
+confirmado en commits (`e24469f` … `ebc13dd`). Sin commit quedan solo `decision.py`,
+`vehicle_package.py` y `test_vehicle_package.py` (§7.1 d) y `docs/v2/TRENES_DLC.md`.
+
+Estado original (2026-10-19): 569 pruebas en verde, 4 saltadas. Cambios sin confirmar: `.gitattributes`; normalización a LF de
 `command`, `hud_ocr`, `learner`, `loop`, `station_plan`, `trace`; código borrado de `gui_view`,
 `hud_db`, `physics`, `vehicle_package`; mojibake de `loop.py`; `test_vehicle_adapter.py` nuevo; este
 documento. Sugerencia de commits separados: (1) normalización de finales de línea, (2) limpieza de
@@ -582,3 +632,50 @@ en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `
 9. **Distancia al tablón** a lo largo de la vía (§7), tras validar con captura.
 10. **Ventana de aprendizaje de 2 s** (§4): decisión de diseño pendiente.
 11. Al final: partir `session_report.py` y reorganizar carpetas (§2.4 paso 5).
+
+### 10.4 Validación contra los logs del 2026-10-22 (`203644Z`, `205735Z`, `212139Z`)
+
+Contrasta la tabla de §10.2 con los JSONL posteriores a la última edición de este documento
+(2026-10-22 22:32). Solo cuenta lo que los logs pueden demostrar.
+
+| # §10.2 | Resultado | Evidencia |
+| ------- | --------- | --------- |
+| 1 Refactor del adaptador (M3A) | **Sin regresión visible** | 12 paradas en 3 sesiones, todas `STOPPED` cortas 1,5-8 m del tablón; arranque, COAST, andén y salida sin errores. Falta la comparación con la 323 y mando a mando contra una sesión previa |
+| 2 `drive_to_notch` / `diagnostic` | **No evaluable** | Ninguna sesión lo ejercita; requiere `test_ipc_v2.bat` / `validar_freno.bat` |
+| 3 Class 323 intacta | **No evaluable** | Las tres sesiones son M3A; sigue sin sesión de la 323 |
+| 4 Dead-reckoning, rodar al final, filtro de horario, `station_plan_decel_ms2` | **Parcial** | `schedule_source` = `hud_db` en 99 % de los ticks (`212139Z`: 568 `track_only` de 26 118); sin paradas largas por horario. Paradas cortas del 10-18 no repetidas; el parpadeo de la aproximación a andén (§7.1 e) toca la zona de rodar↔frenar |
+| 5 RELEASE en marcha con palanca en neutro | **Validado para DEPARTING** | 0 `RELEASE` con `lever` = 4 y FSM `DEPARTING` en las 3 sesiones (antes 63 en 201122Z). Los 101 / 1 / 212 `RELEASE` con neutro restantes son del parpadeo de §7.1 e, no de la salida |
+| 6 Warning de `planning_poller` | **No evaluable** | El JSONL no registra el log de consola; revisar el `.log` de la sesión |
+| 7 `jump` no descarta lecturas buenas | **Validado (con reserva)** | `212139Z`: `board` en 14 887 ticks, `jump` 290, `departed` 5239, las paradas siguen ancladas (`stn` 0,0-7,8). `205735Z` fue el contraejemplo del lado contrario (lectura rota aceptada tras 15 s) → corregido en `40c3ec6` |
+| 8 Sin frenada en vía tras Fordham | **Validado en 1 sesión** | `212139Z`: Fordham → Harlem 125th sin emergencias. `205735Z` falló (con `e36daa6`) y motivó `40c3ec6`. Repetir al menos una vez más |
+
+### 10.5 Para empezar la próxima sesión
+
+Orden de trabajo (cada punto con su log de referencia):
+
+1. **Parpadeo APPLY↔RELEASE en la banda del límite y de la aproximación a andén** (§7.1 e). Es lo
+   más visible en `212139Z` (199 alternancias). Reproducir con `replay_jsonl.py` o con
+   `evaluate_p1_tick` los ticks 17347-17358 (v = 9,26 mph, cartel 10, objetivo @9) y los 24477-24711
+   (andén, 43→10 m). Alinear los umbrales de aplicar y soltar con histéresis explícita (aplicar
+   por encima de `objetivo + a`, soltar por debajo de `objetivo − b`, con a ≥ 0 < b) en lugar de
+   parches por rama. Test de regresión con esos valores.
+2. **Commit** de `decision.py` + `vehicle_package.py` + `test_vehicle_package.py` (freno analógico
+   por cartel, §7.1 d) y de `TRENES_DLC.md`. Validar en juego: curva `decel_by_mc` con pocos puntos
+   puede caer al peldaño B3 (a 250 m, 72→59 mph, la decel necesaria supera la curva).
+3. **Validar en juego** (a)-(d) de §7.1: cartel a 60-75 mph sin escalada al 100 %, sin parpadeo a
+   35 mph, ancla sin lecturas `Nm lem…`, eje continuo en el cartel.
+4. **Sesión de la Class 323** (fila 3 de §10.2) antes de más cambios en `limit_notch` /
+   `decision`: es la única forma de saber si los arreglos de esta semana la afectan.
+5. **Trenes nuevos** (cuando se hayan sondeado): según [TRENES_DLC.md](TRENES_DLC.md), un
+   representante por familia (diésel de EE. UU. con dinámico, eléctrico alemán, metro o UK
+   combinada) antes de decidir «archivo por tren». Criterio: operación nueva → adaptador nuevo;
+   solo números nuevos → JSON.
+6. **Partir `decision.py`** siguiendo [DECISION_MODULOS.md](DECISION_MODULOS.md) (flujo y reglas en
+   `assets/p1_decision.html`); antes del paso 1 de esta lista si se va a tocar el parpadeo.
+7. **Física real de la M3A** (`physics` hoy heredada de la 323) y el resto de §10.3 (ACK ok,
+   `load_ticks`, pruebas de módulos sin cobertura, partir `_step_core` / `evaluate_p1_tick`).
+
+Riesgos abiertos que conviene no olvidar: el feedback por muesca (`fb_escalated`) ya no cambia el
+mando MC del cartel (el lazo se cierra al recalcular la decel necesaria cada tick; una curva muy
+optimista tardaría varios ticks en corregirse); y la envolvente monótona frena algo más fuerte que
+antes también en andén (los tests siguen pasando, sin sesión que lo confirme).

@@ -1,0 +1,40 @@
+// P1 V2 — mapa de modulos objetivo para decision.py y regla de dependencias.
+// Render: dot -Tsvg docs/assets/p1_decision_modulos.dot -o docs/assets/p1_decision_modulos.svg
+// Flecha A -> B = "A importa de B". Solo se permiten flechas hacia abajo.
+digraph P1_MODULOS {
+  rankdir=TB; nodesep=0.35; ranksep=0.5; fontname="Segoe UI"; compound=true;
+  node [fontname="Segoe UI", fontsize=10, shape=box, style="rounded,filled", color="#444444"];
+  edge [fontname="Segoe UI", fontsize=9, color="#555555"];
+
+  loop [label="loop.py\n(IPC, GUI, sesión)", fillcolor="#d6eaf8"];
+  dec  [label="decision.py\nSOLO orquesta evaluate_p1_tick\n+ re-exporta nombres públicos", fillcolor="#85c1e9", penwidth=2];
+
+  subgraph cluster_fases { label="FASES del tick (no se importan entre sí)"; style="rounded,dashed"; color="#7f8c8d";
+    emg [label="decision_emergency\n~120 líneas", fillcolor="#f5b7b1"];
+    tgt [label="decision_targets\ncartel · andén · señal", fillcolor="#f9e79f"];
+    rel [label="decision_release\nbleed · salida · señal · cartel", fillcolor="#abebc6"];
+    fin [label="decision_finalize\ncomando + bloqueo de aire", fillcolor="#aed6f1"];
+  }
+
+  prep [label="decision_prep\n_prepare_tick · brake_kind", fillcolor="#e5e8e8"];
+  typ  [label="decision_types  (hoja)\nLimitBrakeDecision · TickCtx · TickPrep", fillcolor="#d5d8dc", penwidth=2];
+
+  subgraph cluster_veh { label="POR VEHÍCULO  (vehicle_adapter + data/vehicles/*.json)"; style="rounded,filled"; fillcolor="#f4ecf7"; color="#8e44ad";
+    adp [label="vehicle_adapter\nNotchAdapter · McAnalogAdapter\n+ nuevas familias", fillcolor="#d2b4de"];
+    mcf [label="fracciones MC\nandén (rodar/clic/parar)\ncartel (decel → eje)", fillcolor="#e8daef"];
+    adp -> mcf;
+  }
+
+  subgraph cluster_core { label="NÚCLEO sin vehículo  (reglas P1 y física)"; style="rounded,filled"; fillcolor="#fef9e7"; color="#b7950b";
+    core [label="command · limits · limit_* · station_* · signal_* · p1_policy · p1_gate · physics · plan", fillcolor="#fcf3cf"];
+  }
+
+  loop -> dec;
+  dec -> {emg tgt rel fin};
+  {emg tgt rel fin} -> prep -> typ;
+  {emg tgt rel fin} -> typ [style=invis];
+  fin -> adp [label="pide: «mando para esta decel»"];
+  rel -> adp [label="¿freno aplicado? ¿neutro?"];
+  {emg tgt rel fin} -> core;
+  adp -> core [style=dashed, label="constantes"];
+}

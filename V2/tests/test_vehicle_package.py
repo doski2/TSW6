@@ -16,6 +16,7 @@ from tsw6v2.vehicle_package import (
     combined_notch_to_ipc_value,
     enrich_brake_command_actuator,
     mc_service_brake_fraction,
+    mc_limit_brake_fraction,
     mc_stop_brake_fraction,
     profile_brake_fraction,
     resolve_vehicle_package,
@@ -208,6 +209,7 @@ def test_m3a_brake_input_below_neutral_not_power_side_session_215007() -> None:
 
 
 def test_mc_combined_lever_for_gate_neutral_when_brake_lever() -> None:
+    import pytest
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.command import combined_lever_for_station_gate
     from tsw6v2.constants import NEUTRAL_NOTCH
@@ -221,6 +223,7 @@ def test_mc_combined_lever_for_gate_neutral_when_brake_lever() -> None:
 
 
 def test_mc_brake_lever_not_counted_as_throttle() -> None:
+    import pytest
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.command import throttle_notch_from_lever, throttle_notch_from_probe
 
@@ -239,6 +242,7 @@ def test_mc_brake_lever_not_counted_as_throttle() -> None:
 
 
 def test_mc_station_apply_not_coast_ping_pong_session_20261003() -> None:
+    import pytest
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.command import BrakeReleaseState
     from tsw6v2.constants import MS_TO_MPH
@@ -274,6 +278,7 @@ def test_mc_station_apply_not_coast_ping_pong_session_20261003() -> None:
 
 
 def test_class323_decision_keeps_notch_only() -> None:
+    import pytest
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.decision import BrakeReleaseState, evaluate_p1_tick
     from tsw6v2.limits import LimitBrakeState
@@ -496,6 +501,7 @@ def test_click_wait_coasts_until_click_stops_at_marker_session_011059() -> None:
 def test_click_wait_band_far_from_marker_session_011059_225331() -> None:
     """Clic ya aplicado (ancla): lejos de la marca (>100 m) rueda si el clic sobrefrenaría
     (225331Z); cerca no vuelve a rodar (090737Z)."""
+    import pytest
     from tsw6v2.bridge.getdata import ProbeSnapshot
     from tsw6v2.command import BrakeReleaseState
     from tsw6v2.decision import evaluate_p1_tick
@@ -766,3 +772,97 @@ def test_active_vehicle_physics_drives_coast_and_service_frac() -> None:
         set_active_physics(None)
     assert service_decel_frac(3) == 0.33
     assert effective_decel_ms2(0.0, 0.0) == 0.095
+
+
+_M3A_DECEL_BY_MC = {
+    0.27: 0.755, 0.48: 0.56, 0.49: 0.62, 0.5: 0.494, 0.51: 0.43, 0.54: 0.51,
+    0.6: 0.294, 0.62: 0.384, 0.63: 0.339, 0.64: 0.278,
+}
+
+
+def test_mc_limit_fraction_is_analog_not_full_brake_session_212139() -> None:
+    """72→59 mph a 548 m: la decel necesaria (~0,3 m/s²) pide un punto suave, no el 100 %."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert pkg is not None
+    frac = mc_limit_brake_fraction(
+        pkg, speed_mph=71.56, target_mph=59.0, distance_m=548.0,
+        gradient_pct=-0.15, decel_table=_M3A_DECEL_BY_MC,
+    )
+    full = mc_service_brake_fraction(pkg, handle_notch=1, phase="B3")
+    neu = profile_brake_fraction(pkg, "neutral")
+    assert frac is not None and full is not None and neu is not None
+    assert full < frac < neu
+
+
+def test_mc_limit_fraction_grows_as_the_sign_gets_closer() -> None:
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    far = mc_limit_brake_fraction(
+        pkg, speed_mph=71.0, target_mph=59.0, distance_m=550.0,
+        decel_table=_M3A_DECEL_BY_MC,
+    )
+    near = mc_limit_brake_fraction(
+        pkg, speed_mph=71.0, target_mph=59.0, distance_m=250.0,
+        decel_table=_M3A_DECEL_BY_MC,
+    )
+    assert far is not None and near is not None
+    assert near < far  # más cerca → posición más hacia el freno completo
+
+
+def test_mc_limit_fraction_none_without_curve_or_need() -> None:
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    assert mc_limit_brake_fraction(
+        pkg, speed_mph=71.0, target_mph=59.0, distance_m=500.0, decel_table=None
+    ) is None
+    assert mc_limit_brake_fraction(
+        pkg, speed_mph=58.0, target_mph=59.0, distance_m=500.0,
+        decel_table=_M3A_DECEL_BY_MC,
+    ) is None
+
+
+def test_p1_tick_limit_uses_learned_mc_curve_for_analog_vehicle() -> None:
+    """Cartel con M3a: el mando lleva la posición de la curva aprendida, no solo el peldaño."""
+    import pytest
+    from tsw6v2.bridge.getdata import ProbeSnapshot
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.learner import LearnerProfile
+    from tsw6v2.limits import LimitBrakeState
+
+    clear_package_cache()
+    learner = LearnerProfile()
+    learner._by_mc = {int(round(k * 100)): v for k, v in _M3A_DECEL_BY_MC.items()}
+    snap = ProbeSnapshot(
+        vehicle="RVM_NYH_MNR_M3a-B_C",
+        speed_ms=71.56 * 0.44704,
+        speed_limit_ms=75 * 0.44704,
+        next_limit_ms=60 * 0.44704,
+        dist_limit_cm=40000.0,
+        gradient_pct=-0.15,
+        lever_notch=4,
+        mc_input=0.72,
+        train_brake=0.0,
+    )
+    decision = evaluate_p1_tick(
+        LimitBrakeState(), BrakeReleaseState(), snap, learner=learner
+    )
+    cmd = decision.command
+    assert cmd is not None and cmd.kind == "APPLY"
+    assert cmd.target_fraction == pytest.approx(0.5)  # curva aprendida, no 0,64 (B1)
+
+
+def test_mc_limit_fraction_is_monotone_with_noisy_curve() -> None:
+    """Curva ruidosa (0,60 → 0,29 pero 0,62 → 0,38): menos decel necesaria nunca pide más freno."""
+    clear_package_cache()
+    pkg = resolve_vehicle_package("RVM_NYH_MNR_M3a-B_C")
+    fracs = []
+    for dist in range(200, 1200, 25):  # más lejos → menos decel necesaria
+        f = mc_limit_brake_fraction(
+            pkg, speed_mph=71.0, target_mph=59.0, distance_m=float(dist),
+            decel_table=_M3A_DECEL_BY_MC,
+        )
+        if f is not None:
+            fracs.append(f)
+    assert fracs and all(b >= a - 1e-9 for a, b in zip(fracs, fracs[1:]))

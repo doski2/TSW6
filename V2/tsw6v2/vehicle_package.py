@@ -668,10 +668,39 @@ def mc_fraction_for_decel(
         return None
     ok = [
         f
-        for f, decel in decel_table.items()
+        for f, decel in _monotone_decel_table(decel_table).items()
         if full - 1e-4 <= f < neu - 1e-4 and decel >= needed_ms2
     ]
     return max(ok) if ok else None
+
+
+def _monotone_decel_table(decel_table: dict[float, float]) -> dict[float, float]:
+    """Curva posición→decel que no sube hacia el neutro (mínimo acumulado desde el freno pleno).
+
+    Las medidas son ruidosas (M3a: 0,60 → 0,29 y 0,62 → 0,38 m/s²): sin esto la posición elegida
+    salta entre vecinas al cruzar la decel necesaria. Conservadora: nunca promete más decel de la
+    que dio una posición más dura.
+    """
+    out: dict[float, float] = {}
+    floor = float("inf")
+    for f in sorted(decel_table):
+        floor = min(floor, decel_table[f])
+        out[f] = floor
+    return out
+
+
+def _needed_brake_decel_ms2(
+    speed_mph: float,
+    target_mph: float,
+    distance_m: float,
+    gradient_pct: float,
+) -> float:
+    """Decel de freno (m/s²) para pasar de ``speed`` a ``target`` en ``distance_m``, sin la pendiente."""
+    from tsw6v2.physics import MPH_TO_MS, gravity_acceleration_ms2
+
+    v = speed_mph * MPH_TO_MS
+    v_obj = target_mph * MPH_TO_MS
+    return (v * v - v_obj * v_obj) / (2.0 * distance_m) - gravity_acceleration_ms2(gradient_pct)
 
 
 def mc_stop_brake_fraction(
@@ -686,20 +715,43 @@ def mc_stop_brake_fraction(
 
     Con ``decel_table`` (curva aprendida) elige la posición medida; sin dato cae a la rampa.
     """
-    from tsw6v2.physics import MPH_TO_MS, gravity_acceleration_ms2, service_strength_for_stop
+    from tsw6v2.physics import service_strength_for_stop
 
     raw: Optional[float] = None
     if decel_table and distance_m > 1.0:
-        speed_ms = speed_mph * MPH_TO_MS
-        needed = (speed_ms * speed_ms) / (2.0 * distance_m) - gravity_acceleration_ms2(
-            gradient_pct
-        )
+        needed = _needed_brake_decel_ms2(speed_mph, 0.0, distance_m, gradient_pct)
         raw = mc_fraction_for_decel(package, needed, decel_table)
     if raw is None:
         raw = mc_fraction_for_strength(
             package,
             service_strength_for_stop(speed_mph, distance_m, gradient_pct),
         )
+    if raw is None:
+        return None
+    return snap_mc_brake_fraction(package, raw)
+
+
+def mc_limit_brake_fraction(
+    package: Optional[dict[str, Any]],
+    *,
+    speed_mph: float,
+    target_mph: float,
+    distance_m: float,
+    gradient_pct: float = 0.0,
+    decel_table: Optional[dict[float, float]] = None,
+) -> Optional[float]:
+    """Fracción MC para bajar a ``target_mph`` en ``distance_m`` (cartel). Sin peldaños B1/B2/B3.
+
+    Decel necesaria ``(v² − v_obj²)/(2d) − g`` sobre la curva aprendida posición→decel.
+    ``None`` sin curva, sin necesidad de frenar o si ninguna posición medida llega: el
+    llamador conserva el mando por muesca.
+    """
+    if not decel_table or distance_m <= 1.0 or speed_mph <= target_mph:
+        return None
+    needed = _needed_brake_decel_ms2(speed_mph, target_mph, distance_m, gradient_pct)
+    if needed <= 0.0:
+        return None
+    raw = mc_fraction_for_decel(package, needed, decel_table)
     if raw is None:
         return None
     return snap_mc_brake_fraction(package, raw)
