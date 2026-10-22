@@ -795,6 +795,12 @@ def _attempt_release(
         predict_decel=prep.predict,
     )
     if rel is None:
+        latch = limit_state.latch
+        committed = (
+            latch.limit_mph
+            if latch is not None and limit_state.committed_handle is not None
+            else None
+        )
         rel = resolve_orphan_limit_brake_release(
             speed_mph=prep.ctx.speed_mph,
             handle_notch=prep.lever,
@@ -803,6 +809,7 @@ def _attempt_release(
             distance_next_m=prep.dist_m,
             gradient_pct=prep.ctx.grad,
             limit_target=limit_target,
+            committed_limit_mph=committed,
         )
     if rel is None:
         return None

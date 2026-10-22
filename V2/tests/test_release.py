@@ -434,3 +434,48 @@ def test_projected_speed_after_brake_fill():
 
 if __name__ == "__main__":
     raise SystemExit(_path.run_self_tests())
+
+
+def test_no_orphan_release_while_limit_plan_committed():
+    """203644Z: 40.4 mph, cartel 35 a 186 m — B1 comprometido por el plan no es huérfano."""
+    for dist in (186.6, 182.0, 175.0, 150.0):
+        cmd = resolve_orphan_limit_brake_release(
+            speed_mph=40.39,
+            handle_notch=3,
+            effective_limit=50.0,
+            next_limit_mph=35.0,
+            distance_next_m=dist,
+            gradient_pct=0.32,
+            limit_target=None,
+            committed_limit_mph=34.0,
+        )
+        assert cmd is None
+
+
+def test_orphan_release_still_fires_without_commitment():
+    """Sin muesca comprometida (freno heredado lejos del cartel) el RELEASE se mantiene."""
+    cmd = resolve_orphan_limit_brake_release(
+        speed_mph=40.39,
+        handle_notch=3,
+        effective_limit=50.0,
+        next_limit_mph=35.0,
+        distance_next_m=400.0,
+        gradient_pct=0.32,
+        limit_target=None,
+    )
+    assert cmd is not None
+
+
+def test_orphan_release_after_commitment_reaches_target():
+    """Comprometido pero ya en objetivo: se puede soltar."""
+    cmd = resolve_orphan_limit_brake_release(
+        speed_mph=34.2,
+        handle_notch=3,
+        effective_limit=50.0,
+        next_limit_mph=35.0,
+        distance_next_m=400.0,
+        gradient_pct=0.32,
+        limit_target=None,
+        committed_limit_mph=34.0,
+    )
+    assert cmd is not None

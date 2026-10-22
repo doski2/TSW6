@@ -625,9 +625,14 @@ def resolve_orphan_limit_brake_release(
     distance_next_m: Optional[float],
     gradient_pct: float,
     limit_target: Optional[BrakeTargetResult] = None,
+    committed_limit_mph: Optional[float] = None,
 ) -> Optional[BrakeCommand]:
     """
     Freno heredado (HOLD_DH / B1–B2) sin plan activo: soltar bajo techo zona.
+
+    ``committed_limit_mph``: objetivo operativo del latch BRAKE_LIMIT con muesca ya
+    comprometida. Mientras la velocidad siga sobre él el freno es del plan, no huérfano
+    (sesión ``203644Z``: APPLY/RELEASE cada tick entre el horizonte y el APPLY del plan).
 
     Sesión ``095417Z``: B2 tras 15→30 con ``no_plan`` y spd ~15 mph; el RELEASE
     al cartel 50 no aplica (``LIMIT_RELEASE_MIN_SPEED_BAND``).
@@ -637,6 +642,10 @@ def resolve_orphan_limit_brake_release(
     if not is_brake_applied(handle_notch):
         return None
     if limit_target is not None and limit_target.limit_brake_active:
+        return None
+    if committed_limit_mph is not None and speed_mph > (
+        float(committed_limit_mph) + limit_release_over_mph(gradient_pct)
+    ):
         return None
     ceiling = posted_zone_hold_ceiling_mph(effective_limit, gradient_pct)
     if speed_mph > ceiling:
