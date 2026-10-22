@@ -59,18 +59,30 @@ _THOUSANDS_RE = re.compile(r"^\d{1,3}(?:[.,]\d{3})+$")
 _DECIMAL_RE = re.compile(r"^\d+[.,]\d{1,2}$")
 
 
-def parse_hud_distance(text: str) -> Optional[float]:
-    """Distancia en metros desde el texto del HUD (``1.465 ft (pies)``, ``51 ft``, ``340 m``).
+def hud_meters_allowed() -> bool:
+    """``TSW6_HUD_OCR_METERS=1``: el HUD está en métrico y «N m» es una lectura válida."""
+    return os.environ.get("TSW6_HUD_OCR_METERS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def parse_hud_distance(text: str, *, allow_meters: Optional[bool] = None) -> Optional[float]:
+    """Distancia en metros desde el texto del HUD (``1.465 ft (pies)``, ``51 ft``, ``0,9 mi``).
 
     En pies o yardas, ``1.465`` y ``1,465`` son miles; ``0,9`` / ``0.9`` son decimales.
+    El HUD imperial solo muestra ``ft`` o ``mi``: un ``m`` suelto es «3,0mi» con el punto y la
+    «i» perdidos (``30m lem1`` → 30 m a 71 mph, sesión 205735Z), así que solo vale con
+    ``allow_meters`` (por defecto ``TSW6_HUD_OCR_METERS``).
     ``None`` si no hay una distancia reconocible o es absurda.
     """
     if not text:
         return None
+    if allow_meters is None:
+        allow_meters = hud_meters_allowed()
     for match in _DIST_RE.finditer(text.replace("\n", " ")):
         num = re.sub(r"\s+", "", match.group("num")).strip(".,")
         unit = match.group("unit").lower()
         if not num:
+            continue
+        if unit == "m" and not allow_meters:
             continue
         if _THOUSANDS_RE.match(num):
             value = float(re.sub(r"[.,]", "", num))

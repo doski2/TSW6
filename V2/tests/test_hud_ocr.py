@@ -14,7 +14,6 @@ from tsw6v2.hud_ocr import FT_TO_M, find_tesseract, parse_hud_distance, parse_re
         ("1,465 ft", 1465 * FT_TO_M),
         ("51 ft (pies)", 51 * FT_TO_M),
         ("3.932 ft", 3932 * FT_TO_M),
-        ("340 m", 340.0),
         ("0,9 mi", 0.9 * 1609.344),
         ("  7.759 FT (pies)\n", 7759 * FT_TO_M),
         ("1 465 ft", 1465 * FT_TO_M),
@@ -22,6 +21,22 @@ from tsw6v2.hud_ocr import FT_TO_M, find_tesseract, parse_hud_distance, parse_re
 )
 def test_parse_hud_distance_units_and_thousands(text: str, expected: float) -> None:
     assert parse_hud_distance(text) == pytest.approx(expected, abs=0.01)
+
+
+def test_parse_hud_distance_meters_only_in_metric_hud() -> None:
+    assert parse_hud_distance("340 m", allow_meters=True) == pytest.approx(340.0)
+    assert parse_hud_distance("340 m") is None
+
+
+@pytest.mark.parametrize("text", ["30m lem1", "39m lem1", "4M1 lem1"])
+def test_parse_hud_distance_rejects_dropped_mile_unit(text: str) -> None:
+    """205735Z / 211925Z: «3,0mi» leído como «30m»; en HUD imperial no es una distancia."""
+    assert parse_hud_distance(text) is None
+
+
+@pytest.mark.parametrize("text", ["4,4mi lem1", "3.0 mi", "2,7 mi"])
+def test_parse_hud_distance_keeps_miles(text: str) -> None:
+    assert parse_hud_distance(text) is not None
 
 
 @pytest.mark.parametrize("text", ["", "ft", "DETENGASE EN EL LUGAR", "0 ft", "999999 ft"])
