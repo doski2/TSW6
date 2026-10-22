@@ -471,6 +471,3 @@ def format_viewer_lines(snap: Optional[AgentSnapshot], *, loop_hz: float = 0.0) 
     f = snapshot_to_fields(snap, loop_hz=loop_hz)
     return [f.headline, f"vel={f.speed}  lever={f.lever}  ipc_tgt={f.ipc_target}", f"veh={f.vehicle}"]
 
-
-def layer_catalog() -> dict[str, tuple[str, str]]:
-    return dict(LAYERS)

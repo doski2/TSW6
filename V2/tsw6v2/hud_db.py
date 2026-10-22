@@ -37,34 +37,6 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def is_same_stop(
-    candidate: HudStop,
-    served: HudStop,
-) -> bool:
-    """``True`` si ``candidate`` es la misma parada que ``served``.
-
-    Orden de criterio: ``location_id`` (identidad estable); si no coincide,
-    coordenada a menos de ``SAME_STOP_MAX_M`` cuando ambas la tienen; si no,
-    nombre igual (solo cuando falta coordenada en alguna de las dos).
-    """
-    if candidate.location_id == served.location_id:
-        return True
-    if (
-        candidate.latitude is not None
-        and candidate.longitude is not None
-        and served.latitude is not None
-        and served.longitude is not None
-    ):
-        return (
-            _haversine_m(
-                candidate.latitude, candidate.longitude,
-                served.latitude, served.longitude,
-            )
-            <= SAME_STOP_MAX_M
-        )
-    return candidate.name.strip().lower() == served.name.strip().lower()
-
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 

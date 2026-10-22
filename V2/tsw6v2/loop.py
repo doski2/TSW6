@@ -1,4 +1,4 @@
-"""Bucle agente â€” un tick: GetData â†’ decisiÃ³n â†’ (opcional) un paso IPC."""
+"""Bucle agente — un tick: GetData → decisión → (opcional) un paso IPC."""
 
 from __future__ import annotations
 
@@ -60,13 +60,12 @@ from tsw6v2.physics import PRESSURE_IDLE_MAX_BAR
 from tsw6v2.p1_layers import classify_layer
 from tsw6v2.p1_station_gate import DOORS_OPEN_MAX_SPEED_MPH, doors_effective
 
-DEFAULT_ACK_TIMEOUT_S = AGENT_ACK_TIMEOUT_S
 # Takeover MC solo con objetivo freno (< neutro): ``power`` HUD por encima de este umbral.
 _MC_DRIVER_POWER_TAKEOVER = 0.05
 
 
 def agent_snapshot_probe_ok(snap: Optional[AgentSnapshot]) -> bool:
-    """TelemetrÃ­a coherente (evita capas P1 falsas en GUI/JSONL)."""
+    """Telemetría coherente (evita capas P1 falsas en GUI/JSONL)."""
     if snap is None:
         return False
     return probe_identity_ok(snap.seq, snap.vehicle)
@@ -325,7 +324,7 @@ class AgentSnapshot:
 class AgentLoop:
     getdata_path: Path = field(default_factory=default_getdata_path)
     neutral_notch: int = NEUTRAL_NOTCH
-    ack_timeout_s: float = DEFAULT_ACK_TIMEOUT_S
+    ack_timeout_s: float = AGENT_ACK_TIMEOUT_S
     post_ipc_sleep_s: float = 0.02
     limit_brake_enabled: bool = False
     station_brake_enabled: bool = False
@@ -380,7 +379,7 @@ class AgentLoop:
 
     @property
     def profile_save_path(self) -> Optional[Path]:
-        """Ruta para persistir learner (cargada o auto por vehÃ­culo)."""
+        """Ruta para persistir learner (cargada o auto por vehículo)."""
         if self._profile_path is not None:
             return self._profile_path
         if self._vehicle_slug:
@@ -396,7 +395,7 @@ class AgentLoop:
 
     @property
     def station_planning_source(self) -> str:
-        """``http`` | ``file`` | ``none`` (planning andÃ©n)."""
+        """``http`` | ``file`` | ``none`` (planning andén)."""
         return self._station_planning.source
 
     def planning_context(self) -> dict[str, object]:
@@ -405,7 +404,7 @@ class AgentLoop:
 
     @property
     def station_planning_channel(self) -> str:
-        """DescripciÃ³n humana de la fuente de distancia andÃ©n."""
+        """Descripción humana de la fuente de distancia andén."""
         if self._station_planning.http_active:
             sched = self._station_planning.schedule_source
             base = "HTTP DriverAid.TrackData (~2 s)"
@@ -533,7 +532,7 @@ class AgentLoop:
         neutral = int(self.neutral_notch)
         lev = int(lever) if lever is not None else neutral
         if cmd.kind == "RELEASE":
-            # Freno aplicado â†’ neutro; ya en neutro/P: no repetir (214610Z).
+            # Freno aplicado → neutro; ya en neutro/P: no repetir (214610Z).
             if fraction is not None:
                 self.request_input_fraction(fraction)
             elif lev >= neutral:
@@ -541,7 +540,7 @@ class AgentLoop:
             else:
                 self.request_neutral()
         elif cmd.kind == "COAST_THROTTLE":
-            # TracciÃ³n â†’ neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
+            # Tracción → neutro antes de APPLY; MC: siempre neutro aunque muesca UK diga 4 (114756Z).
             mc = self._adapter().analog_lever
             if fraction is not None:
                 self.request_input_fraction(fraction)
@@ -557,7 +556,7 @@ class AgentLoop:
         return self._adapter().fraction_feedback(snap)
 
     def _mc_ramp_ipc_fraction(self, target: float, current: Optional[float]) -> float:
-        """Un paso hacia ``target`` (frenar/soltar gradual, sesiÃ³n 215905Z)."""
+        """Un paso hacia ``target`` (frenar/soltar gradual, sesión 215905Z)."""
         t = float(target)
         if current is None:
             return t
@@ -570,7 +569,7 @@ class AgentLoop:
         return min(t, c + step)
 
     def _fraction_ipc_target_reached(self, snap: ProbeSnapshot) -> bool:
-        """MC: feedback vÃ­a ``probe_mc_input_fraction`` (no ``train_brake`` HUD UK)."""
+        """MC: feedback vía ``probe_mc_input_fraction`` (no ``train_brake`` HUD UK)."""
         if self._target_fraction is None:
             return False
         target = float(self._target_fraction)
@@ -630,7 +629,7 @@ class AgentLoop:
         lever: Optional[int],
         snap: Optional[ProbeSnapshot] = None,
     ) -> None:
-        """Suelta ``target`` IPC si la palanca ya alcanzÃ³ el objetivo."""
+        """Suelta ``target`` IPC si la palanca ya alcanzó el objetivo."""
         if self._target_fraction is not None:
             self._clear_fraction_target_if_reached(snap)
             return
@@ -648,7 +647,7 @@ class AgentLoop:
         lever: int,
         snap: Optional[ProbeSnapshot] = None,
     ) -> None:
-        """Si la palanca se aleja del objetivo IPC, asumir conducciÃ³n manual."""
+        """Si la palanca se aleja del objetivo IPC, asumir conducción manual."""
         if self._target_fraction is not None:
             if snap is not None:
                 self._check_driver_takeover_mc_fraction(snap, lever)
@@ -849,7 +848,7 @@ class AgentLoop:
                 p1_apply_now = True
                 self._apply_brake_command(dwell_cmd, lever=lever, apply_actuator=True)
             elif decision.command is not None:
-                # ``decide()`` ya llamÃ³ ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
+                # ``decide()`` ya llamó ``apply_vehicle_brake_actuator`` (MC ``target_fraction``).
                 cmd = decision.command
                 if cmd.kind == "RELEASE" and snap is not None and snap.speed_ms is not None:
                     speed_mph = float(snap.speed_ms) * MS_TO_MPH
@@ -862,7 +861,7 @@ class AgentLoop:
                         is True
                         and speed_mph <= DOORS_OPEN_MAX_SPEED_MPH
                     )
-                    # HistÃ©resis: parada ya en curso (anchor) no vuelve a rodar a neutro.
+                    # Histéresis: parada ya en curso (anchor) no vuelve a rodar a neutro.
                     stop_running = _station_stop_continues(
                         self._limit_state, station_dist_m, speed_mph
                     )
@@ -888,7 +887,7 @@ class AgentLoop:
                             target_fraction=hold,
                             phase=f"{hold:.3f}",
                             reason=(
-                                "AndÃ©n: mantener parada"
+                                "Andén: mantener parada"
                                 if doors_open or mc_station_still_ahead(station_dist_m)
                                 else "Pendiente: mantener freno"
                             ),

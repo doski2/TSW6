@@ -14,7 +14,14 @@ Cómo se mantiene la seguridad (el OCR es ruidoso y solo se ve con el marcador e
    descarta, y la corrección por captura se limita a ``MAX_CORRECTION_M``. Un fallo de OCR que
    cuele no puede mover la distancia más que eso.
 3. **HTTP** sigue entrando: ya en marco tablón se le resta el desfase aprendido.
-4. Sin lectura (marcador fuera de pantalla, OCR caído) la distancia sigue por v×dt como antes.
+4. **Continuidad de la lectura** (20261020T211925Z): «3,9mi» se leyó como «39m» y tres capturas
+   iguales provocaron un resync de −6398 m y una emergencia a 64 mph. Una captura debe ser
+   coherente con la anterior avanzada a la velocidad actual (``CONTINUITY_MIN_M``); si no, se
+   descarta (``jump``). El resync además no acepta saltos mayores que ``RESYNC_MAX_M``.
+5. **Sin andén vivo** (20261020T211925Z): con la estimación ya en el andén servido
+   (≤ ``DEPARTED_EST_M``) la captura no puede subirla más de ``DEPARTED_RISE_M``: el HUD apunta a
+   otro andén lejano (Harlem 125th a 7 km) que el planificador aún no ofrece. Motivo ``departed``.
+6. Sin lectura (marcador fuera de pantalla, OCR caído) la distancia sigue por v×dt como antes.
 """
 
 from __future__ import annotations
@@ -37,6 +44,12 @@ MIN_SPEED_MPH = 3.0
 MIN_HUD_M = 3.0  # por debajo se está sobre el marcador: la lectura ya no aporta
 OFFSET_EMA = 0.3
 HTTP_REFINE_MAX_AGE_S = 3.0
+CONTINUITY_MIN_M = 250.0  # holgura mínima frente a la lectura anterior (el HUD en millas va a 0,1 mi)
+CONTINUITY_FRAC = 0.25  # ... o esta fracción de la lectura anterior si es mayor
+CONTINUITY_MAX_AGE_S = 15.0  # con la lectura anterior más vieja no se compara
+DEPARTED_EST_M = 20.0  # estimación en el andén ya servido
+DEPARTED_RISE_M = 150.0  # subida máxima que el OCR puede imponer desde ahí
+RESYNC_MAX_M = 1000.0  # un resync nunca mueve la distancia más que esto
 
 
 @dataclass
@@ -81,6 +94,7 @@ class HudAnchor:
         self._last_accept_t: Optional[float] = None
         self._gate_diff: Optional[float] = None
         self._gate_streak = 0
+        self._prev_read: Optional[tuple[float, float]] = None  # (value_m, t) de la última coherente
 
     def apply(
         self,
@@ -98,7 +112,11 @@ class HudAnchor:
         self._last_t = reading.t
         if speed_mph < MIN_SPEED_MPH:
             return self._reject("slow")
+        if not self._continuous(reading, speed_mph):
+            return self._reject("jump")
         hud_now = reading.value_m - speed_mph * MPH_TO_MS * max(0.0, now - reading.t)
+        if est_m <= DEPARTED_EST_M and hud_now - est_m > DEPARTED_RISE_M:
+            return self._reject("departed")
         if hud_now < MIN_HUD_M:
             return self._reject("on_marker")
 
@@ -155,6 +173,20 @@ class HudAnchor:
             f"c={self.last_corr_m:+.1f} {self.last_reason}"
         ).strip()
 
+    def _continuous(self, reading: AnchorReading, speed_mph: float) -> bool:
+        """¿La captura encaja con la anterior avanzada a la velocidad actual?"""
+        prev = self._prev_read
+        if prev is not None:
+            value, t = prev
+            dt = reading.t - t
+            if 0.0 <= dt <= CONTINUITY_MAX_AGE_S:
+                expected = value - speed_mph * MPH_TO_MS * dt
+                tol = max(CONTINUITY_MIN_M, CONTINUITY_FRAC * value)
+                if abs(reading.value_m - expected) > tol:
+                    return False
+        self._prev_read = (reading.value_m, reading.t)
+        return True
+
     def _gated(self, diff: float, hud_now: float, now: float) -> Optional[float]:
         """Captura fuera de puerta. Si varias seguidas coinciden entre sí, la estimación es la errónea."""
         if self._gate_diff is not None and abs(diff - self._gate_diff) <= CONFIRM_AGREE_M:
@@ -164,6 +196,9 @@ class HudAnchor:
         self._gate_diff = diff
         if self._gate_streak < RESYNC_AFTER_GATED:
             return self._reject("track_gate")
+        if abs(diff) > RESYNC_MAX_M:
+            self._gate_streak = 0
+            return self._reject("resync_too_far")
         self._gate_streak = 0
         self.last_corr_m = diff
         self._accept(now)

@@ -97,11 +97,6 @@ def active_safety_margin() -> float:
     return p.safety_margin if p is not None else SAFETY_MARGIN
 
 
-def active_station_plan_decel() -> Optional[float]:
-    p = _ACTIVE_PHYSICS.get()
-    return p.station_plan_decel_ms2 if p is not None else None
-
-
 def active_brake_transition_s() -> float:
     p = _ACTIVE_PHYSICS.get()
     return p.brake_transition_s if p is not None else BRAKE_TRANSITION_S
@@ -449,36 +444,6 @@ def apply_zone_margin_m(speed_ms: float, apply_at_remaining_m: float) -> float:
 def is_in_apply_zone(dist_start: float, apply_zone_m: float) -> bool:
     """Ventana simétrica ±zona (misma regla que ``should_emit_brake_command``)."""
     return -apply_zone_m <= dist_start <= apply_zone_m
-
-
-def is_in_brake_action_window(
-    dist_start: float,
-    *,
-    speed_mph: float,
-    distance_to_target_m: Optional[float] = None,
-    apply_at_remaining_m: Optional[float] = None,
-) -> bool:
-    """
-    ¿``dist_start`` está en la ventana de acción del plan (metros, vía física)?
-
-    Reservado para estación/señal (pasos 4–7); P1 cartel usa ``is_in_apply_zone`` vía
-    ``limit_notch`` / ``command.py``.
-    """
-    zone = brake_command_apply_zone_m(
-        speed_mph=speed_mph,
-        distance_to_target_m=distance_to_target_m,
-        apply_at_remaining_m=apply_at_remaining_m,
-        dist_start=dist_start,
-    )
-    return is_in_apply_zone(dist_start, zone)
-
-
-def low_speed_reaction_scale(speed_ms: float, target_speed_ms: float) -> float:
-    if speed_ms <= 0.5:
-        return 1.0
-    delta = max(0.0, speed_ms - target_speed_ms)
-    ratio = delta / speed_ms
-    return max(0.35, min(1.0, ratio / 0.4))
 
 
 def reaction_margin_m(

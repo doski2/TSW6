@@ -127,11 +127,6 @@ def session_route_meta_for_probe(probe_vehicle: str) -> SessionRouteMeta:
     return SessionRouteMeta(display, slug)
 
 
-def session_route_hint_for_probe(probe_vehicle: str) -> Optional[str]:
-    """Etiqueta legible para informes JSONL/HTML."""
-    return session_route_meta_for_probe(probe_vehicle).display
-
-
 def session_route_cli_slug_for_probe(probe_vehicle: str) -> Optional[str]:
     """Slug ``--route`` / campo ``route`` en metadatos de sesión."""
     return session_route_meta_for_probe(probe_vehicle).cli_slug

@@ -46,7 +46,7 @@ def test_frame_switch_rejects_broken_reading_and_inconsistent_pair() -> None:
     assert anchor.apply(1571.0, _read(0.8, 10.0), now=10.0, speed_mph=MPH) is None
     assert anchor.last_reason == "on_marker"
     assert anchor.apply(1571.0, _read(2910.0, 10.5), now=10.5, speed_mph=MPH) is None
-    assert anchor.last_reason == "frame_gate" and not anchor.board_frame
+    assert anchor.last_reason in ("frame_gate", "jump") and not anchor.board_frame
     # dos lecturas válidas pero con desfases distintos: no confirman
     assert anchor.apply(900.0, _read(800.0, 11.0), now=11.0, speed_mph=MPH) is None
     assert anchor.apply(900.0, _read(700.0, 11.5), now=11.5, speed_mph=MPH) is None
@@ -59,7 +59,7 @@ def test_tracking_clips_correction_and_gates_outliers() -> None:
     assert out == pytest.approx(est - MAX_CORRECTION_M)  # acotada por captura
     # una lectura rota lejos de la estimación no mueve nada
     assert anchor.apply(est, _read(est + 500.0, 11.5), now=11.5, speed_mph=MPH) is None
-    assert anchor.last_reason == "track_gate"
+    assert anchor.last_reason in ("track_gate", "jump")
     # pequeña diferencia: se aplica entera
     out = anchor.apply(est, _read(est - 2.0, 12.0), now=12.0, speed_mph=MPH)
     assert out == pytest.approx(est - 2.0)
@@ -219,3 +219,47 @@ def test_http_contradicting_ocr_is_ignored(monkeypatch) -> None:
     src._poll_once()
     assert src._snap.station_distance_m == pytest.approx(36.0)
     assert src._snap.planning_rejected_n >= 1
+
+
+def test_anchor_rejects_misread_unit_jump_20261020() -> None:
+    """211925Z: «3,9mi» leído como «39m» a 64 mph; ni el salto ni el resync pueden moverlo."""
+    mph = 64.0
+    anchor, est = _locked(offset=100.0, est=6500.0)
+    anchor.apply(est, _read(6437.0, 11.0), now=11.0, speed_mph=mph)
+    t = 11.5
+    for i in range(6):  # varias capturas iguales con la lectura rota
+        out = anchor.apply(est, _read(39.0, t + i * 0.5), now=t + i * 0.5, speed_mph=mph)
+        assert out is None
+        assert anchor.last_reason == "jump"
+
+
+def test_anchor_resync_has_a_maximum_jump() -> None:
+    anchor, _ = _locked(offset=50.0, est=130.0)
+    anchor._prev_read = None  # sin continuidad previa: solo actúa el tope del resync
+    for i in range(3):
+        t = 11.0 + i * 0.5
+        out = anchor.apply(130.0, _read(5000.0, t), now=t, speed_mph=MPH)
+        assert out is None
+    assert anchor.last_reason == "resync_too_far"
+
+
+def test_anchor_continuity_accepts_normal_progress() -> None:
+    anchor, est = _locked(offset=100.0, est=800.0)
+    assert anchor.apply(est, _read(700.0 - 13.4 * 0.5, 11.0), now=11.0, speed_mph=MPH) is not None
+
+
+def test_anchor_ignores_far_station_after_departing_20261020() -> None:
+    """211925Z: tras Fordham (est = 0) el HUD apunta a Harlem 125th a 7 km; no es el andén vivo."""
+    anchor, _ = _locked(offset=50.0, est=130.0)
+    for i in range(5):
+        t = 11.0 + i * 0.5
+        assert anchor.apply(0.0, _read(7078.0, t), now=t, speed_mph=30.0) is None
+        assert anchor.last_reason in ("departed", "jump")
+    assert anchor.board_frame  # el marco no se pierde, solo se ignora la captura
+
+
+def test_anchor_still_corrects_short_stop_near_zero_estimate() -> None:
+    """Parada corta: la app cree estar a 3 m y el HUD marca 40 m; sigue siendo una corrección válida."""
+    anchor, _ = _locked(offset=50.0, est=130.0)
+    out = anchor.apply(3.0, _read(40.0, 11.0), now=11.0, speed_mph=MPH)
+    assert out is not None

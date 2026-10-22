@@ -1,13 +1,14 @@
-# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-15)
+# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-21)
 
-Alcance: `V2/tsw6v2/` (56 módulos + 5 en `bridge/`, ~18,2 k líneas; 40 ficheros de test, ~9,5 k
-líneas). Sin cambios de código en este análisis.
+Alcance: `V2/tsw6v2/` (66 módulos incluido `bridge/`, ~19,5 k líneas; 42 ficheros de test, 569 pruebas).
+Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin referencias).
 Evidencia clasificada según `00-tsw6-core.mdc`: FACT = código leído o medido en logs; INFERENCE =
 deducción; UNKNOWN = no demostrado.
 
-Cambios respecto a la versión del 2026-10-13: tamaños actualizados (§1), nueva sección de
-arquitectura multi-locomotora (§2) y hallazgos de las sesiones del 2026-10-15 (§7). Los apartados
-de duplicados, riesgos y mejoras (§3–§6) siguen vigentes y no se han tratado.
+Cambios respecto a la versión del 2026-10-13: tamaños (§1), arquitectura multi-locomotora (§2),
+hallazgos de las sesiones del 2026-10-15 (§7) y re-análisis del 2026-10-19: duplicados, código sin
+uso, funciones largas y riesgos nuevos en §3–§5 (marcados «2026-10-19»). §9 resume lo hecho el
+2026-10-19 y lo pendiente con prioridad.
 
 ## 1. Tamaño y complejidad (FACT)
 
@@ -16,13 +17,21 @@ Archivos más grandes (líneas):
 | Líneas | Archivo              | Nota                                                    |
 | ------ | -------------------- | ------------------------------------------------------- |
 | 1680   | `session_report.py`  | HTML + cálculo; candidato a partir (render vs métricas) |
-| 1304   | `decision.py`        | Núcleo P1; concentra cartel, andén, RELEASE y COAST     |
-| 1023   | `p1_station_gate.py` | FSM de estación                                         |
-| 981    | `loop.py`            | Bucle agente; envío IPC + estado                        |
-| 940    | `vehicle_package.py` | Datos de vehículo (53 funciones, 19 helpers `mc_*`)     |
-| 822    | `station_plan.py`    | Perfil de parada en andén                               |
-| 816    | `command.py`         | `BrakeCommand` y mandos IPC                             |
-| 787    | `gui.py`             |                                                         |
+| 1323   | `decision.py`        | Núcleo P1; concentra cartel, andén, RELEASE y COAST     |
+| 1044   | `loop.py`            | Bucle agente; envío IPC + estado                        |
+| 1033   | `p1_station_gate.py` | FSM de estación                                         |
+| 1015   | `vehicle_package.py` | Datos de vehículo (19 helpers `mc_*`)                   |
+| 828    | `station_plan.py`    | Perfil de parada en andén                               |
+| 806    | `command.py`         | `BrakeCommand` y mandos IPC                             |
+| 794    | `gui.py`             |                                                         |
+| 654    | `physics.py`         | También lo importa el paquete v1 `tsw6/governor`        |
+| 541    | `planning_poller.py` |                                                         |
+
+Funciones más largas (2026-10-19; ≥ 120 líneas son candidatas a partir): `loop._step_core` 346,
+`session_report._render_chart_svg` 322, `session_report.write_html_replay` 290,
+`decision.evaluate_p1_tick` 287, `diagnostic.run_ipc_brake_test` 165, `loop.from_probe` 161,
+`cli.main` 161, `gui._build_ui` 135, `limits._evaluate_next_limit_brake` 131,
+`session_report.summarize` 130, `cli.run_console` 122.
 
 ## 2. ¿Separar por locomotora? Arquitectura multi-vehículo
 
@@ -33,12 +42,12 @@ para todos y conviene separar ficheros?
 
 - Hay **dos paquetes de vehículo** en `data/vehicles/`: `class_323.json` (layout muesca combinada
   UK) y `m3a_mnr.json` (layout `combined` con palanca MC analógica). No hay ningún otro.
-- La bifurcación entre ambos está **dispersa**: `uses_mc_analog_ipc(...)` aparece en 36 puntos
-  (16 dentro de `vehicle_package.py` y 20 fuera): `loop.py` 5, `p1_station_gate.py` 4, `decision.py`
-  3, `ipc.py` 3, `command.py` 2, y 1 en `gui_view.py`, `diagnostic.py` y `brake_cab.py`.
+- La bifurcación entre ambos estaba **dispersa** (36 puntos con `uses_mc_analog_ipc`, 20 fuera de
+  `vehicle_package.py`). Desde el 2026-10-19 todos pasan por `vehicle_adapter.py`
+  (`adapter_for_package(pkg)`); ver §8 punto 7.
 - Solo hay **dos modelos de aire**: `uk_emu` y `master_controller` (`brake_air_profile.py`).
-- La región se decide por **cadenas de texto fijas** (`vehicle_route_fleet`, `vehicle_package.py:45`):
-  `NYH`/`_MNR_` → `ny`; `BCC`/`CLASS323` → `uk`; cualquier otro → `None` (se confía sin validar).
+- La región ya se lee del campo `fleet` del paquete (2026-10-19). Solo sin paquete cae a cadenas
+  fijas (`NYH`/`_MNR_` → `ny`; `BCC`/`CLASS323` → `uk`; otro → `None`, se confía sin validar).
 - Los parámetros de física **por defecto** vienen de la 323 (`constants.py` abre con «Constantes del
   producto (323 combined UK)»). Desde 2026-10-15 cada paquete de vehículo puede traer un bloque
   `physics` (`max_decel_ms2`, `coast_decel_ms2`, `safety_margin`, `brake_transition_s`,
@@ -74,11 +83,11 @@ No hay evidencia en el repositorio de que el motor se haya validado con un terce
 ### 2.3 Riesgo de seguir sin separar (INFERENCE)
 
 - Cada locomotora nueva obliga a **tocar varios archivos grandes** (`decision.py`, `loop.py`,
-  `p1_station_gate.py`, `command.py`, `ipc.py`) para añadir otra rama `if`. Hoy ya son 20 puntos
-  fuera de `vehicle_package.py`; con 5 vehículos la lógica de cada rama quedaría entrelazada.
+  `p1_station_gate.py`, `command.py`, `ipc.py`) para añadir otra rama `if`. Hoy el adaptador
+  centraliza la decisión, pero la lógica propia de la M3A sigue dentro de esos archivos; con 5 vehículos la lógica de cada rama quedaría entrelazada.
 - Un arreglo pensado para la M3A puede romper la 323 sin que lo detecte un test: 21 de los 40
-  ficheros de test mencionan 323 o M3A, pero no hay un conjunto común de pruebas que se ejecute
-  contra cada paquete de vehículo.
+  ficheros de test mencionan 323 o M3A, y desde el 2026-10-19 hay un conjunto común (`test_vehicle_contract.py`,
+  `test_vehicle_adapter.py`), aunque no cubre aún parada en andén ni soltar al salir.
 - Las constantes de la 323 como valores por defecto dan resultados plausibles para cualquier tren
   y por eso pasan desapercibidas (la M3A frena con decel aprendida 0,3–0,5 m/s² mientras el motor
   planifica con 1,07 m/s² hasta que alguien fije el bloque `physics` de su JSON).
@@ -178,31 +187,79 @@ por vehículo (§2.4 paso 4) ya escritas, para poder comparar antes y después.
   `wait_send_ack` es otro parámetro y se deja.
 - **Resuelto: `PredictDecelFn`.** Ya solo se define en `plan.py`; el resto de módulos la importa
   (el análisis original contaba 7 definiciones; verificado 2026-10-19).
+- **Alias `DEFAULT_ACK_TIMEOUT_S`** (2026-10-19): el de `loop.py` se eliminó (usa `AGENT_ACK_TIMEOUT_S`).
+  Queda el de `ipc.py`, que es el nombre público de sus defaults; mismo valor, sin acción.
+- **`load_ticks` en 2 módulos** (2026-10-19): `hud_ocr_eval.py` (lista de ticks, ignora líneas rotas)
+  y `session_report.py` (devuelve sesión + ticks, falla con una línea rota). Mismo formato JSONL, dos
+  lectores. Unificar en un lector de JSONL de sesión con política de errores explícita.
+- **Sin cuerpos de función duplicados** (2026-10-19): comparación de AST de todas las funciones con
+  ≥ 3 sentencias, sin coincidencias.
 - **`main` en 2 módulos**: normal (puntos de entrada), sin acción.
+
+### 3.1 Código sin referencias (2026-10-19, FACT: sin usos en `tsw6v2`, tests ni scripts)
+
+**Borradas el 2026-10-19** (569 pruebas en verde): `gui_view.layer_catalog`, `hud_db.is_same_stop`,
+`physics.active_station_plan_decel`, `physics.low_speed_reaction_scale`,
+`physics.is_in_brake_action_window` (solo se citaba en `docs/v1/`) y
+`vehicle_package.session_route_hint_for_probe`.
+
+**Se dejan:** `diagnostic_mc_ipc.run_mc_analog_ipc_test` (el módulo entero queda sin punto de entrada;
+decidir si es una herramienta de laboratorio que se quiere conservar).
+
+**No borrar** `physics.should_brake_for_target` ni sus vecinas sin mirar: `tsw6/governor/` (paquete v1)
+las importa de `tsw6v2.physics`. El paquete v1 depende de V2, no al revés.
+
+### 3.2 Módulos sin ninguna referencia en tests (2026-10-19)
+
+`autopilot_limit`, `cli`, `control_lock`, `diag_station`, `diagnostic_mc_ipc`, `limit_containment`,
+`service_brake`. Varios se ejercitan de forma indirecta (`decision`, `limits`), pero no tienen pruebas
+propias; `control_lock` (bloqueo de instancia única) y `service_brake` (objetivo de parada → mando) son
+los de más riesgo.
 
 ## 4. Fallos y riesgos (FACT salvo indicado)
 
 - **ACK ok sin confirmar palanca** (`loop.py`, `_notch_step_pending`): si el ACK es `ok` el
   pendiente no se activa, y el paso puede reenviarse si la palanca tarda en cambiar. Hueco conocido,
   bajo riesgo observado (5 cambios de palanca en 1547 ticks en 214529Z).
-- **Excepciones amplias** (`except Exception`): `hud_schedule.py:64,76` y `planning_poller.py:361`.
-  Ocultan errores; conviene registrar y tratar la causa.
+- **Excepciones amplias** (`except Exception`): resuelto en `hud_schedule.py` (ver §8 punto 4). Quedan
+  5 deliberadas: `cli.py:165`, `hud_ocr.py:149,292,299` y `planning_poller.py:447` (hilos y
+  utilidades que no deben morir; registran el error).
 - **Ventana de aprendizaje de 2 s** (`learn_quality.py`): cualquier cambio de muesca descarta la
   ventana entera (`notch_unstable`). Limita el aprendizaje de `mixed` (87 rechazos en 201122Z).
   Cambio de diseño pendiente de confirmación.
+- **Texto corrupto (mojibake) en `loop.py`** (2026-10-19, corregido): 14 líneas de comentarios y
+  docstrings con doble codificación (`Ã©`, `â†’`), introducidas en el commit `53a3ac4`. Se repararon
+  recodificando; comprobar con `grep -P "â€|Ã.|â†"` que no reaparecen.
+- **Finales de línea mezclados** (2026-10-19): `command.py`, `hud_ocr.py`, `learner.py`, `loop.py`,
+  `station_plan.py` y `trace.py` están en CRLF; el resto en LF, y `.gitattributes` solo fija `.bat`.
+  Cualquier script que reescriba un fichero puede convertirlo entero y generar un diff de miles de
+  líneas (ocurrió con tres módulos durante este trabajo). **Resuelto el 2026-10-19:** `.gitattributes`
+  fija `*.py text eol=lf` y los seis módulos se pasaron a LF. Conviene hacer el commit de esa
+  normalización aparte del resto, porque el diff de esos seis ficheros es casi total.
+- **ACK ok sin pendiente, confirmado en código** (2026-10-19, `loop.py` ≈ l. 985): el comentario dice
+  «pendiente hasta que la palanca cambie o el ACK sea ok», pero con ACK ok se pone `None`, de modo que
+  el paso se reenvía si la palanca tarda en cambiar.
+- **Funciones demasiado largas** (§1): `_step_core` (346 líneas) y `evaluate_p1_tick` (287) concentran
+  la mayor parte del control; cualquier cambio ahí es difícil de revisar y de probar por separado.
 - **Rama MC y rama combinada** comparten `_brake_kind`/aprendizaje pero con tablas distintas; el
   riesgo es confusión de tablas (ya tratado con `brake_kind` explícito).
 
 ## 5. Mejoras propuestas (INFERENCE)
 
 1. ~~Unificar timeouts de ACK~~ y 2. ~~`PredictDecelFn` única~~: hechos (ver §3).
-3. Sustituir los `except Exception` por excepciones concretas, o registrar con `logging` antes de
-   continuar.
+3. ~~Sustituir los `except Exception`~~: hecho donde procedía (§8 punto 4).
 4. Partir `session_report.py` en: métricas (sin HTML) y render HTML.
 5. Confirmar la ventana de 2 s: reiniciar solo desde el último tick válido en lugar de borrar todo.
 6. Cerrar el hueco del ACK ok: marcar pendiente también con ACK ok hasta que la palanca confirme el
    cambio.
 7. Parámetros por vehículo y adaptador de vehículo (ver §2.4).
+8. ~~Normalizar finales de línea~~ (hecho 2026-10-19).
+9. ~~Borrar el código sin referencias de §3.1~~ y ~~el alias de `loop.py`~~ (hecho 2026-10-19); queda
+   unificar `load_ticks`.
+10. (2026-10-19) Partir `loop._step_core` y `decision.evaluate_p1_tick` en pasos con nombre
+    (leer sensores, decidir, enviar IPC, registrar), con las pruebas actuales como red.
+11. (2026-10-19) Pruebas propias para `control_lock`, `service_brake`, `limit_containment` y
+    `autopilot_limit`; ampliar el contrato por vehículo con parada en andén y soltar al salir.
 
 ## 6. Pendiente de validación (UNKNOWN)
 
@@ -244,6 +301,26 @@ Logs `20261015T184644Z` a `20261015T210604Z`, ruta `gct-mnr`, M3A.
   0,31–0,40 m/s² (71–81 s). Es conservador frente a un freno cómodo habitual (≈ 0,6–0,8 m/s²,
   sin dato propio del M3A). Subirlo se aplaza hasta resolver la distancia al tablón.
 
+- **Frenada en vía abierta por lectura OCR rota (2026-10-21, `20261020T211925Z`, M3A, servicio 500).**
+  Tras salir de Fordham (último andén programado) el planificador no ofrecía ya ningún andén
+  (`regress_moving@3`, 190 rechazos) y la distancia salía solo del ancla HUD, que leía «4,0mi
+  Harlem 125th» (6437 m). En t = 2755 s el OCR devolvió «39m» (era «3,9mi»: perdió la coma y la `i`)
+  y tres capturas iguales bastaron para un `resync` de −6398 m (`HudAnchor._gated`). Con 64 mph y
+  «tablón a 34,5 m» P1 emitió `P1-CRITICO-STATION` (APPLY B3, palanca 0) y el tren paró en vía, sin
+  andén. Repitió a los 28 s: la distancia quedó congelada en 35,5 m aunque el tren volvió a 31 mph.
+  Corrección (2026-10-21, sin validar en juego): `hud_anchor.py` descarta capturas que no sean
+  continuas con la anterior avanzada a la velocidad actual (`jump`, holgura 250 m o 25 %) y el resync
+  no acepta saltos mayores de 1000 m (`resync_too_far`); 3 pruebas nuevas en `test_hud_anchor.py`.
+  Segunda guarda (2026-10-21): con la estimación ya en el andén servido (≤ 20 m) una captura no puede
+  subirla más de 150 m (`departed`); es lo que impedía que el HUD, apuntando a Harlem 125th a 7 km,
+  creara una distancia de estación fantasma justo después de salir de Fordham. **Repetición sobre el
+  log real** (ancla alimentada con las lecturas de `hud_ocr_m` desde la salida de Fordham, 495
+  capturas): 345 rechazadas por `departed`, 150 por `jump`, 0 movimientos de la distancia; antes del
+  cambio la distancia pasaba de 0 a 7078 m y luego a 34,5 m. Sin validar en juego.
+  Cubierto por estas guardas: la unidad mal leída (a), el salto/congelado (c) y la estación fantasma
+  tras el último andén (d). Pendiente solo (b), defensa en profundidad: no emitir `P1-CRITICO-STATION`
+  a alta velocidad si la distancia procede del ancla y acaba de saltar.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -255,3 +332,70 @@ Logs `20261015T184644Z` a `20261015T210604Z`, ruta `gct-mnr`, M3A.
 7. Adaptador de vehículo (§2.4 paso 2) con el modelo de palanca de §2.6. *En curso (2026-10-19):* `vehicle_adapter.py` con `NotchAdapter` / `McAnalogAdapter` y siete miembros migrados (`throttle_notch`, `station_lever`, `lever_says_brake`, `single_step`, `wire_fraction`, `fraction_feedback`, `analog_lever`; `command.py`, `brake_cab.py`, `ipc.py` y `loop.py` delegan; `loop.py` ya no llama a `uses_mc_analog_ipc`). Ningún módulo fuera de `vehicle_package.py` y `vehicle_adapter.py` llama ya a `uses_mc_analog_ipc` (todos usan `adapter_for_package(...).analog_lever` u otra operación). Pendiente: mover al adaptador la lógica propia de la M3A que sigue en `p1_station_gate.py` (bleed de andén: `mc_platform_bleed_*`) y `decision.py` (`_mc_station_roll_wanted`), hoy detrás de la guarda `analog_lever`. Registro de flotas por datos (paso 3): *hecho* — campo `fleet` en cada JSON, `vehicle_route_fleet` lo usa y cae al prefijo solo si no hay paquete.
 8. Distancia al tablón a lo largo de la vía (§7), tras validar con sesión y capturas.
 9. Partir `session_report.py` y reorganizar carpetas (refactor grande; hacerlo aparte y al final).
+
+## 9. Resumen del 2026-10-19
+
+Hecho (569 pruebas en verde, 4 saltadas): timeouts de ACK unificados; `PredictDecelFn` ya única;
+`except Exception` revisados; pruebas de contrato por vehículo (`test_vehicle_contract.py`); campo
+`fleet` en los paquetes; `vehicle_adapter.py` con pruebas propias (`test_vehicle_adapter.py`) y
+ninguna llamada directa a `uses_mc_analog_ipc` fuera de `vehicle_package.py`; mojibake de `loop.py`
+reparado.
+
+Pendiente, por prioridad:
+
+1. Cerrar el hueco del ACK ok (§4) — control; validar en juego.
+2. ~~Finales de línea (§5.8)~~ y ~~código sin referencias (§3.1)~~: hechos; falta solo el commit.
+3. Unificar `load_ticks` (§3) — bajo riesgo.
+4. Pruebas de módulos sin cobertura propia (§3.2).
+5. Partir `_step_core` / `evaluate_p1_tick` (§5.10).
+6. Mover al adaptador la lógica de la M3A que sigue tras la guarda `analog_lever`
+   (`mc_platform_bleed_*`, `_mc_station_roll_wanted`) — tras grabar sesiones de referencia 323 y M3A.
+7. Medir la física real de la M3A (§2.4 paso 1) y la distancia al tablón (§7).
+
+## 10. Para cerrar la sesión: validar y tareas siguientes
+
+### 10.1 Estado del árbol de trabajo (sin commit)
+
+569 pruebas en verde, 4 saltadas. Cambios sin confirmar: `.gitattributes`; normalización a LF de
+`command`, `hud_ocr`, `learner`, `loop`, `station_plan`, `trace`; código borrado de `gui_view`,
+`hud_db`, `physics`, `vehicle_package`; mojibake de `loop.py`; `test_vehicle_adapter.py` nuevo; este
+documento. Sugerencia de commits separados: (1) normalización de finales de línea, (2) limpieza de
+código sin uso y mojibake, (3) tests nuevos y documento.
+
+### 10.2 Validar antes de dar por cerrado
+
+Nada de esto lo cubren las pruebas automáticas; hace falta una sesión de juego:
+
+| # | Qué validar | Cómo | Vehículo |
+| - | ----------- | ---- | -------- |
+| 1 | El refactor del adaptador no cambió el comportamiento: arranque, COAST, parada en andén, soltar al salir, RELEASE a neutro | Una sesión completa de 2-3 estaciones y comparar el JSONL con una sesión previa (decisiones, `lever`, IPC enviados) | M3A y Class 323 |
+| 2 | `drive_to_notch` / `diagnostic` siguen mandando bien por IPC tras migrar `ipc.py` | `test_ipc_v2.bat` o `validar_freno.bat` con el probe activo | M3A y Class 323 |
+| 3 | La 323 no se ha roto (solo hay pruebas unitarias para ella) | Ruta Cross-City, una parada | Class 323 |
+| 4 | Punto del §7 aún sin validar en juego: dead-reckoning por reloj de pared, rodar en la aproximación final (`StationRollLatch`), filtro de horario (`fallback_all_when_unmatched`), `station_plan_decel_ms2` = 0,5 | Sesión gct-mnr, comparar paradas contra el HUD | M3A |
+| 5 | RELEASE en marcha ya no se repite con la palanca en neutro | Buscar en el log RELEASE consecutivos con `lever` = neutro (63 en 201122Z) | M3A |
+| 6 | Warning nuevo de `planning_poller` no inunda el log | Revisar el log de una sesión larga | cualquiera |
+| 7 | La continuidad del ancla HUD (`jump`) no descarta lecturas buenas: contar `jump` en el JSONL y comprobar que las paradas siguen ancladas (`board off=… n=…` sube) | Sesión gct-mnr completa, buscar `jump` en `ocr_anchor`; debe aparecer solo en lecturas rotas | M3A |
+| 8 | Tras el último andén programado (Fordham → Harlem 125th) el tren no frena en vía | Repetir el servicio 500 hasta pasar Fordham y circular ≥ 3 min | M3A |
+
+Criterio de aprobado para el punto 1: mismas decisiones y mismos mandos IPC que antes del refactor
+en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `analog_lever` de
+`p1_station_gate.py`, `decision.py` y `loop.py` (la semántica con paquete `None` es la de la 323).
+
+### 10.3 Tareas para las próximas sesiones (en orden)
+
+0. **Validar la corrección de la frenada fantasma** (§7, 2026-10-21; filas 7 y 8 de §10.2) y, si se quiere defensa en profundidad, el punto (b).
+1. **Commits** del §10.1 una vez pasada la validación 1-3.
+2. **Hueco del ACK ok** (§4): marcar pendiente también con ACK ok hasta que la palanca confirme;
+   test unitario del reenvío y validación en juego.
+3. **Unificar `load_ticks`** (`hud_ocr_eval` / `session_report`).
+4. **Pruebas propias** de `control_lock`, `service_brake`, `limit_containment`, `autopilot_limit`
+   (§3.2) y ampliar el contrato por vehículo con parada en andén y soltar al salir.
+5. **Decidir** si se conserva `diagnostic_mc_ipc` (§3.1).
+6. **Medir la física de la M3A** (`physics` del JSON, hoy heredada de la 323) con una sesión de
+   calibración de frenado.
+7. **Partir** `loop._step_core` y `decision.evaluate_p1_tick`.
+8. **Mover al adaptador** la lógica de la M3A que sigue tras `analog_lever` (`mc_platform_bleed_*`,
+   `_mc_station_roll_wanted`), con sesiones de referencia de la 323 y la M3A ya grabadas.
+9. **Distancia al tablón** a lo largo de la vía (§7), tras validar con captura.
+10. **Ventana de aprendizaje de 2 s** (§4): decisión de diseño pendiente.
+11. Al final: partir `session_report.py` y reorganizar carpetas (§2.4 paso 5).

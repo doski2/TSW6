@@ -423,6 +423,30 @@ log probe con `is_slipping`).
 **Salida del estudio:** tabla **escenario × señales × acción** aprobada; entonces sí cablear
 handler.
 
+##### Lluvia y nieve: adherencia de la vía (sugerencia, 2026-10-21)
+
+Estado: el canal existe (`HUD_GetIsSlipping`, `CurrentTrackAdhesion` por HTTP: nieve ≈ 0,01 frente a
+seco ≈ 0,99 en el 323, `214213Z` vs `213100Z`), pero **nada del planificador ni del learner lo usa**
+(INFERENCE: ningún módulo de `tsw6v2` lee adherencia ni clima). Con vía mojada o nevada la decel real
+cae y la parada por plan queda larga, mientras el learner (EMA por muesca × velocidad × gradiente)
+mezcla esas muestras con las de seco. Propuesta por pasos, de menor a mayor riesgo:
+
+| #  | Paso                                                                                                  | Riesgo | Depende de |
+| -- | ----------------------------------------------------------------------------------------------------- | ------ | ---------- |
+| A1 | **Solo medir:** leer `CurrentTrackAdhesion` por HTTP a baja frecuencia (≈ 0,2-1 Hz, como el poll de planificación, nunca en el tick) y grabar `adhesion` + `is_slipping` en el JSONL. | Ninguno | — |
+| A2 | **Clasificar** en bandas (hipótesis a calibrar: seco ≥ 0,8; húmedo 0,3-0,8; nieve/hielo < 0,3) y mostrarlas en el informe y la GUI. | Ninguno | A1 |
+| A3 | **No contaminar el learner:** indexar el perfil aprendido por banda (o descartar muestras fuera de «seco»), y no actualizar el EMA mientras `IsSlipping`. El perfil seco deja de degradarse tras una sesión con nieve. | Bajo | A2 |
+| A4 | **Escalar la decel del plan**, no sumar metros: `a_plan = a_aprendida(banda)`; sin datos de la banda, `a_seco × k` con `k` conservador (hipótesis 0,6-0,8 húmedo, 0,3-0,5 nieve) y suelo en la decel mínima útil. Esto reabre el principio 4 de arriba («sin +metros por adherencia»): la distancia crece porque baja `a`, no por un margen fijo. | Medio | A3 + sesiones |
+| A5 | **Parada en andén con baja adherencia:** empezar antes con un escalón más suave (menos riesgo de bloqueo en el tramo final) y no usar la rodadura `StationRollLatch` para corregir el exceso de velocidad; el último tramo se aplica con la decel de la banda. | Medio | A4 |
+| A6 | **Aviso al maquinista** (capa de texto en GUI) cuando la banda sea nieve/hielo o `IsSlipping` en APPLY: «adherencia baja, frenada ampliada». Sin cambiar el mando. | Ninguno | A2 |
+
+Validación necesaria (no se puede cerrar con tests): S1 y S2 de la tabla anterior en 323 (Cross-City
+nevado) y M3A (gct-mnr con lluvia); medir decel por banda con la misma muesca/fracción y comprobar
+que la parada queda en el tablón en seco **y** en mojado. Hasta tener esas sesiones, A4-A5 son
+hipótesis (UNKNOWN: cómo expone TSW6 el clima de forma estable y si `CurrentTrackAdhesion` es por
+eje o de la vía bajo el primer bogie). Recomendación: hacer A1-A3 y A6 ya (solo observan o protegen
+el aprendizaje) y dejar A4-A5 para después de la matriz del estudio de patinaje.
+
 **Borrador handler (solo tras S1–S4 en 323):**
 
 ```text
