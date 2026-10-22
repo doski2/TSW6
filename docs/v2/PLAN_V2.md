@@ -427,18 +427,19 @@ handler.
 
 Estado: el canal existe (`HUD_GetIsSlipping`, `CurrentTrackAdhesion` por HTTP: nieve ≈ 0,01 frente a
 seco ≈ 0,99 en el 323, `214213Z` vs `213100Z`), pero **nada del planificador ni del learner lo usa**
-(INFERENCE: ningún módulo de `tsw6v2` lee adherencia ni clima). Con vía mojada o nevada la decel real
+(INFERENCE: ningún módulo de `tsw6v2` lee adherencia ni clima). Con vía mojada o nevada la decel
+real
 cae y la parada por plan queda larga, mientras el learner (EMA por muesca × velocidad × gradiente)
 mezcla esas muestras con las de seco. Propuesta por pasos, de menor a mayor riesgo:
 
-| #  | Paso                                                                                                  | Riesgo | Depende de |
-| -- | ----------------------------------------------------------------------------------------------------- | ------ | ---------- |
-| A1 | **Solo medir:** leer `CurrentTrackAdhesion` por HTTP a baja frecuencia (≈ 0,2-1 Hz, como el poll de planificación, nunca en el tick) y grabar `adhesion` + `is_slipping` en el JSONL. | Ninguno | — |
-| A2 | **Clasificar** en bandas (hipótesis a calibrar: seco ≥ 0,8; húmedo 0,3-0,8; nieve/hielo < 0,3) y mostrarlas en el informe y la GUI. | Ninguno | A1 |
-| A3 | **No contaminar el learner:** indexar el perfil aprendido por banda (o descartar muestras fuera de «seco»), y no actualizar el EMA mientras `IsSlipping`. El perfil seco deja de degradarse tras una sesión con nieve. | Bajo | A2 |
-| A4 | **Escalar la decel del plan**, no sumar metros: `a_plan = a_aprendida(banda)`; sin datos de la banda, `a_seco × k` con `k` conservador (hipótesis 0,6-0,8 húmedo, 0,3-0,5 nieve) y suelo en la decel mínima útil. Esto reabre el principio 4 de arriba («sin +metros por adherencia»): la distancia crece porque baja `a`, no por un margen fijo. | Medio | A3 + sesiones |
-| A5 | **Parada en andén con baja adherencia:** empezar antes con un escalón más suave (menos riesgo de bloqueo en el tramo final) y no usar la rodadura `StationRollLatch` para corregir el exceso de velocidad; el último tramo se aplica con la decel de la banda. | Medio | A4 |
-| A6 | **Aviso al maquinista** (capa de texto en GUI) cuando la banda sea nieve/hielo o `IsSlipping` en APPLY: «adherencia baja, frenada ampliada». Sin cambiar el mando. | Ninguno | A2 |
+| #   | Paso                                                                                                                                                                                                                                                                                                                                              | Riesgo  | Depende de    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------- |
+| A1  | **Solo medir:** leer `CurrentTrackAdhesion` por HTTP a baja frecuencia (≈ 0,2-1 Hz, como el poll de planificación, nunca en el tick) y grabar `adhesion` + `is_slipping` en el JSONL.                                                                                                                                                             | Ninguno | —             |
+| A2  | **Clasificar** en bandas (hipótesis a calibrar: seco ≥ 0,8; húmedo 0,3-0,8; nieve/hielo < 0,3) y mostrarlas en el informe y la GUI.                                                                                                                                                                                                               | Ninguno | A1            |
+| A3  | **No contaminar el learner:** indexar el perfil aprendido por banda (o descartar muestras fuera de «seco»), y no actualizar el EMA mientras `IsSlipping`. El perfil seco deja de degradarse tras una sesión con nieve.                                                                                                                            | Bajo    | A2            |
+| A4  | **Escalar la decel del plan**, no sumar metros: `a_plan = a_aprendida(banda)`; sin datos de la banda, `a_seco × k` con `k` conservador (hipótesis 0,6-0,8 húmedo, 0,3-0,5 nieve) y suelo en la decel mínima útil. Esto reabre el principio 4 de arriba («sin +metros por adherencia»): la distancia crece porque baja `a`, no por un margen fijo. | Medio   | A3 + sesiones |
+| A5  | **Parada en andén con baja adherencia:** empezar antes con un escalón más suave (menos riesgo de bloqueo en el tramo final) y no usar la rodadura `StationRollLatch` para corregir el exceso de velocidad; el último tramo se aplica con la decel de la banda.                                                                                    | Medio   | A4            |
+| A6  | **Aviso al maquinista** (capa de texto en GUI) cuando la banda sea nieve/hielo o `IsSlipping` en APPLY: «adherencia baja, frenada ampliada». Sin cambiar el mando.                                                                                                                                                                                | Ninguno | A2            |
 
 Validación necesaria (no se puede cerrar con tests): S1 y S2 de la tabla anterior en 323 (Cross-City
 nevado) y M3A (gct-mnr con lluvia); medir decel por banda con la misma muesca/fracción y comprobar
@@ -830,7 +831,9 @@ HTTP + odometría Python. El tablón fino (`car_stop_signs` en `tsw_hud.db`) es 
    `odo_m` del probe (aún).
 
 El probe **sí** manda `odo_m` (~20 Hz) y puertas (`doors_telem` / `doors_dmi`); **no**
-`station_dist_cm`. **Sin OCR en el control** (Dastsc); desde 2026-10-18 el OCR del HUD **ancla la distancia de parada** al marcador del juego (`TSW6_HUD_OCR_CONTROL`, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)); HTTP queda de referencia.
+`station_dist_cm`. **Sin OCR en el control** (Dastsc); desde 2026-10-18 el OCR del HUD **ancla la
+distancia de parada** al marcador del juego (`TSW6_HUD_OCR_CONTROL`,
+[HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)); HTTP queda de referencia.
 
 **Tres capas (no confundir):**
 
@@ -845,21 +848,21 @@ v2 salvo F9 con escalar legible.
 
 ##### Estado v2
 
-| Estado              | Qué                                                              | Bloqueo                          |
-| ------------------- | ---------------------------------------------------------------- | -------------------------------- |
-| **En producción**   | HTTP markers + `v×dt` + filtro HUD + FSM puertas (Lua/DMI)       | —                                |
-| **Parcial**         | P1 usa fin de plataforma, no tablón; `odo_m` no ancla estaciones | C2                               |
-| **Aplazado**        | `station_dist_cm` en GetData (Lua)                               | F9 frente a andén; después de C1 |
-| **Investigar (C2)** | Ancla HTTP + Δ`odo_m` probe (como C.3a en carteles)              | Medir si ~2 s + `v×dt` no basta  |
+| Estado              | Qué                                                                               | Bloqueo                                        |
+| ------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **En producción**   | HTTP markers + `v×dt` + filtro HUD + FSM puertas (Lua/DMI)                        | —                                              |
+| **Parcial**         | P1 usa fin de plataforma, no tablón; `odo_m` no ancla estaciones                  | C2                                             |
+| **Aplazado**        | `station_dist_cm` en GetData (Lua)                                                | F9 frente a andén; después de C1               |
+| **Investigar (C2)** | Ancla HTTP + Δ`odo_m` probe (como C.3a en carteles)                               | Medir si ~2 s + `v×dt` no basta                |
 | **En prueba**       | Ancla OCR: el HUD manda sobre la distancia de parada (tablón); HTTP de referencia | Ver [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md) |
-| **Fuera v2**        | HTTP cada tick; OCR tablón **como control**; `markers[]` TArray en Lua sin F9 | Lento / TSC / hitch              |
+| **Fuera v2**        | HTTP cada tick; OCR tablón **como control**; `markers[]` TArray en Lua sin F9     | Lento / TSC / hitch                            |
 
-| Alternativa                                   | Pros                              | Contras                                   |
-| --------------------------------------------- | --------------------------------- | ----------------------------------------- |
-| **HTTP markers + odometría Python (elegida)** | Ya funciona; no carga probe       | ~2 s refresco; fin de plataforma ≠ tablón |
-| `station_dist_cm` en GetData (Lua)            | Mismo Hz que límites              | ¿Existe escalar en `GetDriverAidData`? F9 |
-| Híbrido `odo_m` + ancla HTTP                  | Más precisión entre polls HTTP    | Hoy solo `v×dt`; Δ`odo_m` = C2            |
-| GPS / coordenadas mundo                       | `distanceToStation` {x,y} en HTTP | Actor pos en Lua incierto                 |
+| Alternativa                                   | Pros                              | Contras                                                                                                 |
+| --------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **HTTP markers + odometría Python (elegida)** | Ya funciona; no carga probe       | ~2 s refresco; fin de plataforma ≠ tablón                                                               |
+| `station_dist_cm` en GetData (Lua)            | Mismo Hz que límites              | ¿Existe escalar en `GetDriverAidData`? F9                                                               |
+| Híbrido `odo_m` + ancla HTTP                  | Más precisión entre polls HTTP    | Hoy solo `v×dt`; Δ`odo_m` = C2                                                                          |
+| GPS / coordenadas mundo                       | `distanceToStation` {x,y} en HTTP | Actor pos en Lua incierto                                                                               |
 | OCR (Dastsc)                                  | Tablón visual                     | TSC en origen. **Aquí sí, como ancla acotada** (2026-10-18, [HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
 
 **v2:** seguir HTTP + resta. **C2** después de **C1** (señales): F9 en andén — ¿existe
@@ -869,13 +872,13 @@ duplicar reglas aquí).
 
 ##### Dudas (cerrar con sesión C2 / Cross-City, no solo dump HTTP)
 
-| Duda                              | Por qué importa                          | Cómo salir                                           |
-| --------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
-| ¿Fin de plataforma basta para P1? | Parada corta vs tablón desplazado        | Sesión andén conocido; comparar con `car_stop_signs` |
+| Duda                                                                                        | Por qué importa                                     | Cómo salir                                                 |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------- |
+| ¿Fin de plataforma basta para P1?                                                           | Parada corta vs tablón desplazado                   | Sesión andén conocido; comparar con `car_stop_signs`       |
 | **Respuesta parcial (2026-10-15):** no basta, desfase app−HUD ≈ 35 a ≈ 118 m según estación | Ver [ANALISIS § 7](ANALISIS_PROYECTO_2026-10-13.md) | Medir con OCR ([HUD_OCR_MEDICION.md](HUD_OCR_MEDICION.md)) |
-| ¿`v×dt` vs Δ`odo_m`?              | Deriva en pendiente / velocidad errática | Log dist estación vs `odo_m` en tramo largo          |
-| ¿Marker de la vía contraria?      | Sutton / Four Oaks                       | `hud_geo` + `stop_names` (§4.6); no “más cercano”    |
-| ¿Escalar andén en Lua al tick?    | Misma pregunta que lim2                  | F9 en APPROACHING; no TArray a ciegas                |
+| ¿`v×dt` vs Δ`odo_m`?                                                                        | Deriva en pendiente / velocidad errática            | Log dist estación vs `odo_m` en tramo largo                |
+| ¿Marker de la vía contraria?                                                                | Sutton / Four Oaks                                  | `hud_geo` + `stop_names` (§4.6); no “más cercano”          |
+| ¿Escalar andén en Lua al tick?                                                              | Misma pregunta que lim2                             | F9 en APPROACHING; no TArray a ciegas                      |
 
 ##### Criterio de cierre §4.4
 
