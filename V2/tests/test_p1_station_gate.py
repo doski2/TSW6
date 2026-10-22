@@ -912,7 +912,7 @@ def _bleed_release_fakes(lever: int):
 
 def test_in_motion_bleed_release_skipped_when_lever_not_braking_session_201122() -> None:
     """Crestwood 201122Z: RELEASE cada 2 ticks con palanca ya en neutro pisaba al maquinista."""
-    from tsw6v2.decision import _attempt_platform_parked_bleed_release
+    from tsw6v2.decision_release import attempt_platform_parked_bleed_release as _attempt_platform_parked_bleed_release
 
     kwargs = dict(
         station_fsm="DEPARTING",

@@ -56,12 +56,12 @@ Regla del orden: una fase solo mira hacia arriba (lo ya decidido), nunca llama a
 
 ## 4. Orden de extracción (un commit por paso, suite completa antes y después)
 
-0. Borrar `diag_station` (marcado «quitar tras 212814Z»; solo lo usa `decision.py`, import y
+0. ~~Borrar `diag_station`~~ (hecho) (marcado «quitar tras 212814Z»; solo lo usa `decision.py`, import y
    llamada `log_station_tick`). `evaluate_limit_tick` se conserva: lo usa `tests/test_decision.py`.
-1. `decision_types`.
-2. `decision_prep`.
-3. `decision_emergency`.
-4. `decision_release` (aquí se alinean después los umbrales aplicar/soltar, ANALISIS §7.1 e).
+1. ~~`decision_types`~~ (hecho).
+2. ~~`decision_prep`~~ (hecho).
+3. ~~`decision_emergency`~~ (hecho).
+4. ~~`decision_release`~~ (hecho; aquí se alinean después los umbrales aplicar/soltar, ANALISIS §7.1 e).
 5. Lógica MC al adaptador, pasando valores simples (ANALISIS §8.7).
 6. `decision_targets` y `decision_finalize`; `evaluate_p1_tick` queda como orquestador.
 
@@ -77,7 +77,25 @@ salida antes del paso y compararla después sobre `212139Z`).
   `LimitBrakeDecision` sigue importable desde `decision`.
 - **Verificado:** 590 pruebas en verde y paridad antes/después sobre `212139Z` (8706 ticks, uno de
   cada tres): 0 diferencias en razón, fase, tipo de objetivo, `apply_now` ni mando.
-- **Sin hacer:** paso 0 (`diag_station`) y pasos 3-6.
+- **Hecho (2026-10-23, segunda tanda):** paso 0 (`diag_station` borrado: era opt-in con
+  `TSW6_DIAG_STATION=1`, nunca generó fichero y solo lo usaba `decision.py`) y paso 3
+  (`decision_emergency.py`, 143 líneas; `signal_distance_m` pasa a `decision_prep` por ser
+  compartido). `decision.py` queda en 950 líneas (de 1362).
+- **Verificado la segunda tanda:** 590 pruebas y paridad sobre `212139Z` y `205735Z` (15 663 ticks,
+  195 de ellos de emergencia): 0 diferencias.
+- **Hecho (tercera tanda):** paso 4 (`decision_release.py`, 366 líneas con la guarda del parpadeo: bleed, soltar tras bleed,
+  salida, señal heredada y cartel). `decide_station_neutral_release` pasa a `decision_types` como
+  función (la comparten `decision_release` y `_continue_station_stop`; un test usa un `ctx` falso
+  con solo `decide`). El test de `_attempt_platform_parked_bleed_release` importa ahora de
+  `decision_release`. `decision.py` queda en 619 líneas (de 1362).
+- **Verificado la tercera tanda:** 590 pruebas y paridad sobre las tres sesiones del 22-oct
+  (28 399 ticks, uno de cada dos; 902 `release`, 4555 `platform_bleed`, 300 `emergency`): 0
+  diferencias.
+- **Hecho (cambio de lógica, commit aparte):** el parpadeo de ANALISIS §7.1 e.
+  `decision_release._limit_plan_owns_brake` (el plan manda mientras aplique y la velocidad esté
+  sobre su objetivo). Un solo punto de decisión por episodio para el cartel; los demás caminos de
+  soltar quedan para freno heredado.
+- **Sin hacer:** pasos 5-6.
 - **Aviso:** el diff de `decision.py` mezcla este movimiento con `_mc_limit_fraction` (sin commit
   previo). Conviene commitear primero el freno analógico por cartel y después el movimiento.
 

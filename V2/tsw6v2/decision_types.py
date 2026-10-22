@@ -171,3 +171,19 @@ class TickPrep:
     escalate_cap: Optional[Callable[[int, int], int]]
     fill_s: float
     predict: Optional[PredictDecelFn]
+
+
+def decide_station_neutral_release(
+    ctx: TickCtx,
+    rel: BrakeCommand,
+    reason: str,
+) -> LimitBrakeDecision:
+    """RELEASE a neutro ligado al andén (bleed, salida, rodar hasta el clic)."""
+    return ctx.decide(
+        rel,
+        reason,
+        phase=rel.phase or "NEU",
+        detail=rel.reason,
+        handle_notch=rel.target_notch,
+        target_kind="STATION",
+    )

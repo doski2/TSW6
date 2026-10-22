@@ -479,3 +479,50 @@ def test_orphan_release_after_commitment_reaches_target():
         committed_limit_mph=34.0,
     )
     assert cmd is not None
+
+
+def _m3a_limit_snap(lever: int, dist_m: float, speed_mph: float = 9.26):
+    from tsw6v2.bridge.getdata import ProbeSnapshot
+
+    ms = 0.44704
+    return ProbeSnapshot(
+        vehicle="RVM_NYH_MNR_M3a-A_C",
+        speed_ms=speed_mph * ms,
+        speed_limit_ms=60 * ms,
+        next_limit_ms=10 * ms,
+        dist_limit_cm=dist_m * 100.0,
+        gradient_pct=-0.48,
+        lever_notch=lever,
+        mc_input=0.72 if lever == 4 else 0.67,
+        train_brake=0.0 if lever == 4 else 0.05,
+    )
+
+
+def test_limit_plan_keeps_brake_inside_release_band_session_212139() -> None:
+    """212139Z: 9,26 mph, objetivo @9, cartel 10 a 139 m. APPLY/RELEASE cada tick durante ~60 s."""
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.limits import LimitBrakeState
+
+    limit_state, release_state = LimitBrakeState(), BrakeReleaseState()
+    for lever, dist in ((4, 139.6), (3, 139.1), (4, 138.8), (3, 138.5), (3, 138.2)):
+        decision = evaluate_p1_tick(
+            limit_state, release_state, _m3a_limit_snap(lever, dist)
+        )
+        assert decision.command is not None
+        assert decision.command.kind == "APPLY", (lever, decision.reason)
+
+
+def test_limit_brake_released_once_target_reached_session_212139() -> None:
+    """Con la velocidad ya en el objetivo del plan (8,9 ≤ @9) sí se suelta."""
+    from tsw6v2.command import BrakeReleaseState
+    from tsw6v2.decision import evaluate_p1_tick
+    from tsw6v2.limits import LimitBrakeState
+
+    limit_state, release_state = LimitBrakeState(), BrakeReleaseState()
+    evaluate_p1_tick(limit_state, release_state, _m3a_limit_snap(4, 139.6))
+    decision = evaluate_p1_tick(
+        limit_state, release_state, _m3a_limit_snap(3, 139.1, speed_mph=8.9)
+    )
+    assert decision.command is not None
+    assert decision.command.kind == "RELEASE"

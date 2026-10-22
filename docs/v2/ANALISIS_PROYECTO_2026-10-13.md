@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23)
 
-Alcance: `V2/tsw6v2/` (66 módulos incluido `bridge/`, ~19,5 k líneas; 43 ficheros de test, 590
+Alcance: `V2/tsw6v2/` (69 módulos incluido `bridge/`, ~19,5 k líneas; 43 ficheros de test, 592
 pruebas, 4 saltadas).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -23,7 +23,7 @@ Archivos más grandes (líneas):
 | Líneas | Archivo              | Nota                                                    |
 | ------ | -------------------- | ------------------------------------------------------- |
 | 1680   | `session_report.py`  | HTML + cálculo; candidato a partir (render vs métricas) |
-| 1323   | `decision.py`        | Núcleo P1; concentra cartel, andén, RELEASE y COAST     |
+| 619    | `decision.py`        | Orquestador P1 tras partirlo (2026-10-23; era 1323): `decision_types` 189, `decision_prep` 121, `decision_emergency` 143, `decision_release` 366 |
 | 1044   | `loop.py`            | Bucle agente; envío IPC + estado                        |
 | 1033   | `p1_station_gate.py` | FSM de estación                                         |
 | 1015   | `vehicle_package.py` | Datos de vehículo (19 helpers `mc_*`)                   |
@@ -282,7 +282,7 @@ las importa de `tsw6v2.physics`. El paquete v1 depende de V2, no al revés.
 
 ### 3.2 Módulos sin ninguna referencia en tests (2026-10-19)
 
-`autopilot_limit`, `cli`, `control_lock`, `diag_station`, `diagnostic_mc_ipc`, `limit_containment`,
+`autopilot_limit`, `cli`, `control_lock`, `diag_station` (borrado 2026-10-23), `diagnostic_mc_ipc`, `limit_containment`,
 `service_brake`. Varios se ejercitan de forma indirecta (`decision`, `limits`), pero no tienen
 pruebas
 propias; `control_lock` (bloqueo de instancia única) y `service_brake` (objetivo de parada → mando)
@@ -508,7 +508,14 @@ Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; 
   cada tick, 10-41 ticks por racimo, unas 15 veces. Causa probable (INFERENCE): umbrales
   invertidos entre el plan (aplica si v > objetivo) y `resolve_release_command` (suelta si
   v ≤ objetivo + `LIMIT_RELEASE_MAX_OVER_MPH` = 0,4); en [9,0; 9,4] ambos se cumplen y alternan. La
-  guarda de (a) cubre solo la rama huérfana, no esta. Parpadeo análogo en la aproximación a andén
+  guarda de (a) cubre solo la rama huérfana, no esta. **Corregido 2026-10-23 (sin validar en
+  juego):** `decision_release._limit_plan_owns_brake` — con el plan del cartel en `apply_now` y la
+  velocidad por encima de su objetivo no se suelta por la banda de `resolve_release_command`.
+  Reproducido en el replay (`evaluate_p1_tick` con el `lever` del tick anterior: el `lever` del JSONL
+  es el estado tras el mando) y regresión en `test_release.py`. Sobre las tres sesiones completas
+  (56 797 ticks) solo cambian 62 ticks, todos de `212139Z` y todos `release/RELEASE` →
+  `plan/APPLY`. El parpadeo de aproximación a andén (`Estación dist=43/32/20/10 m`) NO es este
+  fallo: es la histéresis rodar↔frenar de `StationRollLatch` (3 s) y queda como está. Parpadeo análogo en la aproximación a andén
   (`Estación dist=43/32/20/10 m`, t = 1245-1257 s) y en `203644Z` (White Plains).
 - **f) Paradas contra el HUD** (última lectura OCR válida con el tren parado): 7,0 / 2,1 m
   (`203644Z`); 2,1 / 1,8 / 1,8 / 1,5 / 1,5 / 1,5 m (`205735Z`); 2,1 / 3,0 / 7,9 m (`212139Z`). Todas
@@ -574,9 +581,15 @@ Pendiente, por prioridad:
 
 ### 10.1 Estado del árbol de trabajo (sin commit)
 
-**Actualización 2026-10-23:** 590 pruebas en verde, 4 saltadas. Lo de abajo (2026-10-19) ya está
-confirmado en commits (`e24469f` … `ebc13dd`). Sin commit quedan solo `decision.py`,
-`vehicle_package.py` y `test_vehicle_package.py` (§7.1 d) y `docs/v2/TRENES_DLC.md`.
+**Actualización 2026-10-23:** 592 pruebas en verde, 4 saltadas. Lo de abajo (2026-10-19) ya está
+confirmado en commits (`e24469f` … `ebc13dd`), y también el freno analógico por cartel (§7.1 d) y
+`TRENES_DLC.md`. **Sin commit** (orden sugerido, un commit por punto):
+(1) borrado de `diag_station.py`; (2) `decision_types.py` + `decision_prep.py`; (3)
+`decision_emergency.py`; (4) `decision_release.py` + el test de `test_p1_station_gate.py` que
+cambia de import; (5) **cambio de lógica aparte:** `_limit_plan_owns_brake` + 2 tests en
+`test_release.py` (parpadeo, §7.1 e); (6) documentos (`ANALISIS…`, `DECISION_MODULOS.md`,
+`assets/p1_decision*`). Los puntos 2-4 son movimientos sin cambio de comportamiento (paridad
+medida: 0 diferencias en 28 399 ticks); el 5 sí cambia comportamiento (62 ticks de 56 797).
 
 Estado original (2026-10-19): 569 pruebas en verde, 4 saltadas. Cambios sin confirmar: `.gitattributes`; normalización a LF de
 `command`, `hud_ocr`, `learner`, `loop`, `station_plan`, `trace`; código borrado de `gui_view`,
@@ -624,7 +637,8 @@ en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `
 
    calibración de frenado.
 
-7. **Partir** `loop._step_core` y `decision.evaluate_p1_tick`.
+7. **Partir** `loop._step_core` y `decision.evaluate_p1_tick` (`decision.py` ya está partido en 5
+   módulos, ver §10.5 punto 2; queda `evaluate_p1_tick` y `loop._step_core`).
 8. **Mover al adaptador** la lógica de la M3A que sigue tras `analog_lever` (`mc_platform_bleed_*`,
 
    `_mc_station_roll_wanted`), con sesiones de referencia de la 323 y la M3A ya grabadas.
@@ -653,29 +667,41 @@ Contrasta la tabla de §10.2 con los JSONL posteriores a la última edición de 
 
 Orden de trabajo (cada punto con su log de referencia):
 
-1. **Parpadeo APPLY↔RELEASE en la banda del límite y de la aproximación a andén** (§7.1 e). Es lo
-   más visible en `212139Z` (199 alternancias). Reproducir con `replay_jsonl.py` o con
-   `evaluate_p1_tick` los ticks 17347-17358 (v = 9,26 mph, cartel 10, objetivo @9) y los 24477-24711
-   (andén, 43→10 m). Alinear los umbrales de aplicar y soltar con histéresis explícita (aplicar
-   por encima de `objetivo + a`, soltar por debajo de `objetivo − b`, con a ≥ 0 < b) en lugar de
-   parches por rama. Test de regresión con esos valores.
-2. **Commit** de `decision.py` + `vehicle_package.py` + `test_vehicle_package.py` (freno analógico
-   por cartel, §7.1 d) y de `TRENES_DLC.md`. Validar en juego: curva `decel_by_mc` con pocos puntos
-   puede caer al peldaño B3 (a 250 m, 72→59 mph, la decel necesaria supera la curva).
-3. **Validar en juego** (a)-(d) de §7.1: cartel a 60-75 mph sin escalada al 100 %, sin parpadeo a
-   35 mph, ancla sin lecturas `Nm lem…`, eje continuo en el cartel.
-4. **Sesión de la Class 323** (fila 3 de §10.2) antes de más cambios en `limit_notch` /
+1. **Commits** del árbol (§10.1, 6 commits en ese orden). Antes del primero: `pytest` (592) y, si
+   se quiere, la comparación antes/después con `V2/scripts/replay_jsonl.py` (usar el `lever` del
+   tick anterior: el del JSONL es el estado tras el mando).
+2. **Partir `decision.py`, lo que queda** ([DECISION_MODULOS.md](DECISION_MODULOS.md); diagrama en
+   `assets/p1_decision.html`). Hecho: pasos 0-4 (`decision.py` 1362 → 619 líneas). Pendiente:
+   - **Paso 5 — lógica MC al adaptador:** `_mc_station_*`, `_mc_limit_fraction`,
+     `_station_stop_continues`, `_continue_station_stop` y `_mc_station_roll_wanted` pasan a
+     `vehicle_adapter` (o a un módulo de fracciones MC), recibiendo valores simples, no `TickCtx`.
+     Cierra también la deuda de §8 punto 7 (`mc_platform_bleed_*` sigue en `p1_station_gate.py`).
+   - **Paso 6 — `decision_targets` y `decision_finalize`:** `evaluate_p1_tick` queda como
+     orquestador (~150 líneas). Las fases de objetivos **no son puras** hoy (§ «Matiz a la regla 3»
+     de `DECISION_MODULOS.md`): conservar el orden exacto al extraerlas.
+   Un commit por paso, suite completa y comparación antes/después en cada uno.
+3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e). El parpadeo del cartel
+   está tapado con `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar
+   independientes del plan. Siguiente paso: que soltar un freno comprometido sea una transición
+   del plan (con histéresis explícita) y que los caminos de `decision_release` actúen solo sobre
+   freno heredado. Cambio de lógica: su propio commit y su propia validación.
+4. **Validar en juego** (a)-(e) de §7.1: cartel a 60-75 mph sin escalada al 100 %; sin parpadeo a
+   35 mph ni en la zona de 10 mph hacia Grand Central (no deben aparecer racimos de alternancias
+   APPLY↔RELEASE en el JSONL); ancla sin lecturas `Nm lem…`; eje continuo en el cartel. Curva
+   `decel_by_mc` con pocos puntos puede caer al peldaño B3 (a 250 m, 72→59 mph la decel
+   necesaria supera la curva).
+5. **Sesión de la Class 323** (fila 3 de §10.2) antes de más cambios en `limit_notch` /
    `decision`: es la única forma de saber si los arreglos de esta semana la afectan.
-5. **Trenes nuevos** (cuando se hayan sondeado): según [TRENES_DLC.md](TRENES_DLC.md), un
+6. **Trenes nuevos** (cuando se hayan sondeado): según [TRENES_DLC.md](TRENES_DLC.md), un
    representante por familia (diésel de EE. UU. con dinámico, eléctrico alemán, metro o UK
    combinada) antes de decidir «archivo por tren». Criterio: operación nueva → adaptador nuevo;
-   solo números nuevos → JSON.
-6. **Partir `decision.py`** siguiendo [DECISION_MODULOS.md](DECISION_MODULOS.md) (flujo y reglas en
-   `assets/p1_decision.html`); antes del paso 1 de esta lista si se va a tocar el parpadeo.
+   solo números nuevos → JSON. El paso 5 del punto 2 es el que lo prepara.
 7. **Física real de la M3A** (`physics` hoy heredada de la 323) y el resto de §10.3 (ACK ok,
-   `load_ticks`, pruebas de módulos sin cobertura, partir `_step_core` / `evaluate_p1_tick`).
+   `load_ticks`, pruebas de módulos sin cobertura, partir `loop._step_core`).
 
 Riesgos abiertos que conviene no olvidar: el feedback por muesca (`fb_escalated`) ya no cambia el
 mando MC del cartel (el lazo se cierra al recalcular la decel necesaria cada tick; una curva muy
-optimista tardaría varios ticks en corregirse); y la envolvente monótona frena algo más fuerte que
-antes también en andén (los tests siguen pasando, sin sesión que lo confirme).
+optimista tardaría varios ticks en corregirse); la envolvente monótona frena algo más fuerte que
+antes también en andén (los tests siguen pasando, sin sesión que lo confirme); y el replay offline
+es en lazo abierto: demuestra qué decide el código con esas entradas, no que el tren deje de
+oscilar.

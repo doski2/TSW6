@@ -112,3 +112,10 @@ def prepare_tick(
             else None
         ),
     )
+
+
+def signal_distance_m(snap: ProbeSnapshot) -> Optional[float]:
+    if snap.signal_red is not True or snap.signal_dist_cm is None:
+        return None
+    dist = float(snap.signal_dist_cm) / 100.0
+    return dist if dist > 0 else None
