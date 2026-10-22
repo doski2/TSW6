@@ -39,6 +39,7 @@ from tsw6v2.physics import (
     MPH_TO_MS,
     apply_zone_margin_m,
     coast_misses_speed_limit,
+    effective_decel_ms2,
 )
 from tsw6v2.command import BrakeReleaseState
 from tsw6v2.target import LIMIT_COAST_BAND_MPH, BrakeTargetResult
@@ -155,6 +156,21 @@ def evaluate_limit_brake(
     return None
 
 
+def _committed_decel_ms2(
+    state: LimitBrakeState,
+    latch: LimitBrakeLatch,
+    gradient_pct: float,
+) -> Optional[float]:
+    """Decel neta (con pendiente) de la muesca comprometida; ``None`` sin compromiso."""
+    handle = state.committed_handle
+    if handle is None:
+        return None
+    decel = latch.decel_by_handle.get(handle)
+    if decel is None or latch.learned_by_handle.get(handle, False):
+        return decel  # el aprendido ya incluye la pendiente
+    return effective_decel_ms2(decel, gradient_pct)
+
+
 def _evaluate_next_limit_brake(
     state: LimitBrakeState,
     *,
@@ -242,6 +258,8 @@ def _evaluate_next_limit_brake(
         gradient_pct=gradient_pct,
         defer_commit=defer_commit,
         escalate_cap=escalate_cap,
+        distance_m=max(0.0, distance_m - latch.reaction_margin_m),
+        committed_decel_ms2=_committed_decel_ms2(state, latch, gradient_pct),
     )
     handle, phase, fb = apply_weak_decel_feedback(
         state,

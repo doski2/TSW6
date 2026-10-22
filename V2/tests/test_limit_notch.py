@@ -131,7 +131,7 @@ def test_evaluate_limit_brake_escalates_after_b1_committed() -> None:
         state,
         speed_mph=55.3,
         limit_mph=55.0,
-        distance_m=120.0,
+        distance_m=70.0,
         gradient_pct=-1.0,
         posted_limit_mph=60.0,
     )
@@ -329,3 +329,43 @@ def test_evaluate_70_to_45_with_learner_not_stuck_on_b1() -> None:
     assert result is not None
     assert result.handle_notch <= 2
     assert learner.air_ready(1.74, lever=3) is True
+
+
+def test_overspeed_far_from_sign_does_not_escalate_b1_to_b3() -> None:
+    """212139Z: 71.6 mph, cartel 60 a 596 m, B1 llega de sobra: no escalar al 100%."""
+    state = LimitBrakeState()
+    state.committed_handle = 3
+    state.committed_phase = "B1"
+    handle, phase = apply_notch_hysteresis(
+        state,
+        handle=3,
+        phase="B1",
+        dist_start=62.0,
+        apply_now=True,
+        apply_zone_m=64.0,
+        speed_mph=71.56,
+        limit_mph=59.0,
+        gradient_pct=-0.15,
+        distance_m=596.0 - 48.0,
+        committed_decel_ms2=0.353,
+    )
+    assert (handle, phase) == (3, "B1")
+
+
+def test_overspeed_escalates_when_committed_notch_falls_short() -> None:
+    state = LimitBrakeState()
+    state.committed_handle = 3
+    state.committed_phase = "B1"
+    handle, _ = apply_notch_hysteresis(
+        state,
+        handle=3,
+        phase="B1",
+        dist_start=20.0,
+        apply_now=True,
+        apply_zone_m=50.0,
+        speed_mph=71.56,
+        limit_mph=59.0,
+        distance_m=300.0,
+        committed_decel_ms2=0.353,
+    )
+    assert handle == 2

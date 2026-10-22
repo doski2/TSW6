@@ -250,6 +250,23 @@ def _grade_escalation_allowed(
     return True
 
 
+def _committed_notch_reaches_target(
+    speed_mph: float,
+    limit_mph: float,
+    distance_m: Optional[float],
+    decel_ms2: Optional[float],
+) -> bool:
+    """¿La muesca comprometida frena de ``speed`` a ``limit`` dentro de ``distance_m``?
+
+    Sin distancia o decel (llamadas heredadas) no hay veredicto: ``False`` conserva la escalada.
+    """
+    if distance_m is None or decel_ms2 is None or decel_ms2 <= 0.0:
+        return False
+    v = speed_mph * MPH_TO_MS
+    v_limit = limit_mph * MPH_TO_MS
+    return v * v <= v_limit * v_limit + 2.0 * decel_ms2 * max(0.0, distance_m)
+
+
 def _step_stronger(
     state: LimitBrakeState,
     prev: int,
@@ -279,6 +296,8 @@ def apply_notch_hysteresis(
     defer_commit: bool = False,
     escalate_cap: Callable[[int, int], int] | None = None,
     downhill_hold: bool = False,
+    distance_m: Optional[float] = None,
+    committed_decel_ms2: Optional[float] = None,
 ) -> tuple[int, str]:
     """
     Muesca de menos a más (B1→B2→B3) y de más a menos (B3→B2→B1).
@@ -325,11 +344,16 @@ def apply_notch_hysteresis(
             return stepped, state.committed_phase
 
     # Escalada por overspeed solo en ventana cinemática (no por apply_now lejos).
+    # Lejos del cartel el overspeed es normal: solo si la muesca comprometida ya no llega
+    # (212139Z: 72→59 mph a 596 m escalaba B1→B3 en 3 ticks y frenaba al 100%).
     if (
         is_in_apply_zone(dist_start, apply_zone_m)
         and may_escalate
         and speed_mph > limit_mph + LIMIT_CONTAIN_ESCALATE_OVER_MPH
         and prev > 1
+        and not _committed_notch_reaches_target(
+            speed_mph, limit_mph, distance_m, committed_decel_ms2
+        )
     ):
         return _step_stronger(state, prev, escalate_cap=escalate_cap)
 
