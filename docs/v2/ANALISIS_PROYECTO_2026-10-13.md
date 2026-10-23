@@ -253,6 +253,9 @@ por vehículo (§2.4 paso 4) ya escritas, para poder comparar antes y después.
   `AGENT_ACK_TIMEOUT_S`).
   Queda el de `ipc.py`, que es el nombre público de sus defaults; mismo valor, sin acción.
 
+- **Resuelto (2026-10-23): `load_ticks`.** Ambos módulos usan `session_io.iter_session_rows(path,
+  strict=...)`: estricto en el informe (línea rota → `ValueError`), tolerante en el análisis OCR.
+  Pruebas en `test_session_io.py`. Descripción original:
 - **`load_ticks` en 2 módulos** (2026-10-19): `hud_ocr_eval.py` (lista de ticks, ignora líneas
 
   rotas)
@@ -568,7 +571,7 @@ Pendiente, por prioridad:
 
 1. Cerrar el hueco del ACK ok (§4) — control; validar en juego.
 2. ~~Finales de línea (§5.8)~~ y ~~código sin referencias (§3.1)~~: hechos; falta solo el commit.
-3. Unificar `load_ticks` (§3) — bajo riesgo.
+3. ~~Unificar `load_ticks` (§3)~~ — hecho 2026-10-23.
 4. Pruebas de módulos sin cobertura propia (§3.2).
 5. Partir `_step_core` / `evaluate_p1_tick` (§5.10).
 6. Mover al adaptador la lógica de la M3A que sigue tras la guarda `analog_lever`
@@ -627,10 +630,10 @@ en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `
 
    test unitario del reenvío y validación en juego.
 
-3. **Unificar `load_ticks`** (`hud_ocr_eval` / `session_report`).
-4. **Pruebas propias** de `control_lock`, `service_brake`, `limit_containment`, `autopilot_limit`
+3. ~~**Unificar `load_ticks`**~~ (hecho 2026-10-23, `session_io.py`).
+4. ~~**Pruebas propias** de `control_lock`, `service_brake`, `limit_containment`, `autopilot_limit`~~
 
-   (§3.2) y ampliar el contrato por vehículo con parada en andén y soltar al salir.
+   (hecho 2026-10-23, §3.2). Sigue pendiente ampliar el contrato por vehículo con parada en andén y soltar al salir.
 
 5. **Decidir** si se conserva `diagnostic_mc_ipc` (§3.1).
 6. **Medir la física de la M3A** (`physics` del JSON, hoy heredada de la 323) con una sesión de
