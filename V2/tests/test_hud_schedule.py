@@ -116,3 +116,49 @@ def test_pick_next_uses_hud_order_when_track_empty():
     nxt = pick_next_scheduled_stop([], hud_match=hud_match)
     assert nxt is not None
     assert nxt["name"] == "Four Oaks"
+
+
+def test_unscheduled_station_not_offered_while_scheduled_stop_is_far_20261023():
+    """Servicio 2307 (única parada: Crestwood, ~19 km): Harlem 125th no es parada del horario.
+
+    Antes ``fallback_all_when_unmatched`` (activo hasta el primer match) devolvía todas las
+    estaciones de ``TrackData`` y el agente frenaba para Harlem 125th.
+    """
+    from types import SimpleNamespace
+
+    stations = parse_track_data_stations(_track())
+    crestwood = SimpleNamespace(name="Crestwood", latitude=40.9598668, longitude=-73.8204233)
+    hud_match = {"service_name": "2307", "stop_names": ["Crestwood"], "stops": [crestwood]}
+    harlem = (40.8053, -73.9386)  # ~19 km de Crestwood
+    with patch("tsw6v2.hud_schedule.resolve_hud_service_stops", return_value=hud_match):
+        filtered, src, match = apply_station_schedule(
+            stations, "2307", lat=harlem[0], lng=harlem[1], fallback_all_when_unmatched=True
+        )
+    assert filtered == [] and src == "hud_db" and match is hud_match
+
+
+def test_scheduled_stop_near_but_unmatched_keeps_track_only_fallback():
+    """A menos de 3 km que no salga en TrackData indica nombres que no cuadran: respaldo."""
+    from types import SimpleNamespace
+
+    stations = parse_track_data_stations(_track())
+    near = SimpleNamespace(name="Crestwood", latitude=40.9598, longitude=-73.8204)
+    hud_match = {"service_name": "2307", "stop_names": ["Crestwood"], "stops": [near]}
+    with patch("tsw6v2.hud_schedule.resolve_hud_service_stops", return_value=hud_match):
+        filtered, src, _ = apply_station_schedule(
+            stations, "2307", lat=40.9600, lng=-73.8210, fallback_all_when_unmatched=True
+        )
+    assert src == "track_only" and len(filtered) == len(stations)
+
+
+def test_scheduled_stops_beyond_trackdata_needs_position_and_coordinates():
+    from types import SimpleNamespace
+
+    from tsw6v2.hud_schedule import scheduled_stops_beyond_trackdata
+
+    far = {"stops": [SimpleNamespace(latitude=40.9598, longitude=-73.8204)]}
+    assert scheduled_stops_beyond_trackdata(far, 40.8053, -73.9386) is True
+    assert scheduled_stops_beyond_trackdata(far, None, None) is False
+    assert scheduled_stops_beyond_trackdata({"stops": []}, 40.8, -73.9) is False
+    nocoords = {"stops": [SimpleNamespace(latitude=None, longitude=None)]}
+    assert scheduled_stops_beyond_trackdata(nocoords, 40.8, -73.9) is False

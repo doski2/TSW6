@@ -116,6 +116,9 @@ class StationPlanning:
         # Algún poll ya cruzó paradas del horario con TrackData: si luego ninguna coincide es que
         # la siguiente parada está lejos (no que los nombres no cuadren).
         self._schedule_matched_once = False
+        # Algún poll resolvió el servicio por la BD (``hud_db``, aunque sin estaciones a la vista):
+        # una lectura posterior ``track_only`` ya no es fiable (sin filtro de horario).
+        self._hud_db_seen = False
         self._source = "none"
         if self.http_enabled and find_api_key() is not None:
             self._http_ok = probe_http_api(timeout_s=PLANNING_READ_TIMEOUT_S)
@@ -183,10 +186,26 @@ class StationPlanning:
             self._snap = PlanningSnapshot()
             self._served_bases = set()
             self._schedule_matched_once = False
+            self._hud_db_seen = False
             if self._anchor is not None:
                 self._anchor.reset()
         self._file_feed.reset()
         self._last_tick_t = 0.0
+
+    def _drop_station_reading(self) -> None:
+        """Sin parada programada a la vista: olvidar la estación guardada (no congelarla)."""
+        with self._cache_lock:
+            snap = self._snap
+            if snap.station_distance_m is None and snap.station_name is None:
+                return
+            snap.station_distance_m = None
+            snap.raw_station_distance_m = None
+            snap.station_name = None
+            snap.planning_reject_streak = 0
+            snap.planning_reject_last = None
+            if self._anchor is not None:
+                self._anchor.reset()
+        _log.info("planning: sin parada programada a la vista; olvidar la estación anterior")
 
     def _clear_served_bases(self) -> None:
         with self._cache_lock:
@@ -344,6 +363,7 @@ class StationPlanning:
                 )
                 self._clear_served_bases()
                 self._schedule_matched_once = False  # otro servicio: sin historial de nombres
+                self._hud_db_seen = False
             _log.info(
                 "planning: cambio servicio %s / %s -> %s / %s (conservar dist)",
                 prev[0] or "?",
@@ -451,8 +471,18 @@ class StationPlanning:
             self.last_poll_ms = (time.perf_counter() - t_poll) * 1000.0
             self.last_poll_http_ms = POLL_TIMING_MS["http"]
             self.last_poll_json_ms = POLL_TIMING_MS["json"]
-        if result.get("schedule_source") == "hud_db" and result.get("stations"):
-            self._schedule_matched_once = True
+        source = result.get("schedule_source")
+        if source == "hud_db":
+            self._hud_db_seen = True
+            if result.get("stations"):
+                self._schedule_matched_once = True
+            elif "stations" in result and not result.get("next_stop"):
+                # 20261023T203255Z: una lectura ``track_only`` metió «Grand Central» y, al volver
+                # el horario con la lista vacía, la distancia se quedó congelada en 198 m.
+                self._drop_station_reading()
+        elif source == "track_only" and self._hud_db_seen:
+            _log.info("planning: ignorar lectura track_only (el servicio ya se resolvió por la BD)")
+            return
         if not skip_identity_check:
             self._note_schedule_identity(result)
         self._apply_poll_metadata(result)

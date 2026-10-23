@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 624
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 630
 pruebas, 4 saltadas; cifras del 2026-10-23).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -528,6 +528,68 @@ Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; 
 - **g) Tras el último andén** (`212139Z`): Fordham (79 s) → Harlem 125th (534 s) sin emergencias,
   5239 capturas `departed` y 290 `jump` rechazadas, 0 movimientos de distancia.
 
+### 7.2 Sesión del 2026-10-23 (`20261023T201351Z`; M3A, servicio 2307, `gct-mnr`)
+
+Servicio 2307: 05:56, 26 min, northbound, **una sola parada: Crestwood vía 4 (06:22)**, según
+`tsw_hud.db` (timetable 18612). Log de 581 s (la sesión seguía abierta). Commit de partida `60c6019`.
+
+- **Frenada para una estación que no es parada (FACT, corregido, sin validar en juego).** Los 11 425
+  ticks salen con `schedule_source = track_only`; el agente seguía «Harlem 125th Street, vía 3» y al
+  final aplicaba `APPLY` para pararse a 124-163 m de ella, mientras el HUD del juego apuntaba a
+  «Deténgase en el lugar — Crestwood, vía 4 — 12 mi» (captura 22:23). Causa: la BD resuelve bien el
+  servicio (`resolve_hud_service_stops('2307')` → `['Crestwood']`), pero Crestwood está a ~19 km y no
+  sale aún en `TrackData`; `apply_station_schedule` caía entonces al respaldo «todas las estaciones»
+  porque `fallback_all_when_unmatched` sigue activo hasta el primer match (arreglo de 203040Z, que
+  solo cubría el caso ya cruzado). Corrección: `hud_schedule.scheduled_stops_beyond_trackdata` — si
+  la posición del jugador (`PlayerInfo.geoLocation`) está a más de 3 km de TODAS las paradas del
+  horario con coordenadas en la BD, no se ofrece ninguna estación (`hud_db`, lista vacía), con
+  independencia del respaldo. Con la parada a < 3 km, o sin posición / coordenadas, se mantiene el
+  respaldo por si los nombres no cuadran. 3 pruebas nuevas en `test_hud_schedule.py` (627 en total).
+  **Por validar:** que `PlayerInfo` entregue `geoLocation` en juego (la doc lo marca ✅; no hay
+  lectura en el JSONL) y que Crestwood sí aparezca en `TrackData` al acercarse.
+- **OCR a distancia larga (FACT).** `hud_ocr_diag`: 115 muestras; 0 `hits` hasta t = 323 s. El HUD
+  muestra millas enteras con la distancia larga («16 mi», «12 mi»). Lecturas: `16mi` y `16m` (sin
+  parsear: > 20 km o unidad `m` suelta), **`5mi` ← «15 mi» y `3mi` ← «13 mi» (se pierde el primer
+  dígito y SÍ parsean: 8,0 y 4,8 km en lugar de 24 y 21 km)**, `13.mi` (no parsea), `12mi` → 19 312 m
+  (correcta). El ancla (`ocr_anchor`) quedó en `wait` / `frame_gate` / `jump` toda la sesión: no
+  intervino, y a esa distancia no debe. Pendiente (defensa en profundidad, **no implementado**): si el
+  OCR da de forma estable una distancia lejana (≥ 2 km) mientras el HTTP da una estación a < 1 km,
+  la estación HTTP no es el objetivo del HUD → no frenar para ella. Habría cubierto este fallo aun
+  con el horario mal resuelto.
+
+### 7.3 Sesión del 2026-10-23 (`20261023T203255Z`; M3A, servicio 2307, 133 s)
+
+Mismo servicio que 7.2, ya con la corrección del horario (`schedule_source = hud_db` en 2499 de
+2645 ticks: durante los primeros 24 s no hubo estación, como debe ser).
+
+- **Freno sin soltar hasta casi 0 mph (FACT, corregido, sin validar en juego).** A 106,5 s (10,3 mph,
+  zona de 10 mph en bajada) el agente aplicó `APPLY B1` por «Mantener bajada @10.3». La velocidad
+  cayó a 1,4 mph (regeneración hasta −200 A) y **no soltó hasta 122,7 s**. Causa: una **estación
+  fantasma** («Grand Central, vía 28», `stn_dist_m` congelada en 198,3 m durante ~1900 ticks) que
+  bloquea los caminos de soltar. Repetido con `evaluate_p1_tick` sobre el log: con la estación
+  logueada 0 `RELEASE` entre 107 y 122,5 s; sin ella, 302 ticks `release` desde 108 s. Origen de la
+  estación: a 24,6 s un poll llegó como `track_only` (sin filtro de horario) y aceptó Grand Central a
+  242 m; cuando volvió `hud_db` con la lista vacía, **la estación guardada no se borró** (el poll
+  salía antes de tocar la distancia) y `_reading_stale` la congeló. Corrección en
+  `planning_poller`: (1) `_hud_db_seen` — tras resolver el servicio por la BD se ignoran las lecturas
+  `track_only`; (2) `_drop_station_reading` — con `hud_db`, `stations` vacío y sin `next_stop` se
+  olvida la estación guardada. 3 pruebas nuevas en `test_planning_poller.py` (630 en total).
+  **Por validar:** que el 2307 completo no ofrezca Grand Central ni Harlem 125th. **Sigue abierto:**
+  por qué ese poll llegó como `track_only` (PlayerInfo / BD intermitente; no queda rastro en el
+  JSONL) y, en profundidad, que una distancia congelada con el tren en marcha caduque en lugar de
+  bloquear el soltar.
+- **Mandos IPC repetidos (FACT, hueco ya conocido de §4).** 16 mandos en 133 s: 14 `RELEASE NEU` y 2
+  `APPLY B1`; **13 de 16 repiten el mando anterior a menos de 1 s** (11 `RELEASE` en 0,7 s al
+  arrancar, mientras la palanca va de 0,32 a 0,72; ids 1-11 todos con ACK `ok`). En
+  `20261023T201351Z`: 75 de 138. Es el «ACK ok sin pendiente» de §4: con ACK `ok` no se marca
+  pendiente y el paso se reenvía cada tick hasta que la palanca confirma. Inofensivo en lo medido
+  (todos `ok`, mismo destino) pero ruido en el bus y en el informe. Prioridad subida: ahora hay
+  medición.
+- **Ticks con el mismo `seq` (no es un fallo):** 492 de 2645 filas (19 %) repiten el `seq` del probe
+  (el agente corre a ~20 Hz y el probe escribe a 16,7 Hz con el juego a 50 fps; ver §7, dead-
+  reckoning). No hay `tick` duplicados ni filas repetidas. El log tiene 4 filas `session_detect`
+  (actualizaciones de servicio / horario), normal.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -679,6 +741,13 @@ refactor mecánico: o necesita el juego o es un cambio de lógica que conviene h
 de esta semana (punto 1). Si algo falla en juego con varios cambios sin validar, no se sabe qué
 commit lo causó.
 
+0. **Repetir el servicio 2307** — además de lo anterior, comprobar (§7.3) que no aparece ninguna
+   estación fantasma (`stn_dist_m` congelada con el tren en marcha) y que el freno de bajada se
+   suelta al caer bajo el objetivo. Antes, ver abajo el original:
+0b. (original) **Repetir el servicio 2307** (o cualquier servicio de una parada lejana) con el commit que
+   incluye `scheduled_stops_beyond_trackdata` (§7.2): comprobar que el agente no frena para Harlem
+   125th, que `schedule_source` pasa a `hud_db` y que Crestwood aparece al acercarse. Si en el
+   JSONL `stn_dist_m` sigue apuntando a Harlem, mirar si `PlayerInfo` entrega `geoLocation`.
 1. **Sesión de la M3A en el juego** (servicio 500, `gct-mnr`, circular pasando Fordham ≥ 3 min). Con
    una sola sesión se validan (a)-(e) de §7.1:
    - cartel a 60-75 mph **sin escalada al 100 %** (el eje no debe llegar a 0,27 lejos del cartel);
@@ -703,7 +772,10 @@ commit lo causó.
    - pruebas propias de `cli` y decidir si se conserva `diagnostic_mc_ipc` (§3.1);
    - partir `loop._step_core` (346 líneas) en pasos con nombre, con el mismo método de paridad.
 5. **Con sesión o decisión de diseño:**
-   - hueco del ACK ok (§4): marcar pendiente también con ACK ok; test del reenvío y validación;
+   - hueco del ACK ok (§4): marcar pendiente también con ACK ok; test del reenvío y validación
+     (**medido en §7.3: 13 de 16 y 75 de 138 mandos repetidos a < 1 s**);
+   - caducar una distancia de estación congelada con el tren en marcha (defensa en profundidad de
+     §7.3), y averiguar por qué un poll llega como `track_only`;
    - defensa en profundidad (b) de §7: no emitir `P1-CRITICO-STATION` a alta velocidad si la
      distancia viene del ancla y acaba de saltar;
    - física real de la M3A (`physics` del JSON, hoy heredada de la 323): sesión de calibración de

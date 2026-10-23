@@ -6,6 +6,7 @@ Lee la BD con ``tsw6v2.hud_db`` (propio de V2). Sin ``tsw6/``.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
@@ -17,6 +18,40 @@ from tsw6v2.track_stations import (
 )
 
 _log = logging.getLogger("tsw6v2.hud_schedule")
+
+# Si la parada programada más cercana está más lejos que esto y aún no sale en ``TrackData``,
+# es que todavía no entra en su horizonte (20261023T201351Z: Crestwood a ~19 km, servicio 2307);
+# más cerca, que no salga indica nombres que no cuadran y se mantiene el respaldo.
+SCHEDULED_STOP_BEYOND_TRACKDATA_M = 3000.0
+_EARTH_RADIUS_M = 6_371_000.0
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = p2 - p1
+    dlmb = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(a))
+
+
+def scheduled_stops_beyond_trackdata(
+    resolved: dict[str, Any],
+    lat: Optional[float],
+    lng: Optional[float],
+) -> bool:
+    """``True`` si el jugador está lejos de TODAS las paradas del horario con coordenadas.
+
+    Sin posición del jugador o sin coordenadas en la BD no se puede saber: ``False``.
+    """
+    if lat is None or lng is None:
+        return False
+    dists = [
+        _haversine_m(lat, lng, float(st.latitude), float(st.longitude))
+        for st in resolved.get("stops") or []
+        if getattr(st, "latitude", None) is not None
+        and getattr(st, "longitude", None) is not None
+    ]
+    return bool(dists) and min(dists) > SCHEDULED_STOP_BEYOND_TRACKDATA_M
 
 
 def player_geo_from_info(info: Any) -> tuple[Optional[float], Optional[float]]:
@@ -108,7 +143,9 @@ def apply_station_schedule(
             )
             if matched:
                 return matched, "hud_db", resolved
-            if not fallback_all_when_unmatched:
+            if not fallback_all_when_unmatched or scheduled_stops_beyond_trackdata(
+                resolved, lat, lng
+            ):
                 # Servicio conocido pero su siguiente parada aún no sale en TrackData: sin
                 # parada próxima (no frenar para una estación que no está en el horario).
                 return [], "hud_db", resolved

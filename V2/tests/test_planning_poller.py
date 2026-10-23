@@ -360,3 +360,59 @@ def test_compensate_http_distance_subtracts_lag_only_when_moving():
     assert abs(got - (500.0 - 46.7 * 0.44704 * 2.0)) < 1e-6
     assert compensate_http_distance_m(20.0, 60.0) == 5.0
     assert compensate_http_distance_m(3.0, 60.0) == 3.0
+
+
+def _poll_sequence(monkeypatch, results):
+    it = iter(results)
+    monkeypatch.setattr(
+        "tsw6v2.planning_poller.poll_station_planning", lambda **_: next(it)
+    )
+    src = StationPlanning(http_enabled=False)
+    src._http_ok = True
+    return src
+
+
+_NO_STOP = {"service_name": "2307", "schedule_source": "hud_db", "stations": []}
+_GC_TRACK_ONLY = {
+    "service_name": "2307",
+    "schedule_source": "track_only",
+    "next_stop": {"distance_m": 242.0, "name": "Grand Central, vía 28"},
+}
+
+
+def test_track_only_reading_ignored_once_service_resolved_by_db_20261023(monkeypatch):
+    """203255Z: un poll ``track_only`` metió Grand Central (no es parada del 2307)."""
+    src = _poll_sequence(monkeypatch, [_NO_STOP, _GC_TRACK_ONLY])
+    src._poll_once()
+    src._poll_once()
+    assert src._snap.station_distance_m is None
+    assert src._snap.station_name is None
+
+
+def test_track_only_is_accepted_when_service_never_resolved_by_db(monkeypatch):
+    """Servicio fuera de la BD: ``track_only`` sigue siendo la única fuente."""
+    src = _poll_sequence(monkeypatch, [_GC_TRACK_ONLY])
+    src._poll_once()
+    assert src._snap.station_distance_m == 242.0
+
+
+def test_empty_schedule_drops_station_instead_of_freezing_it_20261023(monkeypatch):
+    """203255Z: con ``hud_db`` sin estaciones la distancia quedó congelada en 198 m 90 s."""
+    src = _poll_sequence(
+        monkeypatch,
+        [
+            {
+                "service_name": "2307",
+                "schedule_source": "hud_db",
+                "stations": [{"name": "Crestwood"}],
+                "next_stop": {"distance_m": 900.0, "name": "Crestwood, vía 4"},
+            },
+            _NO_STOP,
+        ],
+    )
+    src._poll_once()
+    assert src._snap.station_distance_m is not None
+    src._poll_once()
+    assert src._snap.station_distance_m is None
+    assert src._snap.station_name is None
+    assert src._snap.service_name == "2307"  # los metadatos del servicio se conservan
