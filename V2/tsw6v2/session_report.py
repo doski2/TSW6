@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 # V2 en PYTHONPATH (V2/run_p1_session.bat lo configura)
 from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.session_io import iter_session_rows
 from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.p1_layers import LAYERS, classify_from_p1, layer_label
 from tsw6v2.p1_station_gate import doors_effective
@@ -46,10 +47,7 @@ def _tick_t_s(t: dict[str, Any]) -> float:
 def load_ticks(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     session = None
     ticks: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
+    for row in iter_session_rows(path, strict=True):
         if row.get("type") == "session":
             session = row
         elif row.get("type") == "session_detect":

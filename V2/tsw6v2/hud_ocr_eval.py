@@ -13,13 +13,13 @@ le resta ``v × edad``. Es solo medición; no interviene en el frenado.
 
 from __future__ import annotations
 
-import json
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.session_io import iter_session_rows
 
 PASSED_MARKER_M = 15.0
 # Lectura incoherente con la app (104709Z: «0 m» con el tablón a 1,5 km): se descarta. El fin de
@@ -42,16 +42,7 @@ class Capture:
 
 
 def load_ticks(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if row.get("type") == "tick":
-                rows.append(row)
-    return rows
+    return [r for r in iter_session_rows(path, strict=False) if r.get("type") == "tick"]
 
 
 def extract_captures(
