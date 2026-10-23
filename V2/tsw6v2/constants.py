@@ -57,10 +57,17 @@ LIMIT_DOWNHILL_COAST_TRIM_MPH = 2.0
 
 # Cartel pasado / cola
 LIMIT_SIGN_PASSED_M = 8.0
+# Ticks seguidos (~1 s a 20 Hz) con un objetivo pidiendo frenar (``apply_now``) y la decisión sin
+# mando antes de avisar (vigilante de inanición, ANALISIS §7.11).
+P1_STARVED_WARN_TICKS = 20
 # Layout por muescas (323): ticks seguidos sin que el plan de estación pida freno tras haberlo
 # aplicado antes de dejar que se suelte (~1 s a 20 Hz). Histéresis contra APPLY/RELEASE cada tick
 # y contra retener el freno hasta parar si el plan ya no lo necesita (20261023T214704Z).
 STATION_PLAN_LOST_RELEASE_TICKS = 20
+# Layout por muescas (323): ``seq`` del probe (≈16,7 Hz) que debe pasar tras cambiar de muesca antes de
+# AFLOJARLA (~2 s). Escalar sigue siendo inmediato. Evita que el paso activo alterne B1↔B2 cada
+# pocos ticks al borde de la ventana de B2 (20261023T223846Z, 897 s: 28 cambios).
+NOTCH_WEAKEN_HOLD_SEQ = 33
 LIMIT_OVER_ACTIVE_MPH = 0.5
 
 # RELEASE

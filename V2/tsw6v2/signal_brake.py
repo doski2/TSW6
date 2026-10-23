@@ -44,5 +44,7 @@ def evaluate_signal_brake(
         speed_mph=speed_mph,
         detail=f"Señal roja dist={plan.distance_to_target_m:.0f}m",
         allow_watch=True,
-        max_apply_distance_m=signal_apply_horizon_m(speed_mph),
+        max_apply_distance_m=signal_apply_horizon_m(
+            speed_mph, base_decel=base_decel, brake_fill_s=brake_fill_s
+        ),
     )

@@ -12,6 +12,7 @@ from typing import Any, Optional
 from tsw6v2.probe_seq import probe_seq_delta_ms
 from tsw6v2.gui_view import format_ipc_target_display
 from tsw6v2.loop import AgentSnapshot
+from tsw6v2.constants import P1_STARVED_WARN_TICKS
 from tsw6v2.p1_layers import format_layer_tag, layer_label
 
 # Ticks con step/grabación/hueco >= este valor llevan ``perf_ms`` en el JSONL (diagnóstico de fluidez).
@@ -183,6 +184,8 @@ class JsonlTrace:
             "signal_red": snap.signal_red,
             "signal_dist_m": _round_opt(snap.signal_dist_m, 1),
             "p1_tgt": snap.p1_target_kind or None,
+            "p1_cands": snap.p1_cands or None,
+            "p1_starved": snap.p1_starved_ticks or None,
             "vehicle": snap.vehicle,
             "p1": p1 or None,
             "fb": fb or None,
@@ -240,6 +243,8 @@ def session_meta(
 ) -> dict[str, Any]:
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
+        # Hora local con su desfase (el nombre del log y ``ts`` van en UTC; el reloj del usuario no).
+        "ts_local": datetime.now().astimezone().isoformat(timespec="seconds"),
         "mode": mode,
         "route": route or None,
         "profile": profile,
@@ -305,6 +310,8 @@ def format_investigate(snap: AgentSnapshot) -> str:
         parts.append(f"amps={_fmt_amps_a(snap.amps)}A")
     if snap.p1_target_kind:
         parts.append(f"p1tgt={snap.p1_target_kind}")
+    if snap.p1_starved_ticks >= P1_STARVED_WARN_TICKS:
+        parts.append(f"SIN_MANDO={snap.p1_starved_ticks}")
     if capa:
         parts.append(f"capa={capa}")
     parts.extend([

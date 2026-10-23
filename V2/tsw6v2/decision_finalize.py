@@ -6,6 +6,7 @@ from typing import Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand, BrakeReleaseState
+from tsw6v2.constants import NOTCH_WEAKEN_HOLD_SEQ
 from tsw6v2.decision_mc import (
     continue_station_stop,
     mc_limit_fraction,
@@ -59,6 +60,29 @@ def _air_apply_block(
     if not learner.air_ready(cyl, lever=lever):
         return ("air_fill", "Esperando presión cilindro")
     return None
+
+
+def _notch_weaken_blocked(
+    limit_state: LimitBrakeState,
+    cmd: BrakeCommand,
+    lever: int,
+    seq: Optional[int],
+    *,
+    notch_layout: bool,
+) -> bool:
+    """¿Aflojar la muesca (B2→B1) demasiado pronto tras el último cambio del plan?
+
+    Solo layout por muescas y con ``seq``. Handle mayor = freno más débil (1 = B3, 3 = B1).
+    """
+    if not notch_layout or seq is None or cmd.kind != "APPLY" or cmd.target_notch is None:
+        return False
+    last = limit_state.notch_change_seq
+    if last is None:
+        return False
+    target, current = int(cmd.target_notch), int(lever)
+    if not 1 <= current <= 3 or target <= current:
+        return False
+    return 0 <= seq - last < NOTCH_WEAKEN_HOLD_SEQ
 
 
 def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
@@ -121,12 +145,25 @@ def _finalize_target_decision(
             return ctx.idle("command_none", target=target)
         return ctx.idle("apply_deferred", target=target)
 
+    notch_layout = not adapter_for_package(ctx.vehicle_package).analog_lever
+    seq = getattr(snap, "seq", None)
+    if _notch_weaken_blocked(limit_state, cmd, lever, seq, notch_layout=notch_layout):
+        return ctx.idle("notch_dwell", target=target, detail="Esperar antes de aflojar la muesca")
+
     air_block = _air_apply_block(learner, cmd, ctx.cyl, lever)
     if air_block is not None:
         reason, detail = air_block
         return ctx.idle(reason, target=target, detail=detail)
 
     decision = ctx.from_target(cmd, target, _plan_reason(cmd, target))
+    if (
+        notch_layout
+        and seq is not None
+        and cmd.kind == "APPLY"
+        and cmd.target_notch is not None
+        and int(cmd.target_notch) != int(lever)
+    ):
+        limit_state.notch_change_seq = int(seq)
     if (
         target.target_kind == "STATION"
         and cmd.kind == "APPLY"

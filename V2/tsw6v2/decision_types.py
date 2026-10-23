@@ -35,6 +35,10 @@ class LimitBrakeDecision:
     fb_escalated: bool = False
     target_kind: str = ""
     station_dist_m: Optional[float] = None
+    # Los tres candidatos del tick, también los que pierden el pick: {"lim"|"stn"|"sig": {k, apply, ds, d, h}}.
+    candidates: Optional[dict[str, dict[str, Any]]] = None
+    # Algún candidato pide frenar ya y la decisión no manda nada (inanición, ver ``decision._starved``).
+    starved: bool = False
 
     @classmethod
     def idle(

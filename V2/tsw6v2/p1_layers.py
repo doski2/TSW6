@@ -61,6 +61,7 @@ _REASON_TO_LAYER: dict[str, str] = {
     "apply_deferred": "WAIT",
     "air_fill": "WAIT",
     "air_recharge": "WAIT",
+    "notch_dwell": "WAIT",
     "coast_latch": "HOLD",
     "no_plan": "OK",
     "no_limit_sign": "NONE",

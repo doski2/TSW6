@@ -31,6 +31,7 @@ from tsw6v2.command import BrakeReleaseState  # noqa: E402
 from tsw6v2.decision import evaluate_p1_tick  # noqa: E402
 from tsw6v2.learner import LearnerProfile  # noqa: E402
 from tsw6v2.limits import LimitBrakeState  # noqa: E402
+from tsw6v2.vehicle_package import resolve_vehicle_package  # noqa: E402
 
 
 def dump(out: Path, sessions: list[Path]) -> int:
@@ -42,6 +43,7 @@ def dump(out: Path, sessions: list[Path]) -> int:
                 BrakeReleaseState(),
                 LearnerProfile(),
             )
+            profile_applied = False
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
@@ -51,6 +53,11 @@ def dump(out: Path, sessions: list[Path]) -> int:
                 snap = _tick_to_snap(t)
                 if snap.speed_ms is None:
                     continue
+                if not profile_applied:
+                    # Como el bucle real: perfil de aire del paquete del vehículo (p. ej. la 323 sin
+                    # espera por aire); sin esto el aprendiz usa el perfil por defecto.
+                    learner.apply_vehicle_brake_profile(resolve_vehicle_package(snap.vehicle or ""))
+                    profile_applied = True
                 stn = t.get("stn_dist_m")
                 d = evaluate_p1_tick(
                     limit_state,

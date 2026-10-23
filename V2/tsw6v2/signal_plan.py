@@ -106,13 +106,45 @@ def signal_in_play(
     return True
 
 
-def signal_apply_horizon_m(speed_mph: float) -> float:
+def signal_service_stop_horizon_m(
+    speed_mph: float,
+    *,
+    base_decel: float,
+    brake_fill_s: float,
+    reaction_time_s: float = DEFAULT_SIGNAL_CFG.reaction_time_s,
+) -> float:
+    """Distancia para parar con freno de servicio (B2) más reacción y llenado de cilindros."""
+    from tsw6v2.physics import MPH_TO_MS
+    from tsw6v2.plan import service_decel_frac
+
+    speed_ms = max(0.0, speed_mph) * MPH_TO_MS
+    decel = max(0.1, base_decel * service_decel_frac(2, 0.55))
+    return speed_ms * speed_ms / (2.0 * decel) + speed_ms * (brake_fill_s + reaction_time_s)
+
+
+def signal_apply_horizon_m(
+    speed_mph: float,
+    *,
+    base_decel: Optional[float] = None,
+    brake_fill_s: float = DEFAULT_BRAKE_FILL_S,
+) -> float:
     """
     Horizonte APPLY: ~100 yd en marcha moderada; hasta 150 m si spd >30 mph (155148Z).
 
     Lejos (217 m @ 20 mph) sigue WATCH — no repetir parada temprana 152037Z.
+
+    Con ``base_decel`` y por encima de 30 mph el horizonte no baja de la distancia de parada de
+    servicio: a 50 mph 150 m no bastan (≈ 380 m) y el agente cruzaba el rojo (simulador de lazo
+    cerrado, ANALISIS §7.9). Hasta 30 mph no cambia.
     """
     if speed_mph > SIGNAL_IMMEDIATE_MAX_SPEED_MPH:
+        if base_decel is not None:
+            return max(
+                SIGNAL_WATCH_LIMIT_DEFER_M,
+                signal_service_stop_horizon_m(
+                    speed_mph, base_decel=base_decel, brake_fill_s=brake_fill_s
+                ),
+            )
         return SIGNAL_WATCH_LIMIT_DEFER_M
     if speed_mph > SIGNAL_EARLY_BRAKE_MIN_SPEED_MPH:
         return SIGNAL_EARLY_BRAKE_HORIZON_M

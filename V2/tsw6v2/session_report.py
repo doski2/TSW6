@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 # V2 en PYTHONPATH (V2/run_p1_session.bat lo configura)
-from tsw6v2.constants import MPH_TO_MS
+from tsw6v2.constants import MPH_TO_MS, P1_STARVED_WARN_TICKS
 from tsw6v2.session_io import iter_session_rows
 from tsw6v2.trace import advance_probe_active_ms
 from tsw6v2.p1_layers import LAYERS, classify_from_p1, layer_label
@@ -190,6 +190,10 @@ def summarize(path: Path) -> dict[str, Any]:
         "learn_rows": _learn_event_rows(ticks),
         "station_ticks": sum(1 for t in ticks if t.get("stn_dist_m") is not None),
         "p1_tgt_station_ticks": sum(1 for t in ticks if t.get("p1_tgt") == "STATION"),
+        # Ticks con un objetivo pidiendo frenar y sin mando durante ≥ P1_STARVED_WARN_TICKS (§7.11).
+        "p1_starved_ticks": sum(
+            1 for t in ticks if (t.get("p1_starved") or 0) >= P1_STARVED_WARN_TICKS
+        ),
         "station_events": _station_event_rows(ticks),
         "doors_telem_ticks": sum(1 for t in ticks if t.get("doors_telem") is not None),
         "doors_dmi_ticks": sum(1 for t in ticks if t.get("doors_dmi") is not None),
@@ -1447,6 +1451,7 @@ const stats = [
   ['Learn OK', s.learn_accepted||0], ['Learn rej', (s.learn_events||0)-(s.learn_accepted||0)],
   ...(s.station_ticks ? [['Andén ticks', s.station_ticks], ['STATION tgt', s.p1_tgt_station_ticks||0]] : []),
   ...(s.signal_red_ticks ? [['Señal rojo', s.signal_red_ticks]] : []),
+  ...(s.p1_starved_ticks ? [['Sin mando (objetivo pide frenar)', s.p1_starved_ticks]] : []),
 ];
 document.getElementById('stats').innerHTML = stats.map(([k,v]) =>
   `<div class="stat"><b>${{v}}</b>${{k}}</div>`).join('');

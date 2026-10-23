@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -27,6 +28,7 @@ from tsw6v2.constants import (
     MC_IPC_FRACTION_STEP,
     MS_TO_MPH,
     NEUTRAL_NOTCH,
+    P1_STARVED_WARN_TICKS,
 )
 from tsw6v2.decision import evaluate_p1_tick
 from tsw6v2.decision_mc import station_stop_continues
@@ -72,6 +74,9 @@ def agent_snapshot_probe_ok(snap: Optional[AgentSnapshot]) -> bool:
     return probe_identity_ok(snap.seq, snap.vehicle)
 
 
+_log = logging.getLogger("tsw6v2.loop")
+
+
 @dataclass
 class AgentSnapshot:
     tick: int = 0
@@ -107,6 +112,8 @@ class AgentSnapshot:
     p1_handle: Optional[int] = None
     p1_layer: str = ""
     p1_target_kind: str = ""
+    p1_cands: Optional[dict] = None  # cartel / andén / semáforo de este tick (``decision._candidates``)
+    p1_starved_ticks: int = 0  # ticks seguidos con un objetivo pidiendo frenar y sin mando
     station_dist_m: Optional[float] = None
     raw_station_dist_m: Optional[float] = None
     planning_rejected_n: int = 0    planning_reject_last: Optional[str] = None
@@ -168,6 +175,8 @@ class AgentSnapshot:
         p1_handle: Optional[int] = None,
         p1_layer: str = "",
         p1_target_kind: str = "",
+        p1_cands: Optional[dict] = None,
+        p1_starved_ticks: int = 0,
         station_dist_m: Optional[float] = None,
         raw_station_dist_m: Optional[float] = None,
         planning_rejected_n: int = 0,        planning_reject_last: Optional[str] = None,
@@ -213,6 +222,8 @@ class AgentSnapshot:
                 p1_handle=p1_handle,
                 p1_layer=p1_layer,
                 p1_target_kind=p1_target_kind,
+                p1_cands=p1_cands,
+                p1_starved_ticks=p1_starved_ticks,
                 station_dist_m=station_dist_m,
                 raw_station_dist_m=raw_station_dist_m,
                 planning_rejected_n=planning_rejected_n,                planning_reject_last=planning_reject_last,
@@ -275,6 +286,8 @@ class AgentSnapshot:
             p1_handle=p1_handle,
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
+            p1_cands=p1_cands,
+            p1_starved_ticks=p1_starved_ticks,
             station_dist_m=station_dist_m,
             raw_station_dist_m=raw_station_dist_m,
             planning_rejected_n=planning_rejected_n,            planning_reject_last=planning_reject_last,
@@ -343,6 +356,7 @@ class AgentLoop:
     _target_fraction: Optional[float] = field(default=None, init=False, repr=False)
     _next_cmd_id: int = field(default=1, init=False, repr=False)
     _tick: int = field(default=0, init=False, repr=False)
+    _p1_starved_ticks: int = field(default=0, init=False, repr=False)
     _limit_state: LimitBrakeState = field(default_factory=LimitBrakeState, init=False, repr=False)
     _release_state: BrakeReleaseState = field(default_factory=BrakeReleaseState, init=False, repr=False)
     _learner: LearnerProfile = field(default_factory=LearnerProfile, init=False, repr=False)
@@ -726,6 +740,8 @@ class AgentLoop:
         schedule_source = ""
         station_fsm = ""
         p1_target_kind = ""
+        p1_cands: Optional[dict] = None
+        p1_starved_ticks = 0
         lever = probe_lever(snap)
         throttle_probe = (
             throttle_notch_from_probe(snap, self._vehicle_package)
@@ -833,6 +849,18 @@ class AgentLoop:
             p1_reason = decision.reason
             p1_handle = decision.handle_notch
             p1_target_kind = decision.target_kind
+            p1_cands = decision.candidates
+            # El freno de puertas del bucle (``dwell_cmd``) cuenta como mando.
+            starved_now = decision.starved and dwell_cmd is None
+            self._p1_starved_ticks = self._p1_starved_ticks + 1 if starved_now else 0
+            p1_starved_ticks = self._p1_starved_ticks
+            if self._p1_starved_ticks == P1_STARVED_WARN_TICKS:
+                _log.warning(
+                    "P1: %d ticks con un objetivo pidiendo frenar y sin mando (cand=%s, elegido=%s)",
+                    P1_STARVED_WARN_TICKS,
+                    p1_cands,
+                    p1_target_kind or None,
+                )
             if decision.station_dist_m is not None:
                 station_dist_m = decision.station_dist_m
             fb_a_pred_ms2 = decision.fb_a_pred_ms2
@@ -1011,6 +1039,8 @@ class AgentLoop:
             p1_handle=p1_handle,
             p1_layer=p1_layer,
             p1_target_kind=p1_target_kind,
+            p1_cands=p1_cands,
+            p1_starved_ticks=p1_starved_ticks,
             station_dist_m=station_dist_m,
             raw_station_dist_m=raw_station_dist_m,
             planning_rejected_n=planning_rejected_n,            planning_reject_last=planning_reject_last,

@@ -11,8 +11,8 @@
     "coast_decel_ms2": 0.095,
     "safety_margin": 1.1,
     "brake_transition_s": 0.5,
-    "service_decel_frac": {"3": 0.51, "2": 0.7, "1": 0.8},
-    "source": "Class 323: constantes de constants.py/plan.py (PLAN_V2 §2); B1 0.33→0.51 (0,55 m/s2) medido en 20261023T211407Z (frenada final B1: 0,57-0,69 m/s2 con el llenado; paradas 45 y 63 m cortas con 0,35); B2 0.55→0.7 solo para mantener el orden B1<B2<B3, sin medir; B3 sin cambios"
+    "service_decel_frac": {"3": 0.51, "2": 0.78, "1": 1.0},
+    "source": "Class 323: constantes de constants.py/plan.py (PLAN_V2 §2); medido en 20261023T211407Z-T223846Z (decel en llano): B1 0,57-0,69 → frac 0.51 (0,55, algo conservador); B2 0,80-0,90 (5 ventanas) → frac 0.78 (0,84); B3 ≈ 1,1 (1 ventana) → frac 1.0 (1,07 = max_decel)"
   },
   "brake_air": {"model": "uk_emu", "gate_apply": false},
   "layout": "combined",

@@ -14,6 +14,8 @@ from tsw6v2.loop import AgentLoop, AgentSnapshot
 class PlanningContextSource(Protocol):
     def planning_context(self) -> dict[str, object]: ...
 from tsw6v2.planning_feed import resolve_station_tick_dt
+from tsw6v2.vehicle_adapter import adapter_for_package
+from tsw6v2.vehicle_package import resolve_vehicle_package
 from tsw6v2.session_report import (
     MIN_HTML_DURATION_S,
     MIN_HTML_TICKS,
@@ -52,6 +54,7 @@ class SessionRecorder:
         self._trace: Optional[JsonlTrace] = None
         self._loop: Optional[PlanningContextSource] = None
         self._last_detect_key: Optional[tuple[object, ...]] = None
+        self._last_vehicle: Optional[str] = None
         self._t0 = time.monotonic()
         self._last_seq: Optional[int] = None
         self._last_seq_change_t: Optional[float] = None
@@ -92,9 +95,25 @@ class SessionRecorder:
         self._last_detect_key = key
         trace.write_session_detect(**ctx)
 
+    def _maybe_emit_vehicle_detect(self, trace: JsonlTrace, snap: AgentSnapshot) -> None:
+        """Qué tren es: clase del juego, paquete aplicado y layout (una fila al conocerlo o cambiar)."""
+        vehicle = (snap.vehicle or "").strip()
+        if not vehicle or vehicle == "?" or vehicle == self._last_vehicle:
+            return
+        self._last_vehicle = vehicle
+        package = resolve_vehicle_package(vehicle)
+        trace.write_session_detect(
+            vehicle=vehicle,
+            # ``sin_paquete``: el tren corre con los valores por defecto (323), p. ej. una cabina nueva.
+            vehicle_package=(package or {}).get("vehicle_id") or "sin_paquete",
+            fleet=(package or {}).get("fleet"),
+            layout="analogico" if adapter_for_package(package).analog_lever else "muescas",
+        )
+
     def record(self, snap: AgentSnapshot) -> None:
         trace = self._ensure_trace()
         self._maybe_emit_route_detect(trace)
+        self._maybe_emit_vehicle_detect(trace, snap)
         now = time.monotonic()
         # Mismo criterio que la distancia de estación: reloj de pared, y el seq solo detecta pausa.
         # ``seq×50 ms`` colapsaba ticks con seq repetido en el mismo punto del eje X (104709Z).

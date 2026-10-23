@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 642
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 673
 pruebas, 4 saltadas; cifras del 2026-10-24).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -738,6 +738,165 @@ Seis paradas; las cinco primeras **cerca del tablón: 28,3 / 19,0 / 26,3 / 29,8 
   sigue sin ejercitarse con datos de la 323. El «señal a 20» del servicio es el **cartel de velocidad**
   de 20 mph, no un semáforo.
 
+### 7.8 Cierre de las sesiones de la 323: simulador de lazo cerrado, B2/B3 y parpadeo (2026-10-24)
+
+Datos de las cuatro sesiones de la 323 (`211407Z`, `214704Z`, `221121Z`, `223846Z`):
+
+- **Paradas con el plan corregido (9):** 28,6 / 20,2 / 27,5 / 16,1 / 28,3 / 19,0 / 26,3 / 29,8 / 24,7 m
+  antes del tablón (media 24,5 m; ninguna se pasa). Más la parada corta de Aston (364 m) de §7.7, ya
+  corregida.
+- **Decel real medida (ventanas de palanca estable, ≥ 1,5 s tras el llenado, normalizada a llano):**
+  B1 ≈ 0,57-0,69; **B2 ≈ 0,80-0,90 (5 ventanas)**; **B3 ≈ 1,1 (1 ventana)**. Constantes anteriores del
+  paquete: B2 0,75 y B3 0,86.
+- **Parpadeo B1↔B2 (FACT, se repite):** racimos de 6-28 cambios `APPLY B1`/`APPLY B2` a < 1,5 s
+  (`223846Z` a 897 s: 28; `214704Z` 10; `221121Z` 10; el cartel de 45 mph de ~179 s sale en tres sesiones). Causa:
+  los pasos del plan tienen `apply_now` por ventana (`is_in_apply_zone`) sin histéresis; con B1 ya
+  «tarde» (`dist_start` −96 m) y B2 al borde de su ventana (+40 m) el paso activo alterna B1 ↔ B2
+  cada pocos ticks (`station_plan.select_station_active_step`). El replay en lazo abierto lo
+  reproduce a los mismos instantes del log (897,26 / 898,11 / 899,98 s) pero no permite evaluar una
+  corrección (la palanca del log no sigue a los mandos).
+- **`tests/closed_loop_sim.py`** (nuevo): simulador mínimo de lazo cerrado de la 323 (palanca con
+  retardo de IPC 0,15 s, freno con constante de tiempo 1,2 s, decel en llano B1 0,60 / B2 0,85 /
+  B3 1,10, pendiente, `dt` 0,06 s) que llama a `evaluate_p1_tick`. Con él, **B2/B3 medidos sin
+  corrección producen 10 cambios y 9 inversiones en 45 mph / 393 m / −1 %** (el parpadeo real).
+  Es una aproximación: sirve para comparar variantes, no sustituye al juego (limitaciones: sin
+  aprendizaje, sin señales, una sola aproximación por simulación, a baja velocidad el tren «repta»
+  y el simulador no lo trata).
+- **Correcciones (sin validar en juego):**
+  1. `NOTCH_WEAKEN_HOLD_SEQ = 33` (≈ 2 s de `seq`): en el layout por muescas el plan no **afloja** la
+     muesca antes de ese tiempo desde el último cambio (`decision_finalize._notch_weaken_blocked`;
+     escalar sigue siendo inmediato). Nueva razón `notch_dwell` (capa WAIT). En el simulador: 9 → 1
+     inversiones en el caso anterior; sin efecto con las constantes antiguas.
+  2. `class_323.json`: `service_decel_frac` **B2 0,70 → 0,78 y B3 0,80 → 1,0** (0,84 y 1,07 m/s²).
+     B1 sigue en 0,51 (0,55, algo por debajo de lo medido a propósito).
+- **Efecto simulado de las constantes** (parada a N m antes del tablón, 6 aproximaciones, cartel
+  lejano): con B1 0,51 / B2 0,78 / B3 1,0 y tiempo mínimo, 4-45 m cortas, ninguna se pasa y ≤ 2
+  inversiones; con B1 0,56, 11-31 m (el simulador asume B1 = 0,60 exacto; en el juego B1 varía
+  0,50-0,69 con la pendiente y la velocidad, por eso no se sube todavía).
+- **Verificación:** 653 pruebas; paridad de la M3A idéntica (tres sesiones del 22-oct y dos del
+  23-oct, estas contra la salida posterior a §7.7); `test_class323_closed_loop.py` (11 pruebas, 9 s).
+
+### 7.9 Semáforos: el horizonte fijo de 150 m no permitía parar por encima de 30 mph (2026-10-24)
+
+Con el simulador ampliado (carteles intermedios y un semáforo rojo o que pasa a verde; §7.8) se probó
+el plan de señal con la 323 (FACT en el simulador; **no hay un solo semáforo en rojo con la 323 en
+los logs reales**: `signal_red` es `None` en todos). Resultado **antes** de corregir:
+
+| Aproximación al rojo (permanente)      | Resultado |
+| -------------------------------------- | --------- |
+| 25 mph, rojo a 200 m                   | para a 31 m del poste |
+| 35 mph, rojo a 400 m                   | para a 14 m, 5 cambios de muesca (4 inversiones) |
+| **50 mph, rojo a 700 m**               | **cruza el semáforo en rojo** (para 609 m más allá) |
+| **55 mph, rojo a 900 m**               | **cruza el semáforo en rojo** |
+
+- **Causa.** `signal_brake.evaluate_signal_brake` aplaza el APPLY con
+  `max_apply_distance_m = signal_apply_horizon_m(speed)`: 91 m (≤ 20 mph), 120 m (20-30) y 150 m (> 30).
+  Son constantes afinadas con sesiones a baja velocidad (152037Z: no parar a 217 m a 20 mph; 200405Z,
+  202017Z, 155148Z). A 50 mph se necesitan ≈ 380 m (B2 0,84 m/s² + reacción + llenado): a 150 m solo
+  queda la emergencia (`_needs_immediate_signal_stop`) y no basta. El agente no hace nada hasta ~120 m y
+  luego B3.
+- **Datos reales de a qué distancia se ve un semáforo:** M3A 584 m (parado en el origen, 7-9 mph) y
+  323 1786 m (recién salido de Sutton Coldfield); es decir, el juego informa del rojo desde lejos y a
+  velocidad habría margen para frenar con servicio.
+- **Corrección** (`signal_plan.signal_apply_horizon_m`, `signal_brake.evaluate_signal_brake`): por
+  encima de 30 mph y con la decel del vehículo el horizonte es `max(150 m, distancia de parada de
+  servicio B2 + v·(llenado + reacción))` (`signal_service_stop_horizon_m`; 50 mph ≈ 376 m, 35 mph ≈
+  200 m). **Hasta 30 mph es idéntico** (91 / 120 m), que es donde se afinó con sesiones reales. Las
+  llamadas antiguas sin decel conservan los 150 m. No cambia el plan gradual, solo cuándo se
+  deja de aplazarlo.
+- **Después (simulador):** para antes del poste en todas las velocidades de 25 a 60 mph (11-47 m
+  antes), también cuando el rojo está a 150 m del andén (para en el poste), y sigue su camino hasta el
+  andén si el rojo pasa a verde. Pruebas: `test_class323_closed_loop.py` (`test_para_antes_del_semaforo_en_rojo`
+  × 6, `test_rojo_antes_del_anden_para_en_el_poste`, `test_horizonte_de_senal_…`); fallan sin la
+  corrección. Paridad: ver §7.10.
+- **Sin resolver:** en las aproximaciones a un rojo a más de 30 mph el simulador sigue dando 2-5
+  inversiones de muesca (B1↔B2 en < 3 s); es el plan bang-bang de §7.8, mitigado por el tiempo mínimo
+  antes de aflojar. El efecto de que un rojo pase a verde con el tren ya frenando a alta velocidad solo
+  está probado con un caso. **Pendiente de validar en juego** con una ruta con semáforos.
+
+### 7.10 Cómo verificar un tren sin romper el otro (2026-10-24)
+
+Cada corrección de P1 puede cambiar a más de un tren. Las tres últimas semanas se arreglaron fallos que
+eran de **la política común** (el plan ignoraba el bloque `physics` del paquete, soltar el freno heredado,
+el andén esperando a un cartel, el horizonte de semáforos) y fallos **de datos de un tren** (el paquete
+de la 323 no resolvía para la cabina B, B1/B2/B3 mal medidos). La separación que funciona es:
+
+- **P1 = una política común de servicio de pasajeros** (cartel + andén + semáforo + soltar). El nombre
+  «P1» no está definido en el código; la lectura «pasajeros» es la que ya se usa de hecho: la política no
+  conoce trenes, solo `TickCtx` y la física del vehículo.
+- **Cada tren = datos + adaptador**: paquete `data/vehicles/*.json` (decel por muesca, `brake_air`,
+  estructura de la palanca, `match`) y `vehicle_adapter.py` (muescas frente a palanca analógica). Lo
+  único que cambia entre trenes es eso; cualquier `if` por vehículo fuera de ahí es una deuda.
+- **Verificación cruzada con una orden:** `python V2/scripts/regression_check.py` re-evalúa los logs de
+  referencia de **cada tren** (`V2/tests/golden/reference_logs.json`: M3A ×5, Class 323 ×4) y lo compara con
+  lo aceptado (`logs/golden/<tren>/`, junto a los logs, no versionado). Dice qué tren cambia, cuántos
+  ticks y el primero; `--update` acepta un cambio buscado; `--vehicle m3a` limita a un tren. **No hace
+  falta mover los logs a una carpeta por tren:** el tren de cada log se declara en
+  `reference_logs.json` y la herramienta usa el campo `vehicle` de los ticks.
+- **Cómo usarlo:** (1) con el árbol limpio, `--update` fija la referencia; (2) hacer el cambio;
+  (3) `regression_check.py`: el tren que se quería tocar debe cambiar y el otro no (o solo donde se
+  espera); (4) tras validar en juego, `--update`. Complementos: tests con fixtures por tren
+  (`V2/tests/fixtures/class323_*`), `closed_loop_sim.py` (la 323) y `starvation_scan.py`.
+- **Primer uso (2026-10-24)** — referencia = último commit `451e3c8`; actual = tiempo mínimo entre
+  muescas + B2/B3 de la 323 + horizonte de semáforos: **M3A sin cambios (0 de 74 868 ticks, las cinco
+  sesiones)**; **Class 323: 789 de 55 903 ticks** (solo `221121Z` y `223846Z`: el cartel de 45 mph, donde
+  antes saltaba a B3 y ahora `notch_dwell` mantiene la muesca). Es decir, esos cambios afectan a la
+  323 y no a la M3A, que es lo que se quería. La referencia en `logs/golden/` está ahora en `451e3c8`:
+  tras el commit de estos cambios, `--update`.
+- `parity_jsonl.py` aplica ahora el perfil de aire del vehículo al aprendiz (antes usaba el
+  predeterminado, con espera por aire también en la M3A y en la 323), como hace el bucle real.
+
+### 7.11 Vigilancia de los tres objetivos: candidatos registrados y alarma de inanición (2026-10-24)
+
+`evaluate_p1_tick` evalúa en cada tick el **cartel**, el **andén** y el **semáforo rojo** por separado y
+`pick_p1_brake_target` elige uno; hasta ahora el JSONL solo guardaba el elegido (`p1_tgt`, `p1.apply_now`,
+`dist_start`). Los fallos de §7.6, §7.7 y §7.9 eran todos de esa elección (un candidato pedía frenar y el
+elegido no) y solo se veían reproduciendo el tramo con el código. Cambios, **sin tocar la decisión**:
+
+- **Candidatos en cada tick.** `LimitBrakeDecision.candidates` y `decision._candidates()`:
+  `{"lim" | "stn" | "sig": {"k": tipo, "apply": apply_now, "ds": dist_start, "d": distancia, "h": muesca}}`
+  (solo los que existen, ganen o no el pick). Se adjuntan en todos los retornos posteriores a evaluar los
+  objetivos (`_finish` en `evaluate_p1_tick`); los anteriores (sin velocidad, `p1_off`, emergencia) no
+  tienen candidatos. JSONL: `p1_cands`.
+- **Vigilante de inanición.** `decision._starved()`: algún candidato con `apply_now`, el elegido no, y
+  la decisión sin mando. El bucle (`AgentLoop._p1_starved_ticks`) cuenta los ticks seguidos (el freno de
+  puertas del propio bucle, `dwell_cmd`, cuenta como mando), **avisa una vez por racha** con
+  `_log.warning` al llegar a `P1_STARVED_WARN_TICKS` = 20 (~1 s), y lo escribe en el JSONL
+  (`p1_starved` = nº de ticks seguidos), en la línea de texto de la traza (`SIN_MANDO=N`) y en el
+  informe HTML («Sin mando (objetivo pide frenar)», `p1_starved_ticks`).
+- `scripts/starvation_scan.py` usa el mismo criterio (`decision.starved`) sobre logs antiguos.
+- **Cómo leerlo en un log nuevo:** `p1_cands` dice qué pedía cada objetivo aunque perdiera el pick;
+  `p1_starved ≥ 20` marca la racha; con eso un fallo de elección se ve sin reproducir el tramo.
+- **Límites:** detecta «hay un candidato que pide frenar y no sale mando», no una frenada por el camino
+  equivocado ni un mando contradictorio (APPLY↔RELEASE, que se ve con los pares de mandos). Hay
+  aplazamientos legítimos que dan rachas cortas (34,5-35,0 mph con un cartel de 35 mph); por eso la
+  alarma es a partir de 20 ticks.
+- **Verificación:** `test_p1_watch.py` (7 pruebas: candidatos, criterio, tramo real de Gravelly Hill,
+  JSONL, contador y aviso único del bucle, línea de traza e informe); resto del conjunto sin cambios de
+  decisión (`regression_check.py`, §7.10). Sin validar en juego.
+
+### 7.12 El log dice qué tren es, con qué paquete y a qué hora (2026-10-24)
+
+Hasta ahora el tren solo estaba en el campo `vehicle` de cada tick; la cabecera llevaba el perfil y
+`ts` en UTC (el nombre del log también), y no se veía si el tren corría **sin paquete**: así pasó la
+cabina B de la 323 (§7.4). Cambios, solo registro:
+
+- **Cabecera (`session`)**: `ts_local` (hora local con desfase, p. ej. `2026-10-24T00:38:51+02:00`);
+  `ts` sigue en UTC.
+- **Fila `session_detect` de tren** (`SessionRecorder._maybe_emit_vehicle_detect`; una al conocer el
+  tren y otra si cambia): `vehicle` (clase del juego), `vehicle_package` (`class_323`, `m3a_mnr` o
+  **`sin_paquete`** si el tren corre con los valores por defecto), `fleet` y `layout` (`muescas` /
+  `analogico`). El informe las hereda (`load_ticks` fusiona los `session_detect` en la sesión).
+- **`V2/scripts/log_info.py <log> [--at SEGUNDOS]`**: ficha del log (tren, paquete, layout, ruta,
+  servicio, horario, hora local de inicio y fin, commit, perfil) y, con `--at`, la hora local de un
+  instante de la sesión. Funciona con logs antiguos (deduce el tren de los ticks y del paquete y avisa si
+  no resuelve ninguno).
+- **Hora:** los nombres de log (`20261023T223846Z`) y `ts` van en **UTC**; el reloj del equipo y las
+  capturas, en hora local (UTC+2 en octubre). `t_ms` de cada tick es el tiempo desde el inicio de la
+  sesión: hora local = `ts_local` + `t_ms`.
+- **Primera acción al recibir un log:** `python V2/scripts/log_info.py <log>`.
+- Pruebas en `test_p1_watch.py` (cabecera, una sola fila de tren, `sin_paquete`, informe, `log_info`).
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -834,35 +993,21 @@ Criterio de aprobado para el punto 1: mismas decisiones y mismos mandos IPC que 
 en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `analog_lever` de
 `p1_station_gate.py`, `decision.py` y `loop.py` (la semántica con paquete `None` es la de la 323).
 
-### 10.3 Tareas para las próximas sesiones (en orden)
+### 10.3 Tareas para las próximas sesiones (resumen; el detalle y el orden están en §10.5)
 
-0. **Validar la corrección de la frenada fantasma** (§7, 2026-10-21; filas 7 y 8 de §10.2) y, si se
+Hecho (referencia): commits del §10.1, `load_ticks`, pruebas de módulos sin cobertura, adaptador de
+vehículo completo (paso 5 y 6 de `DECISION_MODULOS.md`), correcciones de las sesiones de la 323
+(§7.4-§7.8), estación fantasma (§7.2-§7.3), simulador de lazo cerrado.
 
-   quiere defensa en profundidad, el punto (b).
+Pendiente, por tipo:
 
-1. ~~**Commits** del §10.1~~ (hechos 2026-10-23: son refactors con paridad medida; la validación
-   1-3 sigue pendiente para los cambios de lógica).
-2. **Hueco del ACK ok** (§4): marcar pendiente también con ACK ok hasta que la palanca confirme;
-
-   test unitario del reenvío y validación en juego.
-
-3. ~~**Unificar `load_ticks`**~~ (hecho 2026-10-23, `session_io.py`).
-4. ~~**Pruebas propias** de `control_lock`, `service_brake`, `limit_containment`, `autopilot_limit`~~
-
-   (hecho 2026-10-23, §3.2). Sigue pendiente ampliar el contrato por vehículo con parada en andén y soltar al salir.
-
-5. **Decidir** si se conserva `diagnostic_mc_ipc` (§3.1).
-6. **Medir la física de la M3A** (`physics` del JSON, hoy heredada de la 323) con una sesión de
-
-   calibración de frenado.
-
-7. **Partir** `loop._step_core` (`decision.py` ya está partido en 7 módulos y `evaluate_p1_tick`
-   baja a 184 líneas; ver §10.5).
-8. ~~**Mover al adaptador** la lógica de la M3A que sigue tras `analog_lever`~~ (hecho 2026-10-23).
-   Sigue pendiente el modelo de palanca de §2.6 (decel objetivo → posición), tras validar en juego.
-9. **Distancia al tablón** a lo largo de la vía (§7), tras validar con captura.
-10. **Ventana de aprendizaje de 2 s** (§4): decisión de diseño pendiente.
-11. Al final: partir `session_report.py` y reorganizar carpetas (§2.4 paso 5).
+- **Necesita el juego:** validar §7.4-§7.8 (323), §7.2-§7.3 (2307 en M3A), §7.1 a-e (servicio 500 en
+  M3A); medir B1 con más paradas y seguir B2/B3; plan de señal/semáforo con datos reales de la 323.
+- **Se puede hacer sin el juego:** ver §10.5 punto 4 (ACK ok, caducar distancia congelada, ampliar el
+  simulador a señales y a la M3A, contrato por vehículo, `cli`, `diagnostic_mc_ipc`, `_step_core`).
+- **Decisión de diseño:** un solo dueño por episodio de frenado, modelo de coast con pendiente,
+  ventana de aprendizaje de 2 s, distancia al tablón a lo largo de la vía, modelo de palanca de §2.6.
+- **Al final:** partir `session_report.py` y reorganizar carpetas (§2.4 paso 5).
 
 ### 10.4 Validación contra los logs del 2026-10-22 (`203644Z`, `205735Z`, `212139Z`)
 
@@ -882,72 +1027,105 @@ Contrasta la tabla de §10.2 con los JSONL posteriores a la última edición de 
 
 ### 10.5 Para empezar la próxima sesión
 
-**Estado de partida:** árbol limpio, 624 pruebas en verde (§10.1). Lo que queda ya no es
-refactor mecánico: o necesita el juego o es un cambio de lógica que conviene hacer con validación.
+**Estado de partida (2026-10-24):** 668 pruebas en verde. Último commit conocido `451e3c8`; **sin
+commit** (pedir al usuario): `NOTCH_WEAKEN_HOLD_SEQ` (`constants.py`, `limit_state.py`,
+`decision_finalize.py`, `p1_layers.py`), B2/B3 en `class_323.json`, horizonte de semáforos
+(`signal_plan.py`, `signal_brake.py`), `tests/closed_loop_sim.py`, `tests/test_class323_closed_loop.py`,
+`scripts/regression_check.py` (+ `tests/golden/reference_logs.json`), `scripts/starvation_scan.py`,
+`scripts/parity_jsonl.py` (perfil de aire), el registro de candidatos y el vigilante de inanición
+(`decision.py`, `decision_types.py`, `loop.py`, `trace.py`, `session_report.py`, `constants.py`,
+`tests/test_p1_watch.py`; §7.11, **solo registro**: se puede commitear aparte) y este documento. **Tras el commit:
+`python V2/scripts/regression_check.py --update`** para aceptar la nueva referencia.
 
-**Regla para esta sesión:** no empezar cambios de lógica nuevos (punto 3) hasta haber validado los
-de esta semana (punto 1). Si algo falla en juego con varios cambios sin validar, no se sabe qué
-commit lo causó.
+**Al recibir un log: `python V2/scripts/log_info.py <log>`** (tren, paquete, layout, ruta, servicio y
+hora local; §7.12). Los nombres de log van en UTC; el usuario habla en hora local (UTC+2).
 
-0. **Repetir el servicio 2307** — además de lo anterior, comprobar (§7.3) que no aparece ninguna
-   estación fantasma (`stn_dist_m` congelada con el tren en marcha) y que el freno de bajada se
-   suelta al caer bajo el objetivo. Antes, ver abajo el original:
-0b. (original) **Repetir el servicio 2307** (o cualquier servicio de una parada lejana) con el commit que
-   incluye `scheduled_stops_beyond_trackdata` (§7.2): comprobar que el agente no frena para Harlem
-   125th, que `schedule_source` pasa a `hud_db` y que Crestwood aparece al acercarse. Si en el
-   JSONL `stn_dist_m` sigue apuntando a Harlem, mirar si `PlayerInfo` entrega `geoLocation`.
-1. **Sesión de la M3A en el juego** (servicio 500, `gct-mnr`, circular pasando Fordham ≥ 3 min). Con
-   una sola sesión se validan (a)-(e) de §7.1:
-   - cartel a 60-75 mph **sin escalada al 100 %** (el eje no debe llegar a 0,27 lejos del cartel);
-   - **sin racimos** de alternancias APPLY↔RELEASE a 35 mph ni en la zona de 10 mph hacia Grand
-     Central (contar en el JSONL);
-   - ancla HUD **sin lecturas `Nm lem…`** y sin frenada en vía tras Fordham (fila 8 de §10.2);
-   - eje continuo en el cartel (la curva `decel_by_mc` con pocos puntos puede caer al peldaño B3: a
-     250 m, 72→59 mph la decel necesaria supera la curva).
-   Después, repetir el análisis de §10.4 con los logs nuevos.
-2. **Repetir la Class 323** (dos sesiones hechas, §7.4 y §7.5: las dos pararon cortas — 45 / 63 m y
-   285 m —). Con las correcciones de §7.5 (plan con B1 = 0,55, propiedad con caducidad, sin soltar
-   por el cartel en `STOPPED`) comprobar: parada a < 10 m del tablón; sin pares APPLY↔RELEASE ni en
-   marcha ni parado; sin `air_fill` / `air_recharge`; **que un cartel (20 mph) seguido de andén suelte el
-   freno heredado al alcanzar el objetivo (§7.7)**; **que el andén con un cartel detrás del tablón
-   (§7.6) frene sin esperar al cartel**; **y mirar si aparece el parpadeo B1↔B2** de
-   §7.5 (si sí, mínimo entre cambios de muesca). Medir B2 y B3 (hoy sin datos) y revisar el perfil
-   `…DMS_A_C.json` (B1 −0,38, n = 999). Los fixtures y `parity_jsonl.py` valen para la 323.
-3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, su propio
-   commit y su propia validación; solo tras el punto 1.* El parpadeo del cartel está tapado con
-   `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar independientes del
-   plan. Siguiente paso: que soltar un freno comprometido sea una transición del plan (con
-   histéresis explícita) y que los caminos de `decision_release` actúen solo sobre freno heredado.
-4. **Sin juego, bajo riesgo** (se pueden hacer en cualquier momento):
-   - ~~guardar el script de paridad~~ (hecho: `V2/scripts/parity_jsonl.py`);
+**Herramientas para comparar antes/después** (usarlas siempre que se toque la decisión):
+
+- **`V2/scripts/regression_check.py` (§7.10): la primera que hay que usar.** Re-evalúa los logs de
+  referencia de cada tren (M3A y Class 323) y dice qué tren cambia, cuántos ticks y el primero. Antes de
+  tocar la decisión, con el árbol limpio, `--update`; después de tocar, comprobar que solo cambia el tren
+  que se quería.
+
+- `V2/scripts/parity_jsonl.py <salida> <logs...>`: vuelca la decisión por tick; comparar con `cmp`.
+  La M3A es la referencia (tres sesiones del 22-oct y dos del 23-oct); la 323 solo tiene logs del
+  23-oct. Las salidas de referencia no están en el repo: regenerarlas **antes** de tocar nada.
+- `V2/tests/closed_loop_sim.py` (§7.8): aproximación de lazo cerrado de la 323; ampliarla antes de
+  fiarse de ella para cosas nuevas.
+- Fixtures en `V2/tests/fixtures/class323_*_20261023.json` (tramos reales de la 323).
+- `V2/scripts/starvation_scan.py <logs...>`: barrido de inanición («algún objetivo pide frenar y la
+  decisión no manda nada», §7.6).
+
+**Regla:** no empezar cambios de lógica grandes (punto 3) hasta haber validado en juego los de las
+últimas sesiones (puntos 1 y 2). Si algo falla con varios cambios sin validar, no se sabe qué commit lo
+causó.
+
+1. **Sesión de la Class 323** (la más urgente; ya hay cuatro y siete cambios de lógica encima).
+   Comprobar en el JSONL:
+   - **`p1_starved` y `p1_cands` (§7.11):** buscar ticks con `p1_starved ≥ 20` (un objetivo pedía frenar
+     y no salía mando) y mirar `p1_cands` para ver qué candidato (`lim` / `stn` / `sig`) lo pedía; el
+     informe HTML los cuenta como «Sin mando». Debe haber **cero** rachas largas;
+   - paradas a < 15 m del tablón (hoy 16-30 m cortas, ninguna se pasa);
+   - sin pares APPLY↔RELEASE en marcha ni parado, sin `air_fill` / `air_recharge`;
+   - **sin racimos de cambios B1↔B2** (`notch_dwell` en el log) — si siguen, comparar con el simulador;
+   - cartel → andén: suelta el freno heredado al alcanzar el objetivo (§7.7) y el andén no espera al
+     cartel (§7.6);
+   - medir B2 / B3 (hoy 5 y 1 ventanas) y revisar `…DMS_A_C.json` (B1 −0,38 con n = 999, no cuadra con
+     lo medido) y el perfil nuevo `…dms_b_c.json` (aprendido en §7.5-§7.7).
+   - **plan de señal / semáforo con datos reales** (hoy `signal_red` es `None` en todos los logs de la
+     323; si la ruta tiene semáforos, buscar un servicio que los cruce). §7.9: en el simulador el agente
+     cruzaba el rojo a 50-55 mph con el horizonte fijo de 150 m; ahora para en todos los casos
+     (25-60 mph). **Comprobar en juego, a más de 30 mph, que frena a tiempo y no demasiado pronto si el
+     rojo pasa a verde.**
+2. **M3A en el juego** (servicio 2307 y servicio 500). 2307: sin estación fantasma, `schedule_source`
+   `hud_db`, Crestwood al acercarse (§7.2-§7.3). Servicio 500: los puntos (a)-(e) de §7.1, **más** el
+   nuevo soltar de §7.7 (58 ticks cambian en la M3A) y el eje continuo del cartel.
+3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, solo tras
+   los puntos 1 y 2.* Siguen existiendo varios caminos de soltar independientes del plan (los de
+   §7.4-§7.7 son parches puntuales: propiedad de estación con caducidad, `STOPPED`, soltar con andén
+   en WATCH). Objetivo: que soltar un freno comprometido sea una transición del plan con histéresis
+   explícita. El simulador y el barrido de inanición son la red.
+4. **Sin juego, bajo riesgo o con simulador** (se pueden hacer ya):
+   - hueco del ACK ok (§4, **medido en §7.3: 13 de 16 y 75 de 138 mandos repetidos a < 1 s**): marcar
+     pendiente también con ACK ok; es control, pero acotado y con efecto medible en el JSONL;
+   - caducar una distancia de estación congelada con el tren en marcha (defensa de §7.3) y averiguar
+     por qué un poll llega como `track_only`;
+   - defensa (b) de §7: no emitir `P1-CRITICO-STATION` a alta velocidad si la distancia viene del
+     ancla y acaba de saltar;
+   - ampliar el simulador (ya tiene cartel intermedio y semáforo, §7.9): el aprendizaje de decel, una
+     versión para la M3A (palanca analógica) y frenado con dos elementos seguidos (rojo → cartel →
+     andén);
    - ampliar `test_vehicle_contract.py` con parada en andén y soltar al salir (§5.10);
    - pruebas propias de `cli` y decidir si se conserva `diagnostic_mc_ipc` (§3.1);
    - partir `loop._step_core` (346 líneas) en pasos con nombre, con el mismo método de paridad.
-5. **Con sesión o decisión de diseño:**
-   - modelo de coast con pendiente (`station_coast_release_in_motion` asume 0,095 m/s² y en bajada
-     del −1 % el tren aceleró; §7.4);
-   - hueco del ACK ok (§4): marcar pendiente también con ACK ok; test del reenvío y validación
-     (**medido en §7.3: 13 de 16 y 75 de 138 mandos repetidos a < 1 s**);
-   - caducar una distancia de estación congelada con el tren en marcha (defensa en profundidad de
-     §7.3), y averiguar por qué un poll llega como `track_only`;
-   - defensa en profundidad (b) de §7: no emitir `P1-CRITICO-STATION` a alta velocidad si la
-     distancia viene del ancla y acaba de saltar;
-   - física real de la M3A (`physics` del JSON, hoy heredada de la 323): sesión de calibración de
-     frenado;
-   - ventana de aprendizaje de 2 s (§4): decisión de diseño pendiente;
-   - distancia al tablón a lo largo de la vía (§7), tras validar con captura.
+5. **Decisión de diseño o datos nuevos:**
+   - modelo de coast con pendiente (`station_coast_release_in_motion` asume 0,095 m/s²; en bajada del
+     −1 % el tren aceleró; §7.4);
+   - subir B1 de la 323 (0,55 → ~0,60) cuando haya más paradas: con 0,56 el simulador baja las
+     paradas cortas a 11-31 m pero reaparece algo de parpadeo;
+   - física real de la M3A (`physics` heredada de la 323) con una sesión de calibración de frenado;
+   - ventana de aprendizaje de 2 s (§4);
+   - distancia al tablón a lo largo de la vía (§7), tras validar con captura;
+   - nombres de estación del JSONL: ya se comprobó que están bien (UTF-8); no hay nada que hacer.
 6. **Trenes nuevos** (cuando se hayan sondeado): según [TRENES_DLC.md](TRENES_DLC.md), un
    representante por familia (diésel de EE. UU. con dinámico, eléctrico alemán, metro o UK
    combinada) antes de decidir «archivo por tren». Criterio: operación nueva → adaptador nuevo;
-   solo números nuevos → JSON. El paso 5 ya hecho es el que lo prepara. Antes, el modelo de palanca
-   de §2.6 (decel objetivo → posición), que toca cartel, FSM de andén, `platform_bleed` y
-   aprendizaje a la vez: solo con las sesiones de referencia 323 y M3A ya grabadas.
+   solo números nuevos → JSON. **Lección de la 323:** un paquete que no resuelve para otra cabina
+   (`DMS_B_C`) pasa inadvertido (§7.4); comprobar la resolución para todas las cabinas de cada vehículo
+   nuevo, y que el bloque `physics` se aplique también en el plan (§7.5). Antes, el modelo de palanca
+   de §2.6 (decel objetivo → posición): solo con las sesiones de referencia 323 y M3A ya grabadas.
 7. **Al final:** partir `session_report.py` (métricas / render HTML) y reorganizar carpetas
    (§2.4 paso 5).
 
-Riesgos abiertos que conviene no olvidar: el feedback por muesca (`fb_escalated`) ya no cambia el
-mando MC del cartel (el lazo se cierra al recalcular la decel necesaria cada tick; una curva muy
-optimista tardaría varios ticks en corregirse); la envolvente monótona frena algo más fuerte que
-antes también en andén (los tests siguen pasando, sin sesión que lo confirme); y el replay offline
-es en lazo abierto: demuestra qué decide el código con esas entradas, no que el tren deje de
-oscilar.
+Riesgos abiertos que conviene no olvidar:
+
+- el simulador es una aproximación (§7.8): una variante que lo mejore no está validada hasta el juego;
+- el aprendiz usa su EMA por muesca **antes** que las constantes de física (`_predict_for_kind`): un
+  perfil contaminado anula una corrección del paquete (pasó en §7.4); tras cambiar constantes, apartar
+  el perfil del vehículo o comprobar su EMA;
+- `evaluate_p1_tick` deja la física activa en un `ContextVar`: los tests que lo llaman deben
+  restaurarla (si no contaminan a los siguientes);
+- el feedback por muesca (`fb_escalated`) ya no cambia el mando MC del cartel; la envolvente monótona
+  frena algo más fuerte que antes también en andén (sin sesión que lo confirme);
+- el replay offline es en lazo abierto: demuestra qué decide el código con esas entradas, no que el
+  tren deje de oscilar; para eso, el simulador o el juego.

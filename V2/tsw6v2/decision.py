@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from tsw6v2.plan import PredictDecelFn
 from tsw6v2.bridge.getdata import ProbeSnapshot
@@ -31,6 +31,45 @@ from tsw6v2.p1_policy import limit_release_allowed, pick_p1_brake_target
 from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED
 from tsw6v2.vehicle_adapter import adapter_for_package
 from tsw6v2.target import BrakeTargetResult
+
+
+def _candidate(target: Optional[BrakeTargetResult]) -> Optional[dict[str, Any]]:
+    if target is None:
+        return None
+    return {
+        "k": target.target_kind,
+        "apply": bool(target.apply_now),
+        "ds": round(float(target.dist_start), 1),
+        "d": round(float(target.distance_m), 1),
+        "h": target.handle_notch,
+    }
+
+
+def _candidates(
+    limit_target: Optional[BrakeTargetResult],
+    station_target: Optional[BrakeTargetResult],
+    signal_target: Optional[BrakeTargetResult],
+) -> dict[str, dict[str, Any]]:
+    """Cartel / andén / semáforo de este tick, ganen o no el pick (se registran en el JSONL)."""
+    out: dict[str, dict[str, Any]] = {}
+    for key, target in (("lim", limit_target), ("stn", station_target), ("sig", signal_target)):
+        cand = _candidate(target)
+        if cand is not None:
+            out[key] = cand
+    return out
+
+
+def _starved(
+    candidates: dict[str, dict[str, Any]],
+    pick: Optional[BrakeTargetResult],
+    decision: LimitBrakeDecision,
+) -> bool:
+    """Un candidato pide frenar ya, el elegido no, y no sale ningún mando (ANALISIS §7.6)."""
+    if decision.command is not None:
+        return False
+    if not any(c["apply"] for c in candidates.values()):
+        return False
+    return pick is None or not pick.apply_now
 
 
 def evaluate_p1_tick(
@@ -148,6 +187,15 @@ def evaluate_p1_tick(
             speed_mph=ctx.speed_mph,
         )
 
+    candidates = _candidates(
+        limit_target if limit_brake_enabled else None, station_target, signal_target
+    )
+
+    def _finish(decision: LimitBrakeDecision) -> LimitBrakeDecision:
+        decision.candidates = candidates
+        decision.starved = _starved(candidates, target, decision)
+        return decision
+
     platform_bleed = attempt_platform_parked_bleed(
         ctx,
         prep,
@@ -157,7 +205,7 @@ def evaluate_p1_tick(
         snap=snap,
     )
     if platform_bleed is not None:
-        return platform_bleed
+        return _finish(platform_bleed)
 
     platform_bleed_release = attempt_platform_parked_bleed_release(
         ctx,
@@ -176,7 +224,7 @@ def evaluate_p1_tick(
         limit_sign_passed=prep.dist_m is not None and prep.dist_m <= LIMIT_SIGN_PASSED_M,
     )
     if platform_bleed_release is not None:
-        return platform_bleed_release
+        return _finish(platform_bleed_release)
 
     departing_release = attempt_departing_brake_release(
         ctx,
@@ -185,7 +233,7 @@ def evaluate_p1_tick(
         station_dist_m=station_dist_geo,
     )
     if departing_release is not None:
-        return departing_release
+        return _finish(departing_release)
 
     skip_release = should_skip_p1_release(
         speed_mph=ctx.speed_mph,
@@ -214,9 +262,9 @@ def evaluate_p1_tick(
             signal_brake_enabled=signal_brake_enabled,
         )
         if released is not None:
-            return released
+            return _finish(released)
 
-    return finalize_p1_decision(
+    return _finish(finalize_p1_decision(
         ctx,
         prep,
         snap,
@@ -229,7 +277,7 @@ def evaluate_p1_tick(
         learner=learner,
         limit_brake_enabled=limit_brake_enabled,
         station_dist_geo=station_dist_geo,
-    )
+    ))
 
 
 def evaluate_limit_tick(
