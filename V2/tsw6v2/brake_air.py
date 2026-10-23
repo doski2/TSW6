@@ -125,7 +125,7 @@ class BrakeAirTracker:
         - En servicio (muesca < neutro): esperar p ≥ mínimo (air_fill tras APPLY).
         - MC US: no bloquear APPLY por escala 323 (IPC analog; lever HUD desacoplado).
         """
-        if self._profile.is_master_controller():
+        if self._profile.is_master_controller() or not self._profile.gate_apply:
             return True
         if brake_cyl_bar is None:
             return True
@@ -149,7 +149,7 @@ class BrakeAirTracker:
         Tras soltar: no volver a frenar hasta vaciar cilindro o pasar fill-time.
         Evita bombar B3→neutro→B3 con tanques vacíos.
         """
-        if self._profile.is_master_controller():
+        if self._profile.is_master_controller() or not self._profile.gate_apply:
             return False
         if self._released_at is None:
             return False

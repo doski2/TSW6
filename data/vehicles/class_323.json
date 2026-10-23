@@ -4,16 +4,17 @@
   "fleet": "uk",
   "session_route": "Birmingham Cross-City",
   "match": {
-    "vehicle_class": "RVM_BCC_WRM_Class323_DMS_A_C"
+    "vehicle_class": "RVM_BCC_WRM_Class323_DMS"
   },
   "physics": {
     "max_decel_ms2": 1.071,
     "coast_decel_ms2": 0.095,
     "safety_margin": 1.1,
     "brake_transition_s": 0.5,
-    "service_decel_frac": {"3": 0.33, "2": 0.55, "1": 0.8},
-    "source": "Class 323: constantes de constants.py/plan.py (PLAN_V2 §2)"
+    "service_decel_frac": {"3": 0.51, "2": 0.7, "1": 0.8},
+    "source": "Class 323: constantes de constants.py/plan.py (PLAN_V2 §2); B1 0.33→0.51 (0,55 m/s2) medido en 20261023T211407Z (frenada final B1: 0,57-0,69 m/s2 con el llenado; paradas 45 y 63 m cortas con 0,35); B2 0.55→0.7 solo para mantener el orden B1<B2<B3, sin medir; B3 sin cambios"
   },
+  "brake_air": {"model": "uk_emu", "gate_apply": false},
   "layout": "combined",
   "controls": {
     "PowerBrakeHandle": {

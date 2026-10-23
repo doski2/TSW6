@@ -14,9 +14,14 @@ class BrakeAirProfile:
     """
     ``uk_emu``: presión cilindro estilo Class 323 (reposo ~1 bar).
     ``master_controller``: MC US — presión reposo alta; IPC analog; lever HUD ≠ UK.
+
+    ``gate_apply``: ``False`` = no esperar presión de cilindro ni recarga para mandar APPLY
+    (``air_fill`` / ``air_recharge``). La Class 323 no lo necesita (20261023T211407Z: 104 ticks de
+    espera en la aproximación a Wylde Green); sí puede hacer falta en mercancías.
     """
 
     model: str = MODEL_UK_EMU
+    gate_apply: bool = True
 
     @classmethod
     def uk_emu(cls) -> BrakeAirProfile:

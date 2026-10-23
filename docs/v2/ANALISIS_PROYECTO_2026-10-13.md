@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 630
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 635
 pruebas, 4 saltadas; cifras del 2026-10-23).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -590,6 +590,53 @@ Mismo servicio que 7.2, ya con la corrección del horario (`schedule_source = hu
   reckoning). No hay `tick` duplicados ni filas repetidas. El log tiene 4 filas `session_detect`
   (actualizaciones de servicio / horario), normal.
 
+### 7.4 Primera sesión de la Class 323 (`20261023T211407Z`; cabina `DMS_B_C`, servicio 2O02, `cross-city`, 544 s)
+
+Commit de partida `7d0a732`. Dos paradas, **las dos cortas: Sutton Coldfield a 45,4 m y Wylde Green a
+63,3 m del tablón** (la app cree estar a esa distancia al parar; ancla HUD `board off=130`). Causas
+(FACT, medidas sobre el JSONL), todas corregidas **sin validar en juego**:
+
+- **El paquete de la 323 no resolvía para la cabina B.** `class_323.json` declaraba
+  `match.vehicle_class = RVM_BCC_WRM_Class323_DMS_A_C` y `vehicle_class_matches` es exacto o por
+  prefijo; la sesión corrió con `DMS_B_C` → `resolve_vehicle_package` = `None`: sin bloque `physics`,
+  sin perfil de aire, `NotchAdapter(None)`. El M3A ya usaba el prefijo corto (`RVM_NYH_MNR_M3a`).
+  Corrección: `match.vehicle_class = RVM_BCC_WRM_Class323_DMS`.
+- **B1 real ≈ 0,5-0,7 m/s², el plan usa 0,35.** Cuatro ventanas con la palanca en B1 estable (sin los
+  primeros 2,5 s de llenado): 0,51 (42→36 mph, −1 %), 0,50 (33→24 mph, −1 %), 0,69 (15→1 mph, llano),
+  0,58 (22→1 mph); decel efectiva de las dos frenadas finales incluyendo el llenado: 0,75 (B1+B2) y
+  0,57 (B1). Con 0,35 el plan frena demasiado pronto y demasiado fuerte → 45 y 63 m cortos (21 mph a
+  110 m: 0,42 m/s² bastaban). Corrección en `class_323.json`: `service_decel_frac` B1 0,33 → **0,51**
+  (0,55 m/s², algo por debajo de lo medido para fallar por corto y no por largo); B2 0,55 → 0,70 **solo
+  para mantener B1 < B2 < B3, sin medir**; B3 sin cambios, sin medir (hay una ventana de 0,8 s a
+  0,70 m/s²). **Ojo:** el aprendiz usa su EMA por muesca antes que las constantes de física
+  (`_predict_for_kind`: `_by_notch > 0,05`). El perfil de esta sesión (B1 = −0,35, n = 35) se aprendió
+  durante el ping-pong y se apartó a `logs/profiles/rvm_bcc_wrm_class323_dms_b_c.json.bak-20261023-
+  contaminado`. **No se ha tocado** `RVM_BCC_WRM_Class323_DMS_A_C.json` (B1 −0,38 con n = 999,
+  B2 −0,83, B3 −1,02): el aprendizaje histórico y la medición de hoy no cuadran; revisar cómo se
+  mide la decel en la ventana de aprendizaje (¿incluye el llenado?).
+- **Ping-pong `APPLY B1` ↔ `RELEASE «Objetivo alcanzado»` (485-510 s, 26 pares, palanca 3↔4).** El
+  plan de estación aplicaba; en el tick siguiente (palanca ya en freno) el objetivo de estación
+  desaparecía o se aplazaba y el camino de soltar por el cartel («objetivo alcanzado») lo deshacía.
+  Mismo patrón que §7.1 e, ahora con objetivo de estación y sin cubrir por `_limit_plan_owns_brake`.
+  Corrección: `decision_finalize` fija `limit_state.station_stop_m` también en el layout por muescas
+  cuando el plan de estación manda `APPLY` (el analógico ya lo hacía), y `_limit_release_ok` /
+  `station_stop_running` lo respetan. Efecto: el freno de la parada en curso es del plan de estación
+  hasta que acaba (velocidad ≤ 1 mph o la estación sube > 20 m). Replay del log: pares 6 → 0.
+- **Espera por aire (104 ticks `air_fill` / `air_recharge`, todos entre 480 y 540 s).** Nuevo flag de
+  paquete `brake_air.gate_apply` (por defecto `true`); la 323 lo lleva a `false` y `BrakeAirTracker`
+  deja de bloquear `air_ready` / `inhibit_reapply`. Mercancías u otros vehículos conservan el
+  bloqueo. Sigue activo el tope de escalada de `cap_escalation` y el tiempo de llenado
+  (`brake_fill_s`), que son físicos.
+- **Soltar en marcha a 420 m (`platform_bleed_release`, 227,8 s, 23 mph).** `station_coast_release_in_
+  motion` creyó que la inercia bastaba (coast 0,095 m/s²) y el tren **aceleró** de 21,9 a 24,0 mph en
+  bajada (−1 %) durante 30 s antes de frenar tarde. Con la propiedad del freno ya no se dispara
+  mientras la parada está en curso. **Sigue abierto:** el modelo de coast ignora la pendiente.
+
+Comprobaciones: paridad de la M3A idéntica (56 797 ticks, mismo md5); 635 pruebas; la regresión
+`test_class323_station_approach.py` (fixture de 485 ticks de la sesión) falla sin la corrección del
+ping-pong y pasa con ella. **Por validar:** que la 323 pare cerca del tablón con B1 = 0,55; que no
+vuelvan las alternancias; que el aprendizaje nuevo converja (con el perfil B limpio); B2 / B3.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -757,10 +804,12 @@ commit lo causó.
    - eje continuo en el cartel (la curva `decel_by_mc` con pocos puntos puede caer al peldaño B3: a
      250 m, 72→59 mph la decel necesaria supera la curva).
    Después, repetir el análisis de §10.4 con los logs nuevos.
-2. **Sesión de la Class 323** (fila 3 de §10.2, Cross-City, una parada) antes de tocar `limit_notch`
-   o `decision`: es la única forma de saber si los arreglos de esta semana la afectan. Es también la
-   única referencia para la paridad de la 323, que hoy solo cubren tests unitarios; con ella se
-   podría usar `parity_jsonl.py` también para la 323.
+2. **Repetir la Class 323** (primera sesión hecha el 2026-10-23, §7.4; fila 3 de §10.2). Con los
+   cambios de §7.4 (paquete para cabina A y B, B1 = 0,55, sin espera por aire, propiedad del freno de
+   estación): comprobar que para a < 10 m del tablón (antes 45 y 63 m cortos), que no hay
+   alternancias APPLY↔RELEASE y que no hay `air_fill` / `air_recharge`. Medir además B2 y B3
+   (hoy sin datos) y revisar el perfil `…DMS_A_C.json` (B1 −0,38, n = 999). Hay ya un fixture y
+   `parity_jsonl.py` sirve también para la 323 (`logs/v2/20261023T211407Z_…`).
 3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, su propio
    commit y su propia validación; solo tras el punto 1.* El parpadeo del cartel está tapado con
    `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar independientes del
@@ -772,6 +821,8 @@ commit lo causó.
    - pruebas propias de `cli` y decidir si se conserva `diagnostic_mc_ipc` (§3.1);
    - partir `loop._step_core` (346 líneas) en pasos con nombre, con el mismo método de paridad.
 5. **Con sesión o decisión de diseño:**
+   - modelo de coast con pendiente (`station_coast_release_in_motion` asume 0,095 m/s² y en bajada
+     del −1 % el tren aceleró; §7.4);
    - hueco del ACK ok (§4): marcar pendiente también con ACK ok; test del reenvío y validación
      (**medido en §7.3: 13 de 16 y 75 de 138 mandos repetidos a < 1 s**);
    - caducar una distancia de estación congelada con el tren en marcha (defensa en profundidad de

@@ -212,13 +212,15 @@ def resolve_brake_air_profile(
     if not package:
         return BrakeAirProfile.uk_emu()
     block = package.get("brake_air")
+    gate_apply = True
     if isinstance(block, dict):
+        gate_apply = bool(block.get("gate_apply", True))
         model = str(block.get("model") or "").strip()
         if model in (MODEL_UK_EMU, MODEL_MASTER_CONTROLLER):
-            return BrakeAirProfile(model=model)
+            return BrakeAirProfile(model=model, gate_apply=gate_apply)
     if uses_mc_analog_ipc(package):
-        return BrakeAirProfile(model=MODEL_MASTER_CONTROLLER)
-    return BrakeAirProfile.uk_emu()
+        return BrakeAirProfile(model=MODEL_MASTER_CONTROLLER, gate_apply=gate_apply)
+    return BrakeAirProfile(model=MODEL_UK_EMU, gate_apply=gate_apply)
 
 
 @lru_cache(maxsize=1)

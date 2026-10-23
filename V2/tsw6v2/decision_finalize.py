@@ -15,6 +15,7 @@ from tsw6v2.decision_types import LimitBrakeDecision, TickCtx, TickPrep
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.target import BrakeTargetResult
+from tsw6v2.vehicle_adapter import adapter_for_package
 
 
 def _overlay_active_zone_hold(
@@ -126,6 +127,16 @@ def _finalize_target_decision(
         return ctx.idle(reason, target=target, detail=detail)
 
     decision = ctx.from_target(cmd, target, _plan_reason(cmd, target))
+    if (
+        target.target_kind == "STATION"
+        and cmd.kind == "APPLY"
+        and not adapter_for_package(ctx.vehicle_package).analog_lever
+    ):
+        # Layout por muescas (323): el freno de la parada en curso es del plan de estación.
+        # Sin esto el tick siguiente (palanca ya en freno) caía en «objetivo alcanzado» del
+        # cartel y soltaba: APPLY/RELEASE cada tick (20261023T211407Z, 485-510 s, 26 pares).
+        # El layout analógico ya lo fija en ``mc_station_stop_fraction``.
+        limit_state.station_stop_m = target.distance_m
     if (
         cmd.target_notch is None
         and cmd.target_fraction is not None
