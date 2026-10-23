@@ -208,3 +208,47 @@ def test_propiedad_del_freno_de_estacion_caduca_tras_20_ticks_sin_plan() -> None
     assert "RELEASE" not in kinds[: k - 1]
     assert not owned[k - 1], "la propiedad debe caducar a los 20 ticks sin plan"
     assert "RELEASE" in kinds[k - 1 :], "tras caducar debe poder soltar"
+
+
+_FIXTURE_SIGN = _FIXTURES / "class323_station_before_limit_sign_20261023.json"
+
+
+def test_estacion_no_espera_a_un_cartel_que_aun_no_frena_20261023() -> None:
+    """Gravelly Hill: andén @ 705 m y cartel 50 @ 829 m (detrás del tablón), 58 mph.
+
+    El plan de estación pedía frenar desde 830 s (``apply_now``, ya tarde desde 834 s) pero
+    ``station_waits_for_approach_limit`` («recorte con HUD invertido») lo cedía al cartel, que aún
+    no frenaba: 18 s sin mando hasta la emergencia a 281 m; el tren pasó el andén a 27 mph.
+    """
+    data = json.loads(_FIXTURE_SIGN.read_text(encoding="utf-8"))
+    keys = data["keys"]
+    ticks = [dict(zip(keys, row)) for row in data["rows"]]
+    pkg = resolve_vehicle_package(_B_CAB)
+    limit_state, release_state, learner = LimitBrakeState(), BrakeReleaseState(), LearnerProfile()
+    learner.apply_vehicle_brake_profile(pkg)
+    prev = get_active_physics()
+    from dataclasses import replace
+
+    commands: list[tuple[float, str | None]] = []
+    logging.disable(logging.CRITICAL)
+    try:
+        for t in ticks:
+            snap = replace(tick_to_snap(t), accel_ms2=t["accel_ms2"])
+            d = evaluate_p1_tick(
+                limit_state,
+                release_state,
+                snap,
+                learner=learner,
+                station_distance_m=t["stn_dist_m"] if (t["stn_dist_m"] or 0) > 0 else None,
+                station_fsm=t["stn_fsm"],
+            )
+            commands.append((t["t_ms"] / 1000.0, d.command.kind if d.command else None))
+    finally:
+        logging.disable(logging.NOTSET)
+        set_active_physics(prev)
+    window = [kind for s, kind in commands if 832.0 <= s <= 846.0]
+    assert window, "el fixture debe cubrir 832-846 s"
+    with_command = sum(1 for kind in window if kind is not None)
+    assert with_command / len(window) >= 0.9, (
+        f"solo {with_command}/{len(window)} ticks con mando mientras el andén pedía frenar"
+    )

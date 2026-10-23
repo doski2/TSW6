@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 640
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 641
 pruebas, 4 saltadas; cifras del 2026-10-24).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -675,6 +675,41 @@ cuanto `speed ≤ objetivo + LIMIT_SCORING_MAX_OVER_MPH` y el plan vuelve a pedi
 el replay en lazo abierto (necesita el lazo cerrado), así que no se ha tocado. Opción: un tiempo
 mínimo entre cambios de muesca (≈ 1,5 s de `seq`) solo en el layout por muescas.
 
+### 7.6 Tercera sesión de la Class 323 (`20261023T221121Z`; cabina B, 2O02, 872 s, commit `c4d3eb4`)
+
+Cuatro paradas, **todas cortas pero ya cerca: 28,6 / 20,2 / 27,5 / 16,1 m** (antes 45-285 m; las
+correcciones de §7.4-§7.5 funcionan) y un **fallo grave en la última, Gravelly Hill andén 1** (FACT):
+
+- **Cronología.** 830,1 s, 57,9 mph, andén @ 757 m: el plan de estación pide frenar (`apply_now`,
+  B1, `dist_start` +79 m; ya tarde desde 834 s, −21 m, y −271 m a 848 s). El objetivo elegido fue
+  `SPEED_LIMIT` («Límite 50 mph → @49»; cartel de 60→50 @ 829 m, **124 m detrás del tablón**, a la
+  altura del final del andén) con `apply_now = False`: **sin ningún mando durante 18 s**. A 848,5 s
+  saltó `P1-EMERGENCIA-STATION` (B3 con 58 mph a 281 m: no se puede parar) y el tren **pasó el
+  andén a 27 mph** (stn 3,3 m a 862,8 s).
+- **Causa.** `limit_station_cluster.station_waits_for_approach_limit` devuelve `True` por su primera
+  regla, `next_sign_is_reduction_beyond_station` («recorte con HUD invertido»: cartel a > 50 m y
+  ≤ 350 m detrás del andén y menor que el límite vigente), **aunque `limit_sign_beyond_station` también
+  es `True`**; la segunda regla nunca llega a evaluarse. `_pick_limit_station_target` entonces cede el
+  tick al cartel, que todavía no necesitaba frenar. Evidencia con el replay: `pick = SPEED_LIMIT` de
+  830 a 848 s con `station = (STATION, apply_now=True, ds < 0)`.
+- **Corrección** (`p1_policy._pick_limit_station_target`): guarda de inanición. El andén no espera al
+  cartel si el propio andén ya está en `apply_now` y el cartel no (`station_due`). La regla de
+  «HUD invertido» **no se ha eliminado**: viene de un caso anterior (20260909T230944Z) que no puedo
+  reproducir; solo se evita que deje el tick sin mando. Con la guarda el replay elige `STATION` desde
+  830,1 s y manda `COAST_THROTTLE` → `APPLY`.
+- **Tests:** `test_estacion_no_espera_a_un_cartel_que_aun_no_frena_20261023` (fixture
+  `class323_station_before_limit_sign_20261023.json`, 822-850 s; falla sin la guarda). **641 pruebas.**
+  Paridad de la M3A idéntica (tres sesiones del 22-oct y dos del 23-oct).
+- **Barrido de inanición** (`algún objetivo con apply_now y la decisión sin mando`) sobre los 8 logs
+  de 323 y M3A, después de la corrección: sin casos nuevos graves. Quedan rachas de 3-4 s que son
+  aplazamientos con margen (p. ej. 176-179 s: 34,5-35,0 mph con cartel de 35, legal) y una de 11 s en
+  la M3A (`201351Z`, 51-62 s, la estación fantasma de §7.3).
+- **Señales / semáforos:** `signal_red` es `None` en los 17 285 ticks de la sesión, así que el plan de
+  señal no intervino ni se ha podido ejercitar aquí. Sigue sin cobertura con datos reales de la 323.
+- **Pendiente:** las paradas siguen 16-29 m cortas (B1 = 0,55 es algo conservador; lo medido da
+  0,57-0,69); revisar con más paradas antes de subir la fracción. Las 252 filas `emergency` del log
+  son todas del episodio de Gravelly Hill.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -845,7 +880,8 @@ commit lo causó.
 2. **Repetir la Class 323** (dos sesiones hechas, §7.4 y §7.5: las dos pararon cortas — 45 / 63 m y
    285 m —). Con las correcciones de §7.5 (plan con B1 = 0,55, propiedad con caducidad, sin soltar
    por el cartel en `STOPPED`) comprobar: parada a < 10 m del tablón; sin pares APPLY↔RELEASE ni en
-   marcha ni parado; sin `air_fill` / `air_recharge`; **y mirar si aparece el parpadeo B1↔B2** de
+   marcha ni parado; sin `air_fill` / `air_recharge`; **que el andén con un cartel detrás del tablón
+   (§7.6) frene sin esperar al cartel**; **y mirar si aparece el parpadeo B1↔B2** de
    §7.5 (si sí, mínimo entre cambios de muesca). Medir B2 y B3 (hoy sin datos) y revisar el perfil
    `…DMS_A_C.json` (B1 −0,38, n = 999). Los fixtures y `parity_jsonl.py` valen para la 323.
 3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, su propio

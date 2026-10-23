@@ -413,7 +413,11 @@ def _pick_limit_station_target(
     if station_dist_m is None:
         return limit_target
 
-    if station_waits_for_approach_limit(
+    # Andén ya pidiendo freno y cartel aún sin frenar: esperar al cartel dejaría el tick sin mando
+    # (20261023T221121Z, Gravelly Hill: cartel 50 @ 829 m, andén @ 705 m; 18 s sin frenar hasta la
+    # emergencia a 281 m y el tren pasó el andén a 27 mph).
+    station_due = station_target.apply_now and not limit_target.apply_now
+    if not station_due and station_waits_for_approach_limit(
         speed_mph=speed_mph,
         limit_mph=limit_mph,
         limit_dist_m=limit_dist_m,
