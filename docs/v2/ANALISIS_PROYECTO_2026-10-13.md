@@ -1,6 +1,6 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 641
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 642
 pruebas, 4 saltadas; cifras del 2026-10-24).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
@@ -710,6 +710,34 @@ correcciones de §7.4-§7.5 funcionan) y un **fallo grave en la última, Gravell
   0,57-0,69); revisar con más paradas antes de subir la fracción. Las 252 filas `emergency` del log
   son todas del episodio de Gravelly Hill.
 
+### 7.7 Cuarta sesión de la Class 323 (`20261023T223846Z`; cabina B, 2O02, 1136 s, commit `c5cf5b6`)
+
+Seis paradas; las cinco primeras **cerca del tablón: 28,3 / 19,0 / 26,3 / 29,8 / 24,7 m** (la guarda de
+§7.6 no se ejercitó aquí). **La última, Aston, quedó a 364,2 m** (FACT):
+
+- **Cronología.** 1093 s, 37,7 mph: cartel 40→20 @ 418 m y andén @ 582 m (el cartel va **delante** del
+  andén). 1096,4 s: `APPLY B1` por el cartel de 20 (objetivo @19). 1110 s, 19,4 mph: objetivo
+  alcanzado; el plan de cartel termina y el objetivo elegido pasa a `STATION` en WATCH
+  (`apply_now = False`, `dist_start` +348 m). **B1 siguió puesto 15 s** y el tren se paró a 364 m
+  (nada soltó entre 1110 y 1126 s; `command_none`).
+- **Causa.** `p1_policy.limit_release_allowed` devolvía `False` para cualquier objetivo `STATION`
+  (`target.target_kind == "STATION"`), también en WATCH. El freno heredado del cartel solo se suelta
+  por `attempt_p1_releases` (que pasa por `limit_release_ok(target)`), y el resto de caminos de soltar
+  no cubren este caso. Aviso de §7.1 e / §10.5 punto 3 (varios caminos de soltar independientes).
+- **Corrección:** ese bloqueo solo con el andén activo (`target.apply_now`). El tramo final lo sigue
+  cubriendo `blocks_inherited_release_in_station_final_approach` y la propiedad del freno de estación
+  (`station_stop_m`, §7.4-§7.5). Con ella el replay suelta a 19,4 mph.
+- **Tests:** `test_suelta_el_freno_del_cartel_aunque_el_objetivo_pase_a_andon_en_watch_20261023`
+  (fixture `class323_limit_then_station_20261023.json`, 1091-1118 s; falla sin la corrección).
+- **Efecto en la M3A (medido):** paridad idéntica en las tres sesiones del 22-oct y en `203255Z`; en
+  `201351Z` cambian **58 de 14 070 ticks** (seq 16679-16727, 549-555 s): antes `STATION` WATCH sin mando,
+  ahora `RELEASE`. Mismo patrón (límite de 40 alcanzado, andén aún en WATCH a 513-425 m, B1 retenido
+  hasta que el conductor soltó a 555 s); es el comportamiento buscado. El log de referencia de la
+  paridad M3A del 23-oct cambia a partir de este punto.
+- **Señales:** `signal_red` y `signal_dist_m` siguen siendo `None` en los 22 487 ticks: el plan de señal
+  sigue sin ejercitarse con datos de la 323. El «señal a 20» del servicio es el **cartel de velocidad**
+  de 20 mph, no un semáforo.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -880,7 +908,8 @@ commit lo causó.
 2. **Repetir la Class 323** (dos sesiones hechas, §7.4 y §7.5: las dos pararon cortas — 45 / 63 m y
    285 m —). Con las correcciones de §7.5 (plan con B1 = 0,55, propiedad con caducidad, sin soltar
    por el cartel en `STOPPED`) comprobar: parada a < 10 m del tablón; sin pares APPLY↔RELEASE ni en
-   marcha ni parado; sin `air_fill` / `air_recharge`; **que el andén con un cartel detrás del tablón
+   marcha ni parado; sin `air_fill` / `air_recharge`; **que un cartel (20 mph) seguido de andén suelte el
+   freno heredado al alcanzar el objetivo (§7.7)**; **que el andén con un cartel detrás del tablón
    (§7.6) frene sin esperar al cartel**; **y mirar si aparece el parpadeo B1↔B2** de
    §7.5 (si sí, mínimo entre cambios de muesca). Medir B2 y B3 (hoy sin datos) y revisar el perfil
    `…DMS_A_C.json` (B1 −0,38, n = 999). Los fixtures y `parity_jsonl.py` valen para la 323.

@@ -361,7 +361,10 @@ def limit_release_allowed(
         )
     ):
         return False
-    if target is not None and target.target_kind == "STATION":
+    # Con el andén solo en WATCH (aún no pide freno) el freno heredado del cartel sí se suelta; el
+    # tramo final lo cubre ``blocks_inherited_release_in_station_final_approach``. Antes cualquier
+    # objetivo STATION lo retenía: 20261023T223846Z, cartel 20 → andén, B1 hasta parar a 364 m.
+    if target is not None and target.target_kind == "STATION" and target.apply_now:
         return False
     if target is not None and target.target_kind == "SPEED_LIMIT":
         return True

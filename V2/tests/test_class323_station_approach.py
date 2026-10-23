@@ -252,3 +252,41 @@ def test_estacion_no_espera_a_un_cartel_que_aun_no_frena_20261023() -> None:
     assert with_command / len(window) >= 0.9, (
         f"solo {with_command}/{len(window)} ticks con mando mientras el andén pedía frenar"
     )
+
+
+_FIXTURE_LIMIT_THEN_STATION = _FIXTURES / "class323_limit_then_station_20261023.json"
+
+
+def test_suelta_el_freno_del_cartel_aunque_el_objetivo_pase_a_andon_en_watch_20261023() -> None:
+    """Aston: B1 por el cartel de 20 mph; al alcanzarlo el objetivo pasó a ``STATION`` (WATCH, aún
+    a ~350 m de empezar) y el freno heredado se retuvo 15 s hasta parar a 364 m del andén.
+    """
+    from dataclasses import replace
+
+    data = json.loads(_FIXTURE_LIMIT_THEN_STATION.read_text(encoding="utf-8"))
+    keys = data["keys"]
+    ticks = [dict(zip(keys, row)) for row in data["rows"]]
+    limit_state, release_state, learner = LimitBrakeState(), BrakeReleaseState(), LearnerProfile()
+    learner.apply_vehicle_brake_profile(resolve_vehicle_package(_B_CAB))
+    prev = get_active_physics()
+    releases: list[float] = []
+    logging.disable(logging.CRITICAL)
+    try:
+        for i, t in enumerate(ticks):
+            tt = {**t, "lever": ticks[i - 1]["lever"] if i else t["lever"]}
+            snap = replace(tick_to_snap(tt), accel_ms2=t["accel_ms2"])
+            d = evaluate_p1_tick(
+                limit_state,
+                release_state,
+                snap,
+                learner=learner,
+                station_distance_m=t["stn_dist_m"] if (t["stn_dist_m"] or 0) > 0 else None,
+                station_fsm=t["stn_fsm"],
+            )
+            if d.command is not None and d.command.kind == "RELEASE":
+                releases.append(t["spd_mph"])
+    finally:
+        logging.disable(logging.NOTSET)
+        set_active_physics(prev)
+    assert releases, "nunca soltó el freno heredado del cartel"
+    assert releases[0] >= 15.0, f"soltó tarde, a {releases[0]} mph"
