@@ -1,7 +1,7 @@
-# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23)
+# Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (69 módulos incluido `bridge/`, ~19,5 k líneas; 43 ficheros de test, 592
-pruebas, 4 saltadas).
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 624
+pruebas, 4 saltadas; cifras del 2026-10-23).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
 Evidencia clasificada según `00-tsw6-core.mdc`: FACT = código leído o medido en logs; INFERENCE =
@@ -13,8 +13,15 @@ uso, funciones largas y riesgos nuevos en §3–§5 (marcados «2026-10-19»). �
 2026-10-19 y lo pendiente con prioridad.
 
 Actualización 2026-10-23: §7 recoge los hallazgos de las sesiones `203644Z`, `205735Z` y
-`212139Z` (2026-10-22) y §10.4 contrasta lo pendiente de §10.2 con esos logs. **Empezar la próxima
-sesión por §10.5.** Inventario de trenes del DLC en [TRENES_DLC.md](TRENES_DLC.md).
+`212139Z` (2026-10-22) y §10.4 contrasta lo pendiente de §10.2 con esos logs. Inventario de trenes del DLC en [TRENES_DLC.md](TRENES_DLC.md).
+
+**Cierre de sesión 2026-10-23 (lo hecho, todo en commits, árbol limpio):** `decision.py` partido
+en 7 módulos (1362 → 238 líneas; pasos 5 y 6 de [DECISION_MODULOS.md](DECISION_MODULOS.md)), con la
+lógica MC y el bleed de andén detrás de `vehicle_adapter`; `load_ticks` unificado
+(`session_io.py`); pruebas propias de `control_lock`, `service_brake`, `limit_containment` y
+`autopilot_limit`. Todo refactor sin cambio de comportamiento (paridad medida: 56 797 ticks de las
+sesiones del 22-oct, decisiones idénticas). **Lo que queda necesita sesión de juego o decisión de
+diseño. Empezar la próxima sesión por §10.5.**
 
 ## 1. Tamaño y complejidad (FACT)
 
@@ -22,20 +29,20 @@ Archivos más grandes (líneas):
 
 | Líneas | Archivo              | Nota                                                    |
 | ------ | -------------------- | ------------------------------------------------------- |
-| 1680   | `session_report.py`  | HTML + cálculo; candidato a partir (render vs métricas) |
+| 1678   | `session_report.py`  | HTML + cálculo; candidato a partir (render vs métricas) |
 | 238    | `decision.py`        | Orquestador P1 tras partirlo (2026-10-23; era 1362): `decision_types` 189, `decision_prep` 121, `decision_emergency` 143, `decision_release` 366, `decision_mc` 163, `decision_targets` 159, `decision_finalize` 191 |
-| 1044   | `loop.py`            | Bucle agente; envío IPC + estado                        |
-| 1033   | `p1_station_gate.py` | FSM de estación                                         |
-| 1015   | `vehicle_package.py` | Datos de vehículo (19 helpers `mc_*`)                   |
+| 1037   | `loop.py`            | Bucle agente; envío IPC + estado                        |
+| 1026   | `p1_station_gate.py` | FSM de estación                                         |
+| 1062   | `vehicle_package.py` | Datos de vehículo (19 helpers `mc_*`)                   |
 | 828    | `station_plan.py`    | Perfil de parada en andén                               |
 | 806    | `command.py`         | `BrakeCommand` y mandos IPC                             |
 | 794    | `gui.py`             |                                                         |
 | 654    | `physics.py`         | También lo importa el paquete v1 `tsw6/governor`        |
 | 541    | `planning_poller.py` |                                                         |
 
-Funciones más largas (2026-10-19; ≥ 120 líneas son candidatas a partir): `loop._step_core` 346,
+Funciones más largas (2026-10-19, salvo la marcada; ≥ 120 líneas son candidatas a partir): `loop._step_core` 346,
 `session_report._render_chart_svg` 322, `session_report.write_html_replay` 290,
-`decision.evaluate_p1_tick` 287, `diagnostic.run_ipc_brake_test` 165, `loop.from_probe` 161,
+`decision.evaluate_p1_tick` 184 (era 287), `diagnostic.run_ipc_brake_test` 165, `loop.from_probe` 161,
 `cli.main` 161, `gui._build_ui` 135, `limits._evaluate_next_limit_brake` 131,
 `session_report.summarize` 130, `cli.run_console` 122.
 
@@ -110,8 +117,8 @@ No hay evidencia en el repositorio de que el motor se haya validado con un terce
 - Cada locomotora nueva obliga a **tocar varios archivos grandes** (`decision.py`, `loop.py`,
 
   `p1_station_gate.py`, `command.py`, `ipc.py`) para añadir otra rama `if`. Hoy el adaptador
-centraliza la decisión, pero la lógica propia de la M3A sigue dentro de esos archivos; con 5
-vehículos la lógica de cada rama quedaría entrelazada.
+centraliza la decisión y (desde el 2026-10-23) también la lógica MC de parada, cartel y bleed de
+andén; lo que sigue dentro de esos archivos son las guardas `analog_lever` y las constantes UK.
 
 - Un arreglo pensado para la M3A puede romper la 323 sin que lo detecte un test: 21 de los 40
 
@@ -283,14 +290,12 @@ decidir si es una herramienta de laboratorio que se quiere conservar).
 v1)
 las importa de `tsw6v2.physics`. El paquete v1 depende de V2, no al revés.
 
-### 3.2 Módulos sin ninguna referencia en tests (2026-10-19)
+### 3.2 Módulos sin ninguna referencia en tests (2026-10-19; actualizado 2026-10-23)
 
-`autopilot_limit`, `cli`, `control_lock`, `diag_station` (borrado 2026-10-23), `diagnostic_mc_ipc`, `limit_containment`,
-`service_brake`. Varios se ejercitan de forma indirecta (`decision`, `limits`), pero no tienen
-pruebas
-propias; `control_lock` (bloqueo de instancia única) y `service_brake` (objetivo de parada → mando)
-son
-los de más riesgo.
+**Cubiertos el 2026-10-23** con pruebas propias: `control_lock` (mutex con nombre único, para no
+chocar con una GUI abierta), `service_brake`, `limit_containment` y `autopilot_limit`.
+`diag_station` se borró. **Siguen sin pruebas propias:** `cli` y `diagnostic_mc_ipc` (este último,
+además, sin punto de entrada; ver §3.1).
 
 ## 4. Fallos y riesgos (FACT salvo indicado)
 
@@ -329,10 +334,9 @@ líneas (ocurrió con tres módulos durante este trabajo). **Resuelto el 2026-10
 «pendiente hasta que la palanca cambie o el ACK sea ok», pero con ACK ok se pone `None`, de modo que
   el paso se reenvía si la palanca tarda en cambiar.
 
-- **Funciones demasiado largas** (§1): `_step_core` (346 líneas) y `evaluate_p1_tick` (287)
-
-  concentran
-  la mayor parte del control; cualquier cambio ahí es difícil de revisar y de probar por separado.
+- **Funciones demasiado largas** (§1): `loop._step_core` (346 líneas) concentra la mayor parte del
+  control; `decision.evaluate_p1_tick` bajó de 287 a 184 tras partir sus fases (2026-10-23).
+  Cualquier cambio en `_step_core` es difícil de revisar y de probar por separado.
 
 - **Rama MC y rama combinada** comparten `_brake_kind`/aprendizaje pero con tablas distintas; el
 
@@ -352,16 +356,14 @@ líneas (ocurrió con tres módulos durante este trabajo). **Resuelto el 2026-10
 7. ~~Normalizar finales de línea~~ (hecho 2026-10-19).
 8. ~~Borrar el código sin referencias de §3.1~~ y ~~el alias de `loop.py`~~ (hecho 2026-10-19);
 
-   queda
-   unificar `load_ticks`.
+   `load_ticks` unificado el 2026-10-23.
 
-9. (2026-10-19) Partir `loop._step_core` y `decision.evaluate_p1_tick` en pasos con nombre
+9. (2026-10-19) Partir `loop._step_core` en pasos con nombre (leer sensores, decidir, enviar IPC,
+    registrar), con las pruebas actuales como red. `evaluate_p1_tick` ya está partido (2026-10-23).
 
-    (leer sensores, decidir, enviar IPC, registrar), con las pruebas actuales como red.
-
-10. (2026-10-19) Pruebas propias para `control_lock`, `service_brake`, `limit_containment` y
-
-    `autopilot_limit`; ampliar el contrato por vehículo con parada en andén y soltar al salir.
+10. ~~Pruebas propias para `control_lock`, `service_brake`, `limit_containment` y `autopilot_limit`~~
+    (hecho 2026-10-23). Pendiente: ampliar el contrato por vehículo con parada en andén y soltar al
+    salir.
 
 ## 6. Pendiente de validación (UNKNOWN)
 
@@ -500,8 +502,8 @@ Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; 
   supera el objetivo. El eje llegó a 0,27 (freno pleno) y el tren acabó a 57,6 mph, bajo los 59.
   Corrección `ebc13dd`: solo escala si la muesca comprometida no llega al objetivo
   (`_committed_notch_reaches_target`). Sin validar en juego.
-- **d) Cartel con eje analógico (M3A), sin commit.** `mc_limit_brake_fraction` +
-  `decision._mc_limit_fraction`: la posición del eje sale de la decel necesaria sobre la curva
+- **d) Cartel con eje analógico (M3A), commit `3942dde`.** `mc_limit_brake_fraction` +
+  `decision_mc.mc_limit_fraction` (antes `decision._mc_limit_fraction`): la posición del eje sale de la decel necesaria sobre la curva
   aprendida `decel_by_mc`, no del peldaño B1/B2/B3. Envolvente monótona conservadora
   (`_monotone_decel_table`) porque la curva es ruidosa (0,60 → 0,29 y 0,62 → 0,38 m/s²); también
   afecta a la parada en andén. La 323 conserva las muescas. Sin validar en juego.
@@ -511,7 +513,7 @@ Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; 
   cada tick, 10-41 ticks por racimo, unas 15 veces. Causa probable (INFERENCE): umbrales
   invertidos entre el plan (aplica si v > objetivo) y `resolve_release_command` (suelta si
   v ≤ objetivo + `LIMIT_RELEASE_MAX_OVER_MPH` = 0,4); en [9,0; 9,4] ambos se cumplen y alternan. La
-  guarda de (a) cubre solo la rama huérfana, no esta. **Corregido 2026-10-23 (sin validar en
+  guarda de (a) cubre solo la rama huérfana, no esta. **Corregido 2026-10-23 (commit `c449f7b`, sin validar en
   juego):** `decision_release._limit_plan_owns_brake` — con el plan del cartel en `apply_now` y la
   velocidad por encima de su objetivo no se suelta por la banda de `resolve_release_command`.
   Reproducido en el replay (`evaluate_p1_tick` con el `lever` del tick anterior: el `lever` del JSONL
@@ -550,9 +552,11 @@ Medido sobre los JSONL (FACT). Las dos primeras corren con el commit `e36daa6`; 
    `fraction_feedback`, `analog_lever`; `command.py`, `brake_cab.py`, `ipc.py` y `loop.py` delegan;
    `loop.py` ya no llama a `uses_mc_analog_ipc`). Ningún módulo fuera de `vehicle_package.py` y
    `vehicle_adapter.py` llama ya a `uses_mc_analog_ipc` (todos usan
-   `adapter_for_package(...).analog_lever` u otra operación). Pendiente: mover al adaptador la
-   lógica propia de la M3A que sigue en `p1_station_gate.py` (bleed de andén: `mc_platform_bleed_*`)
-   y `decision.py` (`_mc_station_roll_wanted`), hoy detrás de la guarda `analog_lever`. Registro de
+   `adapter_for_package(...).analog_lever` u otra operación). *Hecho el 2026-10-23:* la lógica
+   MC de parada, rodar hasta el clic y cartel (`station_stop_fraction`, `roll_until_click`,
+   `limit_fraction`) y el bleed de andén (`bleed_b1_latched`, `bleed_neutral_reached`,
+   `bleed_should_reapply_b1`) pasan por el adaptador; `NotchAdapter` devuelve `None`/`False`.
+   Quedan las guardas `analog_lever` y el modelo de palanca de §2.6 (muescas UK). Registro de
    flotas por datos (paso 3): *hecho* — campo `fleet` en cada JSON, `vehicle_route_fleet` lo usa y
    cae al prefijo solo si no hay paquete.
 
@@ -567,38 +571,39 @@ Hecho (569 pruebas en verde, 4 saltadas): timeouts de ACK unificados; `PredictDe
 ninguna llamada directa a `uses_mc_analog_ipc` fuera de `vehicle_package.py`; mojibake de `loop.py`
 reparado.
 
-Pendiente, por prioridad:
+Pendiente al 2026-10-19, con su estado a 2026-10-23:
 
-1. Cerrar el hueco del ACK ok (§4) — control; validar en juego.
-2. ~~Finales de línea (§5.8)~~ y ~~código sin referencias (§3.1)~~: hechos; falta solo el commit.
+1. Cerrar el hueco del ACK ok (§4) — control; validar en juego. **Sigue pendiente.**
+2. ~~Finales de línea (§5.8)~~ y ~~código sin referencias (§3.1)~~: hechos y en commits.
 3. ~~Unificar `load_ticks` (§3)~~ — hecho 2026-10-23.
-4. Pruebas de módulos sin cobertura propia (§3.2).
-5. Partir `_step_core` / `evaluate_p1_tick` (§5.10).
-6. Mover al adaptador la lógica de la M3A que sigue tras la guarda `analog_lever`
-
-(`mc_platform_bleed_*`, `_mc_station_roll_wanted`) — tras grabar sesiones de referencia 323 y M3A.
-
-1. Medir la física real de la M3A (§2.4 paso 1) y la distancia al tablón (§7).
+4. ~~Pruebas de módulos sin cobertura propia (§3.2)~~ — hecho salvo `cli` y `diagnostic_mc_ipc`.
+5. Partir `_step_core` / `evaluate_p1_tick` (§5.9): `evaluate_p1_tick` hecho; **queda `_step_core`**.
+6. ~~Mover al adaptador la lógica de la M3A tras `analog_lever`~~ — hecho 2026-10-23 (§8 punto 7).
+7. Medir la física real de la M3A (§2.4 paso 1) y la distancia al tablón (§7). **Sigue pendiente.**
 
 ## 10. Para cerrar la sesión: validar y tareas siguientes
 
-### 10.1 Estado del árbol de trabajo (sin commit)
+### 10.1 Estado del árbol de trabajo
 
-**Actualización 2026-10-23:** 592 pruebas en verde, 4 saltadas. Lo de abajo (2026-10-19) ya está
-confirmado en commits (`e24469f` … `ebc13dd`), y también el freno analógico por cartel (§7.1 d) y
-`TRENES_DLC.md`. **Sin commit** (orden sugerido, un commit por punto):
-(1) borrado de `diag_station.py`; (2) `decision_types.py` + `decision_prep.py`; (3)
-`decision_emergency.py`; (4) `decision_release.py` + el test de `test_p1_station_gate.py` que
-cambia de import; (5) **cambio de lógica aparte:** `_limit_plan_owns_brake` + 2 tests en
-`test_release.py` (parpadeo, §7.1 e); (6) documentos (`ANALISIS…`, `DECISION_MODULOS.md`,
-`assets/p1_decision*`). Los puntos 2-4 son movimientos sin cambio de comportamiento (paridad
-medida: 0 diferencias en 28 399 ticks); el 5 sí cambia comportamiento (62 ticks de 56 797).
+**Actualización 2026-10-23 (cierre de sesión): todo está en commits y el árbol está limpio.**
+624 pruebas en verde, 4 saltadas. Commits de la sesión, en orden:
 
-Estado original (2026-10-19): 569 pruebas en verde, 4 saltadas. Cambios sin confirmar: `.gitattributes`; normalización a LF de
-`command`, `hud_ocr`, `learner`, `loop`, `station_plan`, `trace`; código borrado de `gui_view`,
-`hud_db`, `physics`, `vehicle_package`; mojibake de `loop.py`; `test_vehicle_adapter.py` nuevo; este
-documento. Sugerencia de commits separados: (1) normalización de finales de línea, (2) limpieza de
-código sin uso y mojibake, (3) tests nuevos y documento.
+| Commit | Qué |
+| ------ | --- |
+| `c449f7b` | Partir `decision.py` (pasos 0-4: tipos, preparación, emergencia, soltar), borrar `diag_station`, y el cambio de lógica `_limit_plan_owns_brake` (parpadeo §7.1 e) |
+| `6691cee` | Paso 5: `decision_mc.py` y operaciones MC / bleed en `vehicle_adapter` |
+| `f1e8fb2` | Paso 6: `decision_targets.py` y `decision_finalize.py` |
+| `559af85` | `load_ticks` unificado en `session_io.py` |
+| `6764cb0` | Pruebas de `control_lock`, `service_brake`, `limit_containment`, `autopilot_limit` |
+
+De ellos, **solo `c449f7b` contiene un cambio de comportamiento** (`_limit_plan_owns_brake`: 62 de
+56 797 ticks); el resto son movimientos con paridad medida. Antes: `e24469f` … `ebc13dd` (adaptador,
+ancla HUD, escalada en overspeed) y `3942dde` (eje analógico por cartel).
+
+**Cómo se midió la paridad:** `V2/scripts/parity_jsonl.py <salida> <logs...>` vuelca por tick la
+decisión de `evaluate_p1_tick` (comando, motivo, objetivo, fase, `apply_now`, distancia de andén y
+`station_stop_m`). Se ejecuta antes y después de un refactor con los mismos logs y se compara con
+`cmp`. Es lazo abierto y solo cubre la M3A (sin sesión de la 323).
 
 ### 10.2 Validar antes de dar por cerrado
 
@@ -625,7 +630,8 @@ en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `
 
    quiere defensa en profundidad, el punto (b).
 
-1. **Commits** del §10.1 una vez pasada la validación 1-3.
+1. ~~**Commits** del §10.1~~ (hechos 2026-10-23: son refactors con paridad medida; la validación
+   1-3 sigue pendiente para los cambios de lógica).
 2. **Hueco del ACK ok** (§4): marcar pendiente también con ACK ok hasta que la palanca confirme;
 
    test unitario del reenvío y validación en juego.
@@ -640,12 +646,10 @@ en situaciones equivalentes. Si hay diferencias, el sospechoso son las guardas `
 
    calibración de frenado.
 
-7. **Partir** `loop._step_core` y `decision.evaluate_p1_tick` (`decision.py` ya está partido en 5
-   módulos, ver §10.5 punto 2; queda `evaluate_p1_tick` y `loop._step_core`).
-8. **Mover al adaptador** la lógica de la M3A que sigue tras `analog_lever` (`mc_platform_bleed_*`,
-
-   `_mc_station_roll_wanted`), con sesiones de referencia de la 323 y la M3A ya grabadas.
-
+7. **Partir** `loop._step_core` (`decision.py` ya está partido en 7 módulos y `evaluate_p1_tick`
+   baja a 184 líneas; ver §10.5).
+8. ~~**Mover al adaptador** la lógica de la M3A que sigue tras `analog_lever`~~ (hecho 2026-10-23).
+   Sigue pendiente el modelo de palanca de §2.6 (decel objetivo → posición), tras validar en juego.
 9. **Distancia al tablón** a lo largo de la vía (§7), tras validar con captura.
 10. **Ventana de aprendizaje de 2 s** (§4): decisión de diseño pendiente.
 11. Al final: partir `session_report.py` y reorganizar carpetas (§2.4 paso 5).
@@ -668,41 +672,52 @@ Contrasta la tabla de §10.2 con los JSONL posteriores a la última edición de 
 
 ### 10.5 Para empezar la próxima sesión
 
-Orden de trabajo (cada punto con su log de referencia):
+**Estado de partida:** árbol limpio, 624 pruebas en verde (§10.1). Lo que queda ya no es
+refactor mecánico: o necesita el juego o es un cambio de lógica que conviene hacer con validación.
 
-1. **Commits** del árbol (§10.1, 6 commits en ese orden). Antes del primero: `pytest` (592) y, si
-   se quiere, la comparación antes/después con `V2/scripts/replay_jsonl.py` (usar el `lever` del
-   tick anterior: el del JSONL es el estado tras el mando).
-2. **Partir `decision.py`, lo que queda** ([DECISION_MODULOS.md](DECISION_MODULOS.md); diagrama en
-   `assets/p1_decision.html`). Hecho: pasos 0-4 (`decision.py` 1362 → 619 líneas). Pendiente:
-   - **Paso 5 — lógica MC al adaptador** (*hecho a medias 2026-10-23:* las funciones ya viven en
-     `decision_mc.py`, `decision.py` 466 líneas; las llamadas MC y `mc_platform_bleed_*` ya pasan por `vehicle_adapter`; paso cerrado): `_mc_station_*`, `_mc_limit_fraction`,
-     `_station_stop_continues`, `_continue_station_stop` y `_mc_station_roll_wanted` pasan a
-     `vehicle_adapter` (o a un módulo de fracciones MC), recibiendo valores simples, no `TickCtx`.
-     Cierra también la deuda de §8 punto 7 (`mc_platform_bleed_*` sigue en `p1_station_gate.py`).
-   - **Paso 6 — `decision_targets` y `decision_finalize`** (*hecho 2026-10-23*, paridad 56 797 ticks;
-     `decision.py` 238 líneas): `evaluate_p1_tick` queda como
-     orquestador (~150 líneas). Las fases de objetivos **no son puras** hoy (§ «Matiz a la regla 3»
-     de `DECISION_MODULOS.md`): conservar el orden exacto al extraerlas.
-   Un commit por paso, suite completa y comparación antes/después en cada uno.
-3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e). El parpadeo del cartel
-   está tapado con `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar
-   independientes del plan. Siguiente paso: que soltar un freno comprometido sea una transición
-   del plan (con histéresis explícita) y que los caminos de `decision_release` actúen solo sobre
-   freno heredado. Cambio de lógica: su propio commit y su propia validación.
-4. **Validar en juego** (a)-(e) de §7.1: cartel a 60-75 mph sin escalada al 100 %; sin parpadeo a
-   35 mph ni en la zona de 10 mph hacia Grand Central (no deben aparecer racimos de alternancias
-   APPLY↔RELEASE en el JSONL); ancla sin lecturas `Nm lem…`; eje continuo en el cartel. Curva
-   `decel_by_mc` con pocos puntos puede caer al peldaño B3 (a 250 m, 72→59 mph la decel
-   necesaria supera la curva).
-5. **Sesión de la Class 323** (fila 3 de §10.2) antes de más cambios en `limit_notch` /
-   `decision`: es la única forma de saber si los arreglos de esta semana la afectan.
+**Regla para esta sesión:** no empezar cambios de lógica nuevos (punto 3) hasta haber validado los
+de esta semana (punto 1). Si algo falla en juego con varios cambios sin validar, no se sabe qué
+commit lo causó.
+
+1. **Sesión de la M3A en el juego** (servicio 500, `gct-mnr`, circular pasando Fordham ≥ 3 min). Con
+   una sola sesión se validan (a)-(e) de §7.1:
+   - cartel a 60-75 mph **sin escalada al 100 %** (el eje no debe llegar a 0,27 lejos del cartel);
+   - **sin racimos** de alternancias APPLY↔RELEASE a 35 mph ni en la zona de 10 mph hacia Grand
+     Central (contar en el JSONL);
+   - ancla HUD **sin lecturas `Nm lem…`** y sin frenada en vía tras Fordham (fila 8 de §10.2);
+   - eje continuo en el cartel (la curva `decel_by_mc` con pocos puntos puede caer al peldaño B3: a
+     250 m, 72→59 mph la decel necesaria supera la curva).
+   Después, repetir el análisis de §10.4 con los logs nuevos.
+2. **Sesión de la Class 323** (fila 3 de §10.2, Cross-City, una parada) antes de tocar `limit_notch`
+   o `decision`: es la única forma de saber si los arreglos de esta semana la afectan. Es también la
+   única referencia para la paridad de la 323, que hoy solo cubren tests unitarios; con ella se
+   podría usar `parity_jsonl.py` también para la 323.
+3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, su propio
+   commit y su propia validación; solo tras el punto 1.* El parpadeo del cartel está tapado con
+   `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar independientes del
+   plan. Siguiente paso: que soltar un freno comprometido sea una transición del plan (con
+   histéresis explícita) y que los caminos de `decision_release` actúen solo sobre freno heredado.
+4. **Sin juego, bajo riesgo** (se pueden hacer en cualquier momento):
+   - ~~guardar el script de paridad~~ (hecho: `V2/scripts/parity_jsonl.py`);
+   - ampliar `test_vehicle_contract.py` con parada en andén y soltar al salir (§5.10);
+   - pruebas propias de `cli` y decidir si se conserva `diagnostic_mc_ipc` (§3.1);
+   - partir `loop._step_core` (346 líneas) en pasos con nombre, con el mismo método de paridad.
+5. **Con sesión o decisión de diseño:**
+   - hueco del ACK ok (§4): marcar pendiente también con ACK ok; test del reenvío y validación;
+   - defensa en profundidad (b) de §7: no emitir `P1-CRITICO-STATION` a alta velocidad si la
+     distancia viene del ancla y acaba de saltar;
+   - física real de la M3A (`physics` del JSON, hoy heredada de la 323): sesión de calibración de
+     frenado;
+   - ventana de aprendizaje de 2 s (§4): decisión de diseño pendiente;
+   - distancia al tablón a lo largo de la vía (§7), tras validar con captura.
 6. **Trenes nuevos** (cuando se hayan sondeado): según [TRENES_DLC.md](TRENES_DLC.md), un
    representante por familia (diésel de EE. UU. con dinámico, eléctrico alemán, metro o UK
    combinada) antes de decidir «archivo por tren». Criterio: operación nueva → adaptador nuevo;
-   solo números nuevos → JSON. El paso 5 del punto 2 es el que lo prepara.
-7. **Física real de la M3A** (`physics` hoy heredada de la 323) y el resto de §10.3 (ACK ok,
-   `load_ticks`, pruebas de módulos sin cobertura, partir `loop._step_core`).
+   solo números nuevos → JSON. El paso 5 ya hecho es el que lo prepara. Antes, el modelo de palanca
+   de §2.6 (decel objetivo → posición), que toca cartel, FSM de andén, `platform_bleed` y
+   aprendizaje a la vez: solo con las sesiones de referencia 323 y M3A ya grabadas.
+7. **Al final:** partir `session_report.py` (métricas / render HTML) y reorganizar carpetas
+   (§2.4 paso 5).
 
 Riesgos abiertos que conviene no olvidar: el feedback por muesca (`fb_escalated`) ya no cambia el
 mando MC del cartel (el lazo se cierra al recalcular la decel necesaria cada tick; una curva muy
