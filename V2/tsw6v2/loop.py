@@ -28,7 +28,8 @@ from tsw6v2.constants import (
     MS_TO_MPH,
     NEUTRAL_NOTCH,
 )
-from tsw6v2.decision import _station_stop_continues, evaluate_p1_tick
+from tsw6v2.decision import evaluate_p1_tick
+from tsw6v2.decision_mc import station_stop_continues
 from tsw6v2.p1_station_gate import (
     DEPARTING_CLEAR_MPH,
     PlatformBleedEpisode,
@@ -862,7 +863,7 @@ class AgentLoop:
                         and speed_mph <= DOORS_OPEN_MAX_SPEED_MPH
                     )
                     # Histéresis: parada ya en curso (anchor) no vuelve a rodar a neutro.
-                    stop_running = _station_stop_continues(
+                    stop_running = station_stop_continues(
                         self._limit_state, station_dist_m, speed_mph
                     )
                     hold = mc_grade_hold_fraction(

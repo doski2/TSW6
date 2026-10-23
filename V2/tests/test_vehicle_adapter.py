@@ -30,7 +30,7 @@ class _Snap(SimpleNamespace):
         return getattr(self, "lever_notch", None)
 
 
-def _snap(**kw: Any) -> _Snap:
+def _snap(**kw: Any) -> Any:
     base = dict(lever_notch=None, power=None, power_neg=False, mc_input=None, train_brake=None)
     base.update(kw)
     return _Snap(**base)
@@ -85,6 +85,7 @@ def test_lever_says_brake() -> None:
     pkg = resolve_vehicle_package(M3A)
     a = adapter_for_package(pkg)
     neu = profile_neutral_fraction(pkg)
+    assert neu is not None
     assert a.lever_says_brake(_snap(mc_input=neu - 0.2), None) is True
     assert a.lever_says_brake(_snap(mc_input=neu), None) is False
     assert a.lever_says_brake(None, None) is None
@@ -95,3 +96,49 @@ def test_fraction_feedback() -> None:
     assert NotchAdapter().fraction_feedback(_snap()) is None
     pkg = resolve_vehicle_package(M3A)
     assert adapter_for_package(pkg).fraction_feedback(_snap(mc_input=0.64)) == pytest.approx(0.64)
+
+
+_STOP: dict[str, Any] = dict(speed_mph=30.0, distance_m=300.0, gradient_pct=0.0, decel_table=None)
+_LIMIT: dict[str, Any] = dict(speed_mph=60.0, target_mph=35.0, distance_m=400.0, gradient_pct=0.0, decel_table=None)
+
+
+def test_fracciones_notch_adapter_no_aplica() -> None:
+    ad = NotchAdapter(resolve_vehicle_package(C323))
+    assert ad.station_stop_fraction(**_STOP) is None
+    assert ad.limit_fraction(**_LIMIT) is None
+    assert ad.roll_until_click(
+        speed_mph=10.0, distance_m=50.0, gradient_pct=0.0, click_decel_ms2=None, running=False, latch=None
+    ) is False
+
+
+def test_fracciones_mc_adapter_delega_en_el_paquete() -> None:
+    from tsw6v2.vehicle_package import mc_limit_brake_fraction, mc_stop_brake_fraction
+
+    pkg = resolve_vehicle_package(M3A)
+    ad = adapter_for_package(pkg)
+    assert ad.station_stop_fraction(**_STOP) == mc_stop_brake_fraction(pkg, **_STOP)
+    assert ad.limit_fraction(**_LIMIT) == mc_limit_brake_fraction(pkg, **_LIMIT)
+
+
+def test_bleed_notch_adapter_siempre_falso() -> None:
+    ad = NotchAdapter(resolve_vehicle_package(C323))
+    snap = _snap(mc_input=0.64)
+    assert not ad.bleed_b1_latched(snap)
+    assert not ad.bleed_neutral_reached(snap)
+    assert not ad.bleed_should_reapply_b1(snap)
+
+
+def test_bleed_mc_adapter_delega_en_el_paquete() -> None:
+    from tsw6v2.vehicle_package import (
+        mc_platform_bleed_b1_latched,
+        mc_platform_bleed_neutral_ipc,
+        mc_platform_bleed_should_reapply_b1,
+    )
+
+    pkg = resolve_vehicle_package(M3A)
+    ad = adapter_for_package(pkg)
+    for frac in (0.55, 0.64, 0.72):
+        snap = _snap(mc_input=frac)
+        assert ad.bleed_b1_latched(snap) == mc_platform_bleed_b1_latched(snap, pkg)
+        assert ad.bleed_neutral_reached(snap) == mc_platform_bleed_neutral_ipc(snap, pkg)
+        assert ad.bleed_should_reapply_b1(snap) == mc_platform_bleed_should_reapply_b1(snap, pkg)

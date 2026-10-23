@@ -9,8 +9,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, Protocol
 
 from tsw6v2.constants import MC_INPUT_VALUE_EPS, NEUTRAL_NOTCH
+from tsw6v2.roll_latch import StationRollLatch
 from tsw6v2.vehicle_package import (
+    mc_click_hysteresis_m,
+    mc_click_wait,
     mc_has_traction_above_neutral,
+    mc_limit_brake_fraction,
+    mc_platform_bleed_b1_latched,
+    mc_platform_bleed_neutral_ipc,
+    mc_platform_bleed_should_reapply_b1,
+    mc_stop_brake_fraction,
     probe_mc_input_fraction,
     profile_neutral_fraction,
     uses_mc_analog_ipc,
@@ -47,6 +55,54 @@ class VehicleAdapter(Protocol):
         """Posición 0..1 de la palanca leída del probe (feedback del mando por fracción)."""
         ...
 
+    def station_stop_fraction(
+        self,
+        *,
+        speed_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        decel_table: Optional[dict[float, float]],
+    ) -> Optional[float]:
+        """Posición 0..1 para parar en el andén; ``None`` = el layout frena por muescas."""
+        ...
+
+    def roll_until_click(
+        self,
+        *,
+        speed_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        click_decel_ms2: Optional[float],
+        running: bool,
+        latch: Optional[StationRollLatch],
+    ) -> bool:
+        """¿Rodar en neutro hasta el clic antes de frenar en el andén?"""
+        ...
+
+    def limit_fraction(
+        self,
+        *,
+        speed_mph: float,
+        target_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        decel_table: Optional[dict[float, float]],
+    ) -> Optional[float]:
+        """Posición 0..1 para llegar al cartel; ``None`` = el layout frena por muescas."""
+        ...
+
+    def bleed_b1_latched(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        """Bleed de andén: ¿B1 sostenido en el eje? (solo layout analógico)."""
+        ...
+
+    def bleed_neutral_reached(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        """Bleed de andén: ¿el mando ya llegó a neutro? (solo layout analógico)."""
+        ...
+
+    def bleed_should_reapply_b1(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        """Bleed de andén: ¿mandar otro APPLY B1? (solo layout analógico)."""
+        ...
+
 
 class NotchAdapter:
     """Palanca combinada por muescas (Class 323)."""
@@ -77,6 +133,24 @@ class NotchAdapter:
     def fraction_feedback(self, snap: "ProbeSnapshot") -> Optional[float]:
         tb = snap.train_brake
         return float(tb) if tb is not None else None
+
+    def station_stop_fraction(self, **_: object) -> Optional[float]:
+        return None
+
+    def roll_until_click(self, **_: object) -> bool:
+        return False
+
+    def limit_fraction(self, **_: object) -> Optional[float]:
+        return None
+
+    def bleed_b1_latched(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return False
+
+    def bleed_neutral_reached(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return False
+
+    def bleed_should_reapply_b1(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return False
 
 
 class McAnalogAdapter:
@@ -111,6 +185,70 @@ class McAnalogAdapter:
         if est is None:
             return None
         return float(est) < float(neutral) - MC_INPUT_VALUE_EPS
+
+
+    def station_stop_fraction(
+        self,
+        *,
+        speed_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        decel_table: Optional[dict[float, float]],
+    ) -> Optional[float]:
+        return mc_stop_brake_fraction(
+            self.package,
+            speed_mph=speed_mph,
+            distance_m=distance_m,
+            gradient_pct=gradient_pct,
+            decel_table=decel_table,
+        )
+
+    def roll_until_click(
+        self,
+        *,
+        speed_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        click_decel_ms2: Optional[float],
+        running: bool,
+        latch: Optional[StationRollLatch],
+    ) -> bool:
+        return mc_click_wait(
+            self.package,
+            speed_mph=speed_mph,
+            distance_m=distance_m,
+            gradient_pct=gradient_pct,
+            click_decel_ms2=click_decel_ms2,
+            extra_margin_m=mc_click_hysteresis_m(distance_m, stop_running=running),
+            latch=latch,
+        )
+
+    def limit_fraction(
+        self,
+        *,
+        speed_mph: float,
+        target_mph: float,
+        distance_m: float,
+        gradient_pct: float,
+        decel_table: Optional[dict[float, float]],
+    ) -> Optional[float]:
+        return mc_limit_brake_fraction(
+            self.package,
+            speed_mph=speed_mph,
+            target_mph=target_mph,
+            distance_m=distance_m,
+            gradient_pct=gradient_pct,
+            decel_table=decel_table,
+        )
+
+    def bleed_b1_latched(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return mc_platform_bleed_b1_latched(snap, self.package)
+
+    def bleed_neutral_reached(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return mc_platform_bleed_neutral_ipc(snap, self.package)
+
+    def bleed_should_reapply_b1(self, snap: Optional["ProbeSnapshot"]) -> bool:
+        return mc_platform_bleed_should_reapply_b1(snap, self.package)
 
 
 def adapter_for_package(package: Optional[dict]) -> VehicleAdapter:

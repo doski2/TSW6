@@ -672,7 +672,8 @@ Orden de trabajo (cada punto con su log de referencia):
    tick anterior: el del JSONL es el estado tras el mando).
 2. **Partir `decision.py`, lo que queda** ([DECISION_MODULOS.md](DECISION_MODULOS.md); diagrama en
    `assets/p1_decision.html`). Hecho: pasos 0-4 (`decision.py` 1362 → 619 líneas). Pendiente:
-   - **Paso 5 — lógica MC al adaptador:** `_mc_station_*`, `_mc_limit_fraction`,
+   - **Paso 5 — lógica MC al adaptador** (*hecho a medias 2026-10-23:* las funciones ya viven en
+     `decision_mc.py`, `decision.py` 466 líneas; las llamadas MC y `mc_platform_bleed_*` ya pasan por `vehicle_adapter`; paso cerrado): `_mc_station_*`, `_mc_limit_fraction`,
      `_station_stop_continues`, `_continue_station_stop` y `_mc_station_roll_wanted` pasan a
      `vehicle_adapter` (o a un módulo de fracciones MC), recibiendo valores simples, no `TickCtx`.
      Cierra también la deuda de §8 punto 7 (`mc_platform_bleed_*` sigue en `p1_station_gate.py`).

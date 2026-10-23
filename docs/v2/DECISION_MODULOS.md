@@ -95,9 +95,16 @@ salida antes del paso y compararla después sobre `212139Z`).
   `decision_release._limit_plan_owns_brake` (el plan manda mientras aplique y la velocidad esté
   sobre su objetivo). Un solo punto de decisión por episodio para el cartel; los demás caminos de
   soltar quedan para freno heredado.
-- **Sin hacer:** pasos 5-6.
-- **Aviso:** el diff de `decision.py` mezcla este movimiento con `_mc_limit_fraction` (sin commit
-  previo). Conviene commitear primero el freno analógico por cartel y después el movimiento.
+- **Hecho (paso 5, parcial, 2026-10-23):** las seis funciones MC (`station_stop_continues`,
+  `_mc_station_fraction_command`, `_mc_station_roll_wanted`, `continue_station_stop`,
+  `mc_station_stop_fraction`, `mc_limit_fraction`) salen a `decision_mc.py` (172 líneas) sin cambio
+  de comportamiento; `decision.py` queda en 466. 592 pruebas en verde. Segunda mitad: las llamadas a
+  `mc_stop_brake_fraction`, `mc_click_wait` y `mc_limit_brake_fraction` pasan por el adaptador
+  (`station_stop_fraction`, `roll_until_click`, `limit_fraction`, con valores simples; `NotchAdapter`
+  devuelve `None`/`False`); `decision_mc` ya no importa `vehicle_package`. 594 pruebas. `p1_station_gate` también:
+  `bleed_b1_latched`, `bleed_neutral_reached` y `bleed_should_reapply_b1` salen del import directo
+  de `mc_platform_bleed_*` y pasan por el adaptador. Paso 5 cerrado.
+- **Sin hacer:** paso 6.
 
 ### Matiz a la regla 3 (hoy no se cumple del todo)
 
