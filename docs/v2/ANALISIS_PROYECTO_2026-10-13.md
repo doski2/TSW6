@@ -23,7 +23,7 @@ Archivos más grandes (líneas):
 | Líneas | Archivo              | Nota                                                    |
 | ------ | -------------------- | ------------------------------------------------------- |
 | 1680   | `session_report.py`  | HTML + cálculo; candidato a partir (render vs métricas) |
-| 619    | `decision.py`        | Orquestador P1 tras partirlo (2026-10-23; era 1323): `decision_types` 189, `decision_prep` 121, `decision_emergency` 143, `decision_release` 366 |
+| 238    | `decision.py`        | Orquestador P1 tras partirlo (2026-10-23; era 1362): `decision_types` 189, `decision_prep` 121, `decision_emergency` 143, `decision_release` 366, `decision_mc` 163, `decision_targets` 159, `decision_finalize` 191 |
 | 1044   | `loop.py`            | Bucle agente; envío IPC + estado                        |
 | 1033   | `p1_station_gate.py` | FSM de estación                                         |
 | 1015   | `vehicle_package.py` | Datos de vehículo (19 helpers `mc_*`)                   |
@@ -677,7 +677,8 @@ Orden de trabajo (cada punto con su log de referencia):
      `_station_stop_continues`, `_continue_station_stop` y `_mc_station_roll_wanted` pasan a
      `vehicle_adapter` (o a un módulo de fracciones MC), recibiendo valores simples, no `TickCtx`.
      Cierra también la deuda de §8 punto 7 (`mc_platform_bleed_*` sigue en `p1_station_gate.py`).
-   - **Paso 6 — `decision_targets` y `decision_finalize`:** `evaluate_p1_tick` queda como
+   - **Paso 6 — `decision_targets` y `decision_finalize`** (*hecho 2026-10-23*, paridad 56 797 ticks;
+     `decision.py` 238 líneas): `evaluate_p1_tick` queda como
      orquestador (~150 líneas). Las fases de objetivos **no son puras** hoy (§ «Matiz a la regla 3»
      de `DECISION_MODULOS.md`): conservar el orden exacto al extraerlas.
    Un commit por paso, suite completa y comparación antes/después en cada uno.

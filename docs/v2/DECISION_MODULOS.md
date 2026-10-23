@@ -104,7 +104,15 @@ salida antes del paso y compararla después sobre `212139Z`).
   devuelve `None`/`False`); `decision_mc` ya no importa `vehicle_package`. 594 pruebas. `p1_station_gate` también:
   `bleed_b1_latched`, `bleed_neutral_reached` y `bleed_should_reapply_b1` salen del import directo
   de `mc_platform_bleed_*` y pasan por el adaptador. Paso 5 cerrado.
-- **Sin hacer:** paso 6.
+- **Hecho (paso 6, 2026-10-23):** `decision_targets.py` (159 líneas: `evaluate_limit_target`,
+  `evaluate_station_target` —con el `observe_brake_decel` del aprendiz—, `evaluate_signal_target`) y
+  `decision_finalize.py` (191: `finalize_p1_decision`, `_finalize_target_decision`, bloqueo de aire,
+  `_overlay_active_zone_hold`). `evaluate_p1_tick` conserva el orden exacto: emergencia → límite →
+  andén → señal → pick → reset de `station_stop_m` → bleed/salida/releases → cierre. `decision.py`
+  queda en 238 líneas (de 1362). **Paridad:** 56 797 ticks de las tres sesiones del 22-oct, todos los
+  campos de la decisión más `station_stop_m` idénticos (md5 igual antes y después). Solo M3A: la
+  Class 323 no tiene sesión grabada.
+- **Sin hacer:** nada del plan de partición; queda la pureza de las fases (regla 5, cambio de lógica).
 
 ### Matiz a la regla 3 (hoy no se cumple del todo)
 
