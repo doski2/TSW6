@@ -24,11 +24,12 @@ from tsw6v2.decision_targets import (
 )
 from tsw6v2.decision_types import LimitBrakeDecision
 from tsw6v2.p1_station_gate import should_skip_p1_release
-from tsw6v2.constants import LIMIT_SIGN_PASSED_M
+from tsw6v2.constants import LIMIT_SIGN_PASSED_M, STATION_PLAN_LOST_RELEASE_TICKS
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.p1_policy import limit_release_allowed, pick_p1_brake_target
 from tsw6v2.station_plan import STATION_SCHEDULE_SLACK_ENABLED
+from tsw6v2.vehicle_adapter import adapter_for_package
 from tsw6v2.target import BrakeTargetResult
 
 
@@ -119,11 +120,21 @@ def evaluate_p1_tick(
         accel_ms2=snap.accel_ms2,
     )
 
+    notch_layout = not adapter_for_package(ctx.vehicle_package).analog_lever
+    if limit_state.station_stop_m is not None and notch_layout:
+        if station_target is not None and station_target.apply_now:
+            limit_state.station_plan_lost_ticks = 0
+        else:
+            limit_state.station_plan_lost_ticks += 1
+            if limit_state.station_plan_lost_ticks >= STATION_PLAN_LOST_RELEASE_TICKS:
+                limit_state.station_stop_m = None
     if (
         limit_state.station_stop_m is not None
         and not station_stop_continues(limit_state, station_dist_geo, ctx.speed_mph)
     ):
         limit_state.station_stop_m = None
+    if limit_state.station_stop_m is None:
+        limit_state.station_plan_lost_ticks = 0
 
     def _limit_release_ok(pick: Optional[BrakeTargetResult]) -> bool:
         if station_stop_continues(limit_state, station_dist_geo, ctx.speed_mph):
@@ -184,6 +195,9 @@ def evaluate_p1_tick(
         brake_cyl_bar=prep.ctx.cyl,
         platform_bleed_episode=platform_bleed_episode,
     )
+    # Parado en andén (323): el freno de puertas lo manda el bucle y se suelta en DEPARTING;
+    # soltar por el cartel pelea con él (APPLY puertas ↔ RELEASE cada tick, 20261023T214704Z).
+    skip_release = skip_release or (station_fsm == "STOPPED" and notch_layout)
     if not skip_release:
         released = attempt_p1_releases(
             ctx,

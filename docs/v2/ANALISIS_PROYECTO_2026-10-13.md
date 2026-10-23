@@ -1,7 +1,7 @@
 # Análisis del proyecto V2 — 2026-10-13 (actualizado 2026-10-23, cierre de sesión)
 
-Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 635
-pruebas, 4 saltadas; cifras del 2026-10-23).
+Alcance: `V2/tsw6v2/` (71 módulos incluido `bridge/`, ~19,9 k líneas; 48 ficheros de test, 640
+pruebas, 4 saltadas; cifras del 2026-10-24).
 Medido con un script AST el 2026-10-19 (tamaños, funciones largas, duplicados, código sin
 referencias).
 Evidencia clasificada según `00-tsw6-core.mdc`: FACT = código leído o medido en logs; INFERENCE =
@@ -637,6 +637,44 @@ Comprobaciones: paridad de la M3A idéntica (56 797 ticks, mismo md5); 635 prueb
 ping-pong y pasa con ella. **Por validar:** que la 323 pare cerca del tablón con B1 = 0,55; que no
 vuelvan las alternancias; que el aprendizaje nuevo converja (con el perfil B limpio); B2 / B3.
 
+### 7.5 Segunda sesión de la Class 323 (`20261023T214704Z`; cabina B, 2O02, 274 s, commit `5683ef2`)
+
+Una sola parada y **otra vez corta, ahora a 285 m del tablón** (el OCR del HUD confirmó la distancia:
+«319 yd» ≈ 292 m cuando la app decía 291 m; la distancia de la app era correcta). Causas (FACT):
+
+- **El plan de estación ignoraba `physics.service_decel_frac` del paquete.** `plan.resolve_phase_decel`
+  usaba `phase.fraction` (tabla fija de la 323, B1 = 0,33) y no `service_decel_frac()` del vehículo
+  activo; el bloque `physics` solo lo leían `limit_horizon`, `limit_state` y `decision_release`. Con
+  B1 = 0,353 m/s² y la bajada del −1 % (que resta 0,098) la decel efectiva del plan era **0,255
+  m/s²**: B1 desde 560 m a 35 mph, cuando con la real bastan ≈ 300 m. El cambio de B1 de §7.4 no
+  llegaba al plan (por eso el inicio de frenada fue 561 m en las dos sesiones). Corrección:
+  `resolve_phase_decel` usa `service_decel_frac(handle, phase.fraction)`. Con B1 = 0,51 el plan
+  empieza a ≈ 300 m (35 mph, −1 %), ≈ 150 m (25 mph) y ≈ 110 m (21 mph). La M3A, con las mismas
+  fracciones que la 323 antigua, no cambia (paridad idéntica).
+- **La propiedad del freno de estación de §7.4 retenía el freno hasta parar.** A partir de 237,9 s el
+  plan ya devolvía `no_plan` (con B1 puesto y 25 mph a 420 m no hacía falta frenar) y nadie soltaba:
+  B1 sostenido 33 s hasta 285 m. La propiedad era demasiado fuerte. Ahora caduca tras
+  `STATION_PLAN_LOST_RELEASE_TICKS` = 20 ticks (≈ 1 s) con el plan sin pedir freno
+  (`LimitBrakeState.station_plan_lost_ticks`); solo layout por muescas.
+- **Duplicado parado en andén: `APPLY «Andén: freno para puertas»` ↔ `RELEASE «Objetivo alcanzado»`**
+  (25 mandos en 6 s con v = 0, 262-270 s; también 274-276 s en la sesión anterior). El bucle manda B1
+  de puertas en `STOPPED` cuando no hay freno sostenido y, con la palanca ya en B1, `evaluate_p1_tick`
+  lo soltaba por el cartel. Corrección: en `STOPPED` y layout por muescas no se suelta por el cartel
+  (`skip_release`); la suelta es del camino de `DEPARTING`.
+- **Tests:** `test_class323_station_approach.py` (10 pruebas, fixtures
+  `class323_station_approach_20261023.json` y `class323_early_brake_20261023.json`); cada prueba
+  falla sin su corrección. `evaluate_p1_tick` deja la física activa en un `ContextVar` y el test la
+  restaura (si no contamina a los siguientes). **640 pruebas.**
+- **Paridad de la M3A idéntica** (tres sesiones del 22-oct y dos del 23-oct).
+
+**Sin resolver (hipótesis, sin corregir):** a 179,9-180,6 s hay `APPLY B1` / `APPLY B2` alternando 11
+veces en ~1,1 s (cartel de 45 mph, plan `Límite 45 → @44`, cilindro 1,7 → 3,1 bar). Con el bloqueo por
+aire activo, el `air_fill` impedía cambiar de muesca mientras el cilindro se llenaba: probable
+consecuencia de `gate_apply = false` (§7.4). La histéresis de `apply_notch_hysteresis` debilita en
+cuanto `speed ≤ objetivo + LIMIT_SCORING_MAX_OVER_MPH` y el plan vuelve a pedir más. No se reproduce con
+el replay en lazo abierto (necesita el lazo cerrado), así que no se ha tocado. Opción: un tiempo
+mínimo entre cambios de muesca (≈ 1,5 s de `seq`) solo en el layout por muescas.
+
 ## 8. Orden sugerido de trabajo
 
 1. ~~Unificar constantes de timeout~~ (hecho 2026-10-19).
@@ -804,12 +842,12 @@ commit lo causó.
    - eje continuo en el cartel (la curva `decel_by_mc` con pocos puntos puede caer al peldaño B3: a
      250 m, 72→59 mph la decel necesaria supera la curva).
    Después, repetir el análisis de §10.4 con los logs nuevos.
-2. **Repetir la Class 323** (primera sesión hecha el 2026-10-23, §7.4; fila 3 de §10.2). Con los
-   cambios de §7.4 (paquete para cabina A y B, B1 = 0,55, sin espera por aire, propiedad del freno de
-   estación): comprobar que para a < 10 m del tablón (antes 45 y 63 m cortos), que no hay
-   alternancias APPLY↔RELEASE y que no hay `air_fill` / `air_recharge`. Medir además B2 y B3
-   (hoy sin datos) y revisar el perfil `…DMS_A_C.json` (B1 −0,38, n = 999). Hay ya un fixture y
-   `parity_jsonl.py` sirve también para la 323 (`logs/v2/20261023T211407Z_…`).
+2. **Repetir la Class 323** (dos sesiones hechas, §7.4 y §7.5: las dos pararon cortas — 45 / 63 m y
+   285 m —). Con las correcciones de §7.5 (plan con B1 = 0,55, propiedad con caducidad, sin soltar
+   por el cartel en `STOPPED`) comprobar: parada a < 10 m del tablón; sin pares APPLY↔RELEASE ni en
+   marcha ni parado; sin `air_fill` / `air_recharge`; **y mirar si aparece el parpadeo B1↔B2** de
+   §7.5 (si sí, mínimo entre cambios de muesca). Medir B2 y B3 (hoy sin datos) y revisar el perfil
+   `…DMS_A_C.json` (B1 −0,38, n = 999). Los fixtures y `parity_jsonl.py` valen para la 323.
 3. **Un solo dueño por episodio de frenado** (continuación de §7.1 e) — *cambio de lógica, su propio
    commit y su propia validación; solo tras el punto 1.* El parpadeo del cartel está tapado con
    `_limit_plan_owns_brake`, pero siguen existiendo siete caminos de soltar independientes del

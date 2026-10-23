@@ -18,25 +18,34 @@ from tsw6v2.command import BrakeReleaseState
 from tsw6v2.decision import evaluate_p1_tick
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState
+from tsw6v2.physics import get_active_physics, set_active_physics
 from tsw6v2.vehicle_package import (
     resolve_brake_air_profile,
     resolve_vehicle_package,
     vehicle_physics,
 )
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "class323_station_approach_20261023.json"
+_FIXTURES = Path(__file__).parent / "fixtures"
+_FIXTURE = _FIXTURES / "class323_station_approach_20261023.json"
+_FIXTURE_EARLY = _FIXTURES / "class323_early_brake_20261023.json"
 _B_CAB = "RVM_BCC_WRM_Class323_DMS_B_C"
+# Velocidad y FSM de cada tick de la última ``_replay`` (los tests de abajo los cruzan con ``seq``).
+speeds: list[float] = []
+fsms: list[str | None] = []
 
 
-def _replay() -> list[tuple[str | None, str, int | None]]:
-    data = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+def _replay(fixture: Path = _FIXTURE) -> list[tuple[str | None, str, int | None]]:
+    data = json.loads(fixture.read_text(encoding="utf-8"))
     keys = data["keys"]
     ticks = [dict(zip(keys, row)) for row in data["rows"]]
     pkg = resolve_vehicle_package(_B_CAB)
     limit_state, release_state, learner = LimitBrakeState(), BrakeReleaseState(), LearnerProfile()
     learner.apply_vehicle_brake_profile(pkg)
-    out = []
+    out: list[tuple[str | None, str, int | None]] = []
+    speeds.clear()
+    fsms.clear()
     logging.disable(logging.CRITICAL)
+    prev_physics = get_active_physics()
     try:
         for t in ticks:
             d = evaluate_p1_tick(
@@ -49,8 +58,11 @@ def _replay() -> list[tuple[str | None, str, int | None]]:
             )
             c = d.command
             out.append((c.kind if c else None, d.reason, c.target_notch if c else None))
+            speeds.append(t["spd_mph"])
+            fsms.append(t["stn_fsm"])
     finally:
         logging.disable(logging.NOTSET)
+        set_active_physics(prev_physics)  # ``evaluate_p1_tick`` lo fija: no contaminar otros tests
     return out
 
 
@@ -100,3 +112,99 @@ def test_aproximacion_a_anden_sin_ping_pong_ni_espera_de_aire() -> None:
     ]
     assert pares == [], f"APPLY→RELEASE en ticks consecutivos: {pares[:5]}"
     assert not any(r in ("air_fill", "air_recharge") for _, r, _ in seq)
+
+
+def test_plan_usa_la_decel_de_b1_del_vehiculo() -> None:
+    """``resolve_phase_decel`` ignoraba ``physics.service_decel_frac`` (tabla fija 0,33)."""
+    from tsw6v2.plan import UK_SERVICE_PHASES, resolve_phase_decel
+
+    phys = vehicle_physics(resolve_vehicle_package(_B_CAB))
+    b1 = next(p for p in UK_SERVICE_PHASES if p.handle_notch == 3)
+    prev = get_active_physics()
+    set_active_physics(phys)
+    try:
+        decel, learned = resolve_phase_decel(b1, 30.0, 0.0, phys.max_decel_ms2)
+    finally:
+        set_active_physics(prev)
+    assert learned is False
+    assert abs(decel - phys.max_decel_ms2 * phys.service_decel_frac[3]) < 1e-6
+    assert decel > 0.5  # antes 0,353
+
+
+def test_plan_de_estacion_no_empieza_a_560_m_a_35_mph_en_bajada() -> None:
+    """20261023T214704Z: B1 a 560 m con 35 mph y −1 % → parada a 285 m del tablón."""
+    from tsw6v2.station_brake import evaluate_station_brake
+
+    phys = vehicle_physics(resolve_vehicle_package(_B_CAB))
+    prev = get_active_physics()
+    set_active_physics(phys)
+    try:
+        for dist in (560.0, 500.0, 450.0, 400.0):
+            r = evaluate_station_brake(
+                speed_mph=35.0,
+                station_distance_m=dist,
+                gradient_pct=-1.0,
+                base_decel=phys.max_decel_ms2,
+                allow_watch=True,
+                plan_decel_ms2=phys.station_plan_decel_ms2,
+            )
+            assert r is None or not r.apply_now, f"frena ya a {dist} m"
+    finally:
+        set_active_physics(prev)
+
+
+def test_freno_de_estacion_se_suelta_si_el_plan_ya_no_lo_pide() -> None:
+    """Con B1 puesto y el plan sin pedir freno se suelta (antes se retenía hasta parar)."""
+    seq = _replay(_FIXTURE_EARLY)
+    release_speeds = [v for (kind, _, _), v in zip(seq, speeds) if kind == "RELEASE"]
+    assert release_speeds, "nunca soltó"
+    assert release_speeds[0] >= 20.0, f"soltó tarde, a {release_speeds[0]} mph"
+
+
+def test_parado_en_anden_no_suelta_por_el_cartel_ni_alterna() -> None:
+    """APPLY de puertas (bucle) ↔ RELEASE de ``evaluate_p1_tick`` cada tick estando parado."""
+    seq = _replay(_FIXTURE_EARLY)
+    stopped = [kind for (kind, _, _), f in zip(seq, fsms) if f == "STOPPED"]
+    assert stopped, "el fixture debe tener ticks STOPPED"
+    assert "RELEASE" not in stopped
+
+
+def test_propiedad_del_freno_de_estacion_caduca_tras_20_ticks_sin_plan() -> None:
+    """Con la parada propia en curso y el plan sin pedir freno: retiene un tiempo y luego suelta.
+
+    20261023T214704Z: sin esta caducidad el freno se retenía hasta parar (285 m corto).
+    """
+    from tsw6v2.constants import STATION_PLAN_LOST_RELEASE_TICKS
+
+    data = json.loads(_FIXTURE_EARLY.read_text(encoding="utf-8"))
+    keys = data["keys"]
+    ticks = [dict(zip(keys, row)) for row in data["rows"]]
+    start = next(i for i, t in enumerate(ticks) if t["lever"] == 3 and t["spd_mph"] < 27)
+    limit_state, release_state, learner = LimitBrakeState(), BrakeReleaseState(), LearnerProfile()
+    learner.apply_vehicle_brake_profile(resolve_vehicle_package(_B_CAB))
+    kinds: list[str | None] = []
+    owned: list[bool] = []
+    prev = get_active_physics()
+    logging.disable(logging.CRITICAL)
+    try:
+        for n, t in enumerate(ticks[start : start + STATION_PLAN_LOST_RELEASE_TICKS + 80]):
+            if n == 0:
+                limit_state.station_stop_m = float(t["stn_dist_m"]) + 10.0  # APPLY de estación previo
+            d = evaluate_p1_tick(
+                limit_state,
+                release_state,
+                tick_to_snap(t),
+                learner=learner,
+                station_distance_m=t["stn_dist_m"],
+                station_fsm=t["stn_fsm"],
+            )
+            kinds.append(d.command.kind if d.command else None)
+            owned.append(limit_state.station_stop_m is not None)
+    finally:
+        logging.disable(logging.NOTSET)
+        set_active_physics(prev)
+    k = STATION_PLAN_LOST_RELEASE_TICKS
+    assert all(owned[: k - 1]), "debe retener mientras dura la histéresis"
+    assert "RELEASE" not in kinds[: k - 1]
+    assert not owned[k - 1], "la propiedad debe caducar a los 20 ticks sin plan"
+    assert "RELEASE" in kinds[k - 1 :], "tras caducar debe poder soltar"

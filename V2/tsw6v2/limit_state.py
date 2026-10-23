@@ -51,6 +51,8 @@ class LimitBrakeState:
     committed_phase: Optional[str] = None
     weak_decel_ticks: int = 0
     station_stop_m: Optional[float] = None
+    # Ticks seguidos con el freno de estación puesto y el plan de estación sin pedir freno (323).
+    station_plan_lost_ticks: int = 0
     roll_latch: StationRollLatch = field(default_factory=StationRollLatch)
 
     def roll_latch_for(self, running: bool) -> Optional[StationRollLatch]:
@@ -64,6 +66,7 @@ class LimitBrakeState:
         self.latch = None
         self.last_limit_mph = None
         self.station_stop_m = None
+        self.station_plan_lost_ticks = 0
         self.roll_latch.reset()
         self.clear_commitment()
 
@@ -85,6 +88,7 @@ class LimitBrakeState:
         self.committed_phase = other.committed_phase
         self.weak_decel_ticks = other.weak_decel_ticks
         self.station_stop_m = other.station_stop_m
+        self.station_plan_lost_ticks = other.station_plan_lost_ticks
         self.roll_latch = other.roll_latch
 
 

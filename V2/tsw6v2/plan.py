@@ -107,7 +107,10 @@ def resolve_phase_decel(
         learned = predict_decel(phase.handle_notch, speed_mph, gradient_pct)
         if learned is not None and learned > 0.05:
             return learned, True
-    return decel_for_notch(phase.fraction, base_decel, gradient_pct), False
+    # La del vehículo activo (``physics.service_decel_frac``), no la tabla fija de la 323: sin esto el
+    # plan de estación ignoraba el bloque ``physics`` del paquete (20261023T214704Z).
+    frac = service_decel_frac(phase.handle_notch, phase.fraction)
+    return decel_for_notch(frac, base_decel, gradient_pct), False
 
 
 def notch_strength(handle_notch: int) -> int:

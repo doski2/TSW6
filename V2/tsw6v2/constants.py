@@ -57,6 +57,10 @@ LIMIT_DOWNHILL_COAST_TRIM_MPH = 2.0
 
 # Cartel pasado / cola
 LIMIT_SIGN_PASSED_M = 8.0
+# Layout por muescas (323): ticks seguidos sin que el plan de estación pida freno tras haberlo
+# aplicado antes de dejar que se suelte (~1 s a 20 Hz). Histéresis contra APPLY/RELEASE cada tick
+# y contra retener el freno hasta parar si el plan ya no lo necesita (20261023T214704Z).
+STATION_PLAN_LOST_RELEASE_TICKS = 20
 LIMIT_OVER_ACTIVE_MPH = 0.5
 
 # RELEASE
