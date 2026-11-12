@@ -55,6 +55,8 @@ class LimitBrakeState:
     station_plan_lost_ticks: int = 0
     # ``seq`` del probe en el último cambio de muesca mandado por el plan (layout por muescas).
     notch_change_seq: Optional[int] = None
+    # Layout por muescas: sobrefrenado en andén → rodando en neutro hasta que el plan deba reaplicar.
+    station_rolling: bool = False
     roll_latch: StationRollLatch = field(default_factory=StationRollLatch)
 
     def roll_latch_for(self, running: bool) -> Optional[StationRollLatch]:
@@ -70,6 +72,7 @@ class LimitBrakeState:
         self.station_stop_m = None
         self.station_plan_lost_ticks = 0
         self.notch_change_seq = None
+        self.station_rolling = False
         self.roll_latch.reset()
         self.clear_commitment()
 
@@ -93,6 +96,7 @@ class LimitBrakeState:
         self.station_stop_m = other.station_stop_m
         self.station_plan_lost_ticks = other.station_plan_lost_ticks
         self.notch_change_seq = other.notch_change_seq
+        self.station_rolling = other.station_rolling
         self.roll_latch = other.roll_latch
 
 

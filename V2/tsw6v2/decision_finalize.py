@@ -6,13 +6,28 @@ from typing import Optional
 
 from tsw6v2.bridge.getdata import ProbeSnapshot
 from tsw6v2.command import BrakeCommand, BrakeReleaseState
-from tsw6v2.constants import NOTCH_WEAKEN_HOLD_SEQ
+from tsw6v2.brake_feedback import observed_decel_ms2
+from tsw6v2.command import release_service_over_brake_command
+from tsw6v2.constants import (
+    MPH_TO_MS,
+    NOTCH_WEAKEN_HOLD_SEQ,
+    STATION_ROLL_LAG_S,
+    STATION_ROLL_MAX_DIST_M,
+    STATION_ROLL_MIN_MPH,
+    STATION_ROLL_REAPPLY_SLACK_M,
+    STATION_ROLL_RELEASE_SLACK_M,
+)
 from tsw6v2.decision_mc import (
     continue_station_stop,
     mc_limit_fraction,
     mc_station_stop_fraction,
 )
-from tsw6v2.decision_types import LimitBrakeDecision, TickCtx, TickPrep
+from tsw6v2.decision_types import (
+    LimitBrakeDecision,
+    TickCtx,
+    TickPrep,
+    decide_station_neutral_release,
+)
 from tsw6v2.learner import LearnerProfile
 from tsw6v2.limits import LimitBrakeState
 from tsw6v2.target import BrakeTargetResult
@@ -97,6 +112,68 @@ def _plan_reason(cmd: BrakeCommand, target: BrakeTargetResult) -> str:
 
 
 
+def _station_b1_slack_m(
+    ctx: TickCtx,
+    target: BrakeTargetResult,
+    snap: ProbeSnapshot,
+    lever: int,
+) -> float:
+    """Metros que sobrarían al marcador parando con B1 (decel medida si ya se está en B1)."""
+    v = ctx.speed_mph * MPH_TO_MS
+    decel = ctx.physics.max_decel_ms2 * ctx.physics.service_decel_frac[3] + 9.81 * ctx.grad / 100.0
+    if lever == 3:
+        obs = observed_decel_ms2(snap.accel_ms2)
+        if obs is not None:
+            decel = min(max(obs, 0.3), 0.9)
+    decel = max(decel, 0.1)
+    return target.distance_m - v * v / (2.0 * decel) - v * STATION_ROLL_LAG_S
+
+
+def _station_overbrake_roll(
+    ctx: TickCtx,
+    target: BrakeTargetResult,
+    limit_state: LimitBrakeState,
+    snap: ProbeSnapshot,
+    lever: int,
+    *,
+    seq: Optional[int],
+) -> Optional[LimitBrakeDecision]:
+    """Layout por muescas: soltar y rodar si el freno de andén sobra; reaplicar con histéresis.
+
+    El plan solo sabe aplicar o mantener: con el freno puesto no vuelve a soltar y el tren acababa
+    23-33 m antes del marcador. Aquí se compara la holgura con B1 y se rueda hasta que el plan
+    deba reaplicar (holgura < ``STATION_ROLL_REAPPLY_SLACK_M``).
+    """
+    if target.target_kind != "STATION" or adapter_for_package(ctx.vehicle_package).analog_lever:
+        limit_state.station_rolling = False
+        return None
+    dist = target.distance_m
+    if limit_state.station_rolling and (
+        dist > STATION_ROLL_MAX_DIST_M
+        or ctx.speed_mph < 1.0
+        or _station_b1_slack_m(ctx, target, snap, lever) <= STATION_ROLL_REAPPLY_SLACK_M
+    ):
+        limit_state.station_rolling = False
+        return None
+    braking = 1 <= lever <= 3
+    if not limit_state.station_rolling:
+        last = limit_state.notch_change_seq
+        settled = last is None or seq is None or not 0 <= seq - last < NOTCH_WEAKEN_HOLD_SEQ
+        if not (
+            braking
+            and settled
+            and ctx.speed_mph >= STATION_ROLL_MIN_MPH
+            and dist <= STATION_ROLL_MAX_DIST_M
+            and _station_b1_slack_m(ctx, target, snap, lever) > STATION_ROLL_RELEASE_SLACK_M
+        ):
+            return None
+        limit_state.station_rolling = True
+    if braking:
+        rel = release_service_over_brake_command(reason="Andén: sobrefrenado, rodar hasta reaplicar")
+        return decide_station_neutral_release(ctx, rel, "station_roll")
+    return ctx.idle("station_roll_hold", target=target, detail="Andén: rodando")
+
+
 def _finalize_target_decision(
     ctx: TickCtx,
     target: BrakeTargetResult,
@@ -122,6 +199,12 @@ def _finalize_target_decision(
         effective_limit=ctx.effective,
     ):
         return ctx.idle("coast_latch", target=target)
+
+    rolled = _station_overbrake_roll(
+        ctx, target, limit_state, snap, lever, seq=getattr(snap, "seq", None)
+    )
+    if rolled is not None:
+        return rolled
 
     cmd = target.to_brake_command(
         throttle_notch=throttle_notch,

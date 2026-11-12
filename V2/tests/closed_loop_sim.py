@@ -47,6 +47,8 @@ class SimResult:
     passed_red: bool = False  # cruzó el semáforo en rojo
     max_speed_over_limit_mph: float = 0.0  # mayor exceso sobre el límite vigente
     sim_time_s: float = 0.0
+    # Igual, pero al bajar de 1 mph (el juego ya da STOPPED ahí); el arrastre posterior es un artefacto.
+    halt_dist_m: float = 0.0
 
 
 def simulate(
@@ -83,6 +85,7 @@ def simulate(
     changes = reversals = 0
     passed_red = False
     over = 0.0
+    halt_dist: Optional[float] = None
     signs = sorted(limit_signs or [])
     logging.disable(logging.CRITICAL)
     try:
@@ -158,6 +161,8 @@ def simulate(
             v = max(0.0, v - decel * DT_S) if decel > 0 else v - decel * DT_S
             x += v * DT_S
             over = max(over, v / MPH_TO_MS - eff)
+            if halt_dist is None and v / MPH_TO_MS < 1.0 and t > 2.0:
+                halt_dist = dist_m - x
             t += DT_S
             seq += 1.0
             if v < 0.05 and t > 2.0:
@@ -167,6 +172,7 @@ def simulate(
         set_active_physics(prev_phys)
     return SimResult(
         stop_dist_m=(dist_m - x) if station else 0.0,
+        halt_dist_m=(halt_dist if halt_dist is not None else dist_m - x) if station else 0.0,
         stopped=v < 0.05,
         notch_changes=changes,
         quick_reversals=reversals,

@@ -27,7 +27,9 @@ SCENARIOS = [
 @pytest.mark.parametrize("v0,dist,grad", SCENARIOS)
 def test_para_cerca_del_tablon_sin_pasarse(v0: float, dist: float, grad: float) -> None:
     r = simulate(v0_mph=v0, dist_m=dist, grad_pct=grad, limit_next=(50.0, dist + 2500.0), max_s=150.0)
-    assert -5.0 <= r.stop_dist_m <= 60.0, f"paró a {r.stop_dist_m:.1f} m del tablón"
+    # Al bajar de 1 mph (STOPPED en el juego). Antes del soltar-y-rodar paraba 21-46 m corto
+    # (20261024T064847Z: 23-33 m en las 5 paradas); el arrastre a < 1 mph del simulador no cuenta.
+    assert 0.0 <= r.halt_dist_m <= 20.0, f"paró a {r.halt_dist_m:.1f} m del tablón"
 
 
 @pytest.mark.parametrize("v0,dist,grad", SCENARIOS)

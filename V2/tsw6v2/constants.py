@@ -68,6 +68,14 @@ STATION_PLAN_LOST_RELEASE_TICKS = 20
 # AFLOJARLA (~2 s). Escalar sigue siendo inmediato. Evita que el paso activo alterne B1↔B2 cada
 # pocos ticks al borde de la ventana de B2 (20261023T223846Z, 897 s: 28 cambios).
 NOTCH_WEAKEN_HOLD_SEQ = 33
+# Layout por muescas (323), aproximación final a andén: si B1 con la decel medida pararía más de
+# ``RELEASE_SLACK`` m antes del marcador, soltar y rodar; volver al plan cuando la holgura baje de
+# ``REAPPLY_SLACK`` (histéresis). Sin esto el tren frenaba hasta parar 23-33 m corto (20261024T064847Z).
+STATION_ROLL_MAX_DIST_M = 150.0
+STATION_ROLL_MIN_MPH = 2.0
+STATION_ROLL_RELEASE_SLACK_M = 15.0
+STATION_ROLL_REAPPLY_SLACK_M = 4.0
+STATION_ROLL_LAG_S = 1.0  # retardo IPC + llenado de cilindros al reaplicar
 LIMIT_OVER_ACTIVE_MPH = 0.5
 
 # RELEASE
