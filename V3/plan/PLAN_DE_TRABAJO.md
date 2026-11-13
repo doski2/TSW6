@@ -25,12 +25,16 @@ Fase 7+ Ampliaciones (hoja de ruta)
 ## Fase 0 — Debate y decisiones
 
 - **Entregables:** respuestas a [PREGUNTAS.md](PREGUNTAS.md); ADR `Aceptada` para A.1–A.5, B.1–B.2,
-  C.1, D.1–D.3 y H.1–H.4; investigaciones R-01, R-02 y R-10 cerradas (R-10 ✅ 2026-11-13).
+  C.1, D.1–D.3, D.6 y H.1–H.4; investigaciones R-01, R-02 y R-10 cerradas (R-10 ✅ 2026-11-13).
 - **Salida:** sabemos qué producto hacemos, para qué trenes y con qué métricas de "sólido".
 
 ## Fase 1 — Arquitectura escrita
 
-- **Primer entregable:** `docs/contrato-mod.md`, el contrato 3.0 con el mod Lua (paso **M0**):
+- **Primero, la estructura (2026-11-13, [decisiones/0003](decisiones/0003-estructura-por-tren-y-familia.md)):**
+  `docs/estructura.md` con el árbol de carpetas, la carpeta por tren (`trenes/<id>/`), las
+  familias de mando y de servicio y qué puede ir en cada sitio. No se escribe código hasta
+  aprobarla.
+- **Después:** `docs/contrato-mod.md`, el contrato 3.0 con el mod Lua (paso **M0**):
   `hello`, `vehicle_config`, `tick`, `cmd`, versiones y capacidades. Los tipos del núcleo se
   diseñan a partir de él.
 - **Entregables:** `docs/arquitectura.md` con capas, flujo de un tick, tipos principales
@@ -64,7 +68,8 @@ Fase 7+ Ampliaciones (hoja de ruta)
 
 ## Fase 5 — Juego real
 
-- **Entregables:** adaptadores IPC/HTTP, mod Lua versionado, panel (según D.4), modo asistente.
+- **Entregables:** adaptadores IPC/HTTP, mod Lua versionado, panel (según D.4). La v1 solo frena
+  (A.3): el modo asistente pasa a la Fase 7+.
 - **Salida:** métricas de A.5 cumplidas en sesiones reales (p. ej. 10 sesiones, parada ±2 m ≥ 95 %).
 
 ## Fase 6 — Retirada
@@ -75,13 +80,14 @@ Fase 7+ Ampliaciones (hoja de ruta)
 
 ## Fase 7+ — Hoja de ruta (ampliaciones)
 
-Orden tentativo; se reordena con las respuestas de A.3 y B.1. Cada punto tendrá su ADR antes de
-empezar.
+Orden tentativo; se reordena con la respuesta de B.1. Por A.3, la v1 **solo frena**: todo lo de
+esta tabla queda fuera de la v1. Cada punto tendrá su ADR antes de empezar.
 
 | Ampliación                         | Depende de     | Notas                                                   |
 | ---------------------------------- | -------------- | ------------------------------------------------------- |
 | Control de tracción completo       | Fase 5         | Acelerar hasta límite, mantener velocidad               |
 | Conducción por horario             | Tracción       | Usa horario HUD/HTTPAPI                                 |
+| Modo asistente                     | Fase 5         | Solo recomienda en pantalla, no toca mandos             |
 | Learner integrado                  | Fase 5         | Refina física del paquete; nunca decide solo (E.1)      |
 | Trenes con freno independiente     | Fase 4         | Primer caso fuera de "palanca combinada"                |
 | Mercancías (SD40-2)                | Freno indep.   | Freno neumático lento, trenes largos                    |

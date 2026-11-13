@@ -39,6 +39,10 @@ núcleo Python puede reescribirse, añadir trenes o cambiar de UI sin tocar Lua.
 7. **Producción y laboratorio separados.** Pueden compartir librería, pero no tick ni puente.
 8. **Probable fuera del juego.** Toda la lógica que no toca UE (formato, parseo, cola de mandos,
    resolución de nombres) se prueba con Lua normal en CI.
+9. **Leer todo, usar lo elegido** ([decisiones/0004](../decisiones/0004-el-mod-lee-todo-python-elige.md),
+   aceptada). El mod descubre todo lo que expone el tren al cargarlo (`catalog`). En el ciclo solo
+   lee lo que el tren pide (suscripción) y, si se activa, manda el resto despacio para investigar
+   (`wide`).
 
 ## Piezas
 
@@ -73,9 +77,27 @@ Al cargar un tren, el mod escribe un mensaje único:
 }
 ```
 
+### 1b. Catálogo del tren (`catalog`)
+
+Justo después del `hello`, fuera del ciclo, el mod recorre lo que expone el tren y publica cada
+campo con su ruta, tipo, valor de muestra y rango si lo hay. Python lo guarda en la carpeta del
+tren. Sirve para escribir el paquete del tren y para detectar cambios entre versiones del juego.
+
+```json
+{"type":"catalog","fields":[
+  {"path":"Controls/PowerBrakeHandle.Input","kind":"float","sample":0.25,"range":[0,1]},
+  {"path":"HUD/NextSignal.Aspect","kind":"enum","sample":3}
+]}
+```
+
 ### 2. Configuración que manda Python (`vehicle_config`)
 
 Python responde con lo que sacó del paquete del tren:
+
+- **Suscripción:** qué rutas del catálogo van en el `tick` y con qué nombre genérico (`speed`,
+  `signal_stop`, `brake_cyl`…). Un campo nuevo es un cambio de datos, no de Lua.
+- **Canal ancho (`wide`):** si se activa, el mod manda a ~1 Hz todos los campos baratos del
+  catálogo, repartidos entre ticks, para investigar.
 
 - Qué componente es cada eje: tracción, freno de servicio, freno independiente, dinámico…
 - Cómo se escribe cada eje: `step` (un peldaño por comando, caso 323), `input` (valor analógico
@@ -123,6 +145,9 @@ R-03 demuestra que el disco es el cuello. El contrato (mensajes y versiones) no 
 transporte.
 
 ## Laboratorio (`TSW6Lab`)
+
+> 2026-11-13: se escribe **nuevo en V3**, no se reutiliza el ApiExplorerMod de V2 (PREGUNTAS H.6).
+> Su primer trabajo es la M3A ([R-12](../investigaciones/R-12-m3a-http-vs-lua.md), paso 2).
 
 El laboratorio hace lo mismo que el ApiExplorer de V2, pero con dos fines concretos:
 

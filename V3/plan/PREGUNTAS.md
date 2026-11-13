@@ -31,6 +31,10 @@ Marca cada una como *imprescindible v1*, *más adelante* o *nunca*:
 - Modo "asistente" (solo recomienda en pantalla, no toca mandos)
 - Aprendizaje automático del comportamiento de cada tren
 - *Recomendación:* v1 = cartel + andén + semáforo + tracción básica + modo asistente.
+- Comentario del usuario (2026-11-13): el sistema debe frenar en **paradas, semáforos y señales**.
+- ✅ **Respondida (2026-11-13):** la v1 **solo frena** el tren: carteles de velocidad, paradas en
+  andén, semáforos y señales. Tracción, horario, puertas/seguridad, modo asistente y aprendizaje
+  pasan a *más adelante* (Fase 7+).
 
 ### A.4 ¿Para quién es?
 - Solo para ti · para ti y algunos amigos · publicable para la comunidad (instalador, documentación
@@ -120,6 +124,22 @@ Marca cada una como *imprescindible v1*, *más adelante* o *nunca*:
 - **Respondida (2026-11-13):** carpeta **`V3/`** en este repo. El paquete Python, los mods, la
   documentación y el plan viven dentro de `V3/` (`V3/src/`, `V3/mods/`, `V3/docs/`, `V3/plan/`).
   Queda abierto si al final (Fase 6) `V3/` sube a la raíz o se queda como está.
+
+### D.6 ¿Carpeta por tren y código común por familias?
+- Comentario del usuario (2026-11-13): estructurar primero y después construir. Cada tren con su
+  carpeta (perfil, física, tests, logs, herramientas) y el código común separado por tipos de tren.
+  Propuesta en [decisiones/0003](decisiones/0003-estructura-por-tren-y-familia.md).
+- Preguntas abiertas:
+  - **D.6a** ¿Te vale separar las familias en **dos ejes**: *cómo se manda* (muescas, analógica,
+    separada, freno independiente) y *qué servicio hace* (cercanías, larga distancia, mercancías,
+    maniobras)? Un tren sería una combinación, p. ej. la 323 = muescas + cercanías.
+  - **D.6b** ¿Las herramientas son comunes, con el tren como parámetro, y la carpeta del tren solo
+    tiene herramientas exclusivas como excepción? *Recomendación:* sí. Si no, `log_info` acabaría
+    copiado en cada tren.
+  - **D.6c** ¿Los logs de cada tren van dentro de su carpeta, pero fuera de git (salvo recortes
+    para tests)? Enlaza con F.3.
+  - **D.6d** ¿Creamos las familias solo cuando haya un tren que las use? *Recomendación:* sí. Al
+    principio solo habrá muescas (323), analógica (M3A) y cercanías.
 
 ### D.4 Interfaz de usuario
 - tkinter (como hoy) · panel web local (navegador) · solo consola + informes HTML.
@@ -220,6 +240,9 @@ Sale de la revisión [R-10](investigaciones/R-10-revision-mod-lua.md). La propue
   activable.
 - *Recomendación:* 1, con una librería `shared/` que se copia al instalar. La separación fue un
   acierto en V2: el probe pasó de ~2 040 a ~950 líneas.
+- ✅ **Respondida (2026-11-13):** separados (H.9c). Además, el **laboratorio se escribe nuevo en V3**
+  (`TSW6Lab`); no se reutiliza el ApiExplorerMod de V2 (el usuario tiene dudas con él). V2 queda
+  como referencia y sus exportaciones como datos.
 
 ### H.7 ¿Qué hace el mod si Python se cae?
 - Hoy no hace nada: el último mando se queda aplicado.
@@ -233,3 +256,44 @@ Sale de la revisión [R-10](investigaciones/R-10-revision-mod-lua.md). La propue
   avisos AWS/TPWS…
 - *Recomendación:* el **formato** admite cualquier eje desde 3.0. La **implementación** empieza con
   los dos que ya conocemos (323 y M3A) y crece con R-05.
+- Nota (A.3, 2026-11-13): como la v1 solo frena, los únicos ejes que se **escriben** en la v1 son
+  los de freno. En la 323, la palanca combinada sirve para frenar. Leer, se lee todo (H.9).
+
+### H.10 ¿Cómo se llama cada campo (nombre canónico)?
+- Hace falta un nombre estable para cada campo del catálogo, igual en Lua, en HTTP y entre sesiones.
+- *Recomendación:* usar la **misma forma que la ruta HTTP**, relativa al tren:
+  `Simulation/BrakeCylinder_1.Pressure_BAR`, `MasterController.Property.CurrentInputValue`,
+  `Function.HUD_GetSpeed`. Así se compara Lua con HTTP campo a campo
+  ([R-12](investigaciones/R-12-m3a-http-vs-lua.md)) y el paquete del tren usa nombres que ya
+  conocemos.
+
+### H.11 ¿Conviven el laboratorio V3 y los mods de V2?
+- Dos mods enganchados al mismo tick dan tirones (`mod-lua.md`).
+- *Recomendación:* durante una sesión de laboratorio V3, los mods de V2 **desactivados** en
+  `mods.txt`. Un `.bat` para cambiar de uno a otro.
+- Dato que falta: **ruta de instalación de UE4SS** en tu PC (carpeta `Mods/` del juego).
+
+### H.12 ¿Qué guarda una sesión de laboratorio y dónde?
+- *Recomendación:* `trenes/<id>/investigacion/<fecha>/` (fuera de git, como los logs, D.6c):
+  `catalogo.json` (lo que expone el tren), `captura.jsonl` (lecturas con hora, Lua y HTTP a la vez)
+  y `notas.md` (postura del tren en cada captura). A git solo van los resúmenes (como
+  `freno_v1.csv`).
+
+### H.9 ¿El mod lee todo lo posible?
+- Comentario del usuario (2026-11-13): que el mod lea todo lo posible y luego se decida qué se usa
+  y para qué tren, porque cada tren lo describe de forma distinta. Ver
+  [decisiones/0004](decisiones/0004-el-mod-lee-todo-python-elige.md).
+- Propuesta: **catálogo** al cargar el tren + **suscripción** en el ciclo + **canal ancho** lento
+  opcional.
+- ✅ **Respondida (2026-11-13):** «ok» a la propuesta y a las tres recomendaciones (H.9a: catálogo
+  siempre; H.9b: canal ancho activado mientras se investiga; H.9c: laboratorio aparte, más
+  pequeño). Además: los datos que se recojan se clasifican y se analizan a fondo antes de usarlos.
+- Dudas (respondidas):
+  - **H.9a** ¿El catálogo se hace **siempre** al cargar el tren o solo cuando no existe uno
+    guardado para ese tren? *Recomendación:* siempre. Es una vez por sesión y así se detectan los
+    cambios de versión del juego.
+  - **H.9b** ¿El canal ancho va **activado por defecto** en la v1? *Recomendación:* sí, mientras
+    investigamos, y se apaga cuando el tren esté validado.
+  - **H.9c** Con esto, ¿sigue haciendo falta un mod de laboratorio aparte (H.6)? *Recomendación:*
+    sí, pero más pequeño. El catálogo ligero va en el mod normal; la introspección profunda (lo
+    que puede colgar el juego) sigue aparte y se activa a mano.
